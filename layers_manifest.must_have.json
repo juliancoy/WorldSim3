@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Real Property Information",
+    "file": "real_property_information.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
+    "color": "#e41a1c"
+  },
+  {
+    "name": "Parcel",
+    "file": "parcel.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+    "color": "#377eb8"
+  },
+  {
+    "name": "Zoning",
+    "file": "zoning.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
+    "color": "#fc8d62"
+  },
+  {
+    "name": "Housing and Building Permits 2019-Present",
+    "file": "housing_building_permits_2019_present.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/189e6d1c65df4e13b38c0027cee574f6/geojson?layers=3",
+    "color": "#66c2a5"
+  },
+  {
+    "name": "Vacant Building Notices",
+    "file": "vacant_building_notices.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
+    "color": "#4daf4a"
+  },
+  {
+    "name": "NIBRS Group A Crime Data (2022-Present)",
+    "file": "crime_nibrs_group_a_2022_present.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/204beefe92a645d79fdf0969957bbdf8/geojson?layers=0",
+    "color": "#d73027"
+  }
+]

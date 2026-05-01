@@ -1,0 +1,35 @@
+#pragma once
+
+#include "imgui.h"
+
+#include <string>
+#include <utility>
+#include <vector>
+#include <cstdint>
+
+struct LayerDef {
+    enum class Category {
+        Housing,
+        Infrastructure
+    };
+    std::string name;
+    std::string file;
+    std::string source_url;
+    std::string description;
+    ImVec4 color;
+    bool enabled = false;
+    Category category = Category::Housing;
+    struct FeatureExtent {
+        float min_lon = 0.0f;
+        float min_lat = 0.0f;
+        float max_lon = 0.0f;
+        float max_lat = 0.0f;
+    };
+    struct FeatureGeom {
+        FeatureExtent extent;
+        std::vector<std::vector<ImVec2>> rings;
+        std::vector<uint32_t> triangles;
+        std::vector<std::pair<std::string, std::string>> properties;
+    };
+    std::vector<FeatureGeom> features;
+};

@@ -1,0 +1,128 @@
+[
+  {
+    "name": "Real Property Information",
+    "file": "real_property_information.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
+    "color": "#e41a1c",
+    "description": "City real-property records including parcel-linked ownership and assessment context."
+  },
+  {
+    "name": "Parcel",
+    "file": "parcel.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+    "color": "#377eb8",
+    "description": "Official parcel boundaries used as base land-unit geometry."
+  },
+  {
+    "name": "Vacant Building Notices",
+    "file": "vacant_building_notices.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
+    "color": "#4daf4a",
+    "description": "Properties flagged with vacant-building notices and related status fields."
+  },
+  {
+    "name": "Vacant Building Rehabs",
+    "file": "vacant_building_rehabs.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/4db6d1e54e714a3e8125990a09d4623d/geojson?layers=2",
+    "color": "#984ea3",
+    "description": "Vacant-building rehabilitation permit activity and project signals."
+  },
+  {
+    "name": "Tax Lien Certificate Sale Properties",
+    "file": "tax_lien_certificate_sale_properties.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
+    "color": "#ff7f00",
+    "description": "Properties listed for tax lien certificate sale processes."
+  },
+  {
+    "name": "2021 Tax Sale List",
+    "file": "tax_sale_list_2021.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0",
+    "color": "#a65628",
+    "description": "Published 2021 tax sale list for delinquent properties."
+  },
+  {
+    "name": "Open Bid List - Vacants to Value",
+    "file": "open_bid_list_vacants_to_value.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/1b844b06c28a45ca86cdfb586fdce3a7/geojson?layers=7",
+    "color": "#f781bf",
+    "description": "Open bids for Vacants to Value redevelopment opportunities."
+  },
+  {
+    "name": "Completed City Demo",
+    "file": "completed_city_demo.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/37f242ca93b244a998c31b6c0a3696a7/geojson?layers=0",
+    "color": "#999999",
+    "description": "Locations where city demolition work has been completed."
+  },
+  {
+    "name": "Housing and Building Permits 2019-Present",
+    "file": "housing_building_permits_2019_present.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/189e6d1c65df4e13b38c0027cee574f6/geojson?layers=3",
+    "color": "#66c2a5",
+    "description": "Housing and building permits from 2019 to present."
+  },
+  {
+    "name": "Zoning",
+    "file": "zoning.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
+    "color": "#fc8d62",
+    "description": "Current zoning districts and zoning-code geography."
+  },
+  {
+    "name": "Streets",
+    "file": "streets.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/b5ee6aaebdf94241bd6700cf2eacc33b/geojson?layers=0",
+    "color": "#fdb462",
+    "description": "Street centerlines for Baltimore City road network geometry and attributes."
+  },
+  {
+    "name": "Major Drainage",
+    "file": "major_drainage.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/00156edf8258493fa28384e0aa8286a8/geojson?layers=0",
+    "color": "#8da0cb",
+    "description": "Major drainage network and watershed-related infrastructure geometry."
+  },
+  {
+    "name": "Water (Infrastructure Layer 19)",
+    "file": "water_infrastructure_layer_19.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/8ed6565f93a04455ae6bd5bcb7d272db/geojson?layers=19",
+    "color": "#1f78b4",
+    "description": "Water infrastructure features from city infrastructure map layer 19."
+  },
+  {
+    "name": "Rate of Clogged Storm Drain Reports (CSA)",
+    "file": "rate_clogged_storm_drain_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/cc307b1f087244e2bf064d211427d80e/geojson?layers=0",
+    "color": "#6a3d9a",
+    "description": "CSA-level rate of clogged storm drain service reports."
+  },
+  {
+    "name": "Median Price of Homes Sold (CSA)",
+    "file": "median_price_homes_sold_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/eb55867e580740228b0d4317464ea040/geojson?layers=0",
+    "color": "#b2df8a",
+    "description": "CSA-level median home sale price indicator."
+  },
+  {
+    "name": "Total Number of Businesses (CSA)",
+    "file": "total_businesses_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/132ea1fbc8c84645b828a1a55406824d/geojson?layers=0",
+    "color": "#fb9a99",
+    "description": "CSA-level total count of registered businesses."
+  },
+  {
+    "name": "NIBRS Group A Crime Data (2022-Present)",
+    "file": "crime_nibrs_group_a_2022_present.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/204beefe92a645d79fdf0969957bbdf8/geojson?layers=0",
+    "color": "#d73027",
+    "description": "NIBRS Group A incident-level crime data (2022-present)."
+  },
+  {
+    "name": "Part 1 Crime Data (Legacy SRS)",
+    "file": "crime_part_1_legacy_srs.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/e0992dddbbf64231976d5d57763ec4f5/geojson?layers=0",
+    "color": "#4575b4",
+    "description": "Legacy Part I (SRS-era) crime incidents for historical trend analysis."
+  }
+]

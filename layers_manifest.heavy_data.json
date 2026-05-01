@@ -1,0 +1,14 @@
+[
+  {
+    "name": "2021 Tax Sale List",
+    "file": "tax_sale_list_2021.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0",
+    "color": "#a65628"
+  },
+  {
+    "name": "Part 1 Crime Data (Legacy SRS)",
+    "file": "crime_part_1_legacy_srs.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/e0992dddbbf64231976d5d57763ec4f5/geojson?layers=0",
+    "color": "#4575b4"
+  }
+]
