@@ -11,12 +11,12 @@ Usage: ./build.sh [--asan] [--clean] [--build-dir DIR]
 Options:
   --asan            Enable AddressSanitizer + UndefinedBehaviorSanitizer (gated opt-in)
   --clean           Remove build directory before configure
-  --build-dir DIR   Build directory (default: build-ninja)
+  --build-dir DIR   Build directory (default: build)
   -h, --help        Show this help
 USAGE
 }
 
-BUILD_DIR="build-ninja"
+BUILD_DIR="build"
 ENABLE_ASAN=0
 CLEAN=0
 
@@ -53,9 +53,16 @@ fi
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
   current_gen="$(grep -E '^CMAKE_GENERATOR:INTERNAL=' "$BUILD_DIR/CMakeCache.txt" | sed 's/^[^=]*=//')"
   if [[ "$current_gen" != "Ninja" ]]; then
+    if [[ "$BUILD_DIR" == "build" && "$current_gen" == "Unix Makefiles" ]]; then
+      if [[ ! -e "build-cmake" ]]; then
+        echo "[build.sh] Moving existing Unix Makefiles build tree: build -> build-cmake"
+        mv build build-cmake
+      fi
+    else
     echo "Build directory '$BUILD_DIR' uses generator '$current_gen', expected 'Ninja'." >&2
     echo "Re-run with --clean or choose a different --build-dir." >&2
     exit 1
+    fi
   fi
 fi
 
@@ -81,7 +88,3 @@ fi
 
 cmake "${CMAKE_ARGS[@]}"
 cmake --build "$BUILD_DIR"
-
-# Compatibility path for older commands: ./build/bmore_vulkan
-mkdir -p build
-ln -sfn "../$BUILD_DIR/bmore_vulkan" build/bmore_vulkan

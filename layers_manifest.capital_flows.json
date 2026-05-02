@@ -1,0 +1,100 @@
+[
+  {
+    "name": "IRS Exempt Organizations Business Master File - Maryland",
+    "file": "irs_eo_bmf_maryland.csv",
+    "url": "https://www.irs.gov/pub/irs-soi/eo_md.csv",
+    "category": "capital-flows",
+    "source": "IRS EO BMF",
+    "color": "#2ca25f",
+    "description": "Current IRS Business Master File extract for Maryland tax-exempt organizations. Useful for nonprofit headquarters, EINs, exemption type, NTEE code, assets, income, and revenue.",
+    "join_strategy": "Geocode STREET/CITY/STATE/ZIP to parcel, CSA, or census geography; use EIN as stable organization key.",
+    "license_note": "Official public IRS dataset; verify field meanings against the bundled IRS EO BMF guide."
+  },
+  {
+    "name": "IRS EO BMF Dataset Guide",
+    "file": "irs_eo_bmf_dataset_guide.pdf",
+    "url": "https://www.irs.gov/pub/foia/ig/tege/eo-info.pdf",
+    "category": "capital-flows",
+    "source": "IRS EO BMF",
+    "color": "#99d8c9",
+    "description": "Official IRS field guide for EO BMF columns and code meanings."
+  },
+  {
+    "name": "IRS Form 990 XML - 2026 Part 01A",
+    "file": "irs_990_xml_2026_01A.zip",
+    "url": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_01A.zip",
+    "category": "capital-flows",
+    "source": "IRS TEOS Form 990 XML",
+    "large": true,
+    "color": "#756bb1",
+    "description": "Nationwide machine-readable Form 990 XML filings. Large raw source for nonprofit revenue, expenses, assets, grants, officers, and contractor data.",
+    "join_strategy": "Filter by EINs from the Maryland EO BMF or by filer address before deriving local nonprofit-flow records."
+  },
+  {
+    "name": "IRS Form 990 XML - 2026 Part 02A",
+    "file": "irs_990_xml_2026_02A.zip",
+    "url": "https://apps.irs.gov/pub/epostcard/990/xml/2026/2026_TEOS_XML_02A.zip",
+    "category": "capital-flows",
+    "source": "IRS TEOS Form 990 XML",
+    "large": true,
+    "color": "#9e9ac8",
+    "description": "Second current-year nationwide Form 990 XML archive. Skipped by default because it is large.",
+    "join_strategy": "Filter by EINs from the Maryland EO BMF or by filer address before deriving local nonprofit-flow records."
+  },
+  {
+    "name": "ProPublica Nonprofit Explorer API",
+    "file": "propublica_nonprofit_explorer_api.json",
+    "url": "https://projects.propublica.org/nonprofits/api/",
+    "category": "capital-flows",
+    "source": "ProPublica Nonprofit Explorer",
+    "download": false,
+    "reason": "API/source documentation; query by EIN/name/city when deriving nonprofit summaries.",
+    "color": "#3182bd",
+    "description": "Convenience API for nonprofit profiles and processed Form 990 summaries. Useful for enrichment, not a replacement for IRS bulk data."
+  },
+  {
+    "name": "USAspending Awards API",
+    "file": "usaspending_awards_api.json",
+    "url": "https://api.usaspending.gov/",
+    "category": "capital-flows",
+    "source": "USAspending.gov",
+    "download": false,
+    "reason": "API source; use POST filters for Baltimore, Maryland, recipient type, award type, and fiscal year.",
+    "color": "#de2d26",
+    "description": "Federal grants/contracts/loans and other awards. Useful for government capital inflows to nonprofits, city agencies, universities, and businesses."
+  },
+  {
+    "name": "HUD LIHTC Property Database",
+    "file": "hud_lihtc_property_database.zip",
+    "url": "https://www.huduser.gov/portal/datasets/lihtc/property.html",
+    "category": "capital-flows",
+    "source": "HUD USER LIHTC",
+    "download": false,
+    "reason": "Download page uses an interactive/challenged endpoint; fetch manually or add a confirmed direct URL before automation.",
+    "color": "#fd8d3c",
+    "description": "Property-level Low-Income Housing Tax Credit projects with address, units, allocation year, placed-in-service year, geocoding, and financing characteristics.",
+    "join_strategy": "Geocode project address to parcel; aggregate to CSA or census tract for housing-investment layers."
+  },
+  {
+    "name": "FFIEC CRA Flat Files",
+    "file": "ffiec_cra_flat_files.zip",
+    "url": "https://www.ffiec.gov/data/cra/data-products",
+    "category": "capital-flows",
+    "source": "FFIEC CRA",
+    "download": false,
+    "reason": "Download catalog; select year/product before downloading large flat files.",
+    "color": "#636363",
+    "description": "Small business, small farm, and community development lending by geography and lender. Best represented as census-tract or MSA overlays."
+  },
+  {
+    "name": "CDFI Fund Awards Database",
+    "file": "cdfi_fund_awards_database.json",
+    "url": "https://www.cdfifund.gov/awards/state-awards-placeholder",
+    "category": "capital-flows",
+    "source": "CDFI Fund",
+    "download": false,
+    "reason": "Interactive/search source; derive Maryland/Baltimore awardee records with a dedicated fetcher later.",
+    "color": "#8856a7",
+    "description": "CDFI, Capital Magnet Fund, Bank Enterprise Award, Bond Guarantee, Native Initiatives, and New Markets Tax Credit award information."
+  }
+]

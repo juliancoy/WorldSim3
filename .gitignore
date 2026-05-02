@@ -2,3 +2,6 @@ data/
 build/
 build-ninja/
 imgui.ini
+build*
+__pycache__
+perf.*

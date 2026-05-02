@@ -32,7 +32,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
-add_executable(bmore_vulkan
+add_executable(worldsim3
   main.cpp
   layer_state_io.cpp
   feature_props.cpp
@@ -46,14 +46,14 @@ add_executable(bmore_vulkan
   ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
-target_include_directories(bmore_vulkan PRIVATE
+target_include_directories(worldsim3 PRIVATE
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(bmore_vulkan PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl)
+target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl)
 
 if(UNIX AND NOT APPLE)
-  target_link_libraries(bmore_vulkan PRIVATE dl pthread)
+  target_link_libraries(worldsim3 PRIVATE dl pthread)
 endif()

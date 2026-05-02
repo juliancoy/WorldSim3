@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 python3 download_layers.py
 python3 download_tiles.py
 
-cmake -S . -B build
-cmake --build build -j
+cmake -S . -B build-cmake
+cmake --build build-cmake -j
 
-./build/bmore_vulkan
+./build-cmake/worldsim3

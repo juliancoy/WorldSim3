@@ -49,8 +49,11 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
 void loadLayerUiState(
     const fs::path& root,
     std::vector<LayerDef>& layers,
-    bool& parcel_hover_enabled,
-    std::unordered_map<std::string, bool>* zoning_zone_enabled) {
+    bool& hover_inspector_enabled,
+    std::unordered_map<std::string, bool>* zoning_zone_enabled,
+    std::vector<bool>* layer_fill_enabled,
+    std::vector<bool>* layer_hover_enabled,
+    std::vector<bool>* layer_inspect_enabled) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -59,8 +62,10 @@ void loadLayerUiState(
     } catch (...) {
         return;
     }
-    if (j.contains("parcel_hover_enabled") && j["parcel_hover_enabled"].is_boolean()) {
-        parcel_hover_enabled = j["parcel_hover_enabled"].get<bool>();
+    if (j.contains("hover_inspector_enabled") && j["hover_inspector_enabled"].is_boolean()) {
+        hover_inspector_enabled = j["hover_inspector_enabled"].get<bool>();
+    } else if (j.contains("parcel_hover_enabled") && j["parcel_hover_enabled"].is_boolean()) {
+        hover_inspector_enabled = j["parcel_hover_enabled"].get<bool>();
     }
     if (j.contains("layers") && j["layers"].is_object()) {
         const auto& obj = j["layers"];
@@ -76,16 +81,46 @@ void loadLayerUiState(
             if (it.value().is_boolean()) (*zoning_zone_enabled)[it.key()] = it.value().get<bool>();
         }
     }
+    if (layer_fill_enabled && j.contains("layer_fills") && j["layer_fills"].is_object()) {
+        const auto& obj = j["layer_fills"];
+        if (layer_fill_enabled->size() < layers.size()) layer_fill_enabled->resize(layers.size(), true);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*layer_fill_enabled)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    }
+    if (layer_hover_enabled && j.contains("layer_hovers") && j["layer_hovers"].is_object()) {
+        const auto& obj = j["layer_hovers"];
+        if (layer_hover_enabled->size() < layers.size()) layer_hover_enabled->resize(layers.size(), true);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*layer_hover_enabled)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    }
+    if (layer_inspect_enabled && j.contains("layer_inspects") && j["layer_inspects"].is_object()) {
+        const auto& obj = j["layer_inspects"];
+        if (layer_inspect_enabled->size() < layers.size()) layer_inspect_enabled->resize(layers.size(), true);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*layer_inspect_enabled)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    }
 }
 
 void saveLayerUiState(
     const fs::path& root,
     const std::vector<LayerDef>& layers,
-    bool parcel_hover_enabled,
-    const std::unordered_map<std::string, bool>* zoning_zone_enabled) {
+    bool hover_inspector_enabled,
+    const std::unordered_map<std::string, bool>* zoning_zone_enabled,
+    const std::vector<bool>* layer_fill_enabled,
+    const std::vector<bool>* layer_hover_enabled,
+    const std::vector<bool>* layer_inspect_enabled) {
     fs::create_directories(root / "data");
     json j;
-    j["parcel_hover_enabled"] = parcel_hover_enabled;
+    j["hover_inspector_enabled"] = hover_inspector_enabled;
     json flags = json::object();
     for (const auto& l : layers) flags[l.file] = l.enabled;
     j["layers"] = flags;
@@ -93,6 +128,27 @@ void saveLayerUiState(
         json zf = json::object();
         for (const auto& kv : *zoning_zone_enabled) zf[kv.first] = kv.second;
         j["zoning_zones"] = std::move(zf);
+    }
+    if (layer_fill_enabled) {
+        json fills = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            fills[layers[i].file] = i < layer_fill_enabled->size() ? (*layer_fill_enabled)[i] : true;
+        }
+        j["layer_fills"] = std::move(fills);
+    }
+    if (layer_hover_enabled) {
+        json hovers = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            hovers[layers[i].file] = i < layer_hover_enabled->size() ? (*layer_hover_enabled)[i] : true;
+        }
+        j["layer_hovers"] = std::move(hovers);
+    }
+    if (layer_inspect_enabled) {
+        json inspects = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            inspects[layers[i].file] = i < layer_inspect_enabled->size() ? (*layer_inspect_enabled)[i] : true;
+        }
+        j["layer_inspects"] = std::move(inspects);
     }
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);

@@ -66,6 +66,12 @@ python3 download_layers.py --phase nice-to-have
 # largest/heaviest layers
 python3 download_layers.py --phase heavy-data
 
+# nonprofit, public-award, lending, and housing-capital source data
+python3 download_layers.py --phase capital-flows
+
+# include nationwide raw 990 XML archives marked large
+python3 download_layers.py --phase capital-flows --include-large
+
 # full default set (used by run.sh)
 python3 download_layers.py --phase all
 ```
@@ -74,3 +80,4 @@ Phase manifest files:
 - `layers_manifest.must_have.json`
 - `layers_manifest.nice_to_have.json`
 - `layers_manifest.heavy_data.json`
+- `layers_manifest.capital_flows.json`

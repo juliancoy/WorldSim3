@@ -28,6 +28,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <functional>
 #include <array>
@@ -39,6 +40,8 @@
 #include <deque>
 #include <sstream>
 #include <iomanip>
+#include <cctype>
+#include <cfloat>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -100,6 +103,7 @@ struct LayerGeometryCache {
     int zoom = -1;
     size_t feature_count = 0;
     std::unordered_map<uint32_t, std::vector<std::vector<ImVec2>>> world_rings_by_feature;
+    std::unordered_map<uint32_t, std::pair<ImVec2, ImVec2>> world_extent_by_feature;
 };
 
 static std::vector<LayerDef::FeatureGeom> loadLayerPointsFromFile(const fs::path& full_path);
@@ -111,9 +115,20 @@ struct BootstrapProgress {
     std::atomic<int> phase{0}; // 0=init,1=layers,2=tiles,3=done
     std::atomic<size_t> done_items{0};
     std::atomic<size_t> total_items{0};
+    std::atomic<size_t> skipped_layers{0};
+    std::atomic<size_t> skipped_tiles{0};
+    std::vector<std::string> skipped_layer_files;
     std::string status;
     std::string error;
     std::mutex msg_mutex;
+};
+
+struct ZoneMetadata {
+    std::string label;
+    std::string description;
+    std::string color_hex;
+    ImVec4 color = ImVec4(0, 0, 0, 1);
+    bool has_color = false;
 };
 
 static const char* statusToString(LayerPipelineStatus s) {
@@ -296,6 +311,62 @@ static bool writeAll(int fd, const char* data, size_t len) {
     return true;
 }
 
+struct ScreenshotRequestState {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool pending = false;
+    uint64_t req_id = 0;
+    uint64_t done_id = 0;
+    bool ok = false;
+    std::string path;
+    std::string error;
+};
+
+static ScreenshotRequestState g_ScreenshotState;
+
+static bool writePpmRgb(
+    const fs::path& out_path,
+    const uint8_t* pixels,
+    uint32_t width,
+    uint32_t height,
+    size_t row_pitch,
+    VkFormat fmt,
+    std::string& err) {
+    std::ofstream out(out_path, std::ios::binary);
+    if (!out) {
+        err = "failed to open screenshot output";
+        return false;
+    }
+    out << "P6\n" << width << " " << height << "\n255\n";
+    const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB);
+    const bool rgba = (fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_R8G8B8A8_SRGB);
+    if (!bgra && !rgba) {
+        err = "unsupported swapchain format for screenshot";
+        return false;
+    }
+    std::vector<uint8_t> line;
+    line.resize((size_t)width * 3);
+    for (uint32_t y = 0; y < height; ++y) {
+        const uint8_t* src = pixels + (size_t)y * row_pitch;
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint8_t* px = src + (size_t)x * 4;
+            uint8_t r = rgba ? px[0] : px[2];
+            uint8_t g = px[1];
+            uint8_t b = rgba ? px[2] : px[0];
+            size_t i = (size_t)x * 3;
+            line[i + 0] = r;
+            line[i + 1] = g;
+            line[i + 2] = b;
+        }
+        out.write(reinterpret_cast<const char*>(line.data()), (std::streamsize)line.size());
+    }
+    if (!out.good()) {
+        err = "failed writing screenshot file";
+        return false;
+    }
+    return true;
+}
+
 static size_t curlWriteToFile(void* ptr, size_t size, size_t nmemb, void* userdata) {
     FILE* fp = (FILE*)userdata;
     return std::fwrite(ptr, size, nmemb, fp);
@@ -398,6 +469,143 @@ static std::string jsonValueToString(const json& v) {
     if (v.is_number_float()) return std::to_string(v.get<double>());
     if (v.is_null()) return "";
     return v.dump();
+}
+
+static bool parseHexColor(const std::string& hex, ImVec4& out) {
+    if (hex.size() != 7 || hex[0] != '#') return false;
+    auto val = [&](size_t off) -> int {
+        try {
+            return std::stoi(hex.substr(off, 2), nullptr, 16);
+        } catch (...) {
+            return -1;
+        }
+    };
+    int r = val(1), g = val(3), b = val(5);
+    if (r < 0 || g < 0 || b < 0) return false;
+    out = ImVec4(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
+    return true;
+}
+
+static std::unordered_map<std::string, ZoneMetadata> loadZoneMetadata(const fs::path& root) {
+    std::unordered_map<std::string, ZoneMetadata> out;
+    std::ifstream in(root / "data" / "zoning_classes.json");
+    if (!in) in.open(root / "zoning_classes.json");
+    if (!in) return out;
+    json j;
+    try {
+        in >> j;
+    } catch (...) {
+        return out;
+    }
+    if (!j.contains("zones") || !j["zones"].is_object()) return out;
+    for (auto it = j["zones"].begin(); it != j["zones"].end(); ++it) {
+        if (!it.value().is_object()) continue;
+        ZoneMetadata meta;
+        const auto& v = it.value();
+        if (v.contains("label") && v["label"].is_string()) meta.label = v["label"].get<std::string>();
+        if (v.contains("description") && v["description"].is_string()) meta.description = v["description"].get<std::string>();
+        if (v.contains("color") && v["color"].is_string()) {
+            meta.color_hex = v["color"].get<std::string>();
+            meta.has_color = parseHexColor(meta.color_hex, meta.color);
+        }
+        out[it.key()] = std::move(meta);
+    }
+    return out;
+}
+
+static std::string readTextFile(const fs::path& p) {
+    std::ifstream in(p);
+    if (!in) return "";
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+static void collectTodoWork(const std::string& todo_text, std::vector<std::string>& past, std::vector<std::string>& future) {
+    std::istringstream in(todo_text);
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.rfind("- [x]", 0) == 0 || line.rfind("- [X]", 0) == 0) {
+            past.push_back(line.substr(5));
+            continue;
+        }
+        if (line.rfind("- ", 0) == 0) {
+            future.push_back(line.substr(2));
+            continue;
+        }
+    }
+}
+
+static std::string toLowerAscii(std::string s) {
+    for (char& ch : s) ch = (char)std::tolower((unsigned char)ch);
+    return s;
+}
+
+static bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+    if (needle.empty()) return true;
+    const std::string h = toLowerAscii(haystack);
+    const std::string n = toLowerAscii(needle);
+    return h.find(n) != std::string::npos;
+}
+
+static int extractYearMaybe(const std::string& s) {
+    for (size_t i = 0; i + 3 < s.size(); ++i) {
+        if (!std::isdigit((unsigned char)s[i]) ||
+            !std::isdigit((unsigned char)s[i + 1]) ||
+            !std::isdigit((unsigned char)s[i + 2]) ||
+            !std::isdigit((unsigned char)s[i + 3])) continue;
+        const int y = (s[i] - '0') * 1000 + (s[i + 1] - '0') * 100 + (s[i + 2] - '0') * 10 + (s[i + 3] - '0');
+        if (y >= 1900 && y <= 2100) return y;
+    }
+    return -1;
+}
+
+static double parseNumericField(const std::string& s) {
+    std::string cleaned;
+    cleaned.reserve(s.size());
+    for (char ch : s) {
+        if (std::isdigit((unsigned char)ch) || ch == '.' || ch == '-' || ch == '+') cleaned.push_back(ch);
+    }
+    if (cleaned.empty() || cleaned == "-" || cleaned == "+") return 0.0;
+    try {
+        return std::stod(cleaned);
+    } catch (...) {
+        return 0.0;
+    }
+}
+
+static std::string trimDisplayValue(std::string s) {
+    auto is_ws = [](unsigned char ch) { return std::isspace(ch) != 0; };
+    while (!s.empty() && is_ws((unsigned char)s.front())) s.erase(s.begin());
+    while (!s.empty() && is_ws((unsigned char)s.back())) s.pop_back();
+    return s;
+}
+
+static std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        std::string v = trimDisplayValue(getPropertyValue(fg, key));
+        if (!v.empty()) return v;
+    }
+    return "";
+}
+
+static std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot) {
+    std::string b = normalizeJoinKey(block);
+    std::string l = normalizeJoinKey(lot);
+    if (b.empty() || l.empty()) return "";
+    return b + l;
+}
+
+static std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg) {
+    std::string bl = normalizeJoinKey(getPropertyValue(fg, "BLOCKLOT"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(fg, "PIN"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(fg, "pin"));
+    if (!bl.empty()) return bl;
+    bl = blockLotJoinKeyFromParts(getPropertyValue(fg, "BLOCK"), getPropertyValue(fg, "LOT"));
+    if (!bl.empty()) return bl;
+    return blockLotJoinKeyFromParts(getPropertyValue(fg, "block"), getPropertyValue(fg, "lot"));
 }
 
 static void openUrlInBrowser(const std::string& url) {
@@ -1043,12 +1251,21 @@ static bool pointInFeature(const LayerDef::FeatureGeom& fg, float lon, float lat
 }
 
 static int lodRingStepForZoom(int zoom) {
-    if (zoom <= 12) return 8;
-    if (zoom == 13) return 6;
-    if (zoom == 14) return 4;
-    if (zoom == 15) return 3;
-    if (zoom == 16) return 2;
+    if (zoom <= 10) return 8;
+    if (zoom == 11) return 6;
+    if (zoom == 12) return 4;
+    if (zoom == 13) return 2;
     return 1;
+}
+
+static bool implausibleHydrationCache(const std::string& file, size_t feature_count) {
+    // These guards reject previously observed duplicated cache payloads. They are
+    // intentionally loose so legitimate source updates still load from cache.
+    if (file == "parcel.geojson") return feature_count > 300000;
+    if (file == "zoning.geojson") return feature_count > 10000;
+    if (file == "vacant_building_notices.geojson") return feature_count > 20000;
+    if (file == "vacant_building_rehabs.geojson") return feature_count > 20000;
+    return false;
 }
 
 static void hydrateLayerBatches(
@@ -1057,28 +1274,107 @@ static void hydrateLayerBatches(
     const std::atomic<bool>& stop_flag,
     const std::function<bool()>& should_continue,
     const std::function<void(std::vector<LayerDef::FeatureGeom>&&, bool, bool, const std::string&)>& emit) {
-    std::ifstream in(full_path);
-    if (!in) {
-        emit({}, true, true, "failed to open layer file");
-        return;
-    }
-    json j;
-    try {
-        in >> j;
-    } catch (const std::exception& e) {
-        emit({}, true, true, e.what());
-        return;
-    }
-    if (!j.contains("features") || !j["features"].is_array()) {
-        emit({}, true, true, "invalid geojson: missing features array");
-        return;
-    }
+    auto stream_features = [&](std::function<bool(json&&)> on_feature, std::string& err) -> bool {
+        std::ifstream in(full_path, std::ios::binary);
+        if (!in) {
+            err = "failed to open layer file";
+            return false;
+        }
+        std::string token;
+        token.reserve(10);
+        bool in_string = false;
+        bool escape = false;
+        bool found_features_key = false;
+        bool in_features_array = false;
+        bool collecting_feature = false;
+        int obj_depth = 0;
+        std::string feature_buf;
+        feature_buf.reserve(65536);
+
+        char ch = 0;
+        while (in.get(ch)) {
+            if (!in_features_array) {
+                if (!found_features_key) {
+                    if (!in_string) {
+                        if (ch == '"') {
+                            in_string = true;
+                            token.clear();
+                        }
+                    } else {
+                        if (escape) {
+                            token.push_back(ch);
+                            escape = false;
+                        } else if (ch == '\\') {
+                            escape = true;
+                        } else if (ch == '"') {
+                            in_string = false;
+                            if (token == "features") found_features_key = true;
+                        } else {
+                            token.push_back(ch);
+                        }
+                    }
+                } else {
+                    if (ch == '[') {
+                        in_features_array = true;
+                    }
+                }
+                continue;
+            }
+
+            if (!collecting_feature) {
+                if (ch == '{') {
+                    collecting_feature = true;
+                    obj_depth = 1;
+                    in_string = false;
+                    escape = false;
+                    feature_buf.clear();
+                    feature_buf.push_back(ch);
+                } else if (ch == ']') {
+                    return true;
+                }
+                continue;
+            }
+
+            feature_buf.push_back(ch);
+            if (in_string) {
+                if (escape) escape = false;
+                else if (ch == '\\') escape = true;
+                else if (ch == '"') in_string = false;
+                continue;
+            }
+            if (ch == '"') {
+                in_string = true;
+                continue;
+            }
+            if (ch == '{') obj_depth++;
+            else if (ch == '}') {
+                obj_depth--;
+                if (obj_depth == 0) {
+                    try {
+                        json f = json::parse(feature_buf);
+                        if (!on_feature(std::move(f))) return true;
+                    } catch (const std::exception& e) {
+                        err = std::string("feature parse failed: ") + e.what();
+                        return false;
+                    }
+                    collecting_feature = false;
+                }
+            }
+        }
+        err = found_features_key ? "invalid geojson: unterminated features array" : "invalid geojson: missing features array";
+        return false;
+    };
 
     std::vector<LayerDef::FeatureGeom> batch;
     batch.reserve(batch_size);
-    for (auto& f : j["features"]) {
-        if (stop_flag.load(std::memory_order_relaxed) || !should_continue()) return;
-        if (!f.contains("geometry")) continue;
+    std::string stream_err;
+    bool stream_aborted = false;
+    const bool ok = stream_features([&](json&& f) -> bool {
+        if (stop_flag.load(std::memory_order_relaxed) || !should_continue()) {
+            stream_aborted = true;
+            return false;
+        }
+        if (!f.contains("geometry")) return true;
         std::vector<std::pair<std::string, std::string>> props;
         if (f.contains("properties") && f["properties"].is_object()) {
             props.reserve(f["properties"].size());
@@ -1090,7 +1386,10 @@ static void hydrateLayerBatches(
         }
         auto geoms = extractFeatureGeoms(f["geometry"]);
         for (auto& g : geoms) {
-            if (stop_flag.load(std::memory_order_relaxed) || !should_continue()) return;
+            if (stop_flag.load(std::memory_order_relaxed) || !should_continue()) {
+                stream_aborted = true;
+                return false;
+            }
             g.properties = props;
             batch.push_back(std::move(g));
             if (batch.size() >= batch_size) {
@@ -1099,7 +1398,13 @@ static void hydrateLayerBatches(
                 batch.reserve(batch_size);
             }
         }
+        return true;
+    }, stream_err);
+    if (!ok) {
+        emit({}, true, true, stream_err.empty() ? "feature streaming failed" : stream_err);
+        return;
     }
+    if (stream_aborted) return;
     if (!batch.empty()) emit(std::move(batch), false, false, "");
     emit({}, true, false, "");
 }
@@ -1383,6 +1688,157 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_complete_semaphore;
     check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+
+    uint64_t shot_req_id = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
+        if (g_ScreenshotState.pending) shot_req_id = g_ScreenshotState.req_id;
+    }
+    if (shot_req_id == 0) return;
+
+    auto complete_screenshot = [&](bool ok, const std::string& path, const std::string& error) {
+        std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
+        if (g_ScreenshotState.pending && g_ScreenshotState.req_id == shot_req_id) {
+            g_ScreenshotState.pending = false;
+            g_ScreenshotState.done_id = shot_req_id;
+            g_ScreenshotState.ok = ok;
+            g_ScreenshotState.path = path;
+            g_ScreenshotState.error = error;
+            g_ScreenshotState.cv.notify_all();
+        }
+    };
+
+    check_vk_result(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX));
+
+    VkImage src_image = fd->Backbuffer;
+    if (src_image == VK_NULL_HANDLE || wd->Width == 0 || wd->Height == 0) {
+        complete_screenshot(false, "", "invalid backbuffer");
+        return;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    const uint32_t width = wd->Width;
+    const uint32_t height = wd->Height;
+    const VkDeviceSize image_size = (VkDeviceSize)width * (VkDeviceSize)height * 4;
+    createBuffer(
+        image_size,
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        staging,
+        staging_mem);
+
+    VkCommandPool cap_pool = VK_NULL_HANDLE;
+    VkCommandBuffer cap_cmd = VK_NULL_HANDLE;
+    VkCommandPoolCreateInfo pool_info{};
+    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    pool_info.queueFamilyIndex = g_QueueFamily;
+    check_vk_result(vkCreateCommandPool(g_Device, &pool_info, g_Allocator, &cap_pool));
+    VkCommandBufferAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.commandPool = cap_pool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = 1;
+    check_vk_result(vkAllocateCommandBuffers(g_Device, &alloc_info, &cap_cmd));
+
+    VkCommandBufferBeginInfo begin2{};
+    begin2.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin2.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check_vk_result(vkBeginCommandBuffer(cap_cmd, &begin2));
+
+    VkImageMemoryBarrier to_src{};
+    to_src.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    to_src.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    to_src.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    to_src.oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    to_src.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    to_src.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    to_src.image = src_image;
+    to_src.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    to_src.subresourceRange.levelCount = 1;
+    to_src.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(
+        cap_cmd,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0,
+        nullptr,
+        0,
+        nullptr,
+        1,
+        &to_src);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {width, height, 1};
+    vkCmdCopyImageToBuffer(cap_cmd, src_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging, 1, &region);
+
+    VkImageMemoryBarrier back_to_present{};
+    back_to_present.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    back_to_present.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    back_to_present.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+    back_to_present.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    back_to_present.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    back_to_present.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    back_to_present.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    back_to_present.image = src_image;
+    back_to_present.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    back_to_present.subresourceRange.levelCount = 1;
+    back_to_present.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(
+        cap_cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+        0,
+        0,
+        nullptr,
+        0,
+        nullptr,
+        1,
+        &back_to_present);
+    check_vk_result(vkEndCommandBuffer(cap_cmd));
+
+    VkSubmitInfo cap_submit{};
+    cap_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    cap_submit.commandBufferCount = 1;
+    cap_submit.pCommandBuffers = &cap_cmd;
+    check_vk_result(vkQueueSubmit(g_Queue, 1, &cap_submit, VK_NULL_HANDLE));
+    check_vk_result(vkQueueWaitIdle(g_Queue));
+
+    std::string out_path;
+    std::string capture_err;
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(g_Device, staging, &req);
+    void* mapped = nullptr;
+    check_vk_result(vkMapMemory(g_Device, staging_mem, 0, req.size, 0, &mapped));
+    const fs::path shot_dir = fs::current_path() / "data" / "cache" / "screenshots";
+    std::error_code ec;
+    fs::create_directories(shot_dir, ec);
+    auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::system_clock::now().time_since_epoch())
+                  .count();
+    fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + ".ppm");
+    const bool ok = writePpmRgb(
+        out_file,
+        static_cast<const uint8_t*>(mapped),
+        width,
+        height,
+        (size_t)width * 4,
+        wd->SurfaceFormat.format,
+        capture_err);
+    vkUnmapMemory(g_Device, staging_mem);
+    if (ok) out_path = out_file.string();
+
+    vkFreeCommandBuffers(g_Device, cap_pool, 1, &cap_cmd);
+    vkDestroyCommandPool(g_Device, cap_pool, g_Allocator);
+    vkDestroyBuffer(g_Device, staging, g_Allocator);
+    vkFreeMemory(g_Device, staging_mem, g_Allocator);
+
+    complete_screenshot(ok, out_path, capture_err);
 }
 
 static void FramePresent(ImGui_ImplVulkanH_Window* wd) {
@@ -1489,21 +1945,58 @@ int main(int argc, char** argv) {
                 return;
             }
             std::vector<std::pair<std::string, fs::path>> missing_layers;
+            std::vector<std::string> present_layers;
             for (const auto& e : manifest) {
                 if (!e.contains("file") || !e.contains("url")) continue;
                 fs::path out = root / "data" / "layers" / e["file"].get<std::string>();
                 if (!fs::exists(out)) missing_layers.push_back({e["url"].get<std::string>(), out});
+                else present_layers.push_back(out.filename().string());
+            }
+            bootstrap.skipped_layers.store(present_layers.size(), std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(bootstrap.msg_mutex);
+                bootstrap.skipped_layer_files = std::move(present_layers);
             }
             bootstrap.total_items.store(missing_layers.size(), std::memory_order_relaxed);
             bootstrap.done_items.store(0, std::memory_order_relaxed);
-            for (size_t i = 0; i < missing_layers.size(); ++i) {
-                setBootstrapStatus(bootstrap, "Downloading layer " + std::to_string(i + 1) + "/" + std::to_string(missing_layers.size()));
-                std::string err_s;
-                if (!downloadUrlToFile(missing_layers[i].first, missing_layers[i].second, err_s)) {
-                    fail("Layer download failed: " + err_s);
+            if (!missing_layers.empty()) {
+                const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+                const size_t worker_count = std::min<size_t>(6, std::max<size_t>(2, hw));
+                setBootstrapStatus(
+                    bootstrap,
+                    "Downloading layers in parallel (" + std::to_string(worker_count) + " workers)...");
+
+                std::atomic<size_t> next_idx{0};
+                std::atomic<bool> layer_failed{false};
+                std::mutex layer_err_mutex;
+                std::string layer_err;
+                std::vector<std::thread> layer_workers;
+                layer_workers.reserve(worker_count);
+
+                for (size_t wi = 0; wi < worker_count; ++wi) {
+                    layer_workers.emplace_back([&]() {
+                        while (true) {
+                            if (layer_failed.load(std::memory_order_relaxed)) break;
+                            const size_t idx = next_idx.fetch_add(1, std::memory_order_relaxed);
+                            if (idx >= missing_layers.size()) break;
+                            std::string err_s;
+                            if (!downloadUrlToFile(missing_layers[idx].first, missing_layers[idx].second, err_s)) {
+                                const bool first_fail = !layer_failed.exchange(true, std::memory_order_relaxed);
+                                if (first_fail) {
+                                    std::lock_guard<std::mutex> lk(layer_err_mutex);
+                                    layer_err = "Layer download failed (" + missing_layers[idx].second.filename().string() + "): " + err_s;
+                                }
+                                break;
+                            }
+                            bootstrap.done_items.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    });
+                }
+                for (auto& t : layer_workers) if (t.joinable()) t.join();
+                if (layer_failed.load(std::memory_order_relaxed)) {
+                    fail(layer_err.empty() ? "Layer download failed." : layer_err);
                     return;
                 }
-                bootstrap.done_items.fetch_add(1, std::memory_order_relaxed);
             }
 
             // 2) Tiles
@@ -1511,6 +2004,7 @@ int main(int argc, char** argv) {
             constexpr double MIN_LON = -76.72, MIN_LAT = 39.20, MAX_LON = -76.50, MAX_LAT = 39.38;
             constexpr int MIN_ZOOM = 11, MAX_ZOOM = 18;
             std::vector<std::tuple<int, int, int>> missing_tiles;
+            size_t total_tiles_in_range = 0;
             for (int z = MIN_ZOOM; z <= MAX_ZOOM; ++z) {
                 auto [x0, y1] = deg2num(MIN_LAT, MIN_LON, z);
                 auto [x1, y0] = deg2num(MAX_LAT, MAX_LON, z);
@@ -1518,11 +2012,13 @@ int main(int argc, char** argv) {
                 int y_min = std::min(y0, y1), y_max = std::max(y0, y1);
                 for (int x = x_min; x <= x_max; ++x) {
                     for (int y = y_min; y <= y_max; ++y) {
+                        total_tiles_in_range++;
                         fs::path out = root / "data" / "tiles" / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
                         if (!fs::exists(out)) missing_tiles.emplace_back(z, x, y);
                     }
                 }
             }
+            bootstrap.skipped_tiles.store(total_tiles_in_range - missing_tiles.size(), std::memory_order_relaxed);
             bootstrap.total_items.store(missing_tiles.size(), std::memory_order_relaxed);
             bootstrap.done_items.store(0, std::memory_order_relaxed);
             for (size_t i = 0; i < missing_tiles.size(); ++i) {
@@ -1562,24 +2058,72 @@ int main(int argc, char** argv) {
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::SetNextWindowPos(ImVec2((float)w * 0.5f - 280.0f, (float)h * 0.5f - 90.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(560, 180), ImGuiCond_Always);
-        ImGui::Begin("Startup Data Check", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2((float)w, (float)h), ImGuiCond_Always);
+        ImGui::Begin(
+            "Startup Data Check",
+            nullptr,
+            ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const float margin_x = std::max(24.0f, avail.x * 0.05f);
+        const float margin_y = std::max(20.0f, avail.y * 0.05f);
+        const float card_w = std::max(640.0f, avail.x - margin_x * 2.0f);
+        const float card_h = std::max(280.0f, avail.y - margin_y * 2.0f);
+        ImGui::SetCursorPos(ImVec2((avail.x - card_w) * 0.5f, (avail.y - card_h) * 0.5f));
+        ImGui::BeginChild("startup_progress_card", ImVec2(card_w, card_h), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar);
         int ph = bootstrap.phase.load(std::memory_order_relaxed);
         const char* phase_name = ph == 1 ? "Layers" : (ph == 2 ? "Tiles" : (ph == 3 ? "Done" : "Init"));
         size_t done = bootstrap.done_items.load(std::memory_order_relaxed);
         size_t total = bootstrap.total_items.load(std::memory_order_relaxed);
+        size_t skipped_layers = bootstrap.skipped_layers.load(std::memory_order_relaxed);
+        size_t skipped_tiles = bootstrap.skipped_tiles.load(std::memory_order_relaxed);
         double pct = total ? (100.0 * (double)done / (double)total) : 100.0;
         std::string status;
         {
             std::lock_guard<std::mutex> lk(bootstrap.msg_mutex);
             status = bootstrap.status;
         }
+        ImGui::Text("Startup Data Check");
+        ImGui::Separator();
+        auto draw_step_row = [&](const char* label, bool complete, bool active) {
+            ImVec4 bg = ImVec4(0.24f, 0.24f, 0.24f, 0.90f);
+            ImVec4 fg = ImVec4(0.88f, 0.88f, 0.88f, 1.0f);
+            if (complete) {
+                bg = ImVec4(0.18f, 0.47f, 0.24f, 0.96f);
+                fg = ImVec4(0.94f, 1.00f, 0.94f, 1.0f);
+            } else if (active) {
+                bg = ImVec4(0.40f, 0.35f, 0.16f, 0.96f);
+                fg = ImVec4(1.00f, 0.98f, 0.84f, 1.0f);
+            }
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, bg);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+            const std::string row_id = std::string("startup_step_") + label;
+            if (ImGui::BeginChild(row_id.c_str(), ImVec2(-1.0f, 28.0f), ImGuiChildFlags_Border)) {
+                ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f);
+                ImGui::PushStyleColor(ImGuiCol_Text, fg);
+                ImGui::TextUnformatted(label);
+                ImGui::PopStyleColor();
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor();
+        };
+        draw_step_row("1) Layer Download", ph > 1, ph == 1);
+        draw_step_row("2) Tile Download", ph > 2, ph == 2);
+        draw_step_row("3) Ready", ph >= 3, ph == 3);
+        ImGui::Spacing();
         ImGui::Text("Phase: %s", phase_name);
-        ImGui::ProgressBar((float)(total ? ((double)done / (double)total) : 1.0), ImVec2(-1.0f, 0.0f));
+        ImGui::ProgressBar((float)(total ? ((double)done / (double)total) : 1.0), ImVec2(-1.0f, 12.0f));
         ImGui::Text("%zu / %zu (%.1f%%)", done, total, pct);
+        if (ph == 1) ImGui::Text("Already present layers: %zu", skipped_layers);
+        if (ph == 2) ImGui::Text("Already present tiles: %zu", skipped_tiles);
         ImGui::Separator();
         ImGui::TextWrapped("%s", status.c_str());
+        ImGui::EndChild();
         ImGui::End();
 
         ImGui::Render();
@@ -1608,20 +2152,29 @@ int main(int argc, char** argv) {
     int real_property_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
+    int tax_lien_layer_idx = -1;
+    int tax_sale_layer_idx = -1;
     int zoning_layer_idx = -1;
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "parcel.geojson") parcel_layer_idx = (int)i;
         else if (layers[i].file == "real_property_information.geojson") real_property_layer_idx = (int)i;
         else if (layers[i].file == "vacant_building_notices.geojson") vacant_notice_layer_idx = (int)i;
         else if (layers[i].file == "vacant_building_rehabs.geojson") vacant_rehab_layer_idx = (int)i;
+        else if (layers[i].file == "tax_lien_certificate_sale_properties.geojson") tax_lien_layer_idx = (int)i;
+        else if (layers[i].file == "tax_sale_list_2021.geojson") tax_sale_layer_idx = (int)i;
         else if (layers[i].file == "zoning.geojson") zoning_layer_idx = (int)i;
     }
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
     std::unordered_map<std::string, int> vacant_notice_count_by_blocklot;
     std::unordered_map<std::string, int> vacant_rehab_count_by_blocklot;
+    std::unordered_map<std::string, int> tax_lien_count_by_blocklot;
+    std::unordered_map<std::string, double> tax_lien_amount_by_blocklot;
+    std::unordered_map<std::string, int> tax_sale_count_by_blocklot;
+    std::unordered_map<std::string, double> tax_sale_amount_by_blocklot;
     std::unordered_map<std::string, bool> zoning_zone_enabled;
     std::unordered_map<std::string, ImVec4> zoning_zone_color;
     std::unordered_map<std::string, std::string> zoning_zone_label;
+    std::unordered_map<std::string, ZoneMetadata> zoning_metadata = loadZoneMetadata(root);
     std::vector<std::string> zoning_zone_order;
     std::unordered_map<std::string, size_t> zoning_zone_counts;
     std::unordered_map<std::string, std::vector<std::string>> zoning_group_zones;
@@ -1629,11 +2182,19 @@ int main(int argc, char** argv) {
     size_t zoning_zone_discovered_feature_count = 0;
     std::vector<int> parcel_vac_notice_by_feature;
     std::vector<int> parcel_vac_rehab_by_feature;
+    std::vector<int> parcel_tax_lien_by_feature;
+    std::vector<int> parcel_tax_sale_by_feature;
+    std::vector<double> parcel_tax_lien_amount_by_feature;
+    std::vector<double> parcel_tax_sale_amount_by_feature;
     int vacancy_maps_generation = 0;
     int parcel_vacancy_generation_applied = -1;
+    int tax_maps_generation = 0;
+    int parcel_tax_generation_applied = -1;
     size_t cached_real_property_size = 0;
     size_t cached_vac_notice_size = 0;
     size_t cached_vac_rehab_size = 0;
+    size_t cached_tax_lien_size = 0;
+    size_t cached_tax_sale_size = 0;
     std::mutex hydrated_mutex;
     std::deque<HydratedLayer> hydrated_queue;
     std::mutex hydrate_req_mutex;
@@ -1649,6 +2210,10 @@ int main(int argc, char** argv) {
     std::atomic<double> perf_frame_ms_avg{0.0};
     std::atomic<double> perf_frame_ms_last{0.0};
     std::atomic<double> perf_fps_avg{0.0};
+    std::atomic<size_t> render_fill_attempts_last_frame{0};
+    std::atomic<size_t> render_fill_success_last_frame{0};
+    std::atomic<size_t> render_fill_no_triangles_last_frame{0};
+    std::atomic<size_t> render_fill_bad_indices_last_frame{0};
     std::atomic<size_t> visible_vacant_parcels_last_frame{0};
     std::atomic<size_t> vacant_parcels_matched_total{0};
     std::atomic<size_t> vacant_parcels_with_geometry_total{0};
@@ -1661,6 +2226,20 @@ int main(int argc, char** argv) {
     std::atomic<double> api_lat_cmd{std::numeric_limits<double>::quiet_NaN()};
     std::mutex api_layer_mutex;
     std::unordered_map<std::string, bool> api_layer_enable_cmds;
+    std::unordered_map<std::string, bool> api_layer_fill_cmds;
+    std::mutex layer_fill_mutex;
+    std::vector<bool> layer_fill_enabled(layers.size(), true);
+    std::vector<bool> layer_hover_enabled(layers.size(), true);
+    std::vector<bool> layer_inspect_enabled(layers.size(), true);
+    bool hover_inspector_enabled = true;
+    loadLayerUiState(
+        root,
+        layers,
+        hover_inspector_enabled,
+        &zoning_zone_enabled,
+        &layer_fill_enabled,
+        &layer_hover_enabled,
+        &layer_inspect_enabled);
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
@@ -1673,17 +2252,28 @@ int main(int argc, char** argv) {
     size_t last_triangulated_seen = 0;
 
     std::vector<bool> hydration_requested(layers.size(), false);
+    std::vector<bool> hydration_required(layers.size(), false);
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].enabled) {
             hydrate_requests.push_back(i);
             hydration_requested[i] = true;
         }
     }
-    auto enqueue_hydration = [&](size_t idx) {
+    auto is_parcel_priority_index = [&](size_t idx) -> bool {
+        if (parcel_layer_idx < 0) return false;
+        if ((int)idx == parcel_layer_idx) return true;
+        const bool vac_active =
+            (vacant_notice_layer_idx >= 0 && layers[(size_t)vacant_notice_layer_idx].enabled) ||
+            (vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled);
+        return vac_active && (int)idx == parcel_layer_idx;
+    };
+    auto enqueue_hydration = [&](size_t idx, bool required = false) {
         if (idx >= layers.size()) return;
         std::lock_guard<std::mutex> lk(hydrate_req_mutex);
+        if (required) hydration_required[idx] = true;
         if (!hydration_requested[idx]) {
-            hydrate_requests.push_back(idx);
+            if (is_parcel_priority_index(idx)) hydrate_requests.push_front(idx);
+            else hydrate_requests.push_back(idx);
             hydration_requested[idx] = true;
             std::lock_guard<std::mutex> lk2(status_mutex);
             if (idx < layer_states.size()) layer_states[idx].status = LayerPipelineStatus::Queued;
@@ -1709,7 +2299,12 @@ int main(int argc, char** argv) {
                     i = hydrate_requests.front();
                     hydrate_requests.pop_front();
                 }
-                if (i >= layers.size() || !layers[i].enabled) continue;
+                bool required = false;
+                {
+                    std::lock_guard<std::mutex> lk(hydrate_req_mutex);
+                    required = i < hydration_required.size() && hydration_required[i];
+                }
+                if (i >= layers.size() || (!layers[i].enabled && !required)) continue;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
                     if (i < layer_states.size()) layer_states[i].status = LayerPipelineStatus::Hydrating;
@@ -1720,10 +2315,15 @@ int main(int argc, char** argv) {
                 const std::string sig = fileSignature(layer_path);
                 std::vector<LayerDef::FeatureGeom> cached_features;
                 if (loadHydrationCache(cache_path, sig, cached_features)) {
-                    // Treat empty cache as stale/corrupt and fall back to source parse.
-                    if (!cached_features.empty()) {
+                    const bool suspicious_cache =
+                        cached_features.empty() ||
+                        implausibleHydrationCache(layers[i].file, cached_features.size()) ||
+                        (fs::exists(layer_path) &&
+                         fs::file_size(layer_path) > 1024 * 1024 &&
+                         cached_features.size() < 32);
+                    if (!suspicious_cache) {
                         for (size_t off = 0; off < cached_features.size(); off += kHydrationBatchSize) {
-                            if (hydration_stop.load(std::memory_order_relaxed) || !layers[i].enabled) break;
+                            if (hydration_stop.load(std::memory_order_relaxed) || (!layers[i].enabled && !required)) break;
                             size_t end = std::min(cached_features.size(), off + kHydrationBatchSize);
                             std::vector<LayerDef::FeatureGeom> chunk;
                             chunk.reserve(end - off);
@@ -1734,12 +2334,15 @@ int main(int argc, char** argv) {
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
                         hydrated_queue.push_back(HydratedLayer{i, {}, true, false, ""});
                         continue;
+                    } else {
+                        std::error_code ec;
+                        fs::remove(cache_path, ec);
                     }
                 }
 
                 hydrateLayerBatches(
                     layer_path, kHydrationBatchSize, hydration_stop,
-                    [&]() { return i < layers.size() && layers[i].enabled; },
+                    [&]() { return i < layers.size() && (layers[i].enabled || required); },
                     [&](std::vector<LayerDef::FeatureGeom>&& chunk, bool done, bool failed, const std::string& error) {
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
                         hydrated_queue.push_back(HydratedLayer{i, std::move(chunk), done, failed, error});
@@ -1889,11 +2492,30 @@ int main(int argc, char** argv) {
                    << "\r\nConnection: close\r\n\r\n" << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/set_fill") {
+                std::string file = get_q("file");
+                std::string enabled = get_q("enabled");
+                if (!file.empty() && !enabled.empty()) {
+                    bool en = (enabled == "1" || enabled == "true" || enabled == "on");
+                    std::lock_guard<std::mutex> lk(api_layer_mutex);
+                    api_layer_fill_cmds[file] = en;
+                }
+                const char* body = "{\"ok\":true}";
+                std::ostringstream os;
+                os << "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " << std::strlen(body)
+                   << "\r\nConnection: close\r\n\r\n" << body;
+                std::string resp = os.str();
+                (void)writeAll(client_fd, resp.data(), resp.size());
             } else if (path == "/status") {
                 std::vector<LayerRuntimeState> states_copy;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
                     states_copy = layer_states;
+                }
+                std::vector<bool> fill_copy;
+                {
+                    std::lock_guard<std::mutex> lk(layer_fill_mutex);
+                    fill_copy = layer_fill_enabled;
                 }
                 const auto now = std::chrono::steady_clock::now();
                 const double elapsed_s = std::max(0.001, std::chrono::duration<double>(now - hydration_started_at).count());
@@ -1930,6 +2552,12 @@ int main(int argc, char** argv) {
                     {"frame_ms_last", perf_frame_ms_last.load(std::memory_order_relaxed)},
                     {"fps_avg", perf_fps_avg.load(std::memory_order_relaxed)}
                 };
+                out["render_fill"] = {
+                    {"attempts_last_frame", render_fill_attempts_last_frame.load(std::memory_order_relaxed)},
+                    {"success_last_frame", render_fill_success_last_frame.load(std::memory_order_relaxed)},
+                    {"no_triangles_last_frame", render_fill_no_triangles_last_frame.load(std::memory_order_relaxed)},
+                    {"bad_indices_last_frame", render_fill_bad_indices_last_frame.load(std::memory_order_relaxed)}
+                };
                 json status_counts = json::object();
                 out["layers"] = json::array();
                 for (size_t i = 0; i < states_copy.size(); ++i) {
@@ -1941,6 +2569,7 @@ int main(int argc, char** argv) {
                         {"name", i < layers.size() ? layers[i].name : std::string()},
                         {"file", i < layers.size() ? layers[i].file : std::string()},
                         {"enabled", i < layers.size() ? layers[i].enabled : false},
+                        {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
                         {"status", s},
                         {"features", st.feature_count},
                         {"hydrated", st.status != LayerPipelineStatus::Queued && st.status != LayerPipelineStatus::Hydrating && st.status != LayerPipelineStatus::Failed},
@@ -1971,6 +2600,52 @@ int main(int argc, char** argv) {
                    << "\r\nConnection: close\r\n\r\n" << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/screenshot") {
+                uint64_t req_id = 0;
+                {
+                    std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
+                    g_ScreenshotState.req_id += 1;
+                    req_id = g_ScreenshotState.req_id;
+                    g_ScreenshotState.pending = true;
+                    g_ScreenshotState.ok = false;
+                    g_ScreenshotState.path.clear();
+                    g_ScreenshotState.error.clear();
+                }
+                bool ready = false;
+                {
+                    std::unique_lock<std::mutex> lk(g_ScreenshotState.mutex);
+                    ready = g_ScreenshotState.cv.wait_for(
+                        lk,
+                        std::chrono::seconds(5),
+                        [&]() { return g_ScreenshotState.done_id >= req_id; });
+                }
+                json out;
+                out["supported"] = true;
+                out["format"] = "ppm";
+                if (!ready) {
+                    out["ok"] = false;
+                    out["error"] = "timed out waiting for render-thread capture";
+                    std::string body = out.dump();
+                    std::ostringstream os;
+                    os << "HTTP/1.1 504 Gateway Timeout\r\nContent-Type: application/json\r\nContent-Length: " << body.size()
+                       << "\r\nConnection: close\r\n\r\n" << body;
+                    std::string resp = os.str();
+                    (void)writeAll(client_fd, resp.data(), resp.size());
+                } else {
+                    {
+                        std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
+                        out["ok"] = g_ScreenshotState.ok;
+                        out["path"] = g_ScreenshotState.path;
+                        out["error"] = g_ScreenshotState.error;
+                    }
+                    std::string body = out.dump();
+                    std::ostringstream os;
+                    os << "HTTP/1.1 " << (out["ok"].get<bool>() ? "200 OK" : "500 Internal Server Error")
+                       << "\r\nContent-Type: application/json\r\nContent-Length: " << body.size()
+                       << "\r\nConnection: close\r\n\r\n" << body;
+                    std::string resp = os.str();
+                    (void)writeAll(client_fd, resp.data(), resp.size());
+                }
             } else {
                 const char* body = "{\"error\":\"not found\"}";
                 std::ostringstream os;
@@ -1988,14 +2663,39 @@ int main(int argc, char** argv) {
     });
 
     int zoom = 12;
-    float center_lon = -76.6122f;
-    float center_lat = 39.2904f;
-    bool parcel_hover_enabled = true;
-    loadLayerUiState(root, layers, parcel_hover_enabled, &zoning_zone_enabled);
+    double center_lon = -76.6122;
+    double center_lat = 39.2904;
     std::vector<bool> last_enabled_state;
     last_enabled_state.reserve(layers.size());
     for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
-    bool last_parcel_hover_enabled = parcel_hover_enabled;
+    bool last_hover_inspector_enabled = hover_inspector_enabled;
+    bool show_sources_panel = false;
+    bool filter_enabled = false;
+    bool filter_use_date = false;
+    int filter_year_min = 2000;
+    int filter_year_max = 2026;
+    char filter_blocklot[64] = "";
+    char filter_status[64] = "";
+    char filter_address[96] = "";
+    char filter_owner[96] = "";
+    char filter_zip[24] = "";
+    std::vector<int> record_year_hist(201, 0); // 1900..2100
+    std::vector<float> record_year_hist_plot(201, 0.0f);
+    std::vector<size_t> hist_feature_counts(layers.size(), 0);
+    std::vector<bool> hist_enabled(layers.size(), false);
+    bool hist_dirty = true;
+    float record_year_hist_max_bin = 1.0f;
+    int record_year_nonzero_min = 1900;
+    int record_year_nonzero_max = 2100;
+    int record_year_nonzero_total = 0;
+    int selected_record_year = -1;
+    bool selected_record_year_dirty = true;
+    int selected_record_year_total = 0;
+    std::vector<std::string> selected_record_year_samples;
+    bool show_selected_parcel_details = false;
+    size_t selected_parcel_idx = (size_t)-1;
+    bool show_selected_zone_details = false;
+    size_t selected_zone_idx = (size_t)-1;
     auto last_frame_ts = std::chrono::steady_clock::now();
     double ema_frame_ms = 0.0;
     constexpr double kPerfAlpha = 0.12;
@@ -2017,14 +2717,17 @@ int main(int argc, char** argv) {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        bool layer_fill_state_changed = false;
+        bool layer_hover_state_changed = false;
+        bool layer_inspect_state_changed = false;
         // Apply REST control commands on main thread.
         {
             int zc = api_zoom_cmd.exchange(-1, std::memory_order_relaxed);
             if (zc >= kMinZoom && zc <= kMaxZoom) zoom = zc;
             double lonc = api_lon_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
             double latc = api_lat_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
-            if (!std::isnan(lonc)) center_lon = (float)lonc;
-            if (!std::isnan(latc)) center_lat = std::clamp((float)latc, -85.0f, 85.0f);
+            if (!std::isnan(lonc)) center_lon = lonc;
+            if (!std::isnan(latc)) center_lat = std::clamp(latc, -85.0, 85.0);
             std::lock_guard<std::mutex> lk(api_layer_mutex);
             for (const auto& kv : api_layer_enable_cmds) {
                 for (auto& l : layers) {
@@ -2032,6 +2735,20 @@ int main(int argc, char** argv) {
                 }
             }
             api_layer_enable_cmds.clear();
+            if (!api_layer_fill_cmds.empty()) {
+                std::lock_guard<std::mutex> lk_fill(layer_fill_mutex);
+                for (const auto& kv : api_layer_fill_cmds) {
+                    for (size_t i = 0; i < layers.size(); ++i) {
+                        if (layers[i].file == kv.first && i < layer_fill_enabled.size()) {
+                            if (layer_fill_enabled[i] != kv.second) {
+                                layer_fill_enabled[i] = kv.second;
+                                layer_fill_state_changed = true;
+                            }
+                        }
+                    }
+                }
+                api_layer_fill_cmds.clear();
+            }
         }
         current_zoom_state.store(zoom, std::memory_order_relaxed);
         current_lon_state.store(center_lon, std::memory_order_relaxed);
@@ -2040,11 +2757,15 @@ int main(int argc, char** argv) {
         ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(420, 760), ImGuiCond_Always);
         ImGui::Begin("Layers and Controls");
+        if (ImGui::Button("Gear")) show_sources_panel = !show_sources_panel;
+        ImGui::SameLine();
         ImGui::Text("Vulkan map + Vulkan UI");
         ImGui::SliderInt("Zoom", &zoom, kMinZoom, kMaxZoom);
-        ImGui::SliderFloat("Center Lon", &center_lon, -76.75f, -76.45f, "%.4f");
-        ImGui::SliderFloat("Center Lat", &center_lat, 39.18f, 39.40f, "%.4f");
-        ImGui::Checkbox("Enable Parcel Hover Inspector", &parcel_hover_enabled);
+        const double lon_min = -76.75, lon_max = -76.45;
+        const double lat_min = 39.18, lat_max = 39.40;
+        ImGui::SliderScalar("Center Lon", ImGuiDataType_Double, &center_lon, &lon_min, &lon_max, "%.6f");
+        ImGui::SliderScalar("Center Lat", ImGuiDataType_Double, &center_lat, &lat_min, &lat_max, "%.6f");
+        ImGui::Checkbox("Enable Hover Inspector", &hover_inspector_enabled);
         bool validation_ui = g_EnableValidationLayers;
         if (ImGui::Checkbox("Vulkan Validation (restart required)", &validation_ui)) {
             g_EnableValidationLayers = validation_ui;
@@ -2074,8 +2795,56 @@ int main(int argc, char** argv) {
             for (auto& l : layers) {
                 size_t idx = (size_t)(&l - &layers[0]);
                 if (l.category != cat) continue;
+                ImGui::PushID((int)idx);
+                auto icon_toggle = [&](const char* id, const char* icon, bool& value, const char* tip) -> bool {
+                    ImGui::PushID(id);
+                    if (value) {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.78f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.55f, 0.92f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.34f, 0.62f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.16f, 0.16f, 0.22f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.32f, 0.32f, 0.55f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f, 0.42f, 0.42f, 0.75f));
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
+                    }
+                    bool changed = false;
+                    if (ImGui::SmallButton(icon)) {
+                        value = !value;
+                        changed = true;
+                    }
+                    ImGui::PopStyleColor(4);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted(tip);
+                        ImGui::TextDisabled("%s", value ? "Enabled" : "Disabled");
+                        ImGui::EndTooltip();
+                    }
+                    ImGui::PopID();
+                    ImGui::SameLine();
+                    return changed;
+                };
+
+                icon_toggle("show", "V", l.enabled, "Show layer");
+                bool fill_flag = (idx < layer_fill_enabled.size()) ? layer_fill_enabled[idx] : true;
+                if (icon_toggle("fill", "F", fill_flag, "Fill polygons") && idx < layer_fill_enabled.size()) {
+                    std::lock_guard<std::mutex> lk_fill(layer_fill_mutex);
+                    layer_fill_enabled[idx] = fill_flag;
+                    layer_fill_state_changed = true;
+                }
+                bool hover_flag = (idx < layer_hover_enabled.size()) ? layer_hover_enabled[idx] : true;
+                if (icon_toggle("hover", "H", hover_flag, "Hover inspector") && idx < layer_hover_enabled.size()) {
+                    layer_hover_enabled[idx] = hover_flag;
+                    layer_hover_state_changed = true;
+                }
+                bool inspect_flag = (idx < layer_inspect_enabled.size()) ? layer_inspect_enabled[idx] : true;
+                if (icon_toggle("inspect", "I", inspect_flag, "Click to inspect") && idx < layer_inspect_enabled.size()) {
+                    layer_inspect_enabled[idx] = inspect_flag;
+                    layer_inspect_state_changed = true;
+                }
                 ImGui::PushStyleColor(ImGuiCol_Text, l.color);
-                ImGui::Checkbox(l.name.c_str(), &l.enabled);
+                ImGui::TextUnformatted(l.name.c_str());
                 ImGui::PopStyleColor();
                 const bool row_hovered = ImGui::IsItemHovered();
                 ImGui::SameLine();
@@ -2106,6 +2875,7 @@ int main(int argc, char** argv) {
                     }
                     ImGui::EndTooltip();
                 }
+                ImGui::PopID();
             }
         };
 
@@ -2156,17 +2926,30 @@ int main(int argc, char** argv) {
                             ImGui::ColorButton((std::string("##zclr_") + zkey).c_str(), zc, ImGuiColorEditFlags_NoTooltip, ImVec2(12, 12));
                             ImGui::SameLine();
                             bool enabled = zoning_zone_enabled[zkey];
-                            std::string display = zkey;
-                            auto lit = zoning_zone_label.find(zkey);
-                            if (lit != zoning_zone_label.end() && !lit->second.empty() && lit->second != zkey) {
-                                display += " - " + lit->second;
-                            }
-                            std::string label = display + " (" + std::to_string(zoning_zone_counts[zkey]) + ")";
-                            if (ImGui::Checkbox(label.c_str(), &enabled)) {
-                                zoning_zone_enabled[zkey] = enabled;
-                                zoning_filters_changed = true;
-                            }
-                        }
+	                            std::string display = zkey;
+	                            auto lit = zoning_zone_label.find(zkey);
+	                            if (lit != zoning_zone_label.end() && !lit->second.empty() && lit->second != zkey) {
+	                                display += " - " + lit->second;
+	                            }
+	                            std::string label = display + " (" + std::to_string(zoning_zone_counts[zkey]) + ")";
+	                            if (ImGui::Checkbox(label.c_str(), &enabled)) {
+	                                zoning_zone_enabled[zkey] = enabled;
+	                                zoning_filters_changed = true;
+	                            }
+	                            if (ImGui::IsItemHovered()) {
+	                                ImGui::BeginTooltip();
+	                                ImGui::TextUnformatted(zkey.c_str());
+	                                auto mit = zoning_metadata.find(zkey);
+	                                if (mit != zoning_metadata.end()) {
+	                                    if (!mit->second.label.empty()) ImGui::TextWrapped("%s", mit->second.label.c_str());
+	                                    if (!mit->second.description.empty()) {
+	                                        ImGui::Separator();
+	                                        ImGui::TextWrapped("%s", mit->second.description.c_str());
+	                                    }
+	                                }
+	                                ImGui::EndTooltip();
+	                            }
+	                        }
                         ImGui::TreePop();
                     }
                 }
@@ -2202,7 +2985,70 @@ int main(int argc, char** argv) {
         const double hydrate_idle_s = std::chrono::duration<double>(now - last_hydration_progress_at).count();
         const double tri_idle_s = std::chrono::duration<double>(now - last_tri_progress_at).count();
 
-        ImGui::SeparatorText("Background Load Progress");
+        if (show_sources_panel) {
+            ImGui::SetNextWindowSize(ImVec2(540, 420), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("Gear Panel", &show_sources_panel, ImGuiWindowFlags_NoCollapse)) {
+                if (ImGui::BeginTabBar("gear_tabs")) {
+                    if (ImGui::BeginTabItem("Sources")) {
+                        std::vector<std::string> past_work;
+                        std::vector<std::string> future_work;
+                        std::vector<std::string> skipped_layer_files;
+                        std::string todo_text = readTextFile(root / "TODO.md");
+                        collectTodoWork(todo_text, past_work, future_work);
+                        {
+                            std::lock_guard<std::mutex> lk(bootstrap.msg_mutex);
+                            skipped_layer_files = bootstrap.skipped_layer_files;
+                        }
+                        size_t skipped_layers = bootstrap.skipped_layers.load(std::memory_order_relaxed);
+                        size_t skipped_tiles = bootstrap.skipped_tiles.load(std::memory_order_relaxed);
+                        ImGui::Text("Past: %zu", past_work.size());
+                        ImGui::SameLine();
+                        ImGui::Text("Future: %zu", future_work.size());
+                        ImGui::SameLine();
+                        ImGui::Text("Skipped: %zuL/%zuT", skipped_layers, skipped_tiles);
+                        ImGui::Separator();
+                        if (ImGui::BeginTabBar("work_tabs")) {
+                            if (ImGui::BeginTabItem("Past Work")) {
+                                ImGui::BeginChild("past_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                                if (past_work.empty()) ImGui::TextDisabled("No completed checklist items found in TODO.md");
+                                else for (const auto& item : past_work) ImGui::BulletText("%s", item.c_str());
+                                ImGui::EndChild();
+                                ImGui::EndTabItem();
+                            }
+                            if (ImGui::BeginTabItem("Future Work")) {
+                                ImGui::BeginChild("future_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                                if (future_work.empty()) ImGui::TextDisabled("No pending items found in TODO.md");
+                                else for (const auto& item : future_work) ImGui::BulletText("%s", item.c_str());
+                                ImGui::EndChild();
+                                ImGui::EndTabItem();
+                            }
+                            if (ImGui::BeginTabItem("Skipped This Run")) {
+                                ImGui::BeginChild("skipped_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                                ImGui::Text("Layers already present (not downloaded this run): %zu", skipped_layers);
+                                ImGui::Text("Tiles already present (not downloaded this run): %zu", skipped_tiles);
+                                ImGui::Separator();
+                                if (skipped_layer_files.empty()) ImGui::TextDisabled("No skipped layers recorded for this run.");
+                                else {
+                                    ImGui::TextUnformatted("Skipped layer files:");
+                                    for (const auto& f : skipped_layer_files) ImGui::BulletText("%s", f.c_str());
+                                }
+                                ImGui::EndChild();
+                                ImGui::EndTabItem();
+                            }
+                            ImGui::EndTabBar();
+                        }
+                        ImGui::EndTabItem();
+                    }
+                    ImGui::EndTabBar();
+                }
+            }
+            ImGui::End();
+        }
+        ImGui::End();
+
+        ImGui::SetNextWindowPos(ImVec2(12, 784), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(420, (float)h - 796.0f), ImGuiCond_Always);
+        ImGui::Begin("Performance and Stats", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Hydration: %zu / %zu (%.1f%%)", hydrated_now, layers.size(), hydrated_frac * 100.0f);
         ImGui::ProgressBar(hydrated_frac, ImVec2(-1.0f, 0.0f));
         ImGui::Text("Triangulation: %zu / %zu (%.1f%%)", triangulated_now, layers.size(), tri_frac * 100.0f);
@@ -2212,6 +3058,11 @@ int main(int argc, char** argv) {
                             perf_frame_ms_avg.load(std::memory_order_relaxed),
                             perf_frame_ms_last.load(std::memory_order_relaxed),
                             perf_fps_avg.load(std::memory_order_relaxed));
+        ImGui::TextDisabled("Fill: %zu ok / %zu attempts | no tris %zu | bad idx %zu",
+                            render_fill_success_last_frame.load(std::memory_order_relaxed),
+                            render_fill_attempts_last_frame.load(std::memory_order_relaxed),
+                            render_fill_no_triangles_last_frame.load(std::memory_order_relaxed),
+                            render_fill_bad_indices_last_frame.load(std::memory_order_relaxed));
         ImGui::TextDisabled("API: http://127.0.0.1:8787/status");
         if (hydrated_now < layers.size() && hydrate_idle_s > 15.0) {
             ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Hydration has not advanced for %.1fs", hydrate_idle_s);
@@ -2251,6 +3102,7 @@ int main(int argc, char** argv) {
                 std::lock_guard<std::mutex> lk(hydrate_req_mutex);
                 hydrate_requests.clear();
                 std::fill(hydration_requested.begin(), hydration_requested.end(), false);
+                std::fill(hydration_required.begin(), hydration_required.end(), false);
             }
 
             hydrated_count.store(0, std::memory_order_relaxed);
@@ -2258,12 +3110,24 @@ int main(int argc, char** argv) {
             cached_real_property_size = 0;
             cached_vac_notice_size = 0;
             cached_vac_rehab_size = 0;
+            cached_tax_lien_size = 0;
+            cached_tax_sale_size = 0;
             vacancy_maps_generation = 0;
             parcel_vacancy_generation_applied = -1;
+            tax_maps_generation = 0;
+            parcel_tax_generation_applied = -1;
             parcel_vac_notice_by_feature.clear();
             parcel_vac_rehab_by_feature.clear();
+            parcel_tax_lien_by_feature.clear();
+            parcel_tax_sale_by_feature.clear();
+            parcel_tax_lien_amount_by_feature.clear();
+            parcel_tax_sale_amount_by_feature.clear();
             vacant_notice_count_by_blocklot.clear();
             vacant_rehab_count_by_blocklot.clear();
+            tax_lien_count_by_blocklot.clear();
+            tax_lien_amount_by_blocklot.clear();
+            tax_sale_count_by_blocklot.clear();
+            tax_sale_amount_by_blocklot.clear();
             real_property_by_blocklot.clear();
             zoning_zone_label.clear();
             zoning_zone_counts.clear();
@@ -2295,7 +3159,12 @@ int main(int argc, char** argv) {
         }
         if (!last_cache_clear_msg.empty()) ImGui::TextDisabled("%s", last_cache_clear_msg.c_str());
         ImGui::End();
-        bool ui_state_changed = (parcel_hover_enabled != last_parcel_hover_enabled) || zoning_filters_changed;
+        bool ui_state_changed =
+            (hover_inspector_enabled != last_hover_inspector_enabled) ||
+            zoning_filters_changed ||
+            layer_fill_state_changed ||
+            layer_hover_state_changed ||
+            layer_inspect_state_changed;
         std::vector<size_t> newly_enabled;
         if (last_enabled_state.size() == layers.size()) {
             for (size_t i = 0; i < layers.size(); ++i) {
@@ -2329,19 +3198,79 @@ int main(int argc, char** argv) {
                                     st == LayerPipelineStatus::Ready);
                 }
             }
-            if (!parcel_ready && layers[(size_t)parcel_layer_idx].features.empty()) {
-                enqueue_hydration((size_t)parcel_layer_idx);
+            if (!parcel_ready) {
+                enqueue_hydration((size_t)parcel_layer_idx, true);
             }
         }
-        if (parcel_hover_enabled && zoning_layer_idx >= 0 && layers[(size_t)zoning_layer_idx].features.empty()) {
-            enqueue_hydration((size_t)zoning_layer_idx);
+        if (real_property_layer_idx >= 0 && (size_t)real_property_layer_idx < layers.size()) {
+            bool real_property_ready = false;
+            {
+                std::lock_guard<std::mutex> lk(status_mutex);
+                if ((size_t)real_property_layer_idx < layer_states.size()) {
+                    LayerPipelineStatus st = layer_states[(size_t)real_property_layer_idx].status;
+                    real_property_ready = (st == LayerPipelineStatus::Hydrated ||
+                                           st == LayerPipelineStatus::TriQueued ||
+                                           st == LayerPipelineStatus::Triangulating ||
+                                           st == LayerPipelineStatus::Ready);
+                }
+            }
+            const bool filter_join_needed =
+                filter_enabled ||
+                (parcel_layer_idx >= 0 && layers[(size_t)parcel_layer_idx].enabled) ||
+                vacant_layer_active ||
+                filter_owner[0] != '\0' ||
+                filter_address[0] != '\0' ||
+                filter_zip[0] != '\0';
+            if (filter_join_needed && !real_property_ready) {
+                enqueue_hydration((size_t)real_property_layer_idx, true);
+            }
+        }
+        const bool tax_layer_active =
+            (tax_lien_layer_idx >= 0 && layers[(size_t)tax_lien_layer_idx].enabled) ||
+            (tax_sale_layer_idx >= 0 && layers[(size_t)tax_sale_layer_idx].enabled);
+        if (tax_layer_active && parcel_layer_idx >= 0) {
+            bool parcel_ready = false;
+            {
+                std::lock_guard<std::mutex> lk(status_mutex);
+                if ((size_t)parcel_layer_idx < layer_states.size()) {
+                    LayerPipelineStatus st = layer_states[(size_t)parcel_layer_idx].status;
+                    parcel_ready = (st == LayerPipelineStatus::Hydrated ||
+                                    st == LayerPipelineStatus::TriQueued ||
+                                    st == LayerPipelineStatus::Triangulating ||
+                                    st == LayerPipelineStatus::Ready);
+                }
+            }
+            if (!parcel_ready) enqueue_hydration((size_t)parcel_layer_idx, true);
+        }
+        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
+            bool zoning_ready = false;
+            {
+                std::lock_guard<std::mutex> lk(status_mutex);
+                if ((size_t)zoning_layer_idx < layer_states.size()) {
+                    LayerPipelineStatus st = layer_states[(size_t)zoning_layer_idx].status;
+                    zoning_ready = (st == LayerPipelineStatus::Hydrated ||
+                                    st == LayerPipelineStatus::TriQueued ||
+                                    st == LayerPipelineStatus::Triangulating ||
+                                    st == LayerPipelineStatus::Ready);
+                }
+            }
+            if (layers[(size_t)zoning_layer_idx].enabled && !zoning_ready) {
+                enqueue_hydration((size_t)zoning_layer_idx);
+            }
         }
         if (ui_state_changed) {
-            saveLayerUiState(root, layers, parcel_hover_enabled, &zoning_zone_enabled);
+            saveLayerUiState(
+                root,
+                layers,
+                hover_inspector_enabled,
+                &zoning_zone_enabled,
+                &layer_fill_enabled,
+                &layer_hover_enabled,
+                &layer_inspect_enabled);
             last_enabled_state.clear();
             last_enabled_state.reserve(layers.size());
             for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
-            last_parcel_hover_enabled = parcel_hover_enabled;
+            last_hover_inspector_enabled = hover_inspector_enabled;
         }
         {
             std::lock_guard<std::mutex> lk(hydrated_mutex);
@@ -2402,7 +3331,9 @@ int main(int argc, char** argv) {
                         std::lock_guard<std::mutex> lk3(status_mutex);
                         if (ready.index < layer_states.size()) layer_states[ready.index].status = LayerPipelineStatus::TriQueued;
                     }
-                    if (layers[ready.index].enabled) {
+                    const bool parcel_dep_priority =
+                        vacant_layer_active && parcel_layer_idx >= 0 && (int)ready.index == parcel_layer_idx;
+                    if (layers[ready.index].enabled || parcel_dep_priority) {
                         tri_jobs.push_front(std::move(tj));
                     } else {
                         tri_jobs.push_back(std::move(tj));
@@ -2445,18 +3376,25 @@ int main(int argc, char** argv) {
                 zoning_group_order.clear();
                 std::unordered_map<std::string, bool> prev_enabled = zoning_zone_enabled;
                 zoning_zone_order.clear();
+                std::unordered_set<std::string> seen_zone_keys;
+                seen_zone_keys.reserve(zfeats.size() / 4 + 16);
                 for (const auto& fg : zfeats) {
                     std::string zkey = zoningClassKey(fg);
                     std::string zlabel = zoningClassLabel(fg);
                     zoning_zone_counts[zkey] += 1;
+                    if (seen_zone_keys.insert(zkey).second) zoning_zone_order.push_back(zkey);
                     if (zoning_zone_enabled.find(zkey) == zoning_zone_enabled.end()) {
                         auto it_prev = prev_enabled.find(zkey);
                         zoning_zone_enabled[zkey] = (it_prev == prev_enabled.end()) ? true : it_prev->second;
-                        zoning_zone_order.push_back(zkey);
                     }
-                    if (zoning_zone_label.find(zkey) == zoning_zone_label.end()) zoning_zone_label[zkey] = zlabel;
+                    auto meta_it = zoning_metadata.find(zkey);
+                    if (zoning_zone_label.find(zkey) == zoning_zone_label.end()) {
+                        zoning_zone_label[zkey] =
+                            (meta_it != zoning_metadata.end() && !meta_it->second.label.empty()) ? meta_it->second.label : zlabel;
+                    }
                     if (zoning_zone_color.find(zkey) == zoning_zone_color.end()) {
-                        zoning_zone_color[zkey] = colorFromStableKey(zkey);
+                        zoning_zone_color[zkey] =
+                            (meta_it != zoning_metadata.end() && meta_it->second.has_color) ? meta_it->second.color : colorFromStableKey(zkey);
                     }
                 }
                 std::sort(zoning_zone_order.begin(), zoning_zone_order.end());
@@ -2474,7 +3412,7 @@ int main(int argc, char** argv) {
             if (feats.size() != cached_real_property_size) {
                 real_property_by_blocklot.clear();
                 for (size_t i = 0; i < feats.size(); ++i) {
-                    std::string bl = normalizeJoinKey(getPropertyValue(feats[i], "BLOCKLOT"));
+                    std::string bl = featureBlockLotJoinKey(feats[i]);
                     if (!bl.empty() && real_property_by_blocklot.find(bl) == real_property_by_blocklot.end()) {
                         real_property_by_blocklot[bl] = i;
                     }
@@ -2504,6 +3442,39 @@ int main(int argc, char** argv) {
                 }
                 cached_vac_rehab_size = feats.size();
                 vacancy_maps_generation += 1;
+            }
+        }
+        if (tax_lien_layer_idx >= 0) {
+            const auto& feats = layers[(size_t)tax_lien_layer_idx].features;
+            if (feats.size() != cached_tax_lien_size) {
+                tax_lien_count_by_blocklot.clear();
+                tax_lien_amount_by_blocklot.clear();
+                for (const auto& fg : feats) {
+                    std::string bl = featureBlockLotJoinKey(fg);
+                    if (bl.empty()) continue;
+                    tax_lien_count_by_blocklot[bl] += 1;
+                    tax_lien_amount_by_blocklot[bl] += parseNumericField(getPropertyValue(fg, "TOTAL_AMOUNT"));
+                }
+                cached_tax_lien_size = feats.size();
+                tax_maps_generation += 1;
+            }
+        }
+        if (tax_sale_layer_idx >= 0) {
+            const auto& feats = layers[(size_t)tax_sale_layer_idx].features;
+            if (feats.size() != cached_tax_sale_size) {
+                tax_sale_count_by_blocklot.clear();
+                tax_sale_amount_by_blocklot.clear();
+                for (const auto& fg : feats) {
+                    std::string bl = featureBlockLotJoinKey(fg);
+                    if (bl.empty()) continue;
+                    tax_sale_count_by_blocklot[bl] += 1;
+                    double amount = parseNumericField(getPropertyValue(fg, "total_lien"));
+                    if (amount <= 0.0) amount = parseNumericField(getPropertyValue(fg, "total_3yea"));
+                    if (amount <= 0.0) amount = parseNumericField(getPropertyValue(fg, "total_tax"));
+                    tax_sale_amount_by_blocklot[bl] += amount;
+                }
+                cached_tax_sale_size = feats.size();
+                tax_maps_generation += 1;
             }
         }
         if (parcel_layer_idx >= 0) {
@@ -2540,6 +3511,30 @@ int main(int argc, char** argv) {
                     notice_rows_matched,
                     rehab_rows_matched);
             }
+            if (parcel_tax_lien_by_feature.size() != pfeats.size() ||
+                parcel_tax_sale_by_feature.size() != pfeats.size() ||
+                parcel_tax_generation_applied != tax_maps_generation) {
+                parcel_tax_lien_by_feature.assign(pfeats.size(), 0);
+                parcel_tax_sale_by_feature.assign(pfeats.size(), 0);
+                parcel_tax_lien_amount_by_feature.assign(pfeats.size(), 0.0);
+                parcel_tax_sale_amount_by_feature.assign(pfeats.size(), 0.0);
+                for (size_t i = 0; i < pfeats.size(); ++i) {
+                    std::string bl = featureBlockLotJoinKey(pfeats[i]);
+                    auto it_lien = tax_lien_count_by_blocklot.find(bl);
+                    if (it_lien != tax_lien_count_by_blocklot.end()) {
+                        parcel_tax_lien_by_feature[i] = it_lien->second;
+                        auto it_amt = tax_lien_amount_by_blocklot.find(bl);
+                        if (it_amt != tax_lien_amount_by_blocklot.end()) parcel_tax_lien_amount_by_feature[i] = it_amt->second;
+                    }
+                    auto it_sale = tax_sale_count_by_blocklot.find(bl);
+                    if (it_sale != tax_sale_count_by_blocklot.end()) {
+                        parcel_tax_sale_by_feature[i] = it_sale->second;
+                        auto it_amt = tax_sale_amount_by_blocklot.find(bl);
+                        if (it_amt != tax_sale_amount_by_blocklot.end()) parcel_tax_sale_amount_by_feature[i] = it_amt->second;
+                    }
+                }
+                parcel_tax_generation_applied = tax_maps_generation;
+            }
             size_t matched_total = 0;
             size_t with_geometry_total = 0;
             size_t triangulated_renderable_total = 0;
@@ -2574,11 +3569,332 @@ int main(int argc, char** argv) {
                 layer_geom_cache[li].feature_count = layers[li].features.size();
                 layer_geom_cache[li].zoom = -1;
                 layer_geom_cache[li].world_rings_by_feature.clear();
+                layer_geom_cache[li].world_extent_by_feature.clear();
             }
         }
 
-        ImGui::SetNextWindowPos(ImVec2(440, 12), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2((float)w - 452.0f, (float)h - 24.0f), ImGuiCond_Always);
+        auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
+            if (real_property_layer_idx < 0 || (size_t)real_property_layer_idx >= layers.size()) return nullptr;
+            std::string blocklot = featureBlockLotJoinKey(parcel);
+            if (blocklot.empty()) return nullptr;
+            auto itrp = real_property_by_blocklot.find(blocklot);
+            if (itrp == real_property_by_blocklot.end()) return nullptr;
+            const auto& rp_layer = layers[(size_t)real_property_layer_idx];
+            if (itrp->second >= rp_layer.features.size()) return nullptr;
+            return &rp_layer.features[itrp->second];
+        };
+        auto text_prop = [](const char* label, const std::string& value) {
+            if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
+        };
+        auto money_prop = [](const char* label, const std::string& value) {
+            if (value.empty()) return;
+            const double amount = parseNumericField(value);
+            if (amount > 0.0) ImGui::TextWrapped("%s: $%.2f", label, amount);
+            else ImGui::TextWrapped("%s: %s", label, value.c_str());
+        };
+        auto draw_real_property_summary = [&](const LayerDef::FeatureGeom* rp) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Ownership / Assessment");
+            if (!rp) {
+                ImGui::TextDisabled("No matching Real Property Information record loaded for this parcel.");
+                ImGui::TextDisabled("Source expected: data/layers/real_property_information.geojson");
+                return;
+            }
+            text_prop("Owner 1", firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME"}));
+            text_prop("Owner 2", firstDisplayProperty(*rp, {"OWNER_2"}));
+            text_prop("Owner 3", firstDisplayProperty(*rp, {"OWNER_3"}));
+            text_prop("Owner Abbrev", firstDisplayProperty(*rp, {"OWNER_ABBR"}));
+            text_prop("Mailing Address", firstDisplayProperty(*rp, {"MAILTOADD"}));
+            text_prop("Property Address", firstDisplayProperty(*rp, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS"}));
+            text_prop("Use Group", firstDisplayProperty(*rp, {"USEGROUP"}));
+            text_prop("DHCD Use", firstDisplayProperty(*rp, {"DHCDUSE1"}));
+            text_prop("Zone Code", firstDisplayProperty(*rp, {"ZONECODE"}));
+            text_prop("Year Built", firstDisplayProperty(*rp, {"YEAR_BUILD"}));
+            text_prop("Lot Size", firstDisplayProperty(*rp, {"LOT_SIZE"}));
+            text_prop("Structure Area", firstDisplayProperty(*rp, {"STRUCTAREA"}));
+            money_prop("Current Land", firstDisplayProperty(*rp, {"CURRLAND"}));
+            money_prop("Current Improvements", firstDisplayProperty(*rp, {"CURRIMPR"}));
+            money_prop("Tax Base", firstDisplayProperty(*rp, {"TAXBASE", "ARTAXBAS"}));
+            money_prop("City Tax", firstDisplayProperty(*rp, {"CITY_TAX"}));
+            money_prop("State Tax", firstDisplayProperty(*rp, {"STATETAX"}));
+            money_prop("Sale Price", firstDisplayProperty(*rp, {"SALEPRIC"}));
+            text_prop("Sale Date", firstDisplayProperty(*rp, {"SALEDATE"}));
+            const std::string deed_book = firstDisplayProperty(*rp, {"DEEDBOOK"});
+            const std::string deed_page = firstDisplayProperty(*rp, {"DEEDPAGE"});
+            text_prop("Deed", deed_book.empty() ? "" : deed_book + (deed_page.empty() ? "" : " / " + deed_page));
+            text_prop("SDAT Link", firstDisplayProperty(*rp, {"SDATLINK"}));
+            ImGui::TextDisabled("Source: Baltimore Real Property Information (data/layers/real_property_information.geojson)");
+        };
+        auto draw_feature_properties = [&](const char* title, const LayerDef::FeatureGeom& fg) {
+            ImGui::TextUnformatted(title);
+            for (const auto& kv : fg.properties) {
+                std::string v = trimDisplayValue(kv.second);
+                if (v.empty()) continue;
+                ImGui::TextWrapped("%s: %s", kv.first.c_str(), v.c_str());
+            }
+        };
+
+        const float right_panel_w = 360.0f;
+        ImGui::SetNextWindowPos(ImVec2((float)w - right_panel_w - 12.0f, 12.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(right_panel_w, (float)h - 24.0f), ImGuiCond_Always);
+        ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
+        const bool selected_valid =
+            show_selected_parcel_details && parcel_layer_idx >= 0 &&
+            (size_t)parcel_layer_idx < layers.size() &&
+            selected_parcel_idx < layers[(size_t)parcel_layer_idx].features.size();
+        const bool selected_zone_valid =
+            show_selected_zone_details && zoning_layer_idx >= 0 &&
+            (size_t)zoning_layer_idx < layers.size() &&
+            selected_zone_idx < layers[(size_t)zoning_layer_idx].features.size();
+        if (selected_valid) {
+            const auto& selected = layers[(size_t)parcel_layer_idx].features[selected_parcel_idx];
+            if (ImGui::Button("Back To Filters")) {
+                show_selected_parcel_details = false;
+                selected_parcel_idx = (size_t)-1;
+            }
+            ImGui::Separator();
+            std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
+            std::string blocklot = normalizeJoinKey(blocklot_raw);
+            int vac_notice = (selected_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[selected_parcel_idx] : 0;
+            int vac_rehab = (selected_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[selected_parcel_idx] : 0;
+            int tax_lien = (selected_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[selected_parcel_idx] : 0;
+            int tax_sale = (selected_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[selected_parcel_idx] : 0;
+            double tax_lien_amount = (selected_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[selected_parcel_idx] : 0.0;
+            double tax_sale_amount = (selected_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[selected_parcel_idx] : 0.0;
+            ImGui::TextUnformatted("Parcel Details");
+            ImGui::Separator();
+            ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
+            ImGui::Text("Vacant Notices: %d", vac_notice);
+            ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
+            ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
+            if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
+            ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
+            if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
+            const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
+            draw_real_property_summary(selected_rp);
+            ImGui::Separator();
+            ImGui::BeginChild("selected_parcel_fields", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            draw_feature_properties("All Parcel Geometry Fields", selected);
+            if (selected_rp) {
+                ImGui::Separator();
+                draw_feature_properties("All Real Property Fields", *selected_rp);
+            }
+            ImGui::EndChild();
+        } else if (selected_zone_valid) {
+            const auto& selected = layers[(size_t)zoning_layer_idx].features[selected_zone_idx];
+            if (ImGui::Button("Back To Filters")) {
+                show_selected_zone_details = false;
+                selected_zone_idx = (size_t)-1;
+            }
+            ImGui::Separator();
+            std::string zone_key = zoningClassKey(selected);
+            std::string zone_label = zoningClassLabel(selected);
+            std::string zone_description;
+            auto meta_it = zoning_metadata.find(zone_key);
+            if (meta_it != zoning_metadata.end()) {
+                if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
+                zone_description = meta_it->second.description;
+            }
+            ImVec4 zone_color = colorFromStableKey(zone_key);
+            auto it_col = zoning_zone_color.find(zone_key);
+            if (it_col != zoning_zone_color.end()) zone_color = it_col->second;
+            ImGui::TextUnformatted("Zoning Details");
+            ImGui::Separator();
+            ImGui::ColorButton("##selected_zone_color", zone_color, ImGuiColorEditFlags_NoTooltip, ImVec2(18, 18));
+            ImGui::SameLine();
+            ImGui::Text("Zone: %s", zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
+            if (!zone_label.empty() && zone_label != zone_key) {
+                ImGui::TextWrapped("Label: %s", zone_label.c_str());
+            }
+            ImGui::TextWrapped("Description: %s", zone_description.empty() ? "No description available." : zone_description.c_str());
+            ImGui::Separator();
+            ImGui::TextUnformatted("All Zone Fields");
+            ImGui::BeginChild("selected_zone_fields", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (const auto& kv : selected.properties) {
+                if (kv.second.empty()) continue;
+                ImGui::TextWrapped("%s: %s", kv.first.c_str(), kv.second.c_str());
+            }
+            ImGui::EndChild();
+        } else {
+            if (show_selected_parcel_details && !selected_valid) {
+                show_selected_parcel_details = false;
+                selected_parcel_idx = (size_t)-1;
+            }
+            if (show_selected_zone_details && !selected_zone_valid) {
+                show_selected_zone_details = false;
+                selected_zone_idx = (size_t)-1;
+            }
+            ImGui::Checkbox("Enable Filters", &filter_enabled);
+            ImGui::Checkbox("Filter By Record Date", &filter_use_date);
+            ImGui::BeginDisabled(!filter_enabled || !filter_use_date);
+            ImGui::SliderInt("Year Min", &filter_year_min, 1900, 2100);
+            ImGui::SliderInt("Year Max", &filter_year_max, 1900, 2100);
+            if (filter_year_min > filter_year_max) std::swap(filter_year_min, filter_year_max);
+            ImGui::EndDisabled();
+            ImGui::SeparatorText("Common Fields");
+            ImGui::InputText("Block/Lot", filter_blocklot, sizeof(filter_blocklot));
+            ImGui::InputText("Status", filter_status, sizeof(filter_status));
+            ImGui::InputText("Address", filter_address, sizeof(filter_address));
+            ImGui::InputText("Owner", filter_owner, sizeof(filter_owner));
+            ImGui::InputText("ZIP", filter_zip, sizeof(filter_zip));
+            if (ImGui::Button("Clear Field Filters")) {
+                filter_blocklot[0] = '\0';
+                filter_status[0] = '\0';
+                filter_address[0] = '\0';
+                filter_owner[0] = '\0';
+                filter_zip[0] = '\0';
+                filter_use_date = false;
+            }
+            ImGui::SeparatorText("Record Year Histogram");
+            auto first_prop_hist = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+                for (const char* k : keys) {
+                    std::string v = getPropertyValue(fg, k);
+                    if (!v.empty()) return v;
+                }
+                return std::string();
+            };
+            if (hist_feature_counts.size() != layers.size()) {
+                hist_feature_counts.assign(layers.size(), 0);
+                hist_enabled.assign(layers.size(), false);
+                hist_dirty = true;
+            }
+            for (size_t i = 0; i < layers.size(); ++i) {
+                const size_t fc = layers[i].features.size();
+                if (hist_feature_counts[i] != fc || hist_enabled[i] != layers[i].enabled) {
+                    hist_feature_counts[i] = fc;
+                    hist_enabled[i] = layers[i].enabled;
+                    hist_dirty = true;
+                }
+            }
+            if (hist_dirty) {
+                std::fill(record_year_hist.begin(), record_year_hist.end(), 0);
+                for (size_t li = 0; li < layers.size(); ++li) {
+                    if (!layers[li].enabled) continue;
+                    for (const auto& fg : layers[li].features) {
+                        std::string ds = first_prop_hist(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                        if (ds.empty()) continue;
+                        int y = extractYearMaybe(ds);
+                        if (y < 1900 || y > 2100) continue;
+                        record_year_hist[(size_t)(y - 1900)]++;
+                    }
+                }
+                float max_bin = 1.0f;
+                int nz_min = 2101;
+                int nz_max = 1899;
+                int nz_total = 0;
+                for (size_t i = 0; i < record_year_hist.size(); ++i) {
+                    record_year_hist_plot[i] = (float)record_year_hist[i];
+                    if (record_year_hist[i] > 0) {
+                        int y = 1900 + (int)i;
+                        nz_min = std::min(nz_min, y);
+                        nz_max = std::max(nz_max, y);
+                        nz_total += record_year_hist[i];
+                    }
+                    if (record_year_hist_plot[i] > max_bin) max_bin = record_year_hist_plot[i];
+                }
+                record_year_hist_max_bin = max_bin;
+                if (nz_min <= nz_max) {
+                    record_year_nonzero_min = nz_min;
+                    record_year_nonzero_max = nz_max;
+                } else {
+                    record_year_nonzero_min = 1900;
+                    record_year_nonzero_max = 2100;
+                }
+                record_year_nonzero_total = nz_total;
+                selected_record_year_dirty = true;
+                hist_dirty = false;
+            }
+            ImGui::TextDisabled("Enabled-layer records by year");
+            if (record_year_nonzero_total <= 0) {
+                ImGui::TextDisabled("No recognized date fields found in currently enabled layers.");
+            } else {
+                ImGui::Text("Range: %d-%d  Total: %d  Peak: %.0f",
+                            record_year_nonzero_min,
+                            record_year_nonzero_max,
+                            record_year_nonzero_total,
+                            record_year_hist_max_bin);
+                const int plot_offset = std::max(0, record_year_nonzero_min - 1900);
+                const int plot_count = std::max(1, record_year_nonzero_max - record_year_nonzero_min + 1);
+                ImGui::PlotHistogram(
+                    "##record_year_hist",
+                    record_year_hist_plot.data() + plot_offset,
+                    plot_count,
+                    0,
+                    nullptr,
+                    0.0f,
+                    record_year_hist_max_bin * 1.05f,
+                    ImVec2(-1.0f, 140.0f));
+            }
+            ImGui::BeginChild("year_hist_list", ImVec2(0, 130), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (int y = record_year_nonzero_min; y <= record_year_nonzero_max; ++y) {
+                int c = record_year_hist[(size_t)(y - 1900)];
+                if (c <= 0) continue;
+                char label[64];
+                std::snprintf(label, sizeof(label), "%d: %d records", y, c);
+                if (ImGui::Selectable(label, selected_record_year == y)) {
+                    selected_record_year = y;
+                    selected_record_year_dirty = true;
+                }
+            }
+            ImGui::EndChild();
+            if (selected_record_year >= 1900 && selected_record_year <= 2100) {
+                if (record_year_hist[(size_t)(selected_record_year - 1900)] <= 0) {
+                    selected_record_year = -1;
+                    selected_record_year_samples.clear();
+                    selected_record_year_total = 0;
+                    selected_record_year_dirty = false;
+                }
+            }
+            if (selected_record_year >= 1900 && selected_record_year <= 2100 && selected_record_year_dirty) {
+                constexpr size_t kMaxYearSamples = 8;
+                selected_record_year_samples.clear();
+                selected_record_year_total = 0;
+                for (size_t li = 0; li < layers.size(); ++li) {
+                    if (!layers[li].enabled) continue;
+                    for (const auto& fg : layers[li].features) {
+                        std::string ds = first_prop_hist(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                        if (ds.empty() || extractYearMaybe(ds) != selected_record_year) continue;
+                        selected_record_year_total++;
+                        if (selected_record_year_samples.size() >= kMaxYearSamples) continue;
+                        std::string blocklot = first_prop_hist(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
+                        std::string address = first_prop_hist(fg, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
+                        std::string owner = first_prop_hist(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
+                        std::string status = first_prop_hist(fg, {"STATUS", "STATE", "CASE_STATUS"});
+                        std::ostringstream row;
+                        row << layers[li].name << " | " << ds;
+                        if (!blocklot.empty()) row << " | BL " << blocklot;
+                        if (!address.empty()) row << " | " << address;
+                        if (!owner.empty()) row << " | " << owner;
+                        if (!status.empty()) row << " | " << status;
+                        selected_record_year_samples.push_back(row.str());
+                    }
+                }
+                selected_record_year_dirty = false;
+            }
+            if (selected_record_year >= 1900 && selected_record_year <= 2100) {
+                ImGui::SeparatorText("Selected Year Records");
+                ImGui::Text("%d: showing %zu of %d records",
+                            selected_record_year,
+                            selected_record_year_samples.size(),
+                            selected_record_year_total);
+                ImGui::BeginChild("selected_year_records", ImVec2(0, 170), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                if (selected_record_year_samples.empty()) {
+                    ImGui::TextDisabled("No sample records available for this year.");
+                } else {
+                    for (const std::string& row : selected_record_year_samples) {
+                        ImGui::TextWrapped("%s", row.c_str());
+                        ImGui::Separator();
+                    }
+                }
+                ImGui::EndChild();
+            }
+        }
+        ImGui::End();
+
+        const float map_x = 440.0f;
+        const float map_w = std::max(260.0f, (float)w - map_x - right_panel_w - 24.0f);
+        ImGui::SetNextWindowPos(ImVec2(map_x, 12), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(map_w, (float)h - 24.0f), ImGuiCond_Always);
         ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         ImVec2 origin = ImGui::GetCursorScreenPos();
         ImVec2 size = ImGui::GetContentRegionAvail();
@@ -2591,7 +3907,14 @@ int main(int argc, char** argv) {
 
         const int math_zoom = std::min(zoom, kMaxInternalMathZoom);
         const double zoom_scale = std::ldexp(1.0, zoom - math_zoom);
+        auto wrap_world_x = [&](double x, int mz) -> double {
+            const double period = 256.0 * (double)(1u << mz);
+            x = std::fmod(x, period);
+            if (x < 0.0) x += period;
+            return x;
+        };
         ImVec2 center_world = lonLatToWorldPx(center_lon, center_lat, math_zoom);
+        center_world.x = (float)wrap_world_x((double)center_world.x, math_zoom);
 
         if (map_hovered) {
             const float wheel = ImGui::GetIO().MouseWheel;
@@ -2602,6 +3925,7 @@ int main(int argc, char** argv) {
                     ImVec2 mouse_world = ImVec2(
                         center_world.x + (float)((mouse.x - (origin.x + size.x * 0.5f)) / zoom_scale),
                         center_world.y + (float)((mouse.y - (origin.y + size.y * 0.5f)) / zoom_scale));
+                    mouse_world.x = (float)wrap_world_x((double)mouse_world.x, math_zoom);
                     ImVec2 ll = worldPxToLonLat(mouse_world, math_zoom);
                     zoom = next_zoom;
                     const int next_math_zoom = std::min(zoom, kMaxInternalMathZoom);
@@ -2610,9 +3934,10 @@ int main(int argc, char** argv) {
                     center_world = ImVec2(
                         mouse_world_new.x - (float)((mouse.x - (origin.x + size.x * 0.5f)) / next_zoom_scale),
                         mouse_world_new.y - (float)((mouse.y - (origin.y + size.y * 0.5f)) / next_zoom_scale));
+                    center_world.x = (float)wrap_world_x((double)center_world.x, next_math_zoom);
                     ImVec2 cll = worldPxToLonLat(center_world, next_math_zoom);
                     center_lon = cll.x;
-                    center_lat = cll.y;
+                    center_lat = std::clamp((double)cll.y, -85.0, 85.0);
                 }
             }
 
@@ -2620,13 +3945,23 @@ int main(int argc, char** argv) {
                 ImVec2 d = ImGui::GetIO().MouseDelta;
                 center_world.x -= (float)(d.x / zoom_scale);
                 center_world.y -= (float)(d.y / zoom_scale);
+                center_world.x = (float)wrap_world_x((double)center_world.x, math_zoom);
                 ImVec2 ll = worldPxToLonLat(center_world, math_zoom);
                 center_lon = ll.x;
-                center_lat = std::clamp(ll.y, -85.0f, 85.0f);
+                center_lat = std::clamp((double)ll.y, -85.0, 85.0);
             }
         }
 
         center_world = lonLatToWorldPx(center_lon, center_lat, math_zoom);
+        center_world.x = (float)wrap_world_x((double)center_world.x, math_zoom);
+        const float screen_cx = origin.x + size.x * 0.5f;
+        const float screen_cy = origin.y + size.y * 0.5f;
+        const float zsf = (float)zoom_scale;
+        auto project_world = [&](const ImVec2& wp) -> ImVec2 {
+            return ImVec2(
+                screen_cx + (wp.x - center_world.x) * zsf,
+                screen_cy + (wp.y - center_world.y) * zsf);
+        };
         const ImVec2 mouse_screen = ImGui::GetIO().MousePos;
         const ImVec2 mouse_world(
             center_world.x + (float)((mouse_screen.x - (origin.x + size.x * 0.5f)) / zoom_scale),
@@ -2652,6 +3987,8 @@ int main(int argc, char** argv) {
         }
         const LayerDef::FeatureGeom* hovered_parcel = nullptr;
         size_t hovered_parcel_idx = (size_t)-1;
+        const LayerDef::FeatureGeom* hovered_zone = nullptr;
+        size_t hovered_zone_idx = (size_t)-1;
         const double half_w_world = (size.x * 0.5) / zoom_scale;
         const double half_h_world = (size.y * 0.5) / zoom_scale;
         ImVec2 ll_a = worldPxToLonLat(ImVec2(center_world.x - (float)half_w_world, center_world.y - (float)half_h_world), math_zoom);
@@ -2660,6 +3997,86 @@ int main(int argc, char** argv) {
         const float view_max_lon = std::max(ll_a.x, ll_b.x);
         const float view_min_lat = std::min(ll_a.y, ll_b.y);
         const float view_max_lat = std::max(ll_a.y, ll_b.y);
+        auto layer_hover_active = [&](int idx) -> bool {
+            return idx >= 0 && (size_t)idx < layer_hover_enabled.size() && layer_hover_enabled[(size_t)idx];
+        };
+        auto layer_inspect_active = [&](int idx) -> bool {
+            return idx >= 0 && (size_t)idx < layer_inspect_enabled.size() && layer_inspect_enabled[(size_t)idx];
+        };
+        const bool parcel_hover_active = hover_inspector_enabled && layer_hover_active(parcel_layer_idx);
+        const bool parcel_inspect_active = layer_inspect_active(parcel_layer_idx);
+        const bool zoning_hover_active = hover_inspector_enabled && layer_hover_active(zoning_layer_idx);
+        const bool zoning_inspect_active = layer_inspect_active(zoning_layer_idx);
+
+        if (map_hovered && (parcel_hover_active || parcel_inspect_active) && parcel_layer_idx >= 0) {
+            const size_t pli = (size_t)parcel_layer_idx;
+            if (pli < layers.size() && pli < layer_spatial.size() && layer_spatial[pli].built) {
+                std::vector<uint32_t> hover_candidates;
+                if (queryLayerSpatialIndex(
+                        layer_spatial[pli],
+                        mouse_ll.x,
+                        mouse_ll.y,
+                        mouse_ll.x,
+                        mouse_ll.y,
+                        hover_candidates)) {
+                    float best_area = std::numeric_limits<float>::infinity();
+                    for (uint32_t fidx : hover_candidates) {
+                        if (fidx >= layers[pli].features.size()) continue;
+                        const auto& fg = layers[pli].features[(size_t)fidx];
+                        if (fg.rings.empty()) continue;
+                        if (fg.extent.max_lon < view_min_lon || fg.extent.min_lon > view_max_lon ||
+                            fg.extent.max_lat < view_min_lat || fg.extent.min_lat > view_max_lat) {
+                            continue;
+                        }
+                        if (mouse_ll.x < fg.extent.min_lon || mouse_ll.x > fg.extent.max_lon ||
+                            mouse_ll.y < fg.extent.min_lat || mouse_ll.y > fg.extent.max_lat) {
+                            continue;
+                        }
+                        if (!pointInFeature(fg, mouse_ll.x, mouse_ll.y)) continue;
+                        const float area = std::max(0.0f, fg.extent.max_lon - fg.extent.min_lon) *
+                                           std::max(0.0f, fg.extent.max_lat - fg.extent.min_lat);
+                        if (area < best_area) {
+                            best_area = area;
+                            hovered_parcel = &fg;
+                            hovered_parcel_idx = (size_t)fidx;
+                        }
+                    }
+                }
+            }
+        }
+        if (map_hovered && (zoning_hover_active || zoning_inspect_active) && zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
+            const size_t zli = (size_t)zoning_layer_idx;
+            if (zli < layer_spatial.size() && layer_spatial[zli].built) {
+                std::vector<uint32_t> zone_candidates;
+                if (queryLayerSpatialIndex(
+                        layer_spatial[zli],
+                        mouse_ll.x,
+                        mouse_ll.y,
+                        mouse_ll.x,
+                        mouse_ll.y,
+                        zone_candidates)) {
+                    float best_area = std::numeric_limits<float>::infinity();
+                    const auto& zfeats = layers[zli].features;
+                    for (uint32_t zidx : zone_candidates) {
+                        if (zidx >= zfeats.size()) continue;
+                        const auto& zf = zfeats[zidx];
+                        if (zf.rings.empty()) continue;
+                        if (mouse_ll.x < zf.extent.min_lon || mouse_ll.x > zf.extent.max_lon ||
+                            mouse_ll.y < zf.extent.min_lat || mouse_ll.y > zf.extent.max_lat) {
+                            continue;
+                        }
+                        if (!pointInFeature(zf, mouse_ll.x, mouse_ll.y)) continue;
+                        const float area = std::max(0.0f, zf.extent.max_lon - zf.extent.min_lon) *
+                                           std::max(0.0f, zf.extent.max_lat - zf.extent.min_lat);
+                        if (area < best_area) {
+                            best_area = area;
+                            hovered_zone = &zf;
+                            hovered_zone_idx = (size_t)zidx;
+                        }
+                    }
+                }
+            }
+        }
         int min_x = (int)std::floor((center_world.x - half_w_world) / 256.0) - 1;
         int max_x = (int)std::floor((center_world.x + half_w_world) / 256.0) + 1;
         int min_y = (int)std::floor((center_world.y - half_h_world) / 256.0) - 1;
@@ -2678,7 +4095,7 @@ int main(int argc, char** argv) {
                 if (!sample.tex) continue;
 
                 ImVec2 tile_world((float)(tx * 256), (float)(ty * 256));
-                ImVec2 p0 = worldToScreen(tile_world, center_world, origin, size, zoom_scale);
+                ImVec2 p0 = project_world(tile_world);
                 ImVec2 p1(p0.x + (float)(256.0 * zoom_scale), p0.y + (float)(256.0 * zoom_scale));
                 draw->AddImage((ImTextureID)sample.tex->descriptor, p0, p1, sample.uv0, sample.uv1);
             }
@@ -2686,6 +4103,8 @@ int main(int argc, char** argv) {
 
         bool vacant_notice_enabled = vacant_notice_layer_idx >= 0 && layers[(size_t)vacant_notice_layer_idx].enabled;
         bool vacant_rehab_enabled = vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled;
+        bool tax_lien_enabled = tax_lien_layer_idx >= 0 && layers[(size_t)tax_lien_layer_idx].enabled;
+        bool tax_sale_enabled = tax_sale_layer_idx >= 0 && layers[(size_t)tax_sale_layer_idx].enabled;
         auto color_with_alpha = [](const ImVec4& c, int alpha) -> ImU32 {
             const int r = std::clamp((int)std::lround(c.x * 255.0f), 0, 255);
             const int g = std::clamp((int)std::lround(c.y * 255.0f), 0, 255);
@@ -2709,12 +4128,26 @@ int main(int argc, char** argv) {
             return notice_c;
         };
         const int ring_step = lodRingStepForZoom(math_zoom);
+        const bool allow_parcel_scale_fill = math_zoom >= 14;
+        auto is_parcel_scale_layer = [&](size_t layer_idx) -> bool {
+            return ((int)layer_idx == parcel_layer_idx ||
+                    (int)layer_idx == real_property_layer_idx ||
+                    (int)layer_idx == vacant_notice_layer_idx ||
+                    (int)layer_idx == vacant_rehab_layer_idx ||
+                    (int)layer_idx == tax_lien_layer_idx ||
+                    (int)layer_idx == tax_sale_layer_idx);
+        };
+        auto should_fill_layer_polygon = [&](size_t layer_idx) -> bool {
+            // Large-area layers still need low-zoom fill; parcel-scale fills are the expensive case.
+            return !is_parcel_scale_layer(layer_idx) || allow_parcel_scale_fill;
+        };
         auto get_world_rings = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::vector<std::vector<ImVec2>>& {
             auto& cache = layer_geom_cache[layer_idx];
             if (cache.zoom != math_zoom) {
                 cache.zoom = math_zoom;
                 cache.world_rings_by_feature.clear();
+                cache.world_extent_by_feature.clear();
             }
             auto it = cache.world_rings_by_feature.find(feature_idx);
             if (it != cache.world_rings_by_feature.end()) return it->second;
@@ -2729,6 +4162,161 @@ int main(int argc, char** argv) {
             auto [ins_it, _] = cache.world_rings_by_feature.emplace(feature_idx, std::move(wr));
             return ins_it->second;
         };
+        auto get_world_extent = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
+            -> const std::pair<ImVec2, ImVec2>& {
+            auto& cache = layer_geom_cache[layer_idx];
+            if (cache.zoom != math_zoom) {
+                cache.zoom = math_zoom;
+                cache.world_rings_by_feature.clear();
+                cache.world_extent_by_feature.clear();
+            }
+            auto it = cache.world_extent_by_feature.find(feature_idx);
+            if (it != cache.world_extent_by_feature.end()) return it->second;
+            ImVec2 p0w = lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, math_zoom);
+            ImVec2 p1w = lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, math_zoom);
+            auto [ins_it, _] = cache.world_extent_by_feature.emplace(feature_idx, std::make_pair(p0w, p1w));
+            return ins_it->second;
+        };
+        std::vector<ImVec2> scratch_fill_verts;
+        scratch_fill_verts.reserve(4096);
+        std::vector<uint32_t> scratch_fill_indices;
+        scratch_fill_indices.reserve(12288);
+        std::vector<ImVec2> scratch_line;
+        scratch_line.reserve(1024);
+        size_t fill_attempts_frame = 0;
+        size_t fill_success_frame = 0;
+        size_t fill_no_triangles_frame = 0;
+        size_t fill_bad_indices_frame = 0;
+        auto project_world_rings_for_fill = [&](const std::vector<std::vector<ImVec2>>& world_rings) -> size_t {
+            size_t total = 0;
+            for (const auto& r : world_rings) total += r.size();
+            scratch_fill_verts.clear();
+            scratch_fill_verts.reserve(total);
+            for (const auto& r : world_rings) {
+                for (const ImVec2& wp : r) scratch_fill_verts.push_back(project_world(wp));
+            }
+            return total;
+        };
+        auto append_world_ring_line = [&](const std::vector<ImVec2>& world_ring) {
+            scratch_line.clear();
+            if (world_ring.empty()) return;
+            const int step = std::max(1, ring_step);
+            const size_t n = world_ring.size();
+            if (step == 1 || n <= 4) {
+                for (const ImVec2& wp : world_ring) scratch_line.push_back(project_world(wp));
+            } else {
+                scratch_line.reserve((n / (size_t)step) + 2);
+                for (size_t i = 0; i < n; i += (size_t)step) scratch_line.push_back(project_world(world_ring[i]));
+                if ((n - 1) % (size_t)step != 0) scratch_line.push_back(project_world(world_ring.back()));
+            }
+        };
+        auto draw_tessellated_fill = [&](const LayerDef::FeatureGeom& fg,
+                                         const std::vector<std::vector<ImVec2>>& world_rings,
+                                         ImU32 fill_color) -> bool {
+            fill_attempts_frame++;
+            if (fg.triangles.empty()) {
+                fill_no_triangles_frame++;
+                return false;
+            }
+            const size_t vcount = project_world_rings_for_fill(world_rings);
+            if (vcount < 3) return false;
+
+            scratch_fill_indices.clear();
+            scratch_fill_indices.reserve(fg.triangles.size());
+            for (size_t ti = 0; ti + 2 < fg.triangles.size(); ti += 3) {
+                const uint32_t a = fg.triangles[ti + 0];
+                const uint32_t b = fg.triangles[ti + 1];
+                const uint32_t cidx = fg.triangles[ti + 2];
+                if (a < vcount && b < vcount && cidx < vcount) {
+                    scratch_fill_indices.push_back(a);
+                    scratch_fill_indices.push_back(b);
+                    scratch_fill_indices.push_back(cidx);
+                }
+            }
+            if (scratch_fill_indices.empty()) {
+                fill_bad_indices_frame++;
+                return false;
+            }
+
+            const ImDrawListFlags old_flags = draw->Flags;
+            draw->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+            for (size_t ii = 0; ii + 2 < scratch_fill_indices.size(); ii += 3) {
+                draw->AddTriangleFilled(
+                    scratch_fill_verts[scratch_fill_indices[ii + 0]],
+                    scratch_fill_verts[scratch_fill_indices[ii + 1]],
+                    scratch_fill_verts[scratch_fill_indices[ii + 2]],
+                    fill_color);
+            }
+            draw->Flags = old_flags;
+            fill_success_frame++;
+            return true;
+        };
+        auto first_prop = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+            for (const char* k : keys) {
+                std::string v = getPropertyValue(fg, k);
+                if (!v.empty()) return v;
+            }
+            return std::string();
+        };
+        auto feature_passes_filters = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) -> bool {
+            if (!filter_enabled) return true;
+            const LayerDef::FeatureGeom* rp_join = nullptr;
+            if (parcel_layer_idx >= 0 &&
+                (int)layer_idx == parcel_layer_idx &&
+                real_property_layer_idx >= 0 &&
+                (size_t)real_property_layer_idx < layers.size()) {
+                std::string bl = normalizeJoinKey(first_prop(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"}));
+                if (!bl.empty()) {
+                    auto itrp = real_property_by_blocklot.find(bl);
+                    if (itrp != real_property_by_blocklot.end() &&
+                        itrp->second < layers[(size_t)real_property_layer_idx].features.size()) {
+                        rp_join = &layers[(size_t)real_property_layer_idx].features[itrp->second];
+                    }
+                }
+            }
+            if (filter_use_date) {
+                std::string ds = first_prop(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                if (ds.empty() && rp_join) ds = first_prop(*rp_join, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                if (ds.empty()) return false;
+                int yr = extractYearMaybe(ds);
+                if (yr < 0 || yr < filter_year_min || yr > filter_year_max) return false;
+            }
+            const std::string q_blocklot(filter_blocklot);
+            const std::string q_status(filter_status);
+            const std::string q_address(filter_address);
+            const std::string q_owner(filter_owner);
+            const std::string q_zip(filter_zip);
+            if (!q_blocklot.empty()) {
+                std::string bl = first_prop(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
+                if (!containsCaseInsensitive(bl, q_blocklot)) return false;
+            }
+            if (!q_status.empty()) {
+                std::string st = first_prop(fg, {"STATUS", "STATE", "CASE_STATUS"});
+                if (st.empty() && rp_join) st = first_prop(*rp_join, {"STATUS", "STATE", "CASE_STATUS"});
+                if (st.empty() && parcel_layer_idx >= 0 && (int)layer_idx == parcel_layer_idx) {
+                    const int vn = (feature_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[feature_idx] : 0;
+                    const int vr = (feature_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[feature_idx] : 0;
+                    st = (vn + vr) > 0 ? "vacant" : "occupied";
+                }
+                if (!containsCaseInsensitive(st, q_status)) return false;
+            }
+            if (!q_address.empty()) {
+                std::string ad = first_prop(fg, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
+                if (ad.empty() && rp_join) ad = first_prop(*rp_join, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
+                if (!containsCaseInsensitive(ad, q_address)) return false;
+            }
+            if (!q_owner.empty()) {
+                std::string ow = first_prop(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
+                if (ow.empty() && rp_join) ow = first_prop(*rp_join, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
+                if (!containsCaseInsensitive(ow, q_owner)) return false;
+            }
+            if (!q_zip.empty()) {
+                std::string zp = first_prop(fg, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
+                if (zp.empty() && rp_join) zp = first_prop(*rp_join, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
+                if (!containsCaseInsensitive(zp, q_zip)) return false;
+            }
+            return true;
+        };
         for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
             auto& l = layers[layer_idx];
             if (!l.enabled) continue;
@@ -2740,6 +4328,7 @@ int main(int argc, char** argv) {
                 for (uint32_t fidx : render_candidates) {
                     if (fidx >= l.features.size()) continue;
                     auto& fg = l.features[(size_t)fidx];
+                    if (!feature_passes_filters(layer_idx, (size_t)fidx, fg)) continue;
                     ImU32 feature_c = c;
                     if (is_zoning_layer) {
                         const std::string zkey = zoningClassKey(fg);
@@ -2749,61 +4338,44 @@ int main(int argc, char** argv) {
                         if (it_col != zoning_zone_color.end()) feature_c = ImGui::ColorConvertFloat4ToU32(it_col->second);
                     }
                     const auto& ex = fg.extent;
-                    ImVec2 p0w = lonLatToWorldPx(ex.min_lon, ex.max_lat, math_zoom);
-                    ImVec2 p1w = lonLatToWorldPx(ex.max_lon, ex.min_lat, math_zoom);
-                    ImVec2 a = worldToScreen(p0w, center_world, origin, size, zoom_scale);
-                    ImVec2 b = worldToScreen(p1w, center_world, origin, size, zoom_scale);
+                    const auto& pww = get_world_extent(layer_idx, fidx, fg);
+                    ImVec2 p0w = pww.first;
+                    ImVec2 p1w = pww.second;
+                    ImVec2 a = project_world(p0w);
+                    ImVec2 b = project_world(p1w);
                     ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
                     ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
                     if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
 
                     if (!fg.rings.empty()) {
                         const auto& world_rings = get_world_rings(layer_idx, fidx, fg);
-                        std::vector<ImVec2> verts;
-                        size_t total = 0;
-                        for (const auto& r : world_rings) total += r.size();
-                        verts.reserve(total);
-                        for (const auto& r : world_rings) {
-                            for (const ImVec2& wp : r) verts.push_back(worldToScreen(wp, center_world, origin, size, zoom_scale));
-                        }
-
-                        if (!fg.triangles.empty()) {
-                            ImU32 fill = (feature_c & 0x00FFFFFF) | (60u << 24);
-                            draw->PrimReserve((int)fg.triangles.size(), (int)verts.size());
-                            unsigned int base = draw->_VtxCurrentIdx;
-                            for (const ImVec2& v : verts) draw->PrimWriteVtx(v, ImVec2(0, 0), fill);
-                            for (uint32_t idx : fg.triangles) draw->PrimWriteIdx((ImDrawIdx)(base + idx));
+                        const bool fill_enabled_for_layer = layer_idx < layer_fill_enabled.size() && layer_fill_enabled[layer_idx];
+                        if (fill_enabled_for_layer && should_fill_layer_polygon(layer_idx)) {
+                            ImU32 fill = (feature_c & 0x00FFFFFF) | (170u << 24);
+                            draw_tessellated_fill(fg, world_rings, fill);
                         }
 
                         for (const auto& r : world_rings) {
-                            std::vector<ImVec2> line;
-                            appendWorldRingScreenPointsLod(r, ring_step, center_world, origin, size, zoom_scale, line);
-                            draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+                            append_world_ring_line(r);
+                            draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                         }
                     } else {
-                        if ((int)layer_idx == vacant_notice_layer_idx || (int)layer_idx == vacant_rehab_layer_idx) continue;
+                        if ((int)layer_idx == vacant_notice_layer_idx || (int)layer_idx == vacant_rehab_layer_idx ||
+                            (int)layer_idx == tax_lien_layer_idx || (int)layer_idx == tax_sale_layer_idx) continue;
                         ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, math_zoom);
-                        ImVec2 ps = worldToScreen(pw, center_world, origin, size, zoom_scale);
+                        ImVec2 ps = project_world(pw);
                         if (ps.x >= origin.x && ps.x <= origin.x + size.x && ps.y >= origin.y && ps.y <= origin.y + size.y) {
                             float r = std::clamp((float)(2.0 * zoom_scale + 1.5), 2.0f, 6.0f);
                             draw->AddCircleFilled(ps, r, feature_c);
                         }
                     }
 
-                    if (parcel_hover_enabled && map_hovered && hovered_parcel == nullptr && parcel_layer_idx >= 0 &&
-                        (int)layer_idx == parcel_layer_idx) {
-                        if (mouse_ll.x >= fg.extent.min_lon && mouse_ll.x <= fg.extent.max_lon &&
-                            mouse_ll.y >= fg.extent.min_lat && mouse_ll.y <= fg.extent.max_lat &&
-                            pointInFeature(fg, mouse_ll.x, mouse_ll.y)) {
-                            hovered_parcel = &fg;
-                            hovered_parcel_idx = (size_t)fidx;
-                        }
-                    }
                 }
                 continue;
             }
             for (auto& fg : l.features) {
                 size_t fi = (size_t)(&fg - &l.features[0]);
+                if (!feature_passes_filters(layer_idx, fi, fg)) continue;
                 ImU32 feature_c = c;
                 if (is_zoning_layer) {
                     const std::string zkey = zoningClassKey(fg);
@@ -2813,30 +4385,21 @@ int main(int argc, char** argv) {
                     if (it_col != zoning_zone_color.end()) feature_c = ImGui::ColorConvertFloat4ToU32(it_col->second);
                 }
                 const auto& ex = fg.extent;
-                ImVec2 p0w = lonLatToWorldPx(ex.min_lon, ex.max_lat, math_zoom);
-                ImVec2 p1w = lonLatToWorldPx(ex.max_lon, ex.min_lat, math_zoom);
-                ImVec2 a = worldToScreen(p0w, center_world, origin, size, zoom_scale);
-                ImVec2 b = worldToScreen(p1w, center_world, origin, size, zoom_scale);
+                const auto& pww = get_world_extent(layer_idx, (uint32_t)fi, fg);
+                ImVec2 p0w = pww.first;
+                ImVec2 p1w = pww.second;
+                ImVec2 a = project_world(p0w);
+                ImVec2 b = project_world(p1w);
                 ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
                 ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
                 if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
 
                 if (!fg.rings.empty()) {
                     const auto& world_rings = get_world_rings(layer_idx, (uint32_t)fi, fg);
-                    std::vector<ImVec2> verts;
-                    size_t total = 0;
-                    for (const auto& r : world_rings) total += r.size();
-                    verts.reserve(total);
-                    for (const auto& r : world_rings) {
-                        for (const ImVec2& wp : r) verts.push_back(worldToScreen(wp, center_world, origin, size, zoom_scale));
-                    }
-
-                    if (!fg.triangles.empty()) {
-                        ImU32 fill = (feature_c & 0x00FFFFFF) | (60u << 24);
-                        draw->PrimReserve((int)fg.triangles.size(), (int)verts.size());
-                        unsigned int base = draw->_VtxCurrentIdx;
-                        for (const ImVec2& v : verts) draw->PrimWriteVtx(v, ImVec2(0, 0), fill);
-                        for (uint32_t idx : fg.triangles) draw->PrimWriteIdx((ImDrawIdx)(base + idx));
+                    const bool fill_enabled_for_layer = layer_idx < layer_fill_enabled.size() && layer_fill_enabled[layer_idx];
+                    if (fill_enabled_for_layer && should_fill_layer_polygon(layer_idx)) {
+                        ImU32 fill = (feature_c & 0x00FFFFFF) | (170u << 24);
+                        draw_tessellated_fill(fg, world_rings, fill);
                     }
 
                     // Project vacant point datasets onto parcel polygons instead of drawing point markers.
@@ -2849,41 +4412,39 @@ int main(int argc, char** argv) {
                         int weight = 0;
                         if (vacant_notice_enabled) weight += vac_notice;
                         if (vacant_rehab_enabled) weight += vac_rehab;
-                        if (weight > 0 && !fg.triangles.empty()) {
-                            const int alpha = std::clamp(45 + weight * 12, 45, 170);
-                            ImU32 vac_fill = color_with_alpha(vacancy_base_color(vac_notice, vac_rehab), alpha);
-                            draw->PrimReserve((int)fg.triangles.size(), (int)verts.size());
-                            unsigned int base = draw->_VtxCurrentIdx;
-                            for (const ImVec2& v : verts) draw->PrimWriteVtx(v, ImVec2(0, 0), vac_fill);
-                            for (uint32_t idx : fg.triangles) draw->PrimWriteIdx((ImDrawIdx)(base + idx));
+                        if (weight > 0) {
+                            const bool notice_fill = vacant_notice_enabled &&
+                                vacant_notice_layer_idx >= 0 &&
+                                (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() &&
+                                layer_fill_enabled[(size_t)vacant_notice_layer_idx];
+                            const bool rehab_fill = vacant_rehab_enabled &&
+                                vacant_rehab_layer_idx >= 0 &&
+                                (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() &&
+                                layer_fill_enabled[(size_t)vacant_rehab_layer_idx];
+                            if ((notice_fill || rehab_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
+                                const int alpha = std::clamp(95 + weight * 16, 95, 220);
+                                ImU32 vac_fill = color_with_alpha(vacancy_base_color(vac_notice, vac_rehab), alpha);
+                                draw_tessellated_fill(fg, world_rings, vac_fill);
+                            }
                         }
                     }
 
                     for (const auto& r : world_rings) {
-                        std::vector<ImVec2> line;
-                        appendWorldRingScreenPointsLod(r, ring_step, center_world, origin, size, zoom_scale, line);
-                        draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+                        append_world_ring_line(r);
+                        draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                     }
                 } else {
                     // Vacant datasets are point sources used for parcel matching; suppress raw point dot rendering.
-                    if (layer_idx == (size_t)vacant_notice_layer_idx || layer_idx == (size_t)vacant_rehab_layer_idx) continue;
+                    if (layer_idx == (size_t)vacant_notice_layer_idx || layer_idx == (size_t)vacant_rehab_layer_idx ||
+                        layer_idx == (size_t)tax_lien_layer_idx || layer_idx == (size_t)tax_sale_layer_idx) continue;
                     ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, math_zoom);
-                    ImVec2 ps = worldToScreen(pw, center_world, origin, size, zoom_scale);
+                    ImVec2 ps = project_world(pw);
                     if (ps.x >= origin.x && ps.x <= origin.x + size.x && ps.y >= origin.y && ps.y <= origin.y + size.y) {
                         float r = std::clamp((float)(2.0 * zoom_scale + 1.5), 2.0f, 6.0f);
                         draw->AddCircleFilled(ps, r, feature_c);
                     }
                 }
 
-                if (parcel_hover_enabled && map_hovered && hovered_parcel == nullptr && parcel_layer_idx >= 0 &&
-                    (&l - &layers[0]) == parcel_layer_idx) {
-                    if (mouse_ll.x >= fg.extent.min_lon && mouse_ll.x <= fg.extent.max_lon &&
-                        mouse_ll.y >= fg.extent.min_lat && mouse_ll.y <= fg.extent.max_lat &&
-                        pointInFeature(fg, mouse_ll.x, mouse_ll.y)) {
-                        hovered_parcel = &fg;
-                        hovered_parcel_idx = fi;
-                    }
-                }
             }
         }
 
@@ -2893,11 +4454,13 @@ int main(int argc, char** argv) {
             auto& parcel_layer = layers[(size_t)parcel_layer_idx];
             for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
                 auto& fg = parcel_layer.features[i];
+                if (!feature_passes_filters((size_t)parcel_layer_idx, i, fg)) continue;
                 const auto& ex = fg.extent;
-                ImVec2 p0w = lonLatToWorldPx(ex.min_lon, ex.max_lat, math_zoom);
-                ImVec2 p1w = lonLatToWorldPx(ex.max_lon, ex.min_lat, math_zoom);
-                ImVec2 a = worldToScreen(p0w, center_world, origin, size, zoom_scale);
-                ImVec2 b = worldToScreen(p1w, center_world, origin, size, zoom_scale);
+                const auto& pww = get_world_extent((size_t)parcel_layer_idx, (uint32_t)i, fg);
+                ImVec2 p0w = pww.first;
+                ImVec2 p1w = pww.second;
+                ImVec2 a = project_world(p0w);
+                ImVec2 b = project_world(p1w);
                 ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
                 ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
                 if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
@@ -2913,38 +4476,107 @@ int main(int argc, char** argv) {
                 visible_vacant_parcels_counter++;
 
                 const auto& world_rings = get_world_rings((size_t)parcel_layer_idx, (uint32_t)i, fg);
-                std::vector<ImVec2> verts;
-                size_t total = 0;
-                for (const auto& r : world_rings) total += r.size();
-                verts.reserve(total);
-                for (const auto& r : world_rings) {
-                    for (const ImVec2& wp : r) verts.push_back(worldToScreen(wp, center_world, origin, size, zoom_scale));
-                }
-                const int alpha = std::clamp(70 + weight * 14, 70, 200);
+                const int alpha = std::clamp(120 + weight * 18, 120, 230);
                 ImVec4 vac_base = vacancy_base_color(vac_notice, vac_rehab);
                 ImU32 vac_fill = color_with_alpha(vac_base, alpha);
                 ImU32 vac_outline = color_with_alpha(darken_color(vac_base, 0.62f), 235);
-                if (!fg.triangles.empty()) {
-                    draw->PrimReserve((int)fg.triangles.size(), (int)verts.size());
-                    unsigned int base = draw->_VtxCurrentIdx;
-                    for (const ImVec2& v : verts) draw->PrimWriteVtx(v, ImVec2(0, 0), vac_fill);
-                    for (uint32_t idx : fg.triangles) draw->PrimWriteIdx((ImDrawIdx)(base + idx));
+                const bool notice_fill = vacant_notice_layer_idx >= 0 &&
+                    (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() &&
+                    layer_fill_enabled[(size_t)vacant_notice_layer_idx];
+                const bool rehab_fill = vacant_rehab_layer_idx >= 0 &&
+                    (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() &&
+                    layer_fill_enabled[(size_t)vacant_rehab_layer_idx];
+                if ((notice_fill || rehab_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
+                    draw_tessellated_fill(fg, world_rings, vac_fill);
                 }
                 for (const auto& r : world_rings) {
-                    std::vector<ImVec2> line;
-                    appendWorldRingScreenPointsLod(r, ring_step, center_world, origin, size, zoom_scale, line);
-                    if (!line.empty()) draw->AddPolyline(line.data(), (int)line.size(), vac_outline, ImDrawFlags_Closed, 2.0f);
+                    append_world_ring_line(r);
+                    if (!scratch_line.empty()) draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), vac_outline, ImDrawFlags_Closed, 2.0f);
                 }
             }
         }
         visible_vacant_parcels_last_frame.store(visible_vacant_parcels_counter, std::memory_order_relaxed);
 
-        if (parcel_hover_enabled && map_hovered && hovered_parcel) {
+        // Render tax source records on matched parcel geometry, not as raw point dots.
+        if ((tax_lien_enabled || tax_sale_enabled) && parcel_layer_idx >= 0) {
+            auto& parcel_layer = layers[(size_t)parcel_layer_idx];
+            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+                auto& fg = parcel_layer.features[i];
+                if (!feature_passes_filters((size_t)parcel_layer_idx, i, fg)) continue;
+                const auto& pww = get_world_extent((size_t)parcel_layer_idx, (uint32_t)i, fg);
+                ImVec2 a = project_world(pww.first);
+                ImVec2 b = project_world(pww.second);
+                ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
+                ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
+                if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
+                if (fg.rings.empty()) continue;
+
+                const int lien_count = (i < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[i] : 0;
+                const int sale_count = (i < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[i] : 0;
+                int weight = 0;
+                if (tax_lien_enabled) weight += lien_count;
+                if (tax_sale_enabled) weight += sale_count;
+                if (weight <= 0) continue;
+
+                ImVec4 lien_c = (tax_lien_layer_idx >= 0) ? layers[(size_t)tax_lien_layer_idx].color : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
+                ImVec4 sale_c = (tax_sale_layer_idx >= 0) ? layers[(size_t)tax_sale_layer_idx].color : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
+                ImVec4 tax_base = lien_c;
+                if (tax_lien_enabled && tax_sale_enabled && lien_count > 0 && sale_count > 0) {
+                    tax_base = ImVec4((lien_c.x + sale_c.x) * 0.5f,
+                                      (lien_c.y + sale_c.y) * 0.5f,
+                                      (lien_c.z + sale_c.z) * 0.5f,
+                                      1.0f);
+                } else if (tax_sale_enabled && sale_count > 0) {
+                    tax_base = sale_c;
+                }
+                const auto& world_rings = get_world_rings((size_t)parcel_layer_idx, (uint32_t)i, fg);
+                const bool lien_fill = tax_lien_enabled &&
+                    tax_lien_layer_idx >= 0 &&
+                    (size_t)tax_lien_layer_idx < layer_fill_enabled.size() &&
+                    layer_fill_enabled[(size_t)tax_lien_layer_idx];
+                const bool sale_fill = tax_sale_enabled &&
+                    tax_sale_layer_idx >= 0 &&
+                    (size_t)tax_sale_layer_idx < layer_fill_enabled.size() &&
+                    layer_fill_enabled[(size_t)tax_sale_layer_idx];
+                if ((lien_fill || sale_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
+                    const int alpha = std::clamp(90 + weight * 10, 90, 210);
+                    draw_tessellated_fill(fg, world_rings, color_with_alpha(tax_base, alpha));
+                }
+                ImU32 tax_outline = color_with_alpha(darken_color(tax_base, 0.58f), 240);
+                for (const auto& r : world_rings) {
+                    append_world_ring_line(r);
+                    if (!scratch_line.empty()) draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), tax_outline, ImDrawFlags_Closed, 2.0f);
+                }
+            }
+        }
+
+        render_fill_attempts_last_frame.store(fill_attempts_frame, std::memory_order_relaxed);
+        render_fill_success_last_frame.store(fill_success_frame, std::memory_order_relaxed);
+        render_fill_no_triangles_last_frame.store(fill_no_triangles_frame, std::memory_order_relaxed);
+        render_fill_bad_indices_last_frame.store(fill_bad_indices_frame, std::memory_order_relaxed);
+
+        if (map_hovered && parcel_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_parcel != nullptr) {
+            show_selected_parcel_details = true;
+            selected_parcel_idx = hovered_parcel_idx;
+            show_selected_zone_details = false;
+            selected_zone_idx = (size_t)-1;
+        } else if (map_hovered && zoning_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_zone != nullptr) {
+            show_selected_zone_details = true;
+            selected_zone_idx = hovered_zone_idx;
+            show_selected_parcel_details = false;
+            selected_parcel_idx = (size_t)-1;
+        }
+
+        if (parcel_hover_active && map_hovered && hovered_parcel) {
             std::string blocklot_raw = getPropertyValue(*hovered_parcel, "BLOCKLOT");
             std::string blocklot = normalizeJoinKey(blocklot_raw);
             int vac_notice = (hovered_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[hovered_parcel_idx] : 0;
             int vac_rehab = (hovered_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[hovered_parcel_idx] : 0;
-            const LayerDef::FeatureGeom* hovered_zoning = nullptr;
+            int tax_lien = (hovered_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[hovered_parcel_idx] : 0;
+            int tax_sale = (hovered_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[hovered_parcel_idx] : 0;
+            double tax_lien_amount = (hovered_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[hovered_parcel_idx] : 0.0;
+            double tax_sale_amount = (hovered_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[hovered_parcel_idx] : 0.0;
+            const LayerDef::FeatureGeom* hovered_zoning = hovered_zone;
             if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
                 const float qlon = (hovered_parcel->extent.min_lon + hovered_parcel->extent.max_lon) * 0.5f;
                 const float qlat = (hovered_parcel->extent.min_lat + hovered_parcel->extent.max_lat) * 0.5f;
@@ -2975,28 +4607,30 @@ int main(int argc, char** argv) {
             ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
             ImGui::Text("Vacant Notices: %d", vac_notice);
             ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
+            ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
+            if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
+            ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
+            if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
 
-            if (real_property_layer_idx >= 0 && !blocklot.empty()) {
-                auto itrp = real_property_by_blocklot.find(blocklot);
-                if (itrp != real_property_by_blocklot.end()) {
-                    const auto& rp = layers[(size_t)real_property_layer_idx].features[itrp->second];
-                    std::string owner = getPropertyValue(rp, "OWNERNME1");
-                    if (owner.empty()) owner = getPropertyValue(rp, "OWNER");
-                    if (owner.empty()) owner = getPropertyValue(rp, "OWNER_NAME");
-                    std::string addr = getPropertyValue(rp, "PROPERTY_ADDRESS");
-                    if (addr.empty()) addr = getPropertyValue(rp, "PREMISEADD");
-                    if (!owner.empty()) ImGui::TextWrapped("Owner: %s", owner.c_str());
-                    if (!addr.empty()) ImGui::TextWrapped("Property Address: %s", addr.c_str());
-                }
-            }
+            const LayerDef::FeatureGeom* hovered_rp = real_property_for_parcel(*hovered_parcel);
+            draw_real_property_summary(hovered_rp);
 
             ImGui::Separator();
             if (hovered_zoning) {
-                std::string zone_label = zoningClassKey(*hovered_zoning);
-                std::string zone_desc = zoningClassLabel(*hovered_zoning);
-                ImGui::Text("Zoning: %s", zone_label.empty() ? "(available, unlabeled)" : zone_label.c_str());
-                if (!zone_desc.empty() && zone_desc != zone_label) {
-                    ImGui::TextWrapped("Zoning Label: %s", zone_desc.c_str());
+                std::string zone_key = zoningClassKey(*hovered_zoning);
+                std::string zone_label = zoningClassLabel(*hovered_zoning);
+                std::string zone_description;
+                auto meta_it = zoning_metadata.find(zone_key);
+                if (meta_it != zoning_metadata.end()) {
+                    if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
+                    zone_description = meta_it->second.description;
+                }
+                ImGui::Text("Zoning: %s", zone_key.empty() ? "(available, unlabeled)" : zone_key.c_str());
+                if (!zone_label.empty() && zone_label != zone_key) {
+                    ImGui::TextWrapped("Zoning Label: %s", zone_label.c_str());
+                }
+                if (!zone_description.empty()) {
+                    ImGui::TextWrapped("Description: %s", zone_description.c_str());
                 }
                 ImGui::TextUnformatted("Zoning Fields");
                 for (const auto& kv : hovered_zoning->properties) {
@@ -3007,8 +4641,36 @@ int main(int argc, char** argv) {
                 ImGui::TextDisabled("Zoning: no intersecting zoning polygon found.");
             }
             ImGui::Separator();
-            ImGui::TextUnformatted("All Parcel Fields");
-            for (const auto& kv : hovered_parcel->properties) {
+            draw_feature_properties("All Parcel Geometry Fields", *hovered_parcel);
+            if (hovered_rp) {
+                ImGui::Separator();
+                draw_feature_properties("All Real Property Fields", *hovered_rp);
+            }
+            ImGui::EndTooltip();
+        }
+        if (zoning_hover_active && map_hovered && !hovered_parcel && hovered_zone) {
+            std::string zone_key = zoningClassKey(*hovered_zone);
+            std::string zone_label = zoningClassLabel(*hovered_zone);
+            std::string zone_description;
+            auto meta_it = zoning_metadata.find(zone_key);
+            if (meta_it != zoning_metadata.end()) {
+                if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
+                zone_description = meta_it->second.description;
+            }
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Zoning Details");
+            ImGui::Separator();
+            ImGui::Text("Feature: %zu", hovered_zone_idx);
+            ImGui::Text("Zone: %s", zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
+            if (!zone_label.empty() && zone_label != zone_key) {
+                ImGui::TextWrapped("Label: %s", zone_label.c_str());
+            }
+            if (!zone_description.empty()) {
+                ImGui::TextWrapped("Description: %s", zone_description.c_str());
+            }
+            ImGui::Separator();
+            ImGui::TextUnformatted("All Zone Fields");
+            for (const auto& kv : hovered_zone->properties) {
                 if (kv.second.empty()) continue;
                 ImGui::TextWrapped("%s: %s", kv.first.c_str(), kv.second.c_str());
             }
@@ -3040,7 +4702,14 @@ int main(int argc, char** argv) {
     }
 
     vkDeviceWaitIdle(g_Device);
-    saveLayerUiState(root, layers, parcel_hover_enabled, &zoning_zone_enabled);
+    saveLayerUiState(
+        root,
+        layers,
+        hover_inspector_enabled,
+        &zoning_zone_enabled,
+        &layer_fill_enabled,
+        &layer_hover_enabled,
+        &layer_inspect_enabled);
     saveAppSettings(root, g_EnableValidationLayers);
     hydration_stop.store(true, std::memory_order_relaxed);
     hydrate_req_cv.notify_all();
