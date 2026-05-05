@@ -3,36 +3,236 @@
     "name": "Real Property Information",
     "file": "real_property_information.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
-    "color": "#e41a1c"
+    "color": "#e41a1c",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Parcel",
     "file": "parcel.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
-    "color": "#377eb8"
+    "color": "#377eb8",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": true
   },
   {
     "name": "Zoning",
     "file": "zoning.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
-    "color": "#fc8d62"
+    "color": "#fc8d62",
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "scale": "parcel",
+    "default_enabled": true
   },
   {
     "name": "Housing and Building Permits 2019-Present",
     "file": "housing_building_permits_2019_present.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/189e6d1c65df4e13b38c0027cee574f6/geojson?layers=3",
-    "color": "#66c2a5"
+    "color": "#66c2a5",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Vacant Building Notices",
     "file": "vacant_building_notices.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
-    "color": "#4daf4a"
+    "color": "#4daf4a",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
     "file": "crime_nibrs_group_a_2022_present.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/204beefe92a645d79fdf0969957bbdf8/geojson?layers=0",
-    "color": "#d73027"
+    "color": "#d73027",
+    "category": "safety",
+    "subcategory": "Crime",
+    "scale": "point",
+    "default_enabled": false
+  },
+  {
+    "name": "Life Expectancy (CSA)",
+    "file": "life_expectancy_csa.geojson",
+    "url": "https://services1.arcgis.com/mVFRs7NF4iFitgbY/arcgis/rest/services/Lifexp/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#1b9e77",
+    "category": "public_health",
+    "subcategory": "Mortality",
+    "scale": "csa",
+    "default_enabled": true
+  },
+  {
+    "name": "CDC PLACES Asthma (Baltimore Tracts)",
+    "file": "cdc_places_asthma_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CASTHMA_CrudePrev&f=geojson",
+    "color": "#2c7fb8",
+    "heatmap_field": "CASTHMA_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": true
+  },
+  {
+    "name": "CDC PLACES Diabetes (Baltimore Tracts)",
+    "file": "cdc_places_diabetes_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,DIABETES_CrudePrev&f=geojson",
+    "color": "#41ab5d",
+    "heatmap_field": "DIABETES_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Obesity (Baltimore Tracts)",
+    "file": "cdc_places_obesity_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,OBESITY_CrudePrev&f=geojson",
+    "color": "#fdae6b",
+    "heatmap_field": "OBESITY_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Stroke (Baltimore Tracts)",
+    "file": "cdc_places_stroke_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,STROKE_CrudePrev&f=geojson",
+    "color": "#756bb1",
+    "heatmap_field": "STROKE_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Depression (Baltimore Tracts)",
+    "file": "cdc_places_depression_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,DEPRESSION_CrudePrev&f=geojson",
+    "color": "#dd3497",
+    "heatmap_field": "DEPRESSION_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Total Population (Baltimore Tracts)",
+    "file": "cdc_places_total_population_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson",
+    "color": "#636363",
+    "heatmap_field": "TotalPopulation",
+    "category": "public_health",
+    "subcategory": "Population & Denominator",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
+    "file": "cdc_places_uninsured_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,ACCESS2_CrudePrev,ACCESS2_Crude95CI&f=geojson",
+    "color": "#8c510a",
+    "heatmap_field": "ACCESS2_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Care Access",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
+    "file": "cdc_places_annual_checkup_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CHECKUP_CrudePrev,CHECKUP_Crude95CI&f=geojson",
+    "color": "#238b45",
+    "heatmap_field": "CHECKUP_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Care Access",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
+    "file": "cdc_places_high_bp_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,BPHIGH_CrudePrev,BPHIGH_Crude95CI&f=geojson",
+    "color": "#cb181d",
+    "heatmap_field": "BPHIGH_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
+    "file": "cdc_places_chd_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CHD_CrudePrev,CHD_Crude95CI&f=geojson",
+    "color": "#6a51a3",
+    "heatmap_field": "CHD_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
+    "file": "cdc_places_smoking_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CSMOKING_CrudePrev,CSMOKING_Crude95CI&f=geojson",
+    "color": "#e6550d",
+    "heatmap_field": "CSMOKING_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Risk Factors",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
+    "file": "cdc_places_physical_inactivity_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,LPA_CrudePrev,LPA_Crude95CI&f=geojson",
+    "color": "#31a354",
+    "heatmap_field": "LPA_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Risk Factors",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
+    "file": "cdc_places_mental_distress_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,MHLTH_CrudePrev,MHLTH_Crude95CI&f=geojson",
+    "color": "#756bb1",
+    "heatmap_field": "MHLTH_CrudePrev",
+    "category": "public_health",
+    "subcategory": "Behavioral Health",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC SVI 2022 (Baltimore Tracts)",
+    "file": "cdc_svi_2022_baltimore_tracts.geojson",
+    "url": "https://onemap.cdc.gov/OneMapServices/rest/services/SVI/SVI_consolidated_data/FeatureServer/0/query?where=FIPS%20like%20%2724510______%27%20AND%20ReleaseYear%3D2022%20AND%20GeoLevel%3D%27tract%27%20AND%20Comparison%3D%27national%27&outFields=FIPS,ReleaseYear,GeoLevel,Comparison,Overall_SVI_Percentile,Theme1_Percentile,Theme2_Percentile,Theme3_Percentile,Theme4_Percentile&f=geojson",
+    "color": "#7570b3",
+    "heatmap_field": "Overall_SVI_Percentile",
+    "category": "public_health",
+    "subcategory": "Social Vulnerability",
+    "scale": "tract",
+    "default_enabled": true
+  },
+  {
+    "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
+    "file": "hmda_mortgage_2024_baltimore_tracts.geojson",
+    "color": "#08519c",
+    "heatmap_field": "HMDA_OrigLoanSum",
+    "download": false,
+    "reason": "Generated locally by aggregating HMDA API CSV and joining to tract geometry",
+    "category": "public_health",
+    "subcategory": "Housing Finance",
+    "scale": "tract",
+    "default_enabled": false
   }
 ]

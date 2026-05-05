@@ -10,12 +10,18 @@
 struct LayerDef {
     enum class Category {
         Housing,
-        Infrastructure
+        PublicHealth,
+        Infrastructure,
+        Zoning,
+        Safety
     };
     std::string name;
     std::string file;
     std::string source_url;
     std::string description;
+    std::string heatmap_field;
+    std::string subcategory;
+    std::string scale;
     ImVec4 color;
     bool enabled = false;
     Category category = Category::Housing;

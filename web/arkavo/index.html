@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Arkavo Realtime Demo</title>
+    <style>
+      body { font-family: sans-serif; margin: 16px; }
+      #logs { height: 220px; overflow: auto; background: #111; color: #ddd; padding: 8px; }
+      input, button { margin: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Arkavo WebRTC P2P Demo</h1>
+    <div>
+      Room: <input id="room" value="worldsim-test" />
+      <button id="connect">Connect</button>
+      <button id="disconnect">Disconnect</button>
+    </div>
+    <div>
+      <h3>Peers</h3>
+      <ul id="peers"></ul>
+    </div>
+    <div>
+      Target peer ID: <input id="targetPeer" />
+      <input id="file" type="file" />
+      <button id="sendFile">Send File</button>
+    </div>
+    <h3>Logs</h3>
+    <pre id="logs"></pre>
+
+    <!-- Build with: tsc web/arkavo/realtime-client.ts web/arkavo/demo.ts --target ES2021 --module ES2020 --lib DOM,ES2021 --outDir web/arkavo/dist -->
+    <script type="module" src="./dist/demo.js"></script>
+  </body>
+</html>

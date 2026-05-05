@@ -12,13 +12,38 @@ namespace fs = std::filesystem;
 static LayerDef::Category inferCategory(const std::string& layer_name) {
     std::string s = layer_name;
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    const char* zoning_keywords[] = {
+        "zoning"
+    };
+    for (const char* k : zoning_keywords) {
+        if (s.find(k) != std::string::npos) return LayerDef::Category::Zoning;
+    }
+    const char* health_keywords[] = {
+        "health", "life expectancy", "asthma", "diabetes", "obesity", "stroke", "depression", "svi", "vulnerability"
+    };
+    for (const char* k : health_keywords) {
+        if (s.find(k) != std::string::npos) return LayerDef::Category::PublicHealth;
+    }
     const char* infra_keywords[] = {
-        "water", "drain", "sewer", "storm", "zoning", "route", "stop", "bus", "parking", "transit", "street"
+        "water", "drain", "sewer", "storm", "route", "stop", "bus", "parking", "transit", "street"
     };
     for (const char* k : infra_keywords) {
         if (s.find(k) != std::string::npos) return LayerDef::Category::Infrastructure;
     }
     return LayerDef::Category::Housing;
+}
+
+static LayerDef::Category parseCategory(const json& v, const std::string& layer_name) {
+    if (v.contains("category") && v["category"].is_string()) {
+        std::string c = v["category"].get<std::string>();
+        std::transform(c.begin(), c.end(), c.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+        if (c == "housing") return LayerDef::Category::Housing;
+        if (c == "public_health" || c == "public-health" || c == "publichealth") return LayerDef::Category::PublicHealth;
+        if (c == "infrastructure") return LayerDef::Category::Infrastructure;
+        if (c == "zoning") return LayerDef::Category::Zoning;
+        if (c == "safety") return LayerDef::Category::Safety;
+    }
+    return inferCategory(layer_name);
 }
 
 std::vector<LayerDef> loadManifest(const fs::path& root) {
@@ -36,11 +61,14 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
         ld.file = arr[i]["file"].get<std::string>();
         ld.source_url = arr[i].contains("url") ? arr[i]["url"].get<std::string>() : "";
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
+        ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
+        ld.subcategory = arr[i].contains("subcategory") ? arr[i]["subcategory"].get<std::string>() : "";
+        ld.scale = arr[i].contains("scale") ? arr[i]["scale"].get<std::string>() : "";
         std::string c = arr[i]["color"].get<std::string>();
         auto hex = [&](int s) { return std::stoi(c.substr(s, 2), nullptr, 16) / 255.0f; };
         ld.color = ImVec4(hex(1), hex(3), hex(5), 1.0f);
-        ld.enabled = i < 4;
-        ld.category = inferCategory(ld.name);
+        ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : (i < 4);
+        ld.category = parseCategory(arr[i], ld.name);
         layers.push_back(std::move(ld));
     }
     return layers;
@@ -53,7 +81,28 @@ void loadLayerUiState(
     std::unordered_map<std::string, bool>* zoning_zone_enabled,
     std::vector<bool>* layer_fill_enabled,
     std::vector<bool>* layer_hover_enabled,
-    std::vector<bool>* layer_inspect_enabled) {
+    std::vector<bool>* layer_inspect_enabled,
+    std::vector<bool>* layer_heatmap_enabled,
+    std::vector<int>* layer_heatmap_max_zoom,
+    std::vector<bool>* layer_heatmap_use_gradient,
+    std::vector<int>* layer_heatmap_algo,
+    std::vector<bool>* layer_heatmap_use_global_settings,
+    std::vector<float>* layer_heatmap_cell_px,
+    std::vector<float>* layer_heatmap_bandwidth_px,
+    std::vector<float>* layer_heatmap_blur_sigma_px,
+    std::vector<float>* layer_heatmap_percentile_clip,
+    std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth,
+    std::vector<bool>* layer_heatmap_multires_enabled,
+    std::vector<float>* layer_heatmap_multires_blend,
+    int* heatmap_algo,
+    int* heatmap_quality_preset,
+    float* heatmap_cell_px,
+    float* heatmap_bandwidth_px,
+    float* heatmap_blur_sigma_px,
+    float* heatmap_percentile_clip,
+    bool* heatmap_zoom_adaptive_bandwidth,
+    bool* heatmap_multires_enabled,
+    float* heatmap_multires_blend) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -108,6 +157,82 @@ void loadLayerUiState(
             }
         }
     }
+    if (layer_heatmap_enabled && j.contains("layer_heatmaps") && j["layer_heatmaps"].is_object()) {
+        const auto& obj = j["layer_heatmaps"];
+        if (layer_heatmap_enabled->size() < layers.size()) layer_heatmap_enabled->resize(layers.size(), true);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*layer_heatmap_enabled)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    }
+    if (layer_heatmap_max_zoom && j.contains("layer_heatmap_max_zoom") && j["layer_heatmap_max_zoom"].is_object()) {
+        const auto& obj = j["layer_heatmap_max_zoom"];
+        if (layer_heatmap_max_zoom->size() < layers.size()) layer_heatmap_max_zoom->resize(layers.size(), 13);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
+                (*layer_heatmap_max_zoom)[i] = obj[layers[i].file].get<int>();
+            }
+        }
+    }
+    if (layer_heatmap_use_gradient && j.contains("layer_heatmap_use_gradient") && j["layer_heatmap_use_gradient"].is_object()) {
+        const auto& obj = j["layer_heatmap_use_gradient"];
+        if (layer_heatmap_use_gradient->size() < layers.size()) layer_heatmap_use_gradient->resize(layers.size(), true);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*layer_heatmap_use_gradient)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    }
+    if (layer_heatmap_algo && j.contains("layer_heatmap_algo") && j["layer_heatmap_algo"].is_object()) {
+        const auto& obj = j["layer_heatmap_algo"];
+        if (layer_heatmap_algo->size() < layers.size()) layer_heatmap_algo->resize(layers.size(), -1);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
+                (*layer_heatmap_algo)[i] = obj[layers[i].file].get<int>();
+            }
+        }
+    }
+    auto load_float_layer_setting = [&](std::vector<float>* dst, const char* key, float fallback) {
+        if (!dst || !j.contains(key) || !j[key].is_object()) return;
+        const auto& obj = j[key];
+        if (dst->size() < layers.size()) dst->resize(layers.size(), fallback);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number()) {
+                (*dst)[i] = obj[layers[i].file].get<float>();
+            }
+        }
+    };
+    auto load_bool_layer_setting = [&](std::vector<bool>* dst, const char* key, bool fallback) {
+        if (!dst || !j.contains(key) || !j[key].is_object()) return;
+        const auto& obj = j[key];
+        if (dst->size() < layers.size()) dst->resize(layers.size(), fallback);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
+                (*dst)[i] = obj[layers[i].file].get<bool>();
+            }
+        }
+    };
+    load_bool_layer_setting(layer_heatmap_use_global_settings, "layer_heatmap_use_global_settings", true);
+    load_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
+    load_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
+    load_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);
+    load_float_layer_setting(layer_heatmap_percentile_clip, "layer_heatmap_percentile_clip", 95.0f);
+    load_bool_layer_setting(layer_heatmap_zoom_adaptive_bandwidth, "layer_heatmap_zoom_adaptive_bandwidth", true);
+    load_bool_layer_setting(layer_heatmap_multires_enabled, "layer_heatmap_multires_enabled", true);
+    load_float_layer_setting(layer_heatmap_multires_blend, "layer_heatmap_multires_blend", 0.5f);
+    if (j.contains("heatmap_settings") && j["heatmap_settings"].is_object()) {
+        const auto& hs = j["heatmap_settings"];
+        if (heatmap_algo && hs.contains("algo") && hs["algo"].is_number_integer()) *heatmap_algo = hs["algo"].get<int>();
+        if (heatmap_quality_preset && hs.contains("quality_preset") && hs["quality_preset"].is_number_integer()) *heatmap_quality_preset = hs["quality_preset"].get<int>();
+        if (heatmap_cell_px && hs.contains("cell_px") && hs["cell_px"].is_number()) *heatmap_cell_px = hs["cell_px"].get<float>();
+        if (heatmap_bandwidth_px && hs.contains("bandwidth_px") && hs["bandwidth_px"].is_number()) *heatmap_bandwidth_px = hs["bandwidth_px"].get<float>();
+        if (heatmap_blur_sigma_px && hs.contains("blur_sigma_px") && hs["blur_sigma_px"].is_number()) *heatmap_blur_sigma_px = hs["blur_sigma_px"].get<float>();
+        if (heatmap_percentile_clip && hs.contains("percentile_clip") && hs["percentile_clip"].is_number()) *heatmap_percentile_clip = hs["percentile_clip"].get<float>();
+        if (heatmap_zoom_adaptive_bandwidth && hs.contains("zoom_adaptive_bandwidth") && hs["zoom_adaptive_bandwidth"].is_boolean()) *heatmap_zoom_adaptive_bandwidth = hs["zoom_adaptive_bandwidth"].get<bool>();
+        if (heatmap_multires_enabled && hs.contains("multires_enabled") && hs["multires_enabled"].is_boolean()) *heatmap_multires_enabled = hs["multires_enabled"].get<bool>();
+        if (heatmap_multires_blend && hs.contains("multires_blend") && hs["multires_blend"].is_number()) *heatmap_multires_blend = hs["multires_blend"].get<float>();
+    }
 }
 
 void saveLayerUiState(
@@ -117,7 +242,28 @@ void saveLayerUiState(
     const std::unordered_map<std::string, bool>* zoning_zone_enabled,
     const std::vector<bool>* layer_fill_enabled,
     const std::vector<bool>* layer_hover_enabled,
-    const std::vector<bool>* layer_inspect_enabled) {
+    const std::vector<bool>* layer_inspect_enabled,
+    const std::vector<bool>* layer_heatmap_enabled,
+    const std::vector<int>* layer_heatmap_max_zoom,
+    const std::vector<bool>* layer_heatmap_use_gradient,
+    const std::vector<int>* layer_heatmap_algo,
+    const std::vector<bool>* layer_heatmap_use_global_settings,
+    const std::vector<float>* layer_heatmap_cell_px,
+    const std::vector<float>* layer_heatmap_bandwidth_px,
+    const std::vector<float>* layer_heatmap_blur_sigma_px,
+    const std::vector<float>* layer_heatmap_percentile_clip,
+    const std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth,
+    const std::vector<bool>* layer_heatmap_multires_enabled,
+    const std::vector<float>* layer_heatmap_multires_blend,
+    const int* heatmap_algo,
+    const int* heatmap_quality_preset,
+    const float* heatmap_cell_px,
+    const float* heatmap_bandwidth_px,
+    const float* heatmap_blur_sigma_px,
+    const float* heatmap_percentile_clip,
+    const bool* heatmap_zoom_adaptive_bandwidth,
+    const bool* heatmap_multires_enabled,
+    const float* heatmap_multires_blend) {
     fs::create_directories(root / "data");
     json j;
     j["hover_inspector_enabled"] = hover_inspector_enabled;
@@ -149,6 +295,72 @@ void saveLayerUiState(
             inspects[layers[i].file] = i < layer_inspect_enabled->size() ? (*layer_inspect_enabled)[i] : true;
         }
         j["layer_inspects"] = std::move(inspects);
+    }
+    if (layer_heatmap_enabled) {
+        json h = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            h[layers[i].file] = i < layer_heatmap_enabled->size() ? (*layer_heatmap_enabled)[i] : true;
+        }
+        j["layer_heatmaps"] = std::move(h);
+    }
+    if (layer_heatmap_max_zoom) {
+        json hz = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            hz[layers[i].file] = i < layer_heatmap_max_zoom->size() ? (*layer_heatmap_max_zoom)[i] : 13;
+        }
+        j["layer_heatmap_max_zoom"] = std::move(hz);
+    }
+    if (layer_heatmap_use_gradient) {
+        json hg = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            hg[layers[i].file] = i < layer_heatmap_use_gradient->size() ? (*layer_heatmap_use_gradient)[i] : true;
+        }
+        j["layer_heatmap_use_gradient"] = std::move(hg);
+    }
+    if (layer_heatmap_algo) {
+        json ha = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            ha[layers[i].file] = i < layer_heatmap_algo->size() ? (*layer_heatmap_algo)[i] : -1;
+        }
+        j["layer_heatmap_algo"] = std::move(ha);
+    }
+    auto save_float_layer_setting = [&](const std::vector<float>* src, const char* key, float fallback) {
+        if (!src) return;
+        json obj = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            obj[layers[i].file] = i < src->size() ? (*src)[i] : fallback;
+        }
+        j[key] = std::move(obj);
+    };
+    auto save_bool_layer_setting = [&](const std::vector<bool>* src, const char* key, bool fallback) {
+        if (!src) return;
+        json obj = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            obj[layers[i].file] = i < src->size() ? (*src)[i] : fallback;
+        }
+        j[key] = std::move(obj);
+    };
+    save_bool_layer_setting(layer_heatmap_use_global_settings, "layer_heatmap_use_global_settings", true);
+    save_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
+    save_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
+    save_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);
+    save_float_layer_setting(layer_heatmap_percentile_clip, "layer_heatmap_percentile_clip", 95.0f);
+    save_bool_layer_setting(layer_heatmap_zoom_adaptive_bandwidth, "layer_heatmap_zoom_adaptive_bandwidth", true);
+    save_bool_layer_setting(layer_heatmap_multires_enabled, "layer_heatmap_multires_enabled", true);
+    save_float_layer_setting(layer_heatmap_multires_blend, "layer_heatmap_multires_blend", 0.5f);
+    if (heatmap_algo || heatmap_quality_preset || heatmap_cell_px || heatmap_bandwidth_px || heatmap_blur_sigma_px ||
+        heatmap_percentile_clip || heatmap_zoom_adaptive_bandwidth || heatmap_multires_enabled || heatmap_multires_blend) {
+        json hs = json::object();
+        if (heatmap_algo) hs["algo"] = *heatmap_algo;
+        if (heatmap_quality_preset) hs["quality_preset"] = *heatmap_quality_preset;
+        if (heatmap_cell_px) hs["cell_px"] = *heatmap_cell_px;
+        if (heatmap_bandwidth_px) hs["bandwidth_px"] = *heatmap_bandwidth_px;
+        if (heatmap_blur_sigma_px) hs["blur_sigma_px"] = *heatmap_blur_sigma_px;
+        if (heatmap_percentile_clip) hs["percentile_clip"] = *heatmap_percentile_clip;
+        if (heatmap_zoom_adaptive_bandwidth) hs["zoom_adaptive_bandwidth"] = *heatmap_zoom_adaptive_bandwidth;
+        if (heatmap_multires_enabled) hs["multires_enabled"] = *heatmap_multires_enabled;
+        if (heatmap_multires_blend) hs["multires_blend"] = *heatmap_multires_blend;
+        j["heatmap_settings"] = std::move(hs);
     }
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);

@@ -4,125 +4,389 @@
     "file": "real_property_information.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
     "color": "#e41a1c",
-    "description": "City real-property records including parcel-linked ownership and assessment context."
+    "description": "City real-property records including parcel-linked ownership and assessment context.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Parcel",
     "file": "parcel.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
     "color": "#377eb8",
-    "description": "Official parcel boundaries used as base land-unit geometry."
+    "description": "Official parcel boundaries used as base land-unit geometry.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": true
   },
   {
     "name": "Vacant Building Notices",
     "file": "vacant_building_notices.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
     "color": "#4daf4a",
-    "description": "Properties flagged with vacant-building notices and related status fields."
+    "description": "Properties flagged with vacant-building notices and related status fields.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Vacant Building Rehabs",
     "file": "vacant_building_rehabs.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/4db6d1e54e714a3e8125990a09d4623d/geojson?layers=2",
     "color": "#984ea3",
-    "description": "Vacant-building rehabilitation permit activity and project signals."
+    "description": "Vacant-building rehabilitation permit activity and project signals.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
     "file": "tax_lien_certificate_sale_properties.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
     "color": "#ff7f00",
-    "description": "Properties listed for tax lien certificate sale processes."
+    "description": "Properties listed for tax lien certificate sale processes.",
+    "category": "housing",
+    "subcategory": "Tax & Enforcement",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "2021 Tax Sale List",
     "file": "tax_sale_list_2021.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0",
     "color": "#a65628",
-    "description": "Published 2021 tax sale list for delinquent properties."
+    "description": "Published 2021 tax sale list for delinquent properties.",
+    "category": "housing",
+    "subcategory": "Tax & Enforcement",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Open Bid List - Vacants to Value",
     "file": "open_bid_list_vacants_to_value.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/1b844b06c28a45ca86cdfb586fdce3a7/geojson?layers=7",
     "color": "#f781bf",
-    "description": "Open bids for Vacants to Value redevelopment opportunities."
+    "description": "Open bids for Vacants to Value redevelopment opportunities.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Completed City Demo",
     "file": "completed_city_demo.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/37f242ca93b244a998c31b6c0a3696a7/geojson?layers=0",
     "color": "#999999",
-    "description": "Locations where city demolition work has been completed."
+    "description": "Locations where city demolition work has been completed.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Housing and Building Permits 2019-Present",
     "file": "housing_building_permits_2019_present.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/189e6d1c65df4e13b38c0027cee574f6/geojson?layers=3",
     "color": "#66c2a5",
-    "description": "Housing and building permits from 2019 to present."
+    "description": "Housing and building permits from 2019 to present.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
   },
   {
     "name": "Zoning",
     "file": "zoning.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
     "color": "#fc8d62",
-    "description": "Current zoning districts and zoning-code geography."
+    "description": "Current zoning districts and zoning-code geography.",
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "scale": "parcel",
+    "default_enabled": true
   },
   {
     "name": "Streets",
     "file": "streets.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/b5ee6aaebdf94241bd6700cf2eacc33b/geojson?layers=0",
     "color": "#fdb462",
-    "description": "Street centerlines for Baltimore City road network geometry and attributes."
+    "description": "Street centerlines for Baltimore City road network geometry and attributes.",
+    "category": "infrastructure",
+    "subcategory": "Transportation",
+    "scale": "line",
+    "default_enabled": false
   },
   {
     "name": "Major Drainage",
     "file": "major_drainage.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/00156edf8258493fa28384e0aa8286a8/geojson?layers=0",
     "color": "#8da0cb",
-    "description": "Major drainage network and watershed-related infrastructure geometry."
+    "description": "Major drainage network and watershed-related infrastructure geometry.",
+    "category": "infrastructure",
+    "subcategory": "Utilities",
+    "scale": "line",
+    "default_enabled": false
   },
   {
     "name": "Water (Infrastructure Layer 19)",
     "file": "water_infrastructure_layer_19.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/8ed6565f93a04455ae6bd5bcb7d272db/geojson?layers=19",
     "color": "#1f78b4",
-    "description": "Water infrastructure features from city infrastructure map layer 19."
+    "description": "Water infrastructure features from city infrastructure map layer 19.",
+    "category": "infrastructure",
+    "subcategory": "Utilities",
+    "scale": "line",
+    "default_enabled": false
   },
   {
     "name": "Rate of Clogged Storm Drain Reports (CSA)",
     "file": "rate_clogged_storm_drain_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/cc307b1f087244e2bf064d211427d80e/geojson?layers=0",
     "color": "#6a3d9a",
-    "description": "CSA-level rate of clogged storm drain service reports."
+    "description": "CSA-level rate of clogged storm drain service reports.",
+    "category": "infrastructure",
+    "subcategory": "Utilities",
+    "scale": "line",
+    "default_enabled": false
   },
   {
     "name": "Median Price of Homes Sold (CSA)",
     "file": "median_price_homes_sold_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/eb55867e580740228b0d4317464ea040/geojson?layers=0",
     "color": "#b2df8a",
-    "description": "CSA-level median home sale price indicator."
+    "description": "CSA-level median home sale price indicator.",
+    "category": "housing",
+    "subcategory": "Economy",
+    "scale": "csa",
+    "default_enabled": false
   },
   {
     "name": "Total Number of Businesses (CSA)",
     "file": "total_businesses_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/132ea1fbc8c84645b828a1a55406824d/geojson?layers=0",
     "color": "#fb9a99",
-    "description": "CSA-level total count of registered businesses."
+    "description": "CSA-level total count of registered businesses.",
+    "category": "housing",
+    "subcategory": "Economy",
+    "scale": "csa",
+    "default_enabled": false
+  },
+  {
+    "name": "Life Expectancy (CSA)",
+    "file": "life_expectancy_csa.geojson",
+    "url": "https://services1.arcgis.com/mVFRs7NF4iFitgbY/arcgis/rest/services/Lifexp/FeatureServer/0/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#1b9e77",
+    "description": "Baltimore City Health Department life expectancy indicator by Community Statistical Area.",
+    "category": "public_health",
+    "subcategory": "Mortality",
+    "scale": "csa",
+    "default_enabled": true
+  },
+  {
+    "name": "CDC PLACES Asthma (Baltimore Tracts)",
+    "file": "cdc_places_asthma_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CASTHMA_CrudePrev&f=geojson",
+    "color": "#2c7fb8",
+    "heatmap_field": "CASTHMA_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of current asthma in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": true
+  },
+  {
+    "name": "CDC PLACES Diabetes (Baltimore Tracts)",
+    "file": "cdc_places_diabetes_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,DIABETES_CrudePrev&f=geojson",
+    "color": "#41ab5d",
+    "heatmap_field": "DIABETES_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of diagnosed diabetes in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Obesity (Baltimore Tracts)",
+    "file": "cdc_places_obesity_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,OBESITY_CrudePrev&f=geojson",
+    "color": "#fdae6b",
+    "heatmap_field": "OBESITY_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of obesity in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Stroke (Baltimore Tracts)",
+    "file": "cdc_places_stroke_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,STROKE_CrudePrev&f=geojson",
+    "color": "#756bb1",
+    "heatmap_field": "STROKE_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of stroke among adults in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Depression (Baltimore Tracts)",
+    "file": "cdc_places_depression_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,DEPRESSION_CrudePrev&f=geojson",
+    "color": "#dd3497",
+    "heatmap_field": "DEPRESSION_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of diagnosed depression in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Total Population (Baltimore Tracts)",
+    "file": "cdc_places_total_population_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson",
+    "color": "#636363",
+    "heatmap_field": "TotalPopulation",
+    "description": "CDC PLACES tract-level total population and adult population denominators for Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Population & Denominator",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
+    "file": "cdc_places_uninsured_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,ACCESS2_CrudePrev,ACCESS2_Crude95CI&f=geojson",
+    "color": "#8c510a",
+    "heatmap_field": "ACCESS2_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of adults without health insurance in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Care Access",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
+    "file": "cdc_places_annual_checkup_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CHECKUP_CrudePrev,CHECKUP_Crude95CI&f=geojson",
+    "color": "#238b45",
+    "heatmap_field": "CHECKUP_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of adults with an annual routine checkup in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Care Access",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
+    "file": "cdc_places_high_bp_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,BPHIGH_CrudePrev,BPHIGH_Crude95CI&f=geojson",
+    "color": "#cb181d",
+    "heatmap_field": "BPHIGH_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of high blood pressure in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
+    "file": "cdc_places_chd_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CHD_CrudePrev,CHD_Crude95CI&f=geojson",
+    "color": "#6a51a3",
+    "heatmap_field": "CHD_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of coronary heart disease in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Chronic Disease",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
+    "file": "cdc_places_smoking_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,CSMOKING_CrudePrev,CSMOKING_Crude95CI&f=geojson",
+    "color": "#e6550d",
+    "heatmap_field": "CSMOKING_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of current smoking in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Risk Factors",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
+    "file": "cdc_places_physical_inactivity_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,LPA_CrudePrev,LPA_Crude95CI&f=geojson",
+    "color": "#31a354",
+    "heatmap_field": "LPA_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of no leisure-time physical activity in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Risk Factors",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
+    "file": "cdc_places_mental_distress_baltimore_tracts.geojson",
+    "url": "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,MHLTH_CrudePrev,MHLTH_Crude95CI&f=geojson",
+    "color": "#756bb1",
+    "heatmap_field": "MHLTH_CrudePrev",
+    "description": "CDC PLACES tract-level modeled prevalence (%) of frequent mental distress in Baltimore City (with 95% CI).",
+    "category": "public_health",
+    "subcategory": "Behavioral Health",
+    "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "CDC SVI 2022 (Baltimore Tracts)",
+    "file": "cdc_svi_2022_baltimore_tracts.geojson",
+    "url": "https://onemap.cdc.gov/OneMapServices/rest/services/SVI/SVI_consolidated_data/FeatureServer/0/query?where=FIPS%20like%20%2724510______%27%20AND%20ReleaseYear%3D2022%20AND%20GeoLevel%3D%27tract%27%20AND%20Comparison%3D%27national%27&outFields=FIPS,ReleaseYear,GeoLevel,Comparison,Overall_SVI_Percentile,Theme1_Percentile,Theme2_Percentile,Theme3_Percentile,Theme4_Percentile&f=geojson",
+    "color": "#7570b3",
+    "heatmap_field": "Overall_SVI_Percentile",
+    "description": "CDC/ATSDR Social Vulnerability Index 2022 tract percentiles for Baltimore City (national comparison).",
+    "category": "public_health",
+    "subcategory": "Social Vulnerability",
+    "scale": "tract",
+    "default_enabled": true
+  },
+  {
+    "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
+    "file": "hmda_mortgage_2024_baltimore_tracts.geojson",
+    "color": "#08519c",
+    "heatmap_field": "HMDA_OrigLoanSum",
+    "description": "Tract-level 2024 HMDA mortgage activity for Baltimore City derived from FFIEC/CFPB HMDA Data Browser API (applications, originations, denials, loan volume, denial rate).",
+    "download": false,
+    "reason": "Generated locally by aggregating HMDA API CSV and joining to tract geometry",
+    "category": "public_health",
+    "subcategory": "Housing Finance",
+    "scale": "tract",
+    "default_enabled": false
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
     "file": "crime_nibrs_group_a_2022_present.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/204beefe92a645d79fdf0969957bbdf8/geojson?layers=0",
     "color": "#d73027",
-    "description": "NIBRS Group A incident-level crime data (2022-present)."
+    "description": "NIBRS Group A incident-level crime data (2022-present).",
+    "category": "safety",
+    "subcategory": "Crime",
+    "scale": "point",
+    "default_enabled": false
   },
   {
     "name": "Part 1 Crime Data (Legacy SRS)",
     "file": "crime_part_1_legacy_srs.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/e0992dddbbf64231976d5d57763ec4f5/geojson?layers=0",
     "color": "#4575b4",
-    "description": "Legacy Part I (SRS-era) crime incidents for historical trend analysis."
+    "description": "Legacy Part I (SRS-era) crime incidents for historical trend analysis.",
+    "category": "safety",
+    "subcategory": "Crime",
+    "scale": "point",
+    "default_enabled": false
   }
 ]
