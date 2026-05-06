@@ -144,6 +144,53 @@ jobs:
             release-assets/*.AppImage
             release-assets/*.zip
 
+      - name: Validate R2 artifact deployment configuration
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          required=(
+            "R2_ACCESS_KEY_ID"
+            "R2_SECRET_ACCESS_KEY"
+            "R2_BUCKET"
+            "R2_ENDPOINT"
+          )
+          for v in "${required[@]}"; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "Missing required secret: ${v}"
+              exit 1
+            fi
+          done
+
+      - name: Install AWS CLI
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends awscli
+
+      - name: Publish release artifacts to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          DEST="s3://${R2_BUCKET}/worldsim3/releases/${GITHUB_SHA}"
+          aws s3 cp release-assets/ "${DEST}/" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --recursive \
+            --exclude "*" \
+            --include "*.deb" \
+            --include "*.AppImage" \
+            --include "*.zip" \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
   publish-apt-repo:
     name: Publish APT Repository
     runs-on: ubuntu-22.04
@@ -184,36 +231,76 @@ jobs:
           Description: WorldSim3 APT repository
           EOF
 
-      - name: Publish to gh-pages branch
+      - name: Validate R2 deployment configuration
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          APT_BASE_URL: ${{ secrets.APT_BASE_URL }}
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          required=(
+            "R2_ACCESS_KEY_ID"
+            "R2_SECRET_ACCESS_KEY"
+            "R2_BUCKET"
+            "R2_ENDPOINT"
+            "APT_BASE_URL"
+          )
+          for v in "${required[@]}"; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "Missing required secret or variable: ${v}"
+              exit 1
+            fi
+          done
 
-          git fetch origin gh-pages || true
-          if git show-ref --quiet refs/remotes/origin/gh-pages; then
-            git checkout -B gh-pages origin/gh-pages
-          else
-            git checkout --orphan gh-pages
-            git rm -rf . || true
-          fi
-
-          mkdir -p apt
-          rm -rf apt/*
-          cp -a apt-repo/. apt/
-
-          git add apt
-          if git diff --cached --quiet; then
-            echo "No APT repo changes to publish."
-            exit 0
-          fi
-          git commit -m "Update APT repo for ${GITHUB_SHA}"
-          git push origin gh-pages
-
-      - name: Verify published APT endpoints
+      - name: Install AWS CLI
         run: |
           set -euo pipefail
-          BASE_URL="https://juliancoy.github.io/worldsim3/apt"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends awscli
+
+      - name: Publish APT repo to Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          aws s3 sync apt-repo "s3://${R2_BUCKET}/worldsim3/apt" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --delete \
+            --only-show-errors
+
+          # APT index/metadata should refresh quickly for clients.
+          aws s3 cp apt-repo/dists/stable/Release "s3://${R2_BUCKET}/worldsim3/apt/dists/stable/Release" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --cache-control "no-cache, max-age=0, must-revalidate" \
+            --only-show-errors
+          aws s3 cp apt-repo/dists/stable/main/binary-amd64/Packages "s3://${R2_BUCKET}/worldsim3/apt/dists/stable/main/binary-amd64/Packages" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --cache-control "no-cache, max-age=0, must-revalidate" \
+            --only-show-errors
+          aws s3 cp apt-repo/dists/stable/main/binary-amd64/Packages.gz "s3://${R2_BUCKET}/worldsim3/apt/dists/stable/main/binary-amd64/Packages.gz" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --cache-control "no-cache, max-age=0, must-revalidate" \
+            --only-show-errors
+
+          # Package payloads are content-addressed by filename and safe to cache.
+          aws s3 cp apt-repo/pool/main/ "s3://${R2_BUCKET}/worldsim3/apt/pool/main/" \
+            --endpoint-url "${R2_ENDPOINT}" \
+            --recursive \
+            --cache-control "public, max-age=31536000, immutable" \
+            --only-show-errors
+
+      - name: Verify published R2 APT endpoints
+        env:
+          APT_BASE_URL: ${{ secrets.APT_BASE_URL }}
+        run: |
+          set -euo pipefail
+          BASE_URL="${APT_BASE_URL%/}/worldsim3/apt"
           URLS=(
             "${BASE_URL}/dists/stable/Release"
             "${BASE_URL}/dists/stable/main/binary-amd64/Packages"
