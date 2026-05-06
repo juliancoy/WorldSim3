@@ -17,6 +17,21 @@ sudo apt-get update
 sudo apt-get install -y cmake g++ python3 libvulkan-dev vulkan-tools libglfw3-dev xorg-dev libwayland-dev
 ```
 
+## Install release artifacts
+
+After CI produces release artifacts, install/run them with:
+
+```bash
+# Debian package (recommended on Ubuntu/Debian)
+sudo apt install ./worldsim3-<tag>.deb
+
+# AppImage
+chmod +x worldsim3-<tag>.AppImage
+./worldsim3-<tag>.AppImage
+```
+
+Windows artifact output is a zip containing `worldsim3.exe` and `arkavo_connectivity_test.exe` built via MinGW.
+
 ## Run
 
 ```bash

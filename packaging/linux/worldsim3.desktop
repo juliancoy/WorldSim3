@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WorldSim3
+Comment=World simulation and visualization
+Exec=worldsim3
+Icon=worldsim3
+Categories=Science;Education;Graphics;
+Terminal=false

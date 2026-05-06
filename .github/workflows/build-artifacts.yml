@@ -1,0 +1,84 @@
+name: Build Release Artifacts
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux-packages:
+    name: Linux Packages (.deb + AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Install Linux packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            cmake \
+            wget \
+            file \
+            dpkg-dev \
+            zip \
+            libvulkan-dev \
+            libglfw3-dev \
+            libcurl4-openssl-dev \
+            libssl-dev
+
+      - name: Build Linux release packages
+        run: ./scripts/package-linux.sh "${SHORT_SHA}"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-deb-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}.deb
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-appimage-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}.AppImage
+
+  build-windows-mingw:
+    name: Windows .exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        shell: bash
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Configure (MSVC)
+        shell: bash
+        run: cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (MSVC)
+        shell: bash
+        run: cmake --build build-windows --config Release
+
+      - name: Package Windows artifacts
+        shell: bash
+        run: |
+          mkdir -p dist/windows
+          cp -v build-windows/Release/worldsim3.exe dist/windows/
+          cp -v build-windows/Release/arkavo_connectivity_test.exe dist/windows/
+          (cd dist && zip -r "worldsim3-${SHORT_SHA}-windows.zip" windows)
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-exe-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}-windows.zip
