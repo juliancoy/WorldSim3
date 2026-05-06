@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
@@ -36,7 +37,9 @@ bool downloadUrlToFile(const std::string& url, const fs::path& out_path, std::st
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
     CURLcode rc = curl_easy_perform(curl);
@@ -87,7 +90,11 @@ static std::string toHexU64(uint64_t v) {
 static std::string isoNowUtcCompact() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &t);
+#else
     gmtime_r(&t, &tm);
+#endif
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y%m%dT%H%M%SZ", &tm);
     return std::string(buf);
@@ -240,7 +247,9 @@ VersionedDownloadResult downloadUrlVersioned(
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 180L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
@@ -429,4 +438,97 @@ std::vector<json> readLayerManifestEntries(const fs::path& root) {
     out.reserve(arr.size());
     for (const auto& e : arr) out.push_back(e);
     return out;
+}
+
+std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std::string& phase) {
+    if (phase == "all" || phase.empty()) return root / "layers_manifest.json";
+    if (phase == "must-have") return root / "layers_manifest.must_have.json";
+    if (phase == "nice-to-have") return root / "layers_manifest.nice_to_have.json";
+    if (phase == "heavy-data") return root / "layers_manifest.heavy_data.json";
+    if (phase == "capital-flows") return root / "layers_manifest.capital_flows.json";
+    fs::path p(phase);
+    return p.is_absolute() ? p : root / p;
+}
+
+static fs::path layerOutputDirForManifestItem(const fs::path& root, const json& item) {
+    if (item.contains("directory") && item["directory"].is_string()) {
+        fs::path p(item["directory"].get<std::string>());
+        return p.is_absolute() ? p : root / p;
+    }
+    if (item.value("category", std::string()) == "capital-flows") {
+        return root / "data" / "capital_flows";
+    }
+    return root / "data" / "layers";
+}
+
+LayerDownloadSummary downloadLayerManifestPhase(
+    const fs::path& root,
+    const std::string& phase,
+    bool include_large,
+    const std::function<void(size_t, size_t, const std::string&)>& on_progress) {
+    LayerDownloadSummary summary;
+    const fs::path manifest_path = layerManifestPathForPhase(root, phase);
+    std::ifstream in(manifest_path);
+    if (!in) {
+        summary.failed = 1;
+        summary.messages.push_back("manifest not found: " + manifest_path.string());
+        return summary;
+    }
+
+    json items;
+    try {
+        in >> items;
+    } catch (const std::exception& e) {
+        summary.failed = 1;
+        summary.messages.push_back("manifest parse failed: " + std::string(e.what()));
+        return summary;
+    }
+    if (!items.is_array()) {
+        summary.failed = 1;
+        summary.messages.push_back("manifest is not an array: " + manifest_path.string());
+        return summary;
+    }
+
+    summary.total = items.size();
+    for (size_t i = 0; i < items.size(); ++i) {
+        const json& item = items[i];
+        const std::string name = item.value("name", std::string("unnamed"));
+        auto report = [&](const std::string& msg) {
+            summary.messages.push_back(msg);
+            if (on_progress) on_progress(i + 1, items.size(), msg);
+        };
+
+        if (item.value("download", true) == false) {
+            summary.skipped++;
+            report("skipped " + name + ": " + item.value("reason", std::string("metadata/API/manual source")));
+            continue;
+        }
+        if (item.value("large", false) && !include_large) {
+            summary.skipped++;
+            report("skipped " + name + ": large source; rerun with --include-large");
+            continue;
+        }
+        if (!item.contains("url") || !item["url"].is_string() || !item.contains("file") || !item["file"].is_string()) {
+            summary.failed++;
+            report("failed " + name + ": missing url or file");
+            continue;
+        }
+
+        const std::string file = item["file"].get<std::string>();
+        const fs::path out_path = layerOutputDirForManifestItem(root, item) / file;
+        report("downloading " + name + " -> " + out_path.string());
+        VersionedDownloadResult res = downloadUrlVersioned(
+            item["url"].get<std::string>(),
+            out_path,
+            root / "data" / "versions");
+        if (res.ok) {
+            summary.downloaded++;
+            report((res.not_modified ? "checked " : "downloaded ") + file + ": " + res.message);
+        } else {
+            summary.failed++;
+            report("failed " + name + ": " + res.message);
+        }
+    }
+
+    return summary;
 }

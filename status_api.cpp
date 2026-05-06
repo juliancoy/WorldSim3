@@ -8,16 +8,50 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#if !defined(_WIN32)
 #include <sys/resource.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+
+namespace {
+struct ResourceUsageSnapshot {
+    double user_cpu_seconds = 0.0;
+    double system_cpu_seconds = 0.0;
+    long long max_rss_kb = 0;
+    long long voluntary_context_switches = 0;
+    long long involuntary_context_switches = 0;
+};
+
+ResourceUsageSnapshot readResourceUsage() {
+    ResourceUsageSnapshot out;
+#if !defined(_WIN32)
+    struct rusage ru{};
+    getrusage(RUSAGE_SELF, &ru);
+    auto tv_sec_d = [](const timeval& tv) {
+        return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+    };
+    out.user_cpu_seconds = tv_sec_d(ru.ru_utime);
+    out.system_cpu_seconds = tv_sec_d(ru.ru_stime);
+    out.max_rss_kb = (long long)ru.ru_maxrss;
+    out.voluntary_context_switches = (long long)ru.ru_nvcsw;
+    out.involuntary_context_switches = (long long)ru.ru_nivcsw;
+#endif
+    return out;
+}
+
+int currentProcessId() {
+#if defined(_WIN32)
+    return _getpid();
+#else
+    return getpid();
+#endif
+}
+}
 
 std::thread startStatusApiWorker(StatusApiContext ctx) {
     return std::thread([ctx]() mutable {
@@ -77,21 +111,22 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         const int kProtocolVersion = ctx.protocol_version;
         const size_t kMaxTileCache = ctx.tile_cache_max;
 
-        int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0) return;
+        if (!initNetworkSockets()) return;
+        NetSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd == kInvalidNetSocket) return;
         int opt = 1;
-        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(8787);
         if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         if (listen(server_fd, 8) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
 
@@ -101,15 +136,15 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
             FD_SET(server_fd, &readfds);
             timeval tv{};
             tv.tv_sec = 1;
-            int sel = select(server_fd + 1, &readfds, nullptr, nullptr, &tv);
+            int sel = select(static_cast<int>(server_fd + 1), &readfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
-            int client_fd = accept(server_fd, nullptr, nullptr);
-            if (client_fd < 0) continue;
+            NetSocket client_fd = accept(server_fd, nullptr, nullptr);
+            if (client_fd == kInvalidNetSocket) continue;
 
             char buf[1024];
-            ssize_t n = read(client_fd, buf, sizeof(buf) - 1);
+            NetSSize n = netRead(client_fd, buf, sizeof(buf) - 1);
             if (n <= 0) {
-                close(client_fd);
+                netClose(client_fd);
                 continue;
             }
             buf[n] = '\0';
@@ -388,23 +423,20 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         profile_reset_generation++;
                     }
                     send_json(200, "OK", {{"ok", true}, {"profile_generation", profile_reset_generation}});
-                    close(client_fd);
+                    netClose(client_fd);
                     continue;
                 }
                 if (path == "/profile/layers") {
                     json out = build_layer_profile();
                     out["ok"] = true;
                     send_json(200, "OK", out);
-                    close(client_fd);
+                    netClose(client_fd);
                     continue;
                 }
-                struct rusage ru{};
-                getrusage(RUSAGE_SELF, &ru);
-                auto tv_sec_d = [](const timeval& tv) {
-                    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
-                };
+                const ResourceUsageSnapshot ru = readResourceUsage();
                 size_t vm_rss_kb = 0;
                 size_t threads = 0;
+#if !defined(_WIN32)
                 {
                     std::ifstream status_in("/proc/self/status");
                     std::string key;
@@ -418,6 +450,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         std::getline(status_in, rest);
                     }
                 }
+#endif
                 std::vector<ProfileFrameSample> samples;
                 uint64_t profile_generation = 0;
                 {
@@ -439,14 +472,14 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["ok"] = true;
                 out["profile_generation"] = profile_generation;
                 out["process"] = {
-                    {"pid", (int)getpid()},
+                    {"pid", currentProcessId()},
                     {"vm_rss_kb", vm_rss_kb},
                     {"threads", threads},
-                    {"user_cpu_seconds", tv_sec_d(ru.ru_utime)},
-                    {"system_cpu_seconds", tv_sec_d(ru.ru_stime)},
-                    {"max_rss_kb", (long long)ru.ru_maxrss},
-                    {"voluntary_context_switches", (long long)ru.ru_nvcsw},
-                    {"involuntary_context_switches", (long long)ru.ru_nivcsw}
+                    {"user_cpu_seconds", ru.user_cpu_seconds},
+                    {"system_cpu_seconds", ru.system_cpu_seconds},
+                    {"max_rss_kb", ru.max_rss_kb},
+                    {"voluntary_context_switches", ru.voluntary_context_switches},
+                    {"involuntary_context_switches", ru.involuntary_context_switches}
                 };
                 out["frame"] = {
                     {"frame_ms_avg", perf_frame_ms_avg.load(std::memory_order_relaxed)},
@@ -565,9 +598,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
             }
-            close(client_fd);
+            netClose(client_fd);
         }
-        close(server_fd);
+        netClose(server_fd);
     
     });
 }

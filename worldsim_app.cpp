@@ -68,11 +68,6 @@
 #include <cctype>
 #include <cfloat>
 #include <random>
-#include <sys/socket.h>
-#include <sys/resource.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <unistd.h>
 #include "earcut.hpp"
 
 using json = nlohmann::json;

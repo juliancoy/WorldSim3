@@ -7,11 +7,6 @@
 #include <fstream>
 #include <sstream>
 #include <system_error>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <unistd.h>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -26,21 +21,22 @@ std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
         const char* kAppVersion = ctx.app_version;
         const int kProtocolVersion = ctx.protocol_version;
 
-        int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (server_fd < 0) return;
+        if (!initNetworkSockets()) return;
+        NetSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (server_fd == kInvalidNetSocket) return;
         int opt = 1;
-        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
 
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons(8788);
         if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         if (listen(server_fd, 16) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         auto parse_q = [](const std::string& query, const std::string& key) -> std::string {
@@ -56,7 +52,7 @@ std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
             }
             return {};
         };
-        auto send_json = [&](int cfd, int code, const json& j) {
+        auto send_json = [&](NetSocket cfd, int code, const json& j) {
             const std::string body = j.dump();
             const char* reason = code == 200 ? "OK" : (code == 404 ? "Not Found" : "Bad Request");
             std::ostringstream os;
@@ -74,15 +70,15 @@ std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
             FD_SET(server_fd, &readfds);
             timeval tv{};
             tv.tv_sec = 1;
-            int sel = select(server_fd + 1, &readfds, nullptr, nullptr, &tv);
+            int sel = select(static_cast<int>(server_fd + 1), &readfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
-            int client_fd = accept(server_fd, nullptr, nullptr);
-            if (client_fd < 0) continue;
+            NetSocket client_fd = accept(server_fd, nullptr, nullptr);
+            if (client_fd == kInvalidNetSocket) continue;
 
             char buf[4096];
-            ssize_t n = read(client_fd, buf, sizeof(buf) - 1);
+            NetSSize n = netRead(client_fd, buf, sizeof(buf) - 1);
             if (n <= 0) {
-                close(client_fd);
+                netClose(client_fd);
                 continue;
             }
             buf[n] = '\0';
@@ -196,9 +192,9 @@ std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
             } else {
                 send_json(client_fd, 404, json{{"ok", false}, {"error", "not found"}});
             }
-            close(client_fd);
+            netClose(client_fd);
         }
-        close(server_fd);
+        netClose(server_fd);
     
     });
 }
@@ -210,16 +206,17 @@ std::thread startLanDiscoveryWorker(DatasetLanApiContext ctx) {
         const char* kAppVersion = ctx.app_version;
         const int kProtocolVersion = ctx.protocol_version;
 
-        int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0) return;
+        if (!initNetworkSockets()) return;
+        NetSocket sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock == kInvalidNetSocket) return;
         int opt = 1;
-        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons(8789);
         if (bind(sock, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(sock);
+            netClose(sock);
             return;
         }
         while (!hydration_stop.load(std::memory_order_relaxed)) {
@@ -228,12 +225,12 @@ std::thread startLanDiscoveryWorker(DatasetLanApiContext ctx) {
             FD_SET(sock, &rfds);
             timeval tv{};
             tv.tv_sec = 1;
-            int sel = select(sock + 1, &rfds, nullptr, nullptr, &tv);
+            int sel = select(static_cast<int>(sock + 1), &rfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
             sockaddr_in src{};
-            socklen_t slen = sizeof(src);
+            NetSockLen slen = sizeof(src);
             char buf[2048];
-            ssize_t n = recvfrom(sock, buf, sizeof(buf) - 1, 0, (sockaddr*)&src, &slen);
+            NetSSize n = netRecvFrom(sock, buf, sizeof(buf) - 1, (sockaddr*)&src, &slen);
             if (n <= 0) continue;
             buf[n] = '\0';
             std::string msg(buf);
@@ -251,9 +248,9 @@ std::thread startLanDiscoveryWorker(DatasetLanApiContext ctx) {
                 {"ip", std::string(ipbuf)}
             };
             std::string body = out.dump();
-            (void)sendto(sock, body.data(), body.size(), 0, (sockaddr*)&src, slen);
+            (void)netSendTo(sock, body.data(), body.size(), (sockaddr*)&src, slen);
         }
-        close(sock);
+        netClose(sock);
     
     });
 }

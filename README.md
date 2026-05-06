@@ -1,3 +1,5 @@
+![WorldSim3 running app screenshot](docs/assets/worldsim3-running.png)
+
 # Baltimore Vulkan Economic Map
 
 Pure C++/Vulkan app (no Qt) with Vulkan-rendered UI and local Baltimore economic/public-data layers.
@@ -51,7 +53,7 @@ chmod +x worldsim3-<tag>.AppImage
 ./worldsim3-<tag>.AppImage
 ```
 
-Windows artifact output is a zip containing `worldsim3.exe` and `arkavo_connectivity_test.exe` built in CI on `windows-latest` via MSVC (`Visual Studio 2022`).
+Windows artifact output is a zip containing `worldsim3.exe`, `arkavo_connectivity_test.exe`, and any app-local runtime DLLs built in CI on `windows-latest` via MSVC (`Visual Studio 2022`). During CI, the executable is built at `build-windows/Release/worldsim3.exe`, copied to `dist/windows/worldsim3.exe`, zipped as `dist/worldsim3-<short-sha>-windows.zip`, uploaded as the GitHub Actions artifact `worldsim3-exe-<full-sha>`, attached to the prerelease tag `build-<full-sha>`, and published to Cloudflare R2 under `worldsim3/releases/<full-sha>/`.
 
 Local cross-build with MinGW is supported via `scripts/ci-local.sh`, but requires a MinGW-compatible Vulkan loader import library and headers (for example via `vcpkg` `x64-mingw-dynamic`).
 
@@ -66,6 +68,15 @@ Local cross-build with MinGW is supported via `scripts/ci-local.sh`, but require
 2. Launch it
 
 The app no longer auto-downloads all data at startup. Use the in-app `Library` window and per-layer `D` button to download missing datasets on demand.
+
+Native bulk dataset downloads are also available without Python:
+
+```bash
+./build/worldsim3 --download-layers must-have
+./build/worldsim3 --download-layers all
+```
+
+Set `WORLD_SIM3_PRELOAD_DATA=1` before launch to download at startup; use `WORLD_SIM3_PRELOAD_PHASE=must-have` to limit the preload phase.
 
 LAN sharing and peer signaling are available while the app runs:
 - Status API (local only): `http://127.0.0.1:8787/status`

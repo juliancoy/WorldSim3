@@ -22,6 +22,19 @@ Optional preload mode:
 WORLD_SIM3_PRELOAD_DATA=1 ./run.sh
 ```
 
+Native preload/downloads do not require Python:
+
+```bash
+# Download the compact core set and exit
+./build/worldsim3 --download-layers must-have
+
+# Download the full default manifest and exit
+./build/worldsim3 --download-layers all
+
+# Download before launching the app
+WORLD_SIM3_PRELOAD_DATA=1 WORLD_SIM3_PRELOAD_PHASE=must-have ./build/worldsim3
+```
+
 ## Layer download phases
 
 Use phased manifests to control download volume:

@@ -1,11 +1,69 @@
 #include "net_http_utils.h"
 
-#include <unistd.h>
+#include <atomic>
+#include <mutex>
 
-bool writeAll(int fd, const char* data, size_t len) {
+bool initNetworkSockets() {
+#if defined(_WIN32)
+    static std::once_flag once;
+    static std::atomic<bool> ok{false};
+    std::call_once(once, []() {
+        WSADATA data{};
+        ok.store(WSAStartup(MAKEWORD(2, 2), &data) == 0, std::memory_order_relaxed);
+    });
+    return ok.load(std::memory_order_relaxed);
+#else
+    return true;
+#endif
+}
+
+void shutdownNetworkSockets() {
+#if defined(_WIN32)
+    WSACleanup();
+#endif
+}
+
+int netClose(NetSocket fd) {
+#if defined(_WIN32)
+    return closesocket(fd);
+#else
+    return close(fd);
+#endif
+}
+
+NetSSize netRead(NetSocket fd, char* data, size_t len) {
+#if defined(_WIN32)
+    return recv(fd, data, static_cast<int>(len), 0);
+#else
+    return read(fd, data, len);
+#endif
+}
+
+NetSSize netRecvFrom(NetSocket fd, char* data, size_t len, sockaddr* from, NetSockLen* from_len) {
+#if defined(_WIN32)
+    return recvfrom(fd, data, static_cast<int>(len), 0, from, from_len);
+#else
+    return recvfrom(fd, data, len, 0, from, from_len);
+#endif
+}
+
+NetSSize netSendTo(NetSocket fd, const char* data, size_t len, const sockaddr* to, NetSockLen to_len) {
+#if defined(_WIN32)
+    return sendto(fd, data, static_cast<int>(len), 0, to, to_len);
+#else
+    return sendto(fd, data, len, 0, to, to_len);
+#endif
+}
+
+bool writeAll(NetSocket fd, const char* data, size_t len) {
     size_t sent = 0;
     while (sent < len) {
-        ssize_t n = write(fd, data + sent, len - sent);
+        NetSSize n = 0;
+#if defined(_WIN32)
+        n = send(fd, data + sent, static_cast<int>(len - sent), 0);
+#else
+        n = write(fd, data + sent, len - sent);
+#endif
         if (n <= 0) return false;
         sent += (size_t)n;
     }

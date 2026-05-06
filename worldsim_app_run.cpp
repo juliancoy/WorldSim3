@@ -49,35 +49,102 @@
 #include <fstream>
 #include <future>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <mutex>
+#include <numbers>
 #include <optional>
 #include <random>
 #include <sstream>
 #include <string>
-#include <sys/resource.h>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
 
 #include "earcut.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+namespace {
+int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool include_large) {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    std::cout << "Using app root: " << root.string() << "\n";
+    std::cout << "Using manifest phase: " << (phase.empty() ? "all" : phase) << "\n";
+    LayerDownloadSummary summary = downloadLayerManifestPhase(
+        root,
+        phase.empty() ? "all" : phase,
+        include_large,
+        [](size_t i, size_t total, const std::string& msg) {
+            std::cout << "[" << i << "/" << total << "] " << msg << "\n";
+        });
+    curl_global_cleanup();
+    std::cout << "Done. downloaded=" << summary.downloaded
+              << " skipped=" << summary.skipped
+              << " failed=" << summary.failed
+              << " total=" << summary.total << "\n";
+    return summary.failed == 0 ? 0 : 1;
+}
+
+bool envEnabled(const char* name) {
+    const char* value = std::getenv(name);
+    if (!value || !*value) return false;
+    std::string s = toLowerAscii(value);
+    return s != "0" && s != "false" && s != "no" && s != "off";
+}
+}
+
 int runWorldSim3App(int argc, char** argv) {
 
+    fs::path root = resolveAppRoot(fs::current_path(), argc > 0 ? argv[0] : nullptr);
+    std::string download_phase;
+    bool download_layers_cli = false;
+    bool include_large_downloads = false;
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--vacancy-selftest") {
-            return runVacancySelftest(fs::current_path());
+        std::string arg(argv[i]);
+        if (arg == "--vacancy-selftest") {
+            return runVacancySelftest(root);
+        }
+        if (arg == "--download-layers") {
+            download_layers_cli = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                download_phase = argv[++i];
+            } else {
+                download_phase = "all";
+            }
+        } else if (arg.rfind("--download-layers=", 0) == 0) {
+            download_layers_cli = true;
+            download_phase = arg.substr(std::strlen("--download-layers="));
+        } else if (arg == "--include-large") {
+            include_large_downloads = true;
+        } else if (arg == "--help" || arg == "-h") {
+            std::cout
+                << "Usage: worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows]] [--include-large]\n"
+                << "       worldsim3 --vacancy-selftest\n";
+            return 0;
         }
     }
-    fs::path root = fs::current_path();
+    if (download_layers_cli) {
+        return runLayerDownloadCli(root, download_phase.empty() ? "all" : download_phase, include_large_downloads);
+    }
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (envEnabled("WORLD_SIM3_PRELOAD_DATA")) {
+        const char* phase_env = std::getenv("WORLD_SIM3_PRELOAD_PHASE");
+        const std::string preload_phase = (phase_env && *phase_env) ? std::string(phase_env) : "all";
+        LayerDownloadSummary summary = downloadLayerManifestPhase(
+            root,
+            preload_phase,
+            envEnabled("WORLD_SIM3_INCLUDE_LARGE"),
+            [](size_t i, size_t total, const std::string& msg) {
+                std::cout << "[preload " << i << "/" << total << "] " << msg << "\n";
+            });
+        if (summary.failed > 0) {
+            std::cerr << "Preload completed with " << summary.failed << " failed downloads.\n";
+        }
+    }
+
     AppSettings app_settings;
     app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
     app_settings = loadAppSettings(root, app_settings);
@@ -136,8 +203,6 @@ int runWorldSim3App(int argc, char** argv) {
         check_vk_result(vkDeviceWaitIdle(g_Device));
         ImGui_ImplVulkan_DestroyFontsTexture();
     }
-
-    curl_global_init(CURL_GLOBAL_DEFAULT);
 
     BootstrapProgress bootstrap;
     bootstrap.running.store(false, std::memory_order_relaxed);
@@ -502,6 +567,12 @@ int runWorldSim3App(int argc, char** argv) {
     size_t data_library_rendered_rows_last = 0;
     std::vector<FreshnessState> data_freshness_state(layers.size(), FreshnessState::Unknown);
     std::vector<std::string> data_freshness_msg(layers.size(), "");
+    int data_library_download_phase = 0;
+    bool data_library_include_large = false;
+    bool data_library_bulk_inflight = false;
+    std::mutex data_library_bulk_mutex;
+    std::string data_library_bulk_progress;
+    std::future<LayerDownloadSummary> data_library_bulk_future;
     bool filter_enabled = false;
     bool filter_use_date = false;
     int filter_year_min = 2000;
@@ -1446,6 +1517,28 @@ int runWorldSim3App(int argc, char** argv) {
                         case FreshnessState::Unknown: default: return ImVec4(0.30f, 0.45f, 0.72f, 1.0f);
                     }
                 };
+                const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows"};
+                if (data_library_bulk_inflight && data_library_bulk_future.valid() &&
+                    data_library_bulk_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                    LayerDownloadSummary summary = data_library_bulk_future.get();
+                    data_library_bulk_inflight = false;
+                    data_library_status_msg = "Downloaded phase: " + std::to_string(summary.downloaded) +
+                        " fetched/checked, " + std::to_string(summary.skipped) +
+                        " skipped, " + std::to_string(summary.failed) + " failed";
+                    {
+                        std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
+                        data_library_bulk_progress.clear();
+                    }
+                    for (size_t i = 0; i < layers.size(); ++i) {
+                        if (fs::exists(root / "data" / "layers" / layers[i].file)) {
+                            data_freshness_state[i] = FreshnessState::UpToDate;
+                            if (data_freshness_msg[i].empty() || data_freshness_msg[i] == "not downloaded") {
+                                data_freshness_msg[i] = "downloaded";
+                            }
+                            enqueue_hydration(i, true);
+                        }
+                    }
+                }
                 ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", data_library_query, sizeof(data_library_query));
                 ImGui::SameLine();
                 if (ImGui::Button("Clear")) data_library_query[0] = '\0';
@@ -1468,6 +1561,43 @@ int runWorldSim3App(int argc, char** argv) {
                         if (cr.state == FreshnessState::UpdateAvailable) updates++;
                     }
                     data_library_status_msg = "Checked " + std::to_string(checked) + " datasets; updates available: " + std::to_string(updates);
+                }
+                ImGui::Separator();
+                ImGui::SetNextItemWidth(150.0f);
+                ImGui::Combo("Download phase", &data_library_download_phase, download_phases, IM_ARRAYSIZE(download_phases));
+                ImGui::SameLine();
+                ImGui::Checkbox("Include large", &data_library_include_large);
+                ImGui::SameLine();
+                ImGui::BeginDisabled(data_library_bulk_inflight);
+                if (ImGui::Button("Download Phase")) {
+                    const std::string phase = download_phases[data_library_download_phase];
+                    const bool include_large = data_library_include_large;
+                    {
+                        std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
+                        data_library_bulk_progress = "Starting " + phase + " download";
+                    }
+                    data_library_status_msg = "Downloading " + phase + " in background";
+                    data_library_bulk_inflight = true;
+                    data_library_bulk_future = std::async(std::launch::async, [root, phase, include_large, &data_library_bulk_mutex, &data_library_bulk_progress]() {
+                        return downloadLayerManifestPhase(
+                            root,
+                            phase,
+                            include_large,
+                            [&data_library_bulk_mutex, &data_library_bulk_progress](size_t i, size_t total, const std::string& msg) {
+                                std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
+                                data_library_bulk_progress = "[" + std::to_string(i) + "/" + std::to_string(total) + "] " + msg;
+                            });
+                    });
+                }
+                ImGui::EndDisabled();
+                if (data_library_bulk_inflight) {
+                    std::string progress;
+                    {
+                        std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
+                        progress = data_library_bulk_progress;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", progress.empty() ? "Downloading..." : progress.c_str());
                 }
                 size_t downloaded_count = 0;
                 for (const auto& l : layers) {
@@ -1706,50 +1836,58 @@ int runWorldSim3App(int argc, char** argv) {
         if (!arkavo_err.empty()) ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "arkavo: %s", arkavo_err.c_str());
         if (ImGui::Button("Scan LAN Peers")) {
             lan_peers.clear();
-            int s = ::socket(AF_INET, SOCK_DGRAM, 0);
-            if (s < 0) {
-                lan_scan_status = "Scan failed: socket error";
+            if (!initNetworkSockets()) {
+                lan_scan_status = "Scan failed: network init error";
             } else {
-                int on = 1;
-                setsockopt(s, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
-                timeval rcv_to{};
-                rcv_to.tv_sec = 0;
-                rcv_to.tv_usec = 700000;
-                setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
-                sockaddr_in dst{};
-                dst.sin_family = AF_INET;
-                dst.sin_port = htons(8789);
-                dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-                const char* probe = "WS3_DISCOVER_V1";
-                (void)sendto(s, probe, std::strlen(probe), 0, (sockaddr*)&dst, sizeof(dst));
-                std::unordered_set<std::string> seen;
-                for (;;) {
-                    sockaddr_in src{};
-                    socklen_t slen = sizeof(src);
-                    char rbuf[4096];
-                    ssize_t rn = recvfrom(s, rbuf, sizeof(rbuf) - 1, 0, (sockaddr*)&src, &slen);
-                    if (rn <= 0) break;
-                    rbuf[rn] = '\0';
-                    json jr = json::parse(std::string(rbuf), nullptr, false);
-                    if (jr.is_discarded()) continue;
-                    char ipbuf[INET_ADDRSTRLEN] = {0};
-                    inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof(ipbuf));
-                    const std::string ip(ipbuf);
-                    if (seen.count(ip)) continue;
-                    seen.insert(ip);
-                    LanPeerInfo p;
-                    p.ip = ip;
-                    p.app_version = jr.value("app_version", "");
-                    p.protocol_version = jr.value("protocol_version", 0);
-                    p.dataset_port = jr.value("dataset_port", 8788);
-                    p.protocol_match = (p.protocol_version == kProtocolVersion);
-                    lan_peers.push_back(std::move(p));
+                NetSocket s = ::socket(AF_INET, SOCK_DGRAM, 0);
+                if (s == kInvalidNetSocket) {
+                    lan_scan_status = "Scan failed: socket error";
+                } else {
+                    int on = 1;
+                    setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof(on));
+#if defined(_WIN32)
+                    DWORD rcv_to = 700;
+#else
+                    timeval rcv_to{};
+                    rcv_to.tv_sec = 0;
+                    rcv_to.tv_usec = 700000;
+#endif
+                    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&rcv_to), sizeof(rcv_to));
+                    sockaddr_in dst{};
+                    dst.sin_family = AF_INET;
+                    dst.sin_port = htons(8789);
+                    dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+                    const char* probe = "WS3_DISCOVER_V1";
+                    (void)netSendTo(s, probe, std::strlen(probe), (sockaddr*)&dst, sizeof(dst));
+                    std::unordered_set<std::string> seen;
+                    for (;;) {
+                        sockaddr_in src{};
+                        NetSockLen slen = sizeof(src);
+                        char rbuf[4096];
+                        NetSSize rn = netRecvFrom(s, rbuf, sizeof(rbuf) - 1, (sockaddr*)&src, &slen);
+                        if (rn <= 0) break;
+                        rbuf[rn] = '\0';
+                        json jr = json::parse(std::string(rbuf), nullptr, false);
+                        if (jr.is_discarded()) continue;
+                        char ipbuf[INET_ADDRSTRLEN] = {0};
+                        inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof(ipbuf));
+                        const std::string ip(ipbuf);
+                        if (seen.count(ip)) continue;
+                        seen.insert(ip);
+                        LanPeerInfo p;
+                        p.ip = ip;
+                        p.app_version = jr.value("app_version", "");
+                        p.protocol_version = jr.value("protocol_version", 0);
+                        p.dataset_port = jr.value("dataset_port", 8788);
+                        p.protocol_match = (p.protocol_version == kProtocolVersion);
+                        lan_peers.push_back(std::move(p));
+                    }
+                    netClose(s);
+                    size_t compatible = 0;
+                    for (const auto& p : lan_peers) if (p.protocol_match) compatible++;
+                    lan_scan_status = "Peers: " + std::to_string(lan_peers.size()) +
+                                      " | Compatible protocol: " + std::to_string(compatible);
                 }
-                close(s);
-                size_t compatible = 0;
-                for (const auto& p : lan_peers) if (p.protocol_match) compatible++;
-                lan_scan_status = "Peers: " + std::to_string(lan_peers.size()) +
-                                  " | Compatible protocol: " + std::to_string(compatible);
             }
         }
         ImGui::SameLine();
@@ -2371,7 +2509,7 @@ int runWorldSim3App(int argc, char** argv) {
                 double lat_sum = 0.0;
                 for (const auto& p : ring) lat_sum += (double)p.y;
                 const double lat0 = lat_sum / (double)ring.size();
-                const double cos_lat = std::cos(lat0 * M_PI / 180.0);
+                const double cos_lat = std::cos(lat0 * std::numbers::pi / 180.0);
                 const double sx = deg_to_m_lat * cos_lat;
                 const double sy = deg_to_m_lat;
                 double a = 0.0;
@@ -3371,6 +3509,14 @@ int runWorldSim3App(int argc, char** argv) {
             std::memcpy(&bits, &v, sizeof(bits));
             hash_combine_u64(seed, (uint64_t)bits);
         };
+        auto hash_combine_qd = [&](uint64_t& seed, double v, double scale) {
+            if (!std::isfinite(v)) {
+                hash_combine_u64(seed, 0xffffffffffffffffULL);
+                return;
+            }
+            const int64_t q = (int64_t)std::llround(v * scale);
+            hash_combine_u64(seed, (uint64_t)q);
+        };
         const float global_heat_cell = std::max(4.0f, global_heat_cell_px);
         std::vector<HeatSample> heat_samples;
         auto resolve_layer_heat_settings = [&](size_t layer_idx, HeatSample& hs) {
@@ -3386,7 +3532,6 @@ int runWorldSim3App(int argc, char** argv) {
             hs.multires_blend = std::clamp(use_global || layer_idx >= layer_heatmap_multires_blend.size() ? heatmap_multires_blend : layer_heatmap_multires_blend[layer_idx], 0.0f, 1.0f);
         };
         bool smooth_only_heatmap = true;
-        bool smooth_heatmap_zoom_adaptive = false;
         bool any_active_heatmap = false;
         for (size_t i = 0; i < layers.size(); ++i) {
             const bool active_heatmap =
@@ -3399,17 +3544,19 @@ int runWorldSim3App(int argc, char** argv) {
             any_active_heatmap = true;
             const int algo = (i < layer_heatmap_algo.size() && layer_heatmap_algo[i] >= 0) ? layer_heatmap_algo[i] : heatmap_algo;
             if (algo != 1 && algo != 2 && algo != 4) smooth_only_heatmap = false;
-            if (algo == 1 || algo == 2 || algo == 4) {
-                const bool use_global = i >= layer_heatmap_use_global_settings.size() || layer_heatmap_use_global_settings[i];
-                const bool adaptive = use_global || i >= layer_heatmap_zoom_adaptive_bandwidth.size()
-                    ? heatmap_zoom_adaptive_bandwidth
-                    : layer_heatmap_zoom_adaptive_bandwidth[i];
-                smooth_heatmap_zoom_adaptive = smooth_heatmap_zoom_adaptive || adaptive;
-            }
         }
         if (!any_active_heatmap) smooth_only_heatmap = false;
         uint64_t heatmap_key = 1469598103934665603ULL;
-        if (!smooth_only_heatmap || smooth_heatmap_zoom_adaptive) hash_combine_u64(heatmap_key, (uint64_t)zoom);
+        hash_combine_u64(heatmap_key, (uint64_t)zoom);
+        hash_combine_u64(heatmap_key, (uint64_t)math_zoom);
+        hash_combine_qd(heatmap_key, center_lon, 10000000.0);
+        hash_combine_qd(heatmap_key, center_lat, 10000000.0);
+        hash_combine_qd(heatmap_key, view_min_lon, 10000000.0);
+        hash_combine_qd(heatmap_key, view_min_lat, 10000000.0);
+        hash_combine_qd(heatmap_key, view_max_lon, 10000000.0);
+        hash_combine_qd(heatmap_key, view_max_lat, 10000000.0);
+        hash_combine_u64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.x)));
+        hash_combine_u64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.y)));
         hash_combine_f(heatmap_key, global_heat_cell_px);
         hash_combine_u64(heatmap_key, (uint64_t)heatmap_algo);
         hash_combine_u64(heatmap_key, (uint64_t)heatmap_quality_preset);
@@ -3501,6 +3648,12 @@ int runWorldSim3App(int argc, char** argv) {
         for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
             auto& l = layers[layer_idx];
             if (!l.enabled) continue;
+            const bool project_to_parcels_only =
+                (vacant_notice_layer_idx >= 0 && (int)layer_idx == vacant_notice_layer_idx) ||
+                (vacant_rehab_layer_idx >= 0 && (int)layer_idx == vacant_rehab_layer_idx) ||
+                (tax_lien_layer_idx >= 0 && (int)layer_idx == tax_lien_layer_idx) ||
+                (tax_sale_layer_idx >= 0 && (int)layer_idx == tax_sale_layer_idx);
+            if (project_to_parcels_only) continue;
             const bool is_zoning_layer = ((int)layer_idx == zoning_layer_idx);
             const bool is_heat_layer = !l.heatmap_field.empty();
             float heat_min = std::numeric_limits<float>::infinity();
@@ -3812,13 +3965,7 @@ int runWorldSim3App(int argc, char** argv) {
         const auto overlay_prof_begin = std::chrono::steady_clock::now();
         // Render vacant overlays as a final top pass so they remain visible regardless of layer order.
         size_t visible_vacant_parcels_counter = 0;
-        const bool parcel_uses_heatmap =
-            parcel_layer_idx >= 0 &&
-            (size_t)parcel_layer_idx < layer_heatmap_enabled.size() &&
-            (size_t)parcel_layer_idx < layer_heatmap_max_zoom.size() &&
-            layer_heatmap_enabled[(size_t)parcel_layer_idx] &&
-            zoom <= layer_heatmap_max_zoom[(size_t)parcel_layer_idx];
-        if (!parcel_uses_heatmap && (vacant_notice_enabled || vacant_rehab_enabled) && parcel_layer_idx >= 0) {
+        if ((vacant_notice_enabled || vacant_rehab_enabled) && parcel_layer_idx >= 0) {
             auto& parcel_layer = layers[(size_t)parcel_layer_idx];
             for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
                 auto& fg = parcel_layer.features[i];

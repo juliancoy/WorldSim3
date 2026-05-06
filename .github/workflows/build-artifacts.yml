@@ -70,7 +70,7 @@ jobs:
           "VULKAN_SDK=$($sdkRoot.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "$($sdkRoot.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Install vcpkg and curl (x64-windows)
+      - name: Install vcpkg dependencies (x64-windows)
         shell: powershell
         run: |
           $vcpkgRoot = if (Test-Path 'C:\vcpkg') { 'C:\vcpkg' } else { "$env:USERPROFILE\vcpkg" }
@@ -79,7 +79,7 @@ jobs:
             & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
           }
           "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          & "$vcpkgRoot\vcpkg.exe" install curl:x64-windows
+          & "$vcpkgRoot\vcpkg.exe" install curl:x64-windows openssl:x64-windows
 
       - name: Configure (MSVC)
         shell: bash
@@ -95,12 +95,14 @@ jobs:
         run: cmake --build build-windows --config Release
 
       - name: Package Windows artifacts
-        shell: bash
+        shell: powershell
         run: |
-          mkdir -p dist/windows
-          cp -v build-windows/Release/worldsim3.exe dist/windows/
-          cp -v build-windows/Release/arkavo_connectivity_test.exe dist/windows/
-          (cd dist && zip -r "worldsim3-${SHORT_SHA}-windows.zip" windows)
+          New-Item -ItemType Directory -Force dist/windows | Out-Null
+          Copy-Item build-windows/Release/worldsim3.exe dist/windows/
+          Copy-Item build-windows/Release/arkavo_connectivity_test.exe dist/windows/
+          Copy-Item build-windows/Release/*.dll dist/windows/ -ErrorAction SilentlyContinue
+          Copy-Item "$env:VCPKG_ROOT/installed/x64-windows/bin/*.dll" dist/windows/ -ErrorAction SilentlyContinue
+          Compress-Archive -Path dist/windows/* -DestinationPath "dist/worldsim3-${env:SHORT_SHA}-windows.zip" -Force
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4

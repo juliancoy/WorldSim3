@@ -26,6 +26,7 @@ struct BootstrapProgress {
 
 const char* categoryToString(LayerDef::Category c);
 std::pair<int, int> deg2num(double lat_deg, double lon_deg, int zoom);
+std::filesystem::path resolveAppRoot(const std::filesystem::path& start, const char* argv0 = nullptr);
 void setBootstrapStatus(BootstrapProgress& bp, const std::string& s);
 std::string readTextFile(const std::filesystem::path& p);
 void collectTodoWork(const std::string& todo_text, std::vector<std::string>& past, std::vector<std::string>& future);
