@@ -209,3 +209,32 @@ jobs:
           fi
           git commit -m "Update APT repo for ${GITHUB_SHA}"
           git push origin gh-pages
+
+      - name: Verify published APT endpoints
+        run: |
+          set -euo pipefail
+          URLS=(
+            "https://juliancoy.github.io/worldsim3/apt/dists/stable/Release"
+            "https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages"
+          )
+
+          # Pages and DNS updates can be slightly delayed after push.
+          for i in {1..12}; do
+            all_ok=1
+            for u in "${URLS[@]}"; do
+              if ! curl -fsSL "$u" >/dev/null; then
+                all_ok=0
+                break
+              fi
+            done
+
+            if [[ "$all_ok" -eq 1 ]]; then
+              echo "APT endpoints are reachable."
+              exit 0
+            fi
+            echo "APT endpoints not reachable yet (attempt ${i}/12); retrying in 10s..."
+            sleep 10
+          done
+
+          echo "APT publish verification failed: expected endpoints are not reachable."
+          exit 1

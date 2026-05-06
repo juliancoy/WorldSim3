@@ -10,6 +10,31 @@ Pure C++/Vulkan app (no Qt) with Vulkan-rendered UI and local Baltimore economic
 - Local GeoJSON layers from Open Baltimore
 - Local OpenStreetMap raster tiles rendered as Vulkan textures
 
+## Install WorldSim3 (Priority Path: APT)
+
+Use the project APT repository as the default install path:
+
+```bash
+# Remove old/broken source entries from earlier docs
+sudo rm -f /etc/apt/sources.list.d/worldsim3.list
+sudo rm -f /etc/apt/sources.list.d/worldsim3-old.list
+
+# Add the WorldSim3 repository (repo path is lowercase: /worldsim3/)
+echo "deb [trusted=yes arch=amd64] https://juliancoy.github.io/worldsim3/apt stable main" | sudo tee /etc/apt/sources.list.d/worldsim3.list
+
+sudo apt-get update
+sudo apt-get install -y worldsim3
+```
+
+If `apt-get update` reports `404` for WorldSim3, verify these URLs return `200`:
+
+```bash
+curl -I https://juliancoy.github.io/worldsim3/apt/dists/stable/Release
+curl -I https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages
+```
+
+GitHub Pages may redirect `juliancoy.github.io` to a custom domain. If redirected, the custom-domain path must also serve `/worldsim3/apt/...` (lowercase `worldsim3`).
+
 ## Install dependencies (Ubuntu/Debian)
 
 ```bash
@@ -17,16 +42,11 @@ sudo apt-get update
 sudo apt-get install -y cmake g++ python3 libvulkan-dev vulkan-tools libglfw3-dev xorg-dev libwayland-dev
 ```
 
-## Install release artifacts
+## Alternate install methods
 
 After CI produces release artifacts, install/run them with:
 
 ```bash
-# Direct APT install from project repository (no manual .deb download)
-echo "deb [trusted=yes] https://juliancoy.github.io/WorldSim3/apt stable main" | sudo tee /etc/apt/sources.list.d/worldsim3.list
-sudo apt-get update
-sudo apt-get install -y worldsim3
-
 # Local Debian package install
 sudo apt install ./worldsim3-<tag>.deb
 
