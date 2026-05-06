@@ -51,7 +51,9 @@ chmod +x worldsim3-<tag>.AppImage
 ./worldsim3-<tag>.AppImage
 ```
 
-Windows artifact output is a zip containing `worldsim3.exe` and `arkavo_connectivity_test.exe` built via MinGW.
+Windows artifact output is a zip containing `worldsim3.exe` and `arkavo_connectivity_test.exe` built in CI on `windows-latest` via MSVC (`Visual Studio 2022`).
+
+Local cross-build with MinGW is supported via `scripts/ci-local.sh`, but requires a MinGW-compatible Vulkan loader import library and headers (for example via `vcpkg` `x64-mingw-dynamic`).
 
 ## Run
 

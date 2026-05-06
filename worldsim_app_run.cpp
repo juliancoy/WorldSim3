@@ -329,6 +329,19 @@ int runWorldSim3App(int argc, char** argv) {
         double value_usd = 0.0;
     };
     std::vector<OwnerAggregate> owner_aggregates;
+    std::unordered_set<std::string> selected_owners;
+    int selected_owner_anchor = -1;
+    struct FilteredAggregateSnapshot {
+        bool valid = false;
+        uint64_t selection_key = 0;
+        uint64_t data_key = 0;
+        size_t vacancy_parcels_matched = 0;
+        size_t vacancy_parcels_with_geometry = 0;
+        size_t owner_property_count = 0;
+        double owner_area_m2 = 0.0;
+        double owner_value_usd = 0.0;
+    };
+    FilteredAggregateSnapshot filtered_aggregate_snapshot;
     bool owner_aggregates_dirty = true;
     int owner_sort_mode = 0; // 0=count,1=area,2=value
     int owner_sorted_mode = -1;
@@ -2429,10 +2442,68 @@ int runWorldSim3App(int argc, char** argv) {
             owner_aggregates.clear();
             owner_aggregates.reserve(acc.size());
             for (auto& kv : acc) owner_aggregates.push_back(std::move(kv.second));
+            if (!selected_owners.empty()) {
+                std::unordered_set<std::string> owners_present;
+                owners_present.reserve(owner_aggregates.size());
+                for (const auto& row : owner_aggregates) owners_present.insert(row.owner);
+                for (auto it = selected_owners.begin(); it != selected_owners.end();) {
+                    if (owners_present.find(*it) == owners_present.end()) it = selected_owners.erase(it);
+                    else ++it;
+                }
+            }
             owner_aggregates_dirty = !real_property_data_ready && owner_aggregates.empty();
             owner_sorted_mode = -1;
             }
             prof_owner_ms_last.store(prof_ms_since(owner_prof_begin), std::memory_order_relaxed);
+        }
+        if (!selected_owners.empty()) {
+            std::vector<std::string> selected_owner_list(selected_owners.begin(), selected_owners.end());
+            std::sort(selected_owner_list.begin(), selected_owner_list.end());
+            uint64_t selection_key = 1469598103934665603ULL;
+            for (const auto& owner : selected_owner_list) {
+                selection_key ^= (uint64_t)owner.size();
+                selection_key *= 1099511628211ULL;
+                for (unsigned char ch : owner) {
+                    selection_key ^= (uint64_t)ch;
+                    selection_key *= 1099511628211ULL;
+                }
+            }
+            uint64_t data_key = 1469598103934665603ULL;
+            data_key ^= (uint64_t)owner_aggregates.size(); data_key *= 1099511628211ULL;
+            data_key ^= (uint64_t)owner_cached_parcel_size; data_key *= 1099511628211ULL;
+            data_key ^= (uint64_t)owner_cached_real_property_size; data_key *= 1099511628211ULL;
+            data_key ^= (uint64_t)(parcel_vacancy_generation_applied + 3); data_key *= 1099511628211ULL;
+            data_key ^= (uint64_t)(parcel_tax_generation_applied + 7); data_key *= 1099511628211ULL;
+            if (!filtered_aggregate_snapshot.valid ||
+                filtered_aggregate_snapshot.selection_key != selection_key ||
+                filtered_aggregate_snapshot.data_key != data_key) {
+                filtered_aggregate_snapshot = {};
+                filtered_aggregate_snapshot.valid = true;
+                filtered_aggregate_snapshot.selection_key = selection_key;
+                filtered_aggregate_snapshot.data_key = data_key;
+                for (const auto& row : owner_aggregates) {
+                    if (selected_owners.find(row.owner) == selected_owners.end()) continue;
+                    filtered_aggregate_snapshot.owner_property_count += row.property_count;
+                    filtered_aggregate_snapshot.owner_area_m2 += row.area_m2;
+                    filtered_aggregate_snapshot.owner_value_usd += row.value_usd;
+                }
+                if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size()) {
+                    const auto& pfeats = layers[(size_t)parcel_layer_idx].features;
+                    for (size_t i = 0; i < pfeats.size(); ++i) {
+                        const LayerDef::FeatureGeom* rp = real_property_for_parcel(pfeats[i]);
+                        std::string owner = owner_name_for(rp);
+                        if (owner.empty()) owner = owner_name_for(&pfeats[i]);
+                        if (owner.empty() || selected_owners.find(owner) == selected_owners.end()) continue;
+                        const int vac_notice = (i < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[i] : 0;
+                        const int vac_rehab = (i < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[i] : 0;
+                        if ((vac_notice + vac_rehab) <= 0) continue;
+                        filtered_aggregate_snapshot.vacancy_parcels_matched++;
+                        if (!pfeats[i].rings.empty()) filtered_aggregate_snapshot.vacancy_parcels_with_geometry++;
+                    }
+                }
+            }
+        } else {
+            filtered_aggregate_snapshot = {};
         }
 
         const float right_panel_w = 360.0f;
@@ -2699,8 +2770,12 @@ int runWorldSim3App(int argc, char** argv) {
             const size_t rehabs_total = (size_t)cached_vac_rehab_size;
             const size_t notices_matched = vacant_notice_rows_matched_total.load(std::memory_order_relaxed);
             const size_t rehabs_matched = vacant_rehab_rows_matched_total.load(std::memory_order_relaxed);
-            const size_t parcels_matched = vacant_parcels_matched_total.load(std::memory_order_relaxed);
-            const size_t parcels_geom = vacant_parcels_with_geometry_total.load(std::memory_order_relaxed);
+            size_t parcels_matched = vacant_parcels_matched_total.load(std::memory_order_relaxed);
+            size_t parcels_geom = vacant_parcels_with_geometry_total.load(std::memory_order_relaxed);
+            if (!selected_owners.empty() && filtered_aggregate_snapshot.valid) {
+                parcels_matched = filtered_aggregate_snapshot.vacancy_parcels_matched;
+                parcels_geom = filtered_aggregate_snapshot.vacancy_parcels_with_geometry;
+            }
             ImGui::TextUnformatted("Vacant -> Parcel Join Quality");
             ImGui::Separator();
             ImGui::Text("Vacant notice records: %zu", notices_total);
@@ -2713,6 +2788,7 @@ int runWorldSim3App(int argc, char** argv) {
             ImGui::Separator();
             ImGui::Text("Parcels with vacancy evidence: %zu", parcels_matched);
             ImGui::Text("Those with parcel geometry: %zu", parcels_geom);
+            if (!selected_owners.empty()) ImGui::TextDisabled("Counts scoped to selected owners.");
             ImGui::TextWrapped("Map styling uses parcel-level derived status. Raw vacant points are treated as child records.");
         ImGui::EndTabItem();
         }
@@ -2737,6 +2813,18 @@ int runWorldSim3App(int argc, char** argv) {
                 owner_sorted_mode = owner_sort_mode;
             }
             ImGui::Text("Owners: %zu", owner_aggregates.size());
+            ImGui::Text("Selected: %zu", selected_owners.size());
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Selection")) {
+                selected_owners.clear();
+                selected_owner_anchor = -1;
+            }
+            if (!selected_owners.empty() && filtered_aggregate_snapshot.valid) {
+                ImGui::TextDisabled("Filtered totals | properties: %zu | area: %.0f m^2 | value: $%.0f",
+                                    filtered_aggregate_snapshot.owner_property_count,
+                                    filtered_aggregate_snapshot.owner_area_m2,
+                                    filtered_aggregate_snapshot.owner_value_usd);
+            }
             if (owner_aggregates.empty()) {
                 const size_t parcel_count =
                     (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size()) ? layers[(size_t)parcel_layer_idx].features.size() : 0;
@@ -2748,7 +2836,27 @@ int runWorldSim3App(int argc, char** argv) {
             const size_t max_rows = std::min<size_t>(500, owner_aggregates.size());
             for (size_t i = 0; i < max_rows; ++i) {
                 const auto& r = owner_aggregates[i];
-                ImGui::Text("%zu) %s", i + 1, r.owner.c_str());
+                const bool row_selected = selected_owners.find(r.owner) != selected_owners.end();
+                ImGui::PushID((int)i);
+                if (ImGui::Selectable(r.owner.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                    const bool shift = ImGui::GetIO().KeyShift;
+                    const bool ctrl = ImGui::GetIO().KeyCtrl;
+                    if (shift && selected_owner_anchor >= 0 && (size_t)selected_owner_anchor < max_rows) {
+                        if (!ctrl) selected_owners.clear();
+                        const size_t begin = std::min((size_t)selected_owner_anchor, i);
+                        const size_t end = std::max((size_t)selected_owner_anchor, i);
+                        for (size_t j = begin; j <= end; ++j) selected_owners.insert(owner_aggregates[j].owner);
+                    } else if (ctrl) {
+                        if (row_selected) selected_owners.erase(r.owner);
+                        else selected_owners.insert(r.owner);
+                        selected_owner_anchor = (int)i;
+                    } else {
+                        selected_owners.clear();
+                        selected_owners.insert(r.owner);
+                        selected_owner_anchor = (int)i;
+                    }
+                }
+                ImGui::PopID();
                 ImGui::TextDisabled("properties: %zu | area: %.0f m^2 | value: $%.0f", r.property_count, r.area_m2, r.value_usd);
                 ImGui::Separator();
             }
@@ -3159,7 +3267,11 @@ int runWorldSim3App(int argc, char** argv) {
                 if (!filter_enabled && !crime_filter_enabled) return true;
                 return crime_feature_matches(fg);
             }
-            if (!filter_enabled) return true;
+            const bool selected_owner_filter_active =
+                !selected_owners.empty() &&
+                parcel_layer_idx >= 0 &&
+                (int)layer_idx == parcel_layer_idx;
+            if (!filter_enabled && !selected_owner_filter_active) return true;
             const LayerDef::FeatureGeom* rp_join = nullptr;
             if (parcel_layer_idx >= 0 &&
                 (int)layer_idx == parcel_layer_idx &&
@@ -3174,6 +3286,12 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                 }
             }
+            if (selected_owner_filter_active) {
+                std::string owner = owner_name_for(rp_join);
+                if (owner.empty()) owner = owner_name_for(&fg);
+                if (owner.empty() || selected_owners.find(owner) == selected_owners.end()) return false;
+            }
+            if (!filter_enabled) return true;
             if (filter_use_date) {
                 std::string ds = first_prop(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
                 if (ds.empty() && rp_join) ds = first_prop(*rp_join, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
@@ -3306,6 +3424,14 @@ int runWorldSim3App(int argc, char** argv) {
         for (const char* p = filter_status; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
         for (const char* p = filter_address; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
         for (const char* p = filter_owner; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        if (!selected_owners.empty()) {
+            std::vector<std::string> selected_owner_list(selected_owners.begin(), selected_owners.end());
+            std::sort(selected_owner_list.begin(), selected_owner_list.end());
+            for (const auto& owner : selected_owner_list) {
+                hash_combine_u64(heatmap_key, (uint64_t)owner.size());
+                for (unsigned char ch : owner) hash_combine_u64(heatmap_key, (uint64_t)ch);
+            }
+        }
         for (const char* p = filter_zip; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
         hash_combine_u64(heatmap_key, filter_use_date ? 1ULL : 0ULL);
         hash_combine_u64(heatmap_key, (uint64_t)filter_year_min);
@@ -3654,14 +3780,18 @@ int runWorldSim3App(int argc, char** argv) {
         const bool draw_current_raster =
             heatmap_raster_texture_valid &&
             heatmap_raster_cache_key == heatmap_key;
-        if ((draw_current_raster || draw_stale_raster_while_rebuilding) && heatmap_raster_texture.descriptor) {
+        const bool drawing_heatmap_raster =
+            (draw_current_raster || draw_stale_raster_while_rebuilding) &&
+            heatmap_raster_texture.descriptor;
+        if (drawing_heatmap_raster) {
             ImVec2 raster_nw = lonLatToWorldPx(heatmap_cached_raster_meta.min_lon, heatmap_cached_raster_meta.max_lat, math_zoom);
             ImVec2 raster_se = lonLatToWorldPx(heatmap_cached_raster_meta.max_lon, heatmap_cached_raster_meta.min_lat, math_zoom);
             ImVec2 rp0 = project_world(raster_nw);
             ImVec2 rp1 = project_world(raster_se);
             draw->AddImage((ImTextureID)heatmap_raster_texture.descriptor, rp0, rp1);
         }
-        for (const auto& c : draw_cells) {
+        const bool suppress_vector_heat_cells = smooth_only_heatmap && drawing_heatmap_raster;
+        if (!suppress_vector_heat_cells) for (const auto& c : draw_cells) {
             if (c.is_hex) {
                 ImVec2 pts[6] = {
                     ImVec2(c.cx - c.hw, c.cy),
