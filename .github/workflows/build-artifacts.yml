@@ -212,24 +212,24 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends dpkg-dev
+          sudo apt-get install -y --no-install-recommends dpkg-dev apt-utils
 
           mkdir -p apt-repo/pool/main
           cp -v apt-artifacts/*.deb apt-repo/pool/main/
 
           mkdir -p apt-repo/dists/stable/main/binary-amd64
-          dpkg-scanpackages --arch amd64 apt-repo/pool > apt-repo/dists/stable/main/binary-amd64/Packages
+          dpkg-scanpackages apt-repo/pool /dev/null > apt-repo/dists/stable/main/binary-amd64/Packages
           gzip -9c apt-repo/dists/stable/main/binary-amd64/Packages > apt-repo/dists/stable/main/binary-amd64/Packages.gz
 
-          cat > apt-repo/dists/stable/Release <<'EOF'
-          Origin: WorldSim3
-          Label: WorldSim3
-          Suite: stable
-          Codename: stable
-          Architectures: amd64
-          Components: main
-          Description: WorldSim3 APT repository
-          EOF
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="WorldSim3" \
+            -o APT::FTPArchive::Release::Label="WorldSim3" \
+            -o APT::FTPArchive::Release::Suite="stable" \
+            -o APT::FTPArchive::Release::Codename="stable" \
+            -o APT::FTPArchive::Release::Architectures="amd64" \
+            -o APT::FTPArchive::Release::Components="main" \
+            -o APT::FTPArchive::Release::Description="WorldSim3 APT repository" \
+            release apt-repo/dists/stable > apt-repo/dists/stable/Release
 
       - name: Validate R2 deployment configuration
         env:
