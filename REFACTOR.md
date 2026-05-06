@@ -1,144 +1,187 @@
-# Refactor Plan: Split `main.cpp` into Functional Translation Units
+# main.cpp Refactor Plan
 
-## Goals
-- Reduce coupling and compile times by decomposing `main.cpp` into focused modules.
-- Keep behavior identical during refactor (no functional regressions).
-- Preserve ability to build and run after each step.
+Goal: break `main.cpp` into focused modules until it is under 2000 lines without changing runtime behavior or committing generated data.
 
-## Proposed Target Layout
-- `src/app/main.cpp`
-- `src/app/app.cpp`
-- `src/app/app.h`
+## 1. Freeze Behavior
 
-- `src/core/types.h`
-- `src/core/layer_manifest.cpp`
-- `src/core/layer_manifest.h`
-- `src/core/layer_state_io.cpp`
-- `src/core/layer_state_io.h`
-- `src/core/geo.cpp`
-- `src/core/geo.h`
-- `src/core/feature_props.cpp`
-- `src/core/feature_props.h`
+- Build the current baseline before each extraction.
+- Keep smoke checks for startup, `/status`, `/profile`, layer settings load/save, and heatmap settings.
+- Do not combine behavior changes with file-move refactors.
 
-- `src/io/http_download.cpp`
-- `src/io/http_download.h`
-- `src/io/cache_io.cpp`
-- `src/io/cache_io.h`
+## 2. Define Module Boundaries
 
-- `src/pipeline/hydration.cpp`
-- `src/pipeline/hydration.h`
-- `src/pipeline/triangulation.cpp`
-- `src/pipeline/triangulation.h`
-- `src/pipeline/spatial_index.cpp`
-- `src/pipeline/spatial_index.h`
+Extract by ownership, not by line ranges:
 
-- `src/render/vulkan_context.cpp`
-- `src/render/vulkan_context.h`
-- `src/render/tile_renderer.cpp`
-- `src/render/tile_renderer.h`
-- `src/render/layer_renderer.cpp`
-- `src/render/layer_renderer.h`
+- `app_settings.{h,cpp}`: persistent app settings, grayscale, validation, UI defaults.
+- `status_api.{h,cpp}`: HTTP control/status/profile endpoints.
+- `profiling.{h,cpp}`: frame profiler, layer profile snapshots, process metrics.
+- `tile_cache.{h,cpp}`: tile cache, retired Vulkan textures, tile download/decode queue.
+- `heatmap.{h,cpp}`: aggregate method config, raster generation, KDE/splat/grid/hex/multires code.
+- `layer_runtime.{h,cpp}`: hydration queues, triangulation jobs/results, layer pipeline state.
+- `map_render.{h,cpp}`: map draw loop helpers, coordinate transforms, layer drawing helpers.
+- `dataset_library.{h,cpp}`: downloads, version metadata, diff artifacts, freshness checks.
+- `owners_panel.{h,cpp}`: owner aggregation/cache/table logic.
+- `vacancy_tax_overlay.{h,cpp}`: vacancy/tax joins and overlay state.
+- `zoning.{h,cpp}`: zoning class/group discovery, filters, colors.
+- `lan_services.{h,cpp}`: LAN dataset serving, peer discovery, Arkavo integration UI glue.
+- `ui_panels.{h,cpp}`: ImGui panels after state boundaries are clear.
 
-- `src/ui/layers_panel.cpp`
-- `src/ui/layers_panel.h`
-- `src/ui/map_view.cpp`
-- `src/ui/map_view.h`
-- `src/ui/parcel_tooltip.cpp`
-- `src/ui/parcel_tooltip.h`
+## 3. Introduce Shared Context Types
 
-- `src/api/status_api.cpp`
-- `src/api/status_api.h`
-- `src/api/command_api.cpp`
-- `src/api/command_api.h`
+Create `app_context.h` with grouped state structs:
 
-## Functional Ownership
-- `core/*`: data models, manifest parsing, settings persistence, geometry helpers.
-- `io/*`: network download and cache read/write.
-- `pipeline/*`: hydration, triangulation, spatial indexing.
-- `render/*`: Vulkan setup + tile/layer draw implementation.
-- `ui/*`: ImGui windows, filters, hover/tooltips, context menus.
-- `api/*`: REST endpoints, request parsing, status serialization.
+- `ViewState`
+- `LayerUiState`
+- `RuntimeQueues`
+- `RenderStats`
+- `HeatmapState`
+- `OverlayState`
+- `NetworkState`
 
-## Refactor Constraints
-- No behavior changes while moving code.
-- Keep old symbols until call sites are migrated.
-- Prefer extracting pure functions first.
-- Introduce minimal shared state structs instead of more globals.
+Keep raw global Vulkan objects isolated until later to avoid destabilizing rendering.
 
-## Shared State Decomposition
-Create explicit state structs before split:
-- `AppConfig` (paths, constants, zoom limits)
-- `RuntimeState` (zoom, center, perf counters)
-- `LayerRuntime` (layers, pipeline status, caches, lookup maps)
-- `RenderState` (tile cache, vulkan handles)
-- `ApiState` (pending commands, status snapshots)
+## 4. Extract Pure/Low-Risk Code First
 
-Pass these to modules instead of relying on file-scope statics.
+Move static helpers with minimal dependencies:
 
-## Incremental Migration Plan
-1. **Type extraction**
-- Move structs/enums/constants to `core/types.h`.
-- Replace local duplicates/includes with shared header.
+- URL decoding.
+- File hash/signature helpers.
+- GeoJSON diff artifact writing.
+- App settings load/save.
+- Profile sample structs and summarizers.
 
-2. **Pure helper extraction**
-- Move `getPropertyValue`, zoning helpers, key normalization, lon/lat conversions, and ring LOD helpers to `core/*`.
-- Add unit-testable signatures where possible.
+This reduces size without changing control flow.
 
-3. **Manifest and UI state I/O**
-- Move `loadManifest`, `loadLayerUiState`, `saveLayerUiState`, app settings I/O to `core/*`.
+## 5. Extract Status/Profile API
 
-4. **HTTP and cache I/O**
-- Move curl downloader and hydration/tri cache read/write to `io/*`.
+Move the HTTP server worker into `status_api.cpp`.
 
-5. **Pipeline split**
-- Move hydration worker logic and queues to `pipeline/hydration.*`.
-- Move triangulation worker + cache to `pipeline/triangulation.*`.
-- Move spatial index build/query to `pipeline/spatial_index.*`.
+Pass a compact `StatusApiContext` containing:
 
-6. **REST API split**
-- Move status and command handlers to `api/*`.
-- Keep a small API bootstrap in app layer.
+- Atomics for view/perf counters.
+- Mutex-protected layer profile snapshots.
+- REST command queues.
+- Layer status snapshots.
 
-7. **Renderer split**
-- Move Vulkan init/shutdown to `render/vulkan_context.*`.
-- Move tile cache/load/sample to `render/tile_renderer.*`.
-- Move geometry draw passes to `render/layer_renderer.*`.
+Verify:
 
-8. **UI split**
-- Move Layers/Controls panel to `ui/layers_panel.*`.
-- Move map interactions + context menu to `ui/map_view.*`.
-- Move hover tooltip composition to `ui/parcel_tooltip.*`.
+- `GET /status`
+- `GET /profile`
+- `GET /profile/layers`
+- `GET /profile/reset`
 
-9. **Thin main**
-- Keep `src/app/main.cpp` only for wiring:
-  - init
-  - main loop tick dispatch
-  - shutdown
+## 6. Extract Profiling
 
-10. **Cleanup**
-- Remove dead statics and duplicate helpers.
-- Enforce include boundaries and forward declarations.
+Move profiler ownership into `profiling.{h,cpp}`:
 
-## Build System Changes
-- Update `CMakeLists.txt` to compile new sources explicitly.
-- Introduce logical source groups (`core`, `io`, `pipeline`, `render`, `ui`, `api`).
-- Keep link set unchanged initially (`Vulkan`, `GLFW`, `curl`, `imgui`, etc.).
+- `ProfileFrameSample`
+- `LayerProfileSnapshot`
+- Rolling frame ring buffer.
+- Layer snapshot refresh.
+- Process metrics.
+- JSON serialization.
 
-## Validation Checklist Per Step
-- Build passes (`cmake --build ...`).
-- App launches successfully.
-- `/status` responds.
-- Parcel hover still shows full fields.
-- Vacancy probe metrics unchanged.
-- Zoning filters still render/filter correctly.
-- Street View context menu still opens URL.
+Replace direct `main.cpp` mutation with methods:
 
-## Risk Areas
-- Implicit global state dependencies (worker threads + UI).
-- Thread-safety around shared maps/queues during extraction.
-- Order-of-initialization bugs after moving statics.
-- Rendering regressions from splitting draw-path helpers.
+- `profiler.recordFrame(sample)`
+- `profiler.markLayerDirty(i)`
+- `profiler.refreshLayerSnapshots(layers, layer_spatial)`
+- `profiler.toJson()`
 
-## Recommended First PR Scope
-- Steps 1-3 only (types + pure helpers + manifest/UI state I/O).
-- Keep pipeline/render/api untouched for low-risk baseline.
+## 7. Extract Dataset Library
+
+Move download/version/freshness/diff code and related structs into `dataset_library.{h,cpp}`.
+
+Main should keep only:
+
+- UI calls.
+- High-level state.
+- User-triggered actions.
+
+Verify no `data/` outputs are staged or committed.
+
+## 8. Extract Heatmap
+
+Move heatmap ownership into `heatmap.{h,cpp}`:
+
+- Aggregate method enum/config.
+- Per-layer effective settings.
+- Raster generation.
+- Async job key/result types.
+- KDE, splat, grid, hex, and multires algorithms.
+
+Keep Vulkan texture upload in `main.cpp` initially if needed. After stable, move it behind a `HeatmapRenderer` abstraction.
+
+## 9. Extract Layer Pipeline
+
+Move hydration and triangulation into `layer_runtime.{h,cpp}`.
+
+Expose:
+
+- `enqueueHydration(index, required)`
+- `drainHydrated()`
+- `drainTriangulated()`
+- `stopWorkers()`
+
+This touches threading, so do it only after API/profiling extraction is stable.
+
+## 10. Extract Overlays
+
+Move vacancy/tax joins and overlay state into `vacancy_tax_overlay.{h,cpp}`.
+
+Move zoning discovery/filter state into `zoning.{h,cpp}`.
+
+Keep draw calls in `main.cpp` at first. Move draw helpers only after state ownership is stable.
+
+## 11. Extract Tile Cache
+
+Move tile cache ownership into `tile_cache.{h,cpp}`:
+
+- LRU cache.
+- Decode workers.
+- Retired texture draining.
+- Tile request state.
+- Vulkan tile texture lifecycle.
+
+Keep Vulkan handles explicit in a context object. Validate no descriptor-set lifetime regressions.
+
+## 12. Extract UI Panels And Render Helpers
+
+Move large ImGui panels into focused files:
+
+- `layers_panel.cpp`
+- `library_panel.cpp`
+- `models_panel.cpp`
+- `network_panel.cpp`
+
+Move map drawing helpers after state ownership is clear.
+
+## 13. Add Line Count Gate
+
+Add `tools/check_main_size.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+lines=$(wc -l < main.cpp)
+if (( lines > 2000 )); then
+  echo "main.cpp has ${lines} lines; limit is 2000" >&2
+  exit 1
+fi
+```
+
+Run it before committing the final phase.
+
+## 14. Commit Strategy
+
+- One commit per extraction phase.
+- Every commit must build.
+- Do not mix formatting-only changes with behavior-preserving moves.
+- Never stage `data/`, `build/`, generated datasets, binaries, or local cache files.
+
+## 15. Target End State
+
+- `main.cpp` is under 2000 lines.
+- `main.cpp` owns only startup, Vulkan setup, top-level loop orchestration, and shutdown.
+- Domain code lives in named modules.
+- Profiling endpoints remain available throughout the refactor.

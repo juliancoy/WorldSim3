@@ -44,6 +44,24 @@ FetchContent_MakeAvailable(libdatachannel)
 
 add_executable(worldsim3
   main.cpp
+  worldsim_app.cpp
+  worldsim_app_run.cpp
+  app_lifecycle.cpp
+  app_settings.cpp
+  app_utils.cpp
+  zoning.cpp
+  vacancy_overlay.cpp
+  dataset_library.cpp
+  net_http_utils.cpp
+  status_api.cpp
+  dataset_lan_api.cpp
+  layer_runtime.cpp
+  layer_workers.cpp
+  layer_geometry.cpp
+  heatmap_render.cpp
+  time_cube_panel.cpp
+  policy_panel.cpp
+  model_tabs_panel.cpp
   arkavo_realtime_client.cpp
   arkavo_signaling_transport_curl.cpp
   arkavo_rtc_session_manager.cpp
