@@ -15,22 +15,20 @@ Pure C++/Vulkan app (no Qt) with Vulkan-rendered UI and local Baltimore economic
 Use the project APT repository as the default install path:
 
 ```bash
-# Remove old/broken source entries from earlier docs
-sudo rm -f /etc/apt/sources.list.d/worldsim3.list
-sudo rm -f /etc/apt/sources.list.d/worldsim3-old.list
+set -euo pipefail
 
-# Add the WorldSim3 repository (repo path is lowercase: /worldsim3/)
-echo "deb [trusted=yes arch=amd64] https://juliancoy.github.io/worldsim3/apt stable main" | sudo tee /etc/apt/sources.list.d/worldsim3.list
+sudo rm -f /etc/apt/sources.list.d/worldsim3.list /etc/apt/sources.list.d/worldsim3-old.list
+echo "deb [trusted=yes arch=amd64] https://pub-d4e0151c335547aba07b8193dcb86951.r2.dev/worldsim3/apt stable main" | sudo tee /etc/apt/sources.list.d/worldsim3.list >/dev/null
 
 sudo apt-get update
 sudo apt-get install -y worldsim3
 ```
 
-If `apt-get update` reports `404` for WorldSim3, verify these URLs return `200` with no redirect:
+If `apt-get update` reports errors for WorldSim3, verify these URLs return `200`:
 
 ```bash
-curl -fsSI https://juliancoy.github.io/worldsim3/apt/dists/stable/Release
-curl -fsSI https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages
+curl -fsSI https://pub-d4e0151c335547aba07b8193dcb86951.r2.dev/worldsim3/apt/dists/stable/Release
+curl -fsSI https://pub-d4e0151c335547aba07b8193dcb86951.r2.dev/worldsim3/apt/dists/stable/main/binary-amd64/Packages
 ```
 
 ## Install dependencies (Ubuntu/Debian)
