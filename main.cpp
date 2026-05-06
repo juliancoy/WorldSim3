@@ -49,11 +49,18 @@
 #include <cctype>
 #include <cfloat>
 #include <random>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+#else
 #include <sys/socket.h>
 #include <sys/resource.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#endif
 #include "earcut.hpp"
 
 using json = nlohmann::json;
@@ -339,10 +346,53 @@ static const char* categoryToString(LayerDef::Category c) {
     return "unknown";
 }
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+static bool ensureSocketRuntimeInitialized() {
+#ifdef _WIN32
+    static bool initialized = false;
+    static bool ok = false;
+    if (!initialized) {
+        WSADATA wsa{};
+        ok = (WSAStartup(MAKEWORD(2, 2), &wsa) == 0);
+        initialized = true;
+    }
+    return ok;
+#else
+    return true;
+#endif
+}
+
+static int netClose(int fd) {
+#ifdef _WIN32
+    return closesocket((SOCKET)fd);
+#else
+    return close(fd);
+#endif
+}
+
+static ssize_t netRead(int fd, void* buf, size_t len) {
+#ifdef _WIN32
+    return (ssize_t)recv((SOCKET)fd, (char*)buf, (int)len, 0);
+#else
+    return read(fd, buf, len);
+#endif
+}
+
+static ssize_t netWrite(int fd, const char* data, size_t len) {
+#ifdef _WIN32
+    return (ssize_t)send((SOCKET)fd, data, (int)len, 0);
+#else
+    return write(fd, data, len);
+#endif
+}
+
 static bool writeAll(int fd, const char* data, size_t len) {
     size_t sent = 0;
     while (sent < len) {
-        ssize_t n = write(fd, data + sent, len - sent);
+        ssize_t n = netWrite(fd, data + sent, len - sent);
         if (n <= 0) return false;
         sent += (size_t)n;
     }
@@ -2813,7 +2863,8 @@ int main(int argc, char** argv) {
     });
 
     std::thread status_api_worker([&]() {
-        int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!ensureSocketRuntimeInitialized()) return;
+        int server_fd = (int)::socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd < 0) return;
         int opt = 1;
         setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -2823,11 +2874,11 @@ int main(int argc, char** argv) {
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(8787);
         if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         if (listen(server_fd, 8) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
 
@@ -2839,13 +2890,13 @@ int main(int argc, char** argv) {
             tv.tv_sec = 1;
             int sel = select(server_fd + 1, &readfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
-            int client_fd = accept(server_fd, nullptr, nullptr);
+            int client_fd = (int)accept(server_fd, nullptr, nullptr);
             if (client_fd < 0) continue;
 
             char buf[1024];
-            ssize_t n = read(client_fd, buf, sizeof(buf) - 1);
+            ssize_t n = netRead(client_fd, buf, sizeof(buf) - 1);
             if (n <= 0) {
-                close(client_fd);
+                netClose(client_fd);
                 continue;
             }
             buf[n] = '\0';
@@ -3124,23 +3175,36 @@ int main(int argc, char** argv) {
                         profile_reset_generation++;
                     }
                     send_json(200, "OK", {{"ok", true}, {"profile_generation", profile_reset_generation}});
-                    close(client_fd);
+                    netClose(client_fd);
                     continue;
                 }
                 if (path == "/profile/layers") {
                     json out = build_layer_profile();
                     out["ok"] = true;
                     send_json(200, "OK", out);
-                    close(client_fd);
+                    netClose(client_fd);
                     continue;
                 }
+                double user_cpu_seconds = 0.0;
+                double system_cpu_seconds = 0.0;
+                long long max_rss_kb = 0;
+                long long voluntary_context_switches = 0;
+                long long involuntary_context_switches = 0;
+#ifndef _WIN32
                 struct rusage ru{};
                 getrusage(RUSAGE_SELF, &ru);
                 auto tv_sec_d = [](const timeval& tv) {
                     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
                 };
+                user_cpu_seconds = tv_sec_d(ru.ru_utime);
+                system_cpu_seconds = tv_sec_d(ru.ru_stime);
+                max_rss_kb = (long long)ru.ru_maxrss;
+                voluntary_context_switches = (long long)ru.ru_nvcsw;
+                involuntary_context_switches = (long long)ru.ru_nivcsw;
+#endif
                 size_t vm_rss_kb = 0;
                 size_t threads = 0;
+#ifndef _WIN32
                 {
                     std::ifstream status_in("/proc/self/status");
                     std::string key;
@@ -3154,6 +3218,7 @@ int main(int argc, char** argv) {
                         std::getline(status_in, rest);
                     }
                 }
+#endif
                 std::vector<ProfileFrameSample> samples;
                 uint64_t profile_generation = 0;
                 {
@@ -3178,11 +3243,11 @@ int main(int argc, char** argv) {
                     {"pid", (int)getpid()},
                     {"vm_rss_kb", vm_rss_kb},
                     {"threads", threads},
-                    {"user_cpu_seconds", tv_sec_d(ru.ru_utime)},
-                    {"system_cpu_seconds", tv_sec_d(ru.ru_stime)},
-                    {"max_rss_kb", (long long)ru.ru_maxrss},
-                    {"voluntary_context_switches", (long long)ru.ru_nvcsw},
-                    {"involuntary_context_switches", (long long)ru.ru_nivcsw}
+                    {"user_cpu_seconds", user_cpu_seconds},
+                    {"system_cpu_seconds", system_cpu_seconds},
+                    {"max_rss_kb", max_rss_kb},
+                    {"voluntary_context_switches", voluntary_context_switches},
+                    {"involuntary_context_switches", involuntary_context_switches}
                 };
                 out["frame"] = {
                     {"frame_ms_avg", perf_frame_ms_avg.load(std::memory_order_relaxed)},
@@ -3301,14 +3366,15 @@ int main(int argc, char** argv) {
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
             }
-            close(client_fd);
+            netClose(client_fd);
         }
-        close(server_fd);
+        netClose(server_fd);
     });
     std::mutex p2p_mutex;
     std::unordered_map<std::string, std::vector<json>> p2p_mailbox;
     std::thread dataset_api_worker([&]() {
-        int server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (!ensureSocketRuntimeInitialized()) return;
+        int server_fd = (int)::socket(AF_INET, SOCK_STREAM, 0);
         if (server_fd < 0) return;
         int opt = 1;
         setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -3318,11 +3384,11 @@ int main(int argc, char** argv) {
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons(8788);
         if (bind(server_fd, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         if (listen(server_fd, 16) != 0) {
-            close(server_fd);
+            netClose(server_fd);
             return;
         }
         auto parse_q = [](const std::string& query, const std::string& key) -> std::string {
@@ -3358,13 +3424,13 @@ int main(int argc, char** argv) {
             tv.tv_sec = 1;
             int sel = select(server_fd + 1, &readfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
-            int client_fd = accept(server_fd, nullptr, nullptr);
+            int client_fd = (int)accept(server_fd, nullptr, nullptr);
             if (client_fd < 0) continue;
 
             char buf[4096];
-            ssize_t n = read(client_fd, buf, sizeof(buf) - 1);
+            ssize_t n = netRead(client_fd, buf, sizeof(buf) - 1);
             if (n <= 0) {
-                close(client_fd);
+                netClose(client_fd);
                 continue;
             }
             buf[n] = '\0';
@@ -3478,12 +3544,13 @@ int main(int argc, char** argv) {
             } else {
                 send_json(client_fd, 404, json{{"ok", false}, {"error", "not found"}});
             }
-            close(client_fd);
+            netClose(client_fd);
         }
-        close(server_fd);
+        netClose(server_fd);
     });
     std::thread lan_discovery_worker([&]() {
-        int sock = ::socket(AF_INET, SOCK_DGRAM, 0);
+        if (!ensureSocketRuntimeInitialized()) return;
+        int sock = (int)::socket(AF_INET, SOCK_DGRAM, 0);
         if (sock < 0) return;
         int opt = 1;
         setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -3492,7 +3559,7 @@ int main(int argc, char** argv) {
         addr.sin_addr.s_addr = htonl(INADDR_ANY);
         addr.sin_port = htons(8789);
         if (bind(sock, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            close(sock);
+            netClose(sock);
             return;
         }
         while (!hydration_stop.load(std::memory_order_relaxed)) {
@@ -3504,7 +3571,11 @@ int main(int argc, char** argv) {
             int sel = select(sock + 1, &rfds, nullptr, nullptr, &tv);
             if (sel <= 0) continue;
             sockaddr_in src{};
+            #ifdef _WIN32
+            int slen = sizeof(src);
+            #else
             socklen_t slen = sizeof(src);
+            #endif
             char buf[2048];
             ssize_t n = recvfrom(sock, buf, sizeof(buf) - 1, 0, (sockaddr*)&src, &slen);
             if (n <= 0) continue;
@@ -3526,7 +3597,7 @@ int main(int argc, char** argv) {
             std::string body = out.dump();
             (void)sendto(sock, body.data(), body.size(), 0, (sockaddr*)&src, slen);
         }
-        close(sock);
+        netClose(sock);
     });
 
     int zoom = 12;
@@ -4774,7 +4845,8 @@ int main(int argc, char** argv) {
         if (!arkavo_err.empty()) ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "arkavo: %s", arkavo_err.c_str());
         if (ImGui::Button("Scan LAN Peers")) {
             lan_peers.clear();
-            int s = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (!ensureSocketRuntimeInitialized()) continue;
+            int s = (int)::socket(AF_INET, SOCK_DGRAM, 0);
             if (s < 0) {
                 lan_scan_status = "Scan failed: socket error";
             } else {
@@ -4793,7 +4865,11 @@ int main(int argc, char** argv) {
                 std::unordered_set<std::string> seen;
                 for (;;) {
                     sockaddr_in src{};
+                    #ifdef _WIN32
+                    int slen = sizeof(src);
+                    #else
                     socklen_t slen = sizeof(src);
+                    #endif
                     char rbuf[4096];
                     ssize_t rn = recvfrom(s, rbuf, sizeof(rbuf) - 1, 0, (sockaddr*)&src, &slen);
                     if (rn <= 0) break;
@@ -4813,7 +4889,7 @@ int main(int argc, char** argv) {
                     p.protocol_match = (p.protocol_version == kProtocolVersion);
                     lan_peers.push_back(std::move(p));
                 }
-                close(s);
+                netClose(s);
                 size_t compatible = 0;
                 for (const auto& p : lan_peers) if (p.protocol_match) compatible++;
                 lan_scan_status = "Peers: " + std::to_string(lan_peers.size()) +
