@@ -1,0 +1,243 @@
+name: Build Release Artifacts
+
+on:
+  push:
+    branches:
+      - '**'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-packages:
+    name: Linux Packages (.deb + AppImage)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Install Linux packaging prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ninja-build \
+            cmake \
+            wget \
+            file \
+            dpkg-dev \
+            zip \
+            libvulkan-dev \
+            libglfw3-dev \
+            libcurl4-openssl-dev \
+            libssl-dev
+
+      - name: Build Linux release packages
+        run: ./scripts/package-linux.sh "${SHORT_SHA}"
+
+      - name: Upload Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-deb-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}.deb
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-appimage-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}.AppImage
+
+  build-windows:
+    name: Windows .exe
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        shell: bash
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Install Vulkan SDK
+        shell: powershell
+        run: |
+          choco install vulkan-sdk --yes --no-progress
+          $sdkRoot = Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $sdkRoot) { throw "Vulkan SDK not found under C:\VulkanSDK" }
+          "VULKAN_SDK=$($sdkRoot.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$($sdkRoot.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install vcpkg and curl (x64-windows)
+        shell: powershell
+        run: |
+          $vcpkgRoot = if (Test-Path 'C:\vcpkg') { 'C:\vcpkg' } else { "$env:USERPROFILE\vcpkg" }
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & "$vcpkgRoot\vcpkg.exe" install curl:x64-windows
+
+      - name: Configure (MSVC)
+        shell: bash
+        run: |
+          cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
+            -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/Include" \
+            -DVulkan_LIBRARY="${VULKAN_SDK}/Lib/vulkan-1.lib"
+
+      - name: Build (MSVC)
+        shell: bash
+        run: cmake --build build-windows --config Release
+
+      - name: Package Windows artifacts
+        shell: bash
+        run: |
+          mkdir -p dist/windows
+          cp -v build-windows/Release/worldsim3.exe dist/windows/
+          cp -v build-windows/Release/arkavo_connectivity_test.exe dist/windows/
+          (cd dist && zip -r "worldsim3-${SHORT_SHA}-windows.zip" windows)
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldsim3-exe-${{ github.sha }}
+          path: dist/worldsim3-${{ env.SHORT_SHA }}-windows.zip
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-22.04
+    needs:
+      - build-linux-packages
+      - build-windows
+    steps:
+      - name: Download Debian artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worldsim3-deb-${{ github.sha }}
+          path: release-assets
+
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worldsim3-appimage-${{ github.sha }}
+          path: release-assets
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worldsim3-exe-${{ github.sha }}
+          path: release-assets
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          prerelease: true
+          files: |
+            release-assets/*.deb
+            release-assets/*.AppImage
+            release-assets/*.zip
+
+  publish-apt-repo:
+    name: Publish APT Repository
+    runs-on: ubuntu-22.04
+    needs:
+      - build-linux-packages
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Debian artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worldsim3-deb-${{ github.sha }}
+          path: apt-artifacts
+
+      - name: Build APT repository structure
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev
+
+          mkdir -p apt-repo/pool/main
+          cp -v apt-artifacts/*.deb apt-repo/pool/main/
+
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          dpkg-scanpackages --arch amd64 apt-repo/pool > apt-repo/dists/stable/main/binary-amd64/Packages
+          gzip -9c apt-repo/dists/stable/main/binary-amd64/Packages > apt-repo/dists/stable/main/binary-amd64/Packages.gz
+
+          cat > apt-repo/dists/stable/Release <<'EOF'
+          Origin: WorldSim3
+          Label: WorldSim3
+          Suite: stable
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: WorldSim3 APT repository
+          EOF
+
+      - name: Publish to gh-pages branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin gh-pages || true
+          if git show-ref --quiet refs/remotes/origin/gh-pages; then
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . || true
+          fi
+
+          mkdir -p apt
+          rm -rf apt/*
+          cp -a apt-repo/. apt/
+
+          git add apt
+          if git diff --cached --quiet; then
+            echo "No APT repo changes to publish."
+            exit 0
+          fi
+          git commit -m "Update APT repo for ${GITHUB_SHA}"
+          git push origin gh-pages
+
+      - name: Verify published APT endpoints
+        run: |
+          set -euo pipefail
+          BASE_URL="https://juliancoy.github.io/worldsim3/apt"
+          URLS=(
+            "${BASE_URL}/dists/stable/Release"
+            "${BASE_URL}/dists/stable/main/binary-amd64/Packages"
+          )
+
+          # Pages and DNS updates can be slightly delayed after push.
+          for i in {1..12}; do
+            all_ok=1
+            for u in "${URLS[@]}"; do
+              code="$(curl -sS -o /dev/null -w '%{http_code}' "$u" || true)"
+              if [[ "$code" != "200" ]]; then
+                echo "Expected HTTP 200 from ${u}, got ${code}"
+                all_ok=0
+                break
+              fi
+            done
+
+            if [[ "$all_ok" -eq 1 ]]; then
+              echo "APT endpoints are reachable."
+              exit 0
+            fi
+            echo "APT endpoints not reachable yet (attempt ${i}/12); retrying in 10s..."
+            sleep 10
+          done
+
+          echo "APT publish verification failed: expected endpoints are not reachable."
+          exit 1

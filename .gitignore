@@ -2,6 +2,11 @@ data/
 build/
 build-ninja/
 imgui.ini
-build*
+build*/
 __pycache__
 perf.*
+dist/
+AppDir/
+*.AppImage
+linuxdeploy-*.AppImage
+appimagetool-*.AppImage

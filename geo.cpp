@@ -2,6 +2,10 @@
 
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 ImVec2 lonLatToWorldPx(double lon, double lat, int zoom) {
     const double scale = 256.0 * std::pow(2.0, zoom);
     const double x = (lon + 180.0) / 360.0 * scale;

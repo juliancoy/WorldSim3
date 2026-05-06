@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(BaltimoreVulkanMap LANGUAGES CXX)
+project(WorldSim3 VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -106,3 +106,31 @@ target_link_libraries(arkavo_connectivity_test PRIVATE nlohmann_json::nlohmann_j
 if(UNIX AND NOT APPLE)
   target_link_libraries(arkavo_connectivity_test PRIVATE pthread)
 endif()
+
+install(TARGETS worldsim3 RUNTIME DESTINATION bin)
+
+install(
+  FILES packaging/linux/worldsim3.desktop
+  DESTINATION share/applications
+)
+
+install(
+  FILES packaging/linux/worldsim3.svg
+  DESTINATION share/icons/hicolor/scalable/apps
+)
+
+set(CPACK_PACKAGE_NAME "worldsim3")
+set(CPACK_PACKAGE_VENDOR "WorldSim3")
+set(CPACK_PACKAGE_CONTACT "maintainers@worldsim3.local")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "World simulation and visualization tool")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+
+if(UNIX AND NOT APPLE)
+  set(CPACK_GENERATOR "DEB")
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+  set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+endif()
+
+include(CPack)
