@@ -48,6 +48,9 @@ add_executable(worldsim3
   main.cpp
   worldsim_app.cpp
   worldsim_app_run.cpp
+  worldsim_cli.cpp
+  worldsim_dataset_bootstrap.cpp
+  worldsim_bootstrap.cpp
   app_lifecycle.cpp
   app_settings.cpp
   app_utils.cpp

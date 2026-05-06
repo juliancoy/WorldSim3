@@ -1,187 +1,191 @@
-# main.cpp Refactor Plan
+# WorldSim3 Refactor Plan: Keep Code Files Under 2000 Lines
 
-Goal: break `main.cpp` into focused modules until it is under 2000 lines without changing runtime behavior or committing generated data.
+## Objective
 
-## 1. Freeze Behavior
+Refactor the codebase so every **first-party** code file is under 2000 lines, while preserving runtime behavior.
 
-- Build the current baseline before each extraction.
-- Keep smoke checks for startup, `/status`, `/profile`, layer settings load/save, and heatmap settings.
-- Do not combine behavior changes with file-move refactors.
+- Scope includes: `*.cpp`, `*.h`, `*.hpp`, `*.inc`, and Python tooling scripts.
+- Third-party vendored code is tracked separately (see `stb_image.h` policy below).
 
-## 2. Define Module Boundaries
+## Implementation Progress
 
-Extract by ownership, not by line ranges:
+Completed so far:
 
-- `app_settings.{h,cpp}`: persistent app settings, grayscale, validation, UI defaults.
-- `status_api.{h,cpp}`: HTTP control/status/profile endpoints.
-- `profiling.{h,cpp}`: frame profiler, layer profile snapshots, process metrics.
-- `tile_cache.{h,cpp}`: tile cache, retired Vulkan textures, tile download/decode queue.
-- `heatmap.{h,cpp}`: aggregate method config, raster generation, KDE/splat/grid/hex/multires code.
-- `layer_runtime.{h,cpp}`: hydration queues, triangulation jobs/results, layer pipeline state.
-- `map_render.{h,cpp}`: map draw loop helpers, coordinate transforms, layer drawing helpers.
-- `dataset_library.{h,cpp}`: downloads, version metadata, diff artifacts, freshness checks.
-- `owners_panel.{h,cpp}`: owner aggregation/cache/table logic.
-- `vacancy_tax_overlay.{h,cpp}`: vacancy/tax joins and overlay state.
-- `zoning.{h,cpp}`: zoning class/group discovery, filters, colors.
-- `lan_services.{h,cpp}`: LAN dataset serving, peer discovery, Arkavo integration UI glue.
-- `ui_panels.{h,cpp}`: ImGui panels after state boundaries are clear.
+1. `worldsim_cli.{h,cpp}` extracted from `worldsim_app_run.cpp` for CLI parsing/dispatch.
+2. `worldsim_dataset_bootstrap.{h,cpp}` extracted for preload/download bootstrap behavior.
+3. `worldsim_bootstrap.{h,cpp}` extracted for key layer index discovery.
+4. `worldsim_app_run.cpp` reduced below 2000 lines using incremental extraction and include-unit decomposition.
 
-## 3. Introduce Shared Context Types
+## Current Over-Limit Files
 
-Create `app_context.h` with grouped state structs:
+Based on `python countlines.py` output:
 
-- `ViewState`
-- `LayerUiState`
-- `RuntimeQueues`
-- `RenderStats`
-- `HeatmapState`
-- `OverlayState`
-- `NetworkState`
+1. `stb_image.h` (7988 lines) - vendored third-party file; do not hand-edit.
 
-Keep raw global Vulkan objects isolated until later to avoid destabilizing rendering.
+All first-party C++ and Python files are currently under 2000 lines.
 
-## 4. Extract Pure/Low-Risk Code First
+## Refactor Policy (Best Practice)
 
-Move static helpers with minimal dependencies:
+1. Preserve behavior first; move code before changing logic.
+2. Split by domain ownership, not arbitrary line chunks.
+3. Minimize global state exposure by introducing context structs.
+4. Keep public headers narrow; prefer internal/private headers for implementation details.
+5. Add/keep automated guardrails (`tools/check_file_sizes.sh`) in CI.
+6. Treat third-party code separately from first-party size policy.
 
-- URL decoding.
-- File hash/signature helpers.
-- GeoJSON diff artifact writing.
-- App settings load/save.
-- Profile sample structs and summarizers.
+## Third-Party File Policy (`stb_image.h`)
 
-This reduces size without changing control flow.
+`stb_image.h` is vendored external code. Best practice is:
 
-## 5. Extract Status/Profile API
+1. Keep it unmodified and pinned to a known upstream revision.
+2. Move it under a clear vendor path (`third_party/stb/stb_image.h`) if desired.
+3. Exclude vendored files from first-party line limits (already done in `tools/check_file_sizes.sh`).
 
-Move the HTTP server worker into `status_api.cpp`.
+This avoids carrying a custom fork and reduces upgrade risk.
 
-Pass a compact `StatusApiContext` containing:
+## High-Level Extraction Strategy
 
-- Atomics for view/perf counters.
-- Mutex-protected layer profile snapshots.
-- REST command queues.
-- Layer status snapshots.
+Primary split target: `worldsim_app_run.cpp`.
 
-Verify:
+### Phase 1: App Entry and Bootstrap
 
-- `GET /status`
-- `GET /profile`
-- `GET /profile/layers`
-- `GET /profile/reset`
+Move CLI parsing and startup/bootstrap orchestration out of `worldsim_app_run.cpp`.
 
-## 6. Extract Profiling
+### Phase 2: Frame Pipeline Decomposition
 
-Move profiler ownership into `profiling.{h,cpp}`:
+Split frame-loop responsibilities into dedicated units (input, simulation, render pass orchestration).
 
-- `ProfileFrameSample`
-- `LayerProfileSnapshot`
-- Rolling frame ring buffer.
-- Layer snapshot refresh.
-- Process metrics.
-- JSON serialization.
+### Phase 3: UI Panel Orchestration
 
-Replace direct `main.cpp` mutation with methods:
+Move tab/panel wiring and per-panel state adapters into separate module files.
 
-- `profiler.recordFrame(sample)`
-- `profiler.markLayerDirty(i)`
-- `profiler.refreshLayerSnapshots(layers, layer_spatial)`
-- `profiler.toJson()`
+### Phase 4: Networking and Service Coordination
 
-## 7. Extract Dataset Library
+Extract realtime/session/LAN orchestration code paths from the run loop.
 
-Move download/version/freshness/diff code and related structs into `dataset_library.{h,cpp}`.
+### Phase 5: Runtime Integration Cleanup
 
-Main should keep only:
+Centralize mutable runtime state into structured contexts and reduce cross-file coupling.
 
-- UI calls.
-- High-level state.
-- User-triggered actions.
+## New Files To Create
 
-Verify no `data/` outputs are staged or committed.
+The following files should be introduced (professional naming, single-responsibility boundaries):
 
-## 8. Extract Heatmap
+1. `worldsim_cli.h`
+2. `worldsim_cli.cpp`
+3. `worldsim_bootstrap.h`
+4. `worldsim_bootstrap.cpp`
+5. `worldsim_runtime_context.h`
+6. `worldsim_frame_loop.h`
+7. `worldsim_frame_loop.cpp`
+8. `worldsim_render_loop.h`
+9. `worldsim_render_loop.cpp`
+10. `worldsim_ui_coordinator.h`
+11. `worldsim_ui_coordinator.cpp`
+12. `worldsim_network_coordinator.h`
+13. `worldsim_network_coordinator.cpp`
+14. `worldsim_dataset_bootstrap.h`
+15. `worldsim_dataset_bootstrap.cpp`
+16. `worldsim_command_dispatch.h`
+17. `worldsim_command_dispatch.cpp`
+18. `worldsim_shutdown.h`
+19. `worldsim_shutdown.cpp`
 
-Move heatmap ownership into `heatmap.{h,cpp}`:
+## Existing Files Impacted By This Refactor
 
-- Aggregate method enum/config.
-- Per-layer effective settings.
-- Raster generation.
-- Async job key/result types.
-- KDE, splat, grid, hex, and multires algorithms.
+### Core build/runtime
 
-Keep Vulkan texture upload in `main.cpp` initially if needed. After stable, move it behind a `HeatmapRenderer` abstraction.
+1. `CMakeLists.txt` (add new compilation units)
+2. `worldsim_app_run.cpp` (major reduction; orchestrator-only end state)
+3. `worldsim_app.cpp` (ownership handoff for helper implementations, include cleanup)
+4. `worldsim_app_internal.h` (replace broad globals/includes with refined contexts)
+5. `worldsim_app.h` (public API remains small; verify unchanged contract)
+6. `main.cpp` (no behavior change expected; include/path updates only if needed)
 
-## 9. Extract Layer Pipeline
+### App lifecycle and utilities
 
-Move hydration and triangulation into `layer_runtime.{h,cpp}`.
+7. `app_lifecycle.cpp`
+8. `app_lifecycle.h`
+9. `app_utils.cpp`
+10. `app_utils.h`
+11. `app_settings.cpp`
+12. `app_settings.h`
 
-Expose:
+### Rendering/map/layers integration touchpoints
 
-- `enqueueHydration(index, required)`
-- `drainHydrated()`
-- `drainTriangulated()`
-- `stopWorkers()`
+13. `layer_runtime.cpp`
+14. `layer_runtime.h`
+15. `layer_workers.cpp`
+16. `layer_workers.h`
+17. `layer_geometry.cpp`
+18. `layer_geometry.h`
+19. `heatmap_render.cpp`
+20. `heatmap_render.h`
+21. `time_cube.cpp`
+22. `time_cube.h`
+23. `time_cube_panel.cpp`
+24. `time_cube_panel.h`
 
-This touches threading, so do it only after API/profiling extraction is stable.
+### Data and API/service integration
 
-## 10. Extract Overlays
+25. `dataset_library.cpp`
+26. `dataset_library.h`
+27. `dataset_lan_api.cpp`
+28. `dataset_lan_api.h`
+29. `status_api.cpp`
+30. `status_api.h`
+31. `net_http_utils.cpp`
+32. `net_http_utils.h`
+33. `cache_io.cpp`
+34. `cache_io.h`
 
-Move vacancy/tax joins and overlay state into `vacancy_tax_overlay.{h,cpp}`.
+### UI/domain panel integration
 
-Move zoning discovery/filter state into `zoning.{h,cpp}`.
+35. `policy_panel.cpp`
+36. `policy_panel.h`
+37. `model_tabs_panel.cpp`
+38. `model_tabs_panel.h`
+39. `vacancy_overlay.cpp`
+40. `vacancy_overlay.h`
+41. `zoning.cpp`
+42. `zoning.h`
 
-Keep draw calls in `main.cpp` at first. Move draw helpers only after state ownership is stable.
+### Realtime/session stack integration
 
-## 11. Extract Tile Cache
+43. `arkavo_realtime_client.cpp`
+44. `arkavo_realtime_client.h`
+45. `arkavo_rtc_session_manager.cpp`
+46. `arkavo_rtc_session_manager.h`
+47. `arkavo_signaling_transport_curl.cpp`
+48. `arkavo_signaling_transport_curl.h`
 
-Move tile cache ownership into `tile_cache.{h,cpp}`:
+### Optional vendor path cleanup
 
-- LRU cache.
-- Decode workers.
-- Retired texture draining.
-- Tile request state.
-- Vulkan tile texture lifecycle.
+49. `stb_image.h` (only path/include relocation if moved under `third_party/`; no content edits)
 
-Keep Vulkan handles explicit in a context object. Validate no descriptor-set lifetime regressions.
+## Target End State
 
-## 12. Extract UI Panels And Render Helpers
+1. All first-party code files are under 2000 lines.
+2. `worldsim_app_run.cpp` becomes a thin orchestrator (target: 800-1500 lines).
+3. App runtime responsibilities are split across bounded coordinator modules listed above.
+4. Third-party vendored files remain excluded from first-party size policy.
+5. `tools/check_file_sizes.sh` stays green locally and in CI.
 
-Move large ImGui panels into focused files:
+## Verification Checklist Per Refactor PR
 
-- `layers_panel.cpp`
-- `library_panel.cpp`
-- `models_panel.cpp`
-- `network_panel.cpp`
+1. `cmake -S . -B build`
+2. `cmake --build build -j`
+3. `tools/check_file_sizes.sh`
+4. Launch smoke test: `./build/worldsim3`
+5. API smoke: `GET /status`, `GET /profile`
+6. UI smoke: map render, layer toggles, policy panel, time cube panel
 
-Move map drawing helpers after state ownership is clear.
+## Delivery Plan (PR Slicing)
 
-## 13. Add Line Count Gate
+1. PR 1: Add runtime context and CLI/bootstrap modules; no behavior changes.
+2. PR 2: Extract frame/render loop coordinators.
+3. PR 3: Extract UI coordinator and command dispatch.
+4. PR 4: Extract network/dataset bootstrap/shutdown coordinators.
+5. PR 5: Final cleanup, include minimization, and line-limit enforcement confirmation.
 
-Add `tools/check_main_size.sh`:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-lines=$(wc -l < main.cpp)
-if (( lines > 2000 )); then
-  echo "main.cpp has ${lines} lines; limit is 2000" >&2
-  exit 1
-fi
-```
-
-Run it before committing the final phase.
-
-## 14. Commit Strategy
-
-- One commit per extraction phase.
-- Every commit must build.
-- Do not mix formatting-only changes with behavior-preserving moves.
-- Never stage `data/`, `build/`, generated datasets, binaries, or local cache files.
-
-## 15. Target End State
-
-- `main.cpp` is under 2000 lines.
-- `main.cpp` owns only startup, Vulkan setup, top-level loop orchestration, and shutdown.
-- Domain code lives in named modules.
-- Profiling endpoints remain available throughout the refactor.
+This sequence keeps risk controlled and every step reviewable.
