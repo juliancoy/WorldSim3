@@ -213,16 +213,19 @@ jobs:
       - name: Verify published APT endpoints
         run: |
           set -euo pipefail
+          BASE_URL="https://juliancoy.github.io/worldsim3/apt"
           URLS=(
-            "https://juliancoy.github.io/worldsim3/apt/dists/stable/Release"
-            "https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages"
+            "${BASE_URL}/dists/stable/Release"
+            "${BASE_URL}/dists/stable/main/binary-amd64/Packages"
           )
 
           # Pages and DNS updates can be slightly delayed after push.
           for i in {1..12}; do
             all_ok=1
             for u in "${URLS[@]}"; do
-              if ! curl -fsSL "$u" >/dev/null; then
+              code="$(curl -sS -o /dev/null -w '%{http_code}' "$u" || true)"
+              if [[ "$code" != "200" ]]; then
+                echo "Expected HTTP 200 from ${u}, got ${code}"
                 all_ok=0
                 break
               fi

@@ -26,14 +26,12 @@ sudo apt-get update
 sudo apt-get install -y worldsim3
 ```
 
-If `apt-get update` reports `404` for WorldSim3, verify these URLs return `200`:
+If `apt-get update` reports `404` for WorldSim3, verify these URLs return `200` with no redirect:
 
 ```bash
-curl -I https://juliancoy.github.io/worldsim3/apt/dists/stable/Release
-curl -I https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages
+curl -fsSI https://juliancoy.github.io/worldsim3/apt/dists/stable/Release
+curl -fsSI https://juliancoy.github.io/worldsim3/apt/dists/stable/main/binary-amd64/Packages
 ```
-
-GitHub Pages may redirect `juliancoy.github.io` to a custom domain. If redirected, the custom-domain path must also serve `/worldsim3/apt/...` (lowercase `worldsim3`).
 
 ## Install dependencies (Ubuntu/Debian)
 
