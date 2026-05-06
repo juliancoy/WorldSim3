@@ -70,10 +70,23 @@ jobs:
           "VULKAN_SDK=$($sdkRoot.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "$($sdkRoot.FullName)\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
+      - name: Install vcpkg and curl (x64-windows)
+        shell: powershell
+        run: |
+          $vcpkgRoot = if (Test-Path 'C:\vcpkg') { 'C:\vcpkg' } else { "$env:USERPROFILE\vcpkg" }
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & "$vcpkgRoot\bootstrap-vcpkg.bat" -disableMetrics
+          }
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & "$vcpkgRoot\vcpkg.exe" install curl:x64-windows
+
       - name: Configure (MSVC)
         shell: bash
         run: |
           cmake -S . -B build-windows -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x64-windows \
             -DVulkan_INCLUDE_DIR="${VULKAN_SDK}/Include" \
             -DVulkan_LIBRARY="${VULKAN_SDK}/Lib/vulkan-1.lib"
 
