@@ -143,3 +143,69 @@ jobs:
             release-assets/*.deb
             release-assets/*.AppImage
             release-assets/*.zip
+
+  publish-apt-repo:
+    name: Publish APT Repository
+    runs-on: ubuntu-22.04
+    needs:
+      - build-linux-packages
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Debian artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: worldsim3-deb-${{ github.sha }}
+          path: apt-artifacts
+
+      - name: Build APT repository structure
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dpkg-dev
+
+          mkdir -p apt-repo/pool/main
+          cp -v apt-artifacts/*.deb apt-repo/pool/main/
+
+          mkdir -p apt-repo/dists/stable/main/binary-amd64
+          dpkg-scanpackages --arch amd64 apt-repo/pool > apt-repo/dists/stable/main/binary-amd64/Packages
+          gzip -9c apt-repo/dists/stable/main/binary-amd64/Packages > apt-repo/dists/stable/main/binary-amd64/Packages.gz
+
+          cat > apt-repo/dists/stable/Release <<'EOF'
+          Origin: WorldSim3
+          Label: WorldSim3
+          Suite: stable
+          Codename: stable
+          Architectures: amd64
+          Components: main
+          Description: WorldSim3 APT repository
+          EOF
+
+      - name: Publish to gh-pages branch
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin gh-pages || true
+          if git show-ref --quiet refs/remotes/origin/gh-pages; then
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . || true
+          fi
+
+          mkdir -p apt
+          rm -rf apt/*
+          cp -a apt-repo/. apt/
+
+          git add apt
+          if git diff --cached --quiet; then
+            echo "No APT repo changes to publish."
+            exit 0
+          fi
+          git commit -m "Update APT repo for ${GITHUB_SHA}"
+          git push origin gh-pages

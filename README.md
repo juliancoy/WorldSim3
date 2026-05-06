@@ -22,7 +22,12 @@ sudo apt-get install -y cmake g++ python3 libvulkan-dev vulkan-tools libglfw3-de
 After CI produces release artifacts, install/run them with:
 
 ```bash
-# Debian package (recommended on Ubuntu/Debian)
+# Direct APT install from project repository (no manual .deb download)
+echo "deb [trusted=yes] https://juliancoy.github.io/WorldSim3/apt stable main" | sudo tee /etc/apt/sources.list.d/worldsim3.list
+sudo apt-get update
+sudo apt-get install -y worldsim3
+
+# Local Debian package install
 sudo apt install ./worldsim3-<tag>.deb
 
 # AppImage
