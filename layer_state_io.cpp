@@ -1,5 +1,7 @@
 #include "layer_state_io.h"
 
+#include "aggregate_visualization_strategies.h"
+
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -84,6 +86,7 @@ void loadLayerUiState(
     std::vector<bool>* layer_inspect_enabled,
     std::vector<bool>* layer_heatmap_enabled,
     std::vector<int>* layer_heatmap_max_zoom,
+    std::vector<int>* layer_parcel_detail_min_zoom,
     std::vector<bool>* layer_heatmap_use_gradient,
     std::vector<int>* layer_heatmap_algo,
     std::vector<bool>* layer_heatmap_use_global_settings,
@@ -175,6 +178,15 @@ void loadLayerUiState(
             }
         }
     }
+    if (layer_parcel_detail_min_zoom && j.contains("layer_parcel_detail_min_zoom") && j["layer_parcel_detail_min_zoom"].is_object()) {
+        const auto& obj = j["layer_parcel_detail_min_zoom"];
+        if (layer_parcel_detail_min_zoom->size() < layers.size()) layer_parcel_detail_min_zoom->resize(layers.size(), 14);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
+                (*layer_parcel_detail_min_zoom)[i] = obj[layers[i].file].get<int>();
+            }
+        }
+    }
     if (layer_heatmap_use_gradient && j.contains("layer_heatmap_use_gradient") && j["layer_heatmap_use_gradient"].is_object()) {
         const auto& obj = j["layer_heatmap_use_gradient"];
         if (layer_heatmap_use_gradient->size() < layers.size()) layer_heatmap_use_gradient->resize(layers.size(), true);
@@ -245,6 +257,7 @@ void saveLayerUiState(
     const std::vector<bool>* layer_inspect_enabled,
     const std::vector<bool>* layer_heatmap_enabled,
     const std::vector<int>* layer_heatmap_max_zoom,
+    const std::vector<int>* layer_parcel_detail_min_zoom,
     const std::vector<bool>* layer_heatmap_use_gradient,
     const std::vector<int>* layer_heatmap_algo,
     const std::vector<bool>* layer_heatmap_use_global_settings,
@@ -309,6 +322,13 @@ void saveLayerUiState(
             hz[layers[i].file] = i < layer_heatmap_max_zoom->size() ? (*layer_heatmap_max_zoom)[i] : 13;
         }
         j["layer_heatmap_max_zoom"] = std::move(hz);
+    }
+    if (layer_parcel_detail_min_zoom) {
+        json pz = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            pz[layers[i].file] = i < layer_parcel_detail_min_zoom->size() ? (*layer_parcel_detail_min_zoom)[i] : kParcelChoroplethMinZoom;
+        }
+        j["layer_parcel_detail_min_zoom"] = std::move(pz);
     }
     if (layer_heatmap_use_gradient) {
         json hg = json::object();

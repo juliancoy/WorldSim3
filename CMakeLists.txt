@@ -51,6 +51,7 @@ add_executable(worldsim3
   worldsim_cli.cpp
   worldsim_dataset_bootstrap.cpp
   worldsim_bootstrap.cpp
+  aggregate_visualization_strategies.cpp
   app_lifecycle.cpp
   app_settings.cpp
   app_utils.cpp
@@ -63,7 +64,11 @@ add_executable(worldsim3
   layer_runtime.cpp
   layer_workers.cpp
   layer_geometry.cpp
+  map_render_heatmap_pass.cpp
+  map_render_hover.cpp
+  map_render_layers.cpp
   map_render_overlays.cpp
+  map_render_projection.cpp
   map_render_utils.cpp
   heatmap_render.cpp
   time_cube_panel.cpp

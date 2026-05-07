@@ -13,9 +13,9 @@ bool layerFillEnabled(const MapRenderContext& ctx, int layer_idx) {
 }
 
 bool featureOnScreen(const MapRenderContext& ctx, size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg) {
-    const auto pww = ctx.get_world_extent(layer_idx, feature_idx, fg);
-    ImVec2 a = ctx.project_world(pww.first);
-    ImVec2 b = ctx.project_world(pww.second);
+    const auto pww = ctx.projection->getWorldExtent(layer_idx, feature_idx, fg);
+    ImVec2 a = ctx.projection->projectWorld(pww.first);
+    ImVec2 b = ctx.projection->projectWorld(pww.second);
     ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
     ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
     return !(p1.x < ctx.origin.x || p0.x > ctx.origin.x + ctx.size.x ||
@@ -32,9 +32,10 @@ void drawParcelOverlayRings(
     const std::vector<std::vector<ImVec2>>& world_rings,
     ImU32 outline) {
     for (const auto& r : world_rings) {
-        ctx.append_world_ring_line(r);
-        if (ctx.scratch_line && !ctx.scratch_line->empty()) {
-            ctx.draw->AddPolyline(ctx.scratch_line->data(), (int)ctx.scratch_line->size(), outline, ImDrawFlags_Closed, 2.0f);
+        ctx.projection->appendWorldRingLine(r);
+        const auto& scratch_line = ctx.projection->scratchLine();
+        if (!scratch_line.empty()) {
+            ctx.draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), outline, ImDrawFlags_Closed, 2.0f);
         }
     }
     (void)fg;
@@ -43,10 +44,8 @@ void drawParcelOverlayRings(
 
 MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
     MapOverlayResult result;
-    if (!ctx.draw || !ctx.layers || ctx.parcel_layer_idx >= ctx.layers->size()) return result;
-    if (!ctx.feature_passes_filters || !ctx.get_world_extent || !ctx.get_world_rings ||
-        !ctx.project_world || !ctx.should_fill_layer_polygon || !ctx.draw_tessellated_fill ||
-        !ctx.append_world_ring_line) {
+    if (!ctx.draw || !ctx.layers || !ctx.projection || ctx.parcel_layer_idx >= ctx.layers->size()) return result;
+    if (!ctx.feature_passes_filters || !ctx.should_fill_layer_polygon) {
         return result;
     }
 
@@ -65,7 +64,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             if (weight <= 0) continue;
             result.visible_vacant_parcels++;
 
-            const auto& world_rings = ctx.get_world_rings(ctx.parcel_layer_idx, (uint32_t)i, fg);
+            const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
             const int alpha = scaledOverlayAlpha(120, 18, 120, 230, weight);
             const ImVec4 vac_base = blendVacancyColor(ctx.vacancy_notice_color, ctx.vacancy_rehab_color, vac_notice, vac_rehab);
             const ImU32 vac_fill = colorWithAlpha(vac_base, alpha);
@@ -73,7 +72,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const bool notice_fill = layerFillEnabled(ctx, ctx.vacant_notice_layer_idx);
             const bool rehab_fill = layerFillEnabled(ctx, ctx.vacant_rehab_layer_idx);
             if ((notice_fill || rehab_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
-                ctx.draw_tessellated_fill(fg, world_rings, vac_fill);
+                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, vac_fill);
             }
             drawParcelOverlayRings(ctx, fg, world_rings, vac_outline);
         }
@@ -94,12 +93,12 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const ImVec4 lien_c = (ctx.tax_lien_layer_idx >= 0) ? (*ctx.layers)[(size_t)ctx.tax_lien_layer_idx].color : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
             const ImVec4 sale_c = (ctx.tax_sale_layer_idx >= 0) ? (*ctx.layers)[(size_t)ctx.tax_sale_layer_idx].color : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
             const ImVec4 tax_base = blendTaxColor(lien_c, sale_c, ctx.tax_lien_enabled, ctx.tax_sale_enabled, lien_count, sale_count);
-            const auto& world_rings = ctx.get_world_rings(ctx.parcel_layer_idx, (uint32_t)i, fg);
+            const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
             const bool lien_fill = ctx.tax_lien_enabled && layerFillEnabled(ctx, ctx.tax_lien_layer_idx);
             const bool sale_fill = ctx.tax_sale_enabled && layerFillEnabled(ctx, ctx.tax_sale_layer_idx);
             if ((lien_fill || sale_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
                 const int alpha = scaledOverlayAlpha(90, 10, 90, 210, weight);
-                ctx.draw_tessellated_fill(fg, world_rings, colorWithAlpha(tax_base, alpha));
+                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, colorWithAlpha(tax_base, alpha));
             }
             const ImU32 tax_outline = colorWithAlpha(darkenColor(tax_base, 0.58f), 240);
             drawParcelOverlayRings(ctx, fg, world_rings, tax_outline);

@@ -18,7 +18,12 @@
 #include "layer_runtime.h"
 #include "layer_geometry.h"
 #include "layer_workers.h"
+#include "aggregate_visualization_strategies.h"
+#include "map_render_heatmap_pass.h"
+#include "map_render_hover.h"
+#include "map_render_layers.h"
 #include "map_render_overlays.h"
+#include "map_render_projection.h"
 #include "map_render_utils.h"
 #include "heatmap_render.h"
 #include "time_cube_panel.h"
@@ -256,6 +261,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<bool> layer_inspect_enabled(layers.size(), true);
     std::vector<bool> layer_heatmap_enabled(layers.size(), true);
     std::vector<int> layer_heatmap_max_zoom(layers.size(), 13);
+    std::vector<int> layer_parcel_detail_min_zoom(layers.size(), kParcelChoroplethMinZoom);
     std::vector<bool> layer_heatmap_use_gradient(layers.size(), true);
     std::vector<int> layer_heatmap_algo(layers.size(), -1);
     std::vector<bool> layer_heatmap_use_global_settings(layers.size(), true);
@@ -296,6 +302,7 @@ int runWorldSim3App(int argc, char** argv) {
         &layer_inspect_enabled,
         &layer_heatmap_enabled,
         &layer_heatmap_max_zoom,
+        &layer_parcel_detail_min_zoom,
         &layer_heatmap_use_gradient,
         &layer_heatmap_algo,
         &layer_heatmap_use_global_settings,
@@ -677,6 +684,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.layer_inspect_enabled = &layer_inspect_enabled;
     shutdown_ctx.layer_heatmap_enabled = &layer_heatmap_enabled;
     shutdown_ctx.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
+    shutdown_ctx.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
     shutdown_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
     shutdown_ctx.layer_heatmap_algo = &layer_heatmap_algo;
     shutdown_ctx.layer_heatmap_use_global_settings = &layer_heatmap_use_global_settings;

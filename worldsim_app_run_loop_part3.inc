@@ -748,10 +748,6 @@
             }
             ImGui::EndPopup();
         }
-        const LayerDef::FeatureGeom* hovered_parcel = nullptr;
-        size_t hovered_parcel_idx = (size_t)-1;
-        const LayerDef::FeatureGeom* hovered_zone = nullptr;
-        size_t hovered_zone_idx = (size_t)-1;
         const double half_w_world = (size.x * 0.5) / zoom_scale;
         const double half_h_world = (size.y * 0.5) / zoom_scale;
         ImVec2 ll_a = worldPxToLonLat(ImVec2(center_world.x - (float)half_w_world, center_world.y - (float)half_h_world), math_zoom);
@@ -771,75 +767,26 @@
         const bool zoning_hover_active = hover_inspector_enabled && layer_hover_active(zoning_layer_idx);
         const bool zoning_inspect_active = layer_inspect_active(zoning_layer_idx);
 
-        if (map_hovered && (parcel_hover_active || parcel_inspect_active) && parcel_layer_idx >= 0) {
-            const size_t pli = (size_t)parcel_layer_idx;
-            if (pli < layers.size() && pli < layer_spatial.size() && layer_spatial[pli].built) {
-                std::vector<uint32_t> hover_candidates;
-                if (queryLayerSpatialIndex(
-                        layer_spatial[pli],
-                        mouse_ll.x,
-                        mouse_ll.y,
-                        mouse_ll.x,
-                        mouse_ll.y,
-                        hover_candidates)) {
-                    float best_area = std::numeric_limits<float>::infinity();
-                    for (uint32_t fidx : hover_candidates) {
-                        if (fidx >= layers[pli].features.size()) continue;
-                        const auto& fg = layers[pli].features[(size_t)fidx];
-                        if (fg.rings.empty()) continue;
-                        if (fg.extent.max_lon < view_min_lon || fg.extent.min_lon > view_max_lon ||
-                            fg.extent.max_lat < view_min_lat || fg.extent.min_lat > view_max_lat) {
-                            continue;
-                        }
-                        if (mouse_ll.x < fg.extent.min_lon || mouse_ll.x > fg.extent.max_lon ||
-                            mouse_ll.y < fg.extent.min_lat || mouse_ll.y > fg.extent.max_lat) {
-                            continue;
-                        }
-                        if (!pointInFeature(fg, mouse_ll.x, mouse_ll.y)) continue;
-                        const float area = std::max(0.0f, fg.extent.max_lon - fg.extent.min_lon) *
-                                           std::max(0.0f, fg.extent.max_lat - fg.extent.min_lat);
-                        if (area < best_area) {
-                            best_area = area;
-                            hovered_parcel = &fg;
-                            hovered_parcel_idx = (size_t)fidx;
-                        }
-                    }
-                }
-            }
-        }
-        if (map_hovered && (zoning_hover_active || zoning_inspect_active) && zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
-            const size_t zli = (size_t)zoning_layer_idx;
-            if (zli < layer_spatial.size() && layer_spatial[zli].built) {
-                std::vector<uint32_t> zone_candidates;
-                if (queryLayerSpatialIndex(
-                        layer_spatial[zli],
-                        mouse_ll.x,
-                        mouse_ll.y,
-                        mouse_ll.x,
-                        mouse_ll.y,
-                        zone_candidates)) {
-                    float best_area = std::numeric_limits<float>::infinity();
-                    const auto& zfeats = layers[zli].features;
-                    for (uint32_t zidx : zone_candidates) {
-                        if (zidx >= zfeats.size()) continue;
-                        const auto& zf = zfeats[zidx];
-                        if (zf.rings.empty()) continue;
-                        if (mouse_ll.x < zf.extent.min_lon || mouse_ll.x > zf.extent.max_lon ||
-                            mouse_ll.y < zf.extent.min_lat || mouse_ll.y > zf.extent.max_lat) {
-                            continue;
-                        }
-                        if (!pointInFeature(zf, mouse_ll.x, mouse_ll.y)) continue;
-                        const float area = std::max(0.0f, zf.extent.max_lon - zf.extent.min_lon) *
-                                           std::max(0.0f, zf.extent.max_lat - zf.extent.min_lat);
-                        if (area < best_area) {
-                            best_area = area;
-                            hovered_zone = &zf;
-                            hovered_zone_idx = (size_t)zidx;
-                        }
-                    }
-                }
-            }
-        }
+        MapHoverQuery hover_query;
+        hover_query.map_hovered = map_hovered;
+        hover_query.parcel_hover_active = parcel_hover_active;
+        hover_query.parcel_inspect_active = parcel_inspect_active;
+        hover_query.zoning_hover_active = zoning_hover_active;
+        hover_query.zoning_inspect_active = zoning_inspect_active;
+        hover_query.parcel_layer_idx = parcel_layer_idx;
+        hover_query.zoning_layer_idx = zoning_layer_idx;
+        hover_query.layers = &layers;
+        hover_query.layer_spatial = &layer_spatial;
+        hover_query.mouse_ll = mouse_ll;
+        hover_query.view_min_lon = view_min_lon;
+        hover_query.view_max_lon = view_max_lon;
+        hover_query.view_min_lat = view_min_lat;
+        hover_query.view_max_lat = view_max_lat;
+        const MapHoverState hover_state = findMapHoverTargets(hover_query);
+        const LayerDef::FeatureGeom* hovered_parcel = hover_state.hovered_parcel;
+        size_t hovered_parcel_idx = hover_state.hovered_parcel_idx;
+        const LayerDef::FeatureGeom* hovered_zone = hover_state.hovered_zone;
+        size_t hovered_zone_idx = hover_state.hovered_zone_idx;
         int min_x = (int)std::floor((center_world.x - half_w_world) / 256.0) - 1;
         int max_x = (int)std::floor((center_world.x + half_w_world) / 256.0) + 1;
         int min_y = (int)std::floor((center_world.y - half_h_world) / 256.0) - 1;
@@ -896,110 +843,22 @@
             // Large-area layers still need low-zoom fill; parcel-scale fills are the expensive case.
             return !is_parcel_scale_layer(layer_idx) || allow_parcel_scale_fill;
         };
-        auto feature_cache_key = [](size_t layer_idx, uint32_t feature_idx) -> uint64_t {
-            return (uint64_t(layer_idx) << 32) | uint64_t(feature_idx);
-        };
-        std::unordered_map<uint64_t, std::vector<std::vector<ImVec2>>> world_rings_cache;
-        std::unordered_map<uint64_t, std::pair<ImVec2, ImVec2>> world_extent_cache;
+        MapProjectionCache projection_cache(math_zoom, ring_step, project_world);
         auto get_world_rings = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::vector<std::vector<ImVec2>>& {
-            const uint64_t key = feature_cache_key(layer_idx, feature_idx);
-            auto it = world_rings_cache.find(key);
-            if (it != world_rings_cache.end()) return it->second;
-            std::vector<std::vector<ImVec2>> rings;
-            rings.reserve(fg.rings.size());
-            for (const auto& r : fg.rings) {
-                std::vector<ImVec2> rr;
-                rr.reserve(r.size());
-                for (const ImVec2& ll : r) rr.push_back(lonLatToWorldPx(ll.x, ll.y, math_zoom));
-                rings.push_back(std::move(rr));
-            }
-            return world_rings_cache.emplace(key, std::move(rings)).first->second;
+            return projection_cache.getWorldRings(layer_idx, feature_idx, fg);
         };
         auto get_world_extent = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::pair<ImVec2, ImVec2>& {
-            const uint64_t key = feature_cache_key(layer_idx, feature_idx);
-            auto it = world_extent_cache.find(key);
-            if (it != world_extent_cache.end()) return it->second;
-            ImVec2 p0w = lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, math_zoom);
-            ImVec2 p1w = lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, math_zoom);
-            return world_extent_cache.emplace(key, std::make_pair(p0w, p1w)).first->second;
-        };
-        std::vector<ImVec2> scratch_fill_verts;
-        scratch_fill_verts.reserve(4096);
-        std::vector<uint32_t> scratch_fill_indices;
-        scratch_fill_indices.reserve(12288);
-        std::vector<ImVec2> scratch_line;
-        scratch_line.reserve(1024);
-        size_t fill_attempts_frame = 0;
-        size_t fill_success_frame = 0;
-        size_t fill_no_triangles_frame = 0;
-        size_t fill_bad_indices_frame = 0;
-        auto project_world_rings_for_fill = [&](const std::vector<std::vector<ImVec2>>& world_rings) -> size_t {
-            size_t total = 0;
-            for (const auto& r : world_rings) total += r.size();
-            scratch_fill_verts.clear();
-            scratch_fill_verts.reserve(total);
-            for (const auto& r : world_rings) {
-                for (const ImVec2& wp : r) scratch_fill_verts.push_back(project_world(wp));
-            }
-            return total;
+            return projection_cache.getWorldExtent(layer_idx, feature_idx, fg);
         };
         auto append_world_ring_line = [&](const std::vector<ImVec2>& world_ring) {
-            scratch_line.clear();
-            if (world_ring.empty()) return;
-            const int step = std::max(1, ring_step);
-            const size_t n = world_ring.size();
-            if (step == 1 || n <= 4) {
-                for (const ImVec2& wp : world_ring) scratch_line.push_back(project_world(wp));
-            } else {
-                scratch_line.reserve((n / (size_t)step) + 2);
-                for (size_t i = 0; i < n; i += (size_t)step) scratch_line.push_back(project_world(world_ring[i]));
-                if ((n - 1) % (size_t)step != 0) scratch_line.push_back(project_world(world_ring.back()));
-            }
+            projection_cache.appendWorldRingLine(world_ring);
         };
         auto draw_tessellated_fill = [&](const LayerDef::FeatureGeom& fg,
                                          const std::vector<std::vector<ImVec2>>& world_rings,
                                          ImU32 fill_color) -> bool {
-            fill_attempts_frame++;
-            if (fg.triangles.empty()) {
-                fill_no_triangles_frame++;
-                return false;
-            }
-            // Very dense polygons dominate CPU at low zoom; outline-only is acceptable there.
-            if (math_zoom <= 12 && fg.triangles.size() > 6000) return false;
-            const size_t vcount = project_world_rings_for_fill(world_rings);
-            if (vcount < 3) return false;
-
-            scratch_fill_indices.clear();
-            scratch_fill_indices.reserve(fg.triangles.size());
-            for (size_t ti = 0; ti + 2 < fg.triangles.size(); ti += 3) {
-                const uint32_t a = fg.triangles[ti + 0];
-                const uint32_t b = fg.triangles[ti + 1];
-                const uint32_t cidx = fg.triangles[ti + 2];
-                if (a < vcount && b < vcount && cidx < vcount) {
-                    scratch_fill_indices.push_back(a);
-                    scratch_fill_indices.push_back(b);
-                    scratch_fill_indices.push_back(cidx);
-                }
-            }
-            if (scratch_fill_indices.empty()) {
-                fill_bad_indices_frame++;
-                return false;
-            }
-
-            const ImDrawListFlags old_flags = draw->Flags;
-            draw->Flags &= ~ImDrawListFlags_AntiAliasedFill;
-            for (size_t ii = 0; ii + 2 < scratch_fill_indices.size(); ii += 3) {
-                draw->AddTriangleFilled(
-                    scratch_fill_verts[scratch_fill_indices[ii + 0]],
-                    scratch_fill_verts[scratch_fill_indices[ii + 1]],
-                    scratch_fill_verts[scratch_fill_indices[ii + 2]],
-                    fill_color);
-            }
-            draw->Flags = old_flags;
-            fill_success_frame++;
-            return true;
+            return projection_cache.drawTessellatedFill(draw, fg, world_rings, fill_color);
         };
         auto first_prop = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
             for (const char* k : keys) {

@@ -88,10 +88,38 @@
         };
         const float global_heat_cell = std::max(4.0f, global_heat_cell_px);
         std::vector<HeatSample> heat_samples;
+        auto resolve_layer_aggregate_algo = [&](size_t layer_idx) {
+            return (layer_idx < layer_heatmap_algo.size() && layer_heatmap_algo[layer_idx] >= 0)
+                ? layer_heatmap_algo[layer_idx]
+                : heatmap_algo;
+        };
+        auto layer_uses_parcel_choropleth_detail = [&](size_t layer_idx) {
+            if (layer_idx >= layers.size()) return false;
+            const auto& layer = layers[layer_idx];
+            const int min_zoom =
+                layer_idx < layer_parcel_detail_min_zoom.size()
+                    ? layer_parcel_detail_min_zoom[layer_idx]
+                    : kParcelChoroplethMinZoom;
+            return zoom >= min_zoom &&
+                   layer.scale == "parcel" &&
+                   !layer.heatmap_field.empty();
+        };
+        auto layer_uses_heatmap_aggregate = [&](size_t layer_idx) {
+            if (layer_idx >= layers.size() ||
+                !layers[layer_idx].enabled ||
+                layer_idx >= layer_heatmap_enabled.size() ||
+                layer_idx >= layer_heatmap_max_zoom.size() ||
+                !layer_heatmap_enabled[layer_idx] ||
+                zoom > layer_heatmap_max_zoom[layer_idx]) {
+                return false;
+            }
+            if (layer_uses_parcel_choropleth_detail(layer_idx)) return false;
+            return isHeatmapAggregateMethod(resolve_layer_aggregate_algo(layer_idx));
+        };
         auto resolve_layer_heat_settings = [&](size_t layer_idx, HeatSample& hs) {
             const bool use_global = layer_idx >= layer_heatmap_use_global_settings.size() || layer_heatmap_use_global_settings[layer_idx];
             hs.layer = (int)layer_idx;
-            hs.algo = (layer_idx < layer_heatmap_algo.size() && layer_heatmap_algo[layer_idx] >= 0) ? layer_heatmap_algo[layer_idx] : heatmap_algo;
+            hs.algo = resolve_layer_aggregate_algo(layer_idx);
             hs.cell_px = std::max(4.0f, use_global || layer_idx >= layer_heatmap_cell_px.size() ? global_heat_cell_px : layer_heatmap_cell_px[layer_idx]);
             hs.bandwidth_px = std::max(1.0f, use_global || layer_idx >= layer_heatmap_bandwidth_px.size() ? heatmap_bandwidth_px : layer_heatmap_bandwidth_px[layer_idx]);
             hs.blur_sigma_px = std::max(0.0f, use_global || layer_idx >= layer_heatmap_blur_sigma_px.size() ? heatmap_blur_sigma_px : layer_heatmap_blur_sigma_px[layer_idx]);
@@ -103,16 +131,9 @@
         bool smooth_only_heatmap = true;
         bool any_active_heatmap = false;
         for (size_t i = 0; i < layers.size(); ++i) {
-            const bool active_heatmap =
-                layers[i].enabled &&
-                i < layer_heatmap_enabled.size() &&
-                i < layer_heatmap_max_zoom.size() &&
-                layer_heatmap_enabled[i] &&
-                zoom <= layer_heatmap_max_zoom[i];
-            if (!active_heatmap) continue;
+            if (!layer_uses_heatmap_aggregate(i)) continue;
             any_active_heatmap = true;
-            const int algo = (i < layer_heatmap_algo.size() && layer_heatmap_algo[i] >= 0) ? layer_heatmap_algo[i] : heatmap_algo;
-            if (algo != 1 && algo != 2 && algo != 4) smooth_only_heatmap = false;
+            if (!isSmoothHeatmapAggregateMethod(resolve_layer_aggregate_algo(i))) smooth_only_heatmap = false;
         }
         if (!any_active_heatmap) smooth_only_heatmap = false;
         uint64_t heatmap_key = 1469598103934665603ULL;
@@ -168,6 +189,7 @@
             hashCombineU64(heatmap_key, layers[i].enabled ? 1ULL : 0ULL);
             hashCombineU64(heatmap_key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
             hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
+            hashCombineU64(heatmap_key, (uint64_t)((i < layer_parcel_detail_min_zoom.size()) ? layer_parcel_detail_min_zoom[i] : kParcelChoroplethMinZoom));
             hashCombineU64(heatmap_key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
             hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_algo.size()) ? (layer_heatmap_algo[i] + 1) : 0));
             const bool use_global = i >= layer_heatmap_use_global_settings.size() || layer_heatmap_use_global_settings[i];
@@ -211,39 +233,71 @@
             }
             prof_heatmap_ms_last.store(prof_ms_since(heat_prof_begin), std::memory_order_relaxed);
         }
-        const bool can_use_cached_heatmap = heatmap_cache_valid && heatmap_cache_key == heatmap_key;
-        bool should_recompute_heatmap = (!can_use_cached_heatmap) && (!heatmap_controls_active);
+        if (!any_active_heatmap) {
+            heatmap_cached_cells.clear();
+            heatmap_cache_valid = false;
+            heatmap_cache_key = 0;
+            if (heatmap_raster_texture_valid) destroyTileTexture(heatmap_raster_texture);
+            heatmap_raster_texture_valid = false;
+            heatmap_cached_raster_meta = {};
+            heatmap_raster_cache_key = 0;
+        }
+        const bool can_use_cached_heatmap = any_active_heatmap && heatmap_cache_valid && heatmap_cache_key == heatmap_key;
+        bool should_recompute_heatmap = any_active_heatmap && (!can_use_cached_heatmap) && (!heatmap_controls_active);
         const auto layer_prof_begin = std::chrono::steady_clock::now();
+        const RawSourceLayerPolicy raw_source_layer_policy{
+            vacant_notice_layer_idx,
+            vacant_rehab_layer_idx,
+            tax_lien_layer_idx,
+            tax_sale_layer_idx
+        };
         for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
             auto& l = layers[layer_idx];
             if (!l.enabled) continue;
-            const bool project_to_parcels_only =
-                (vacant_notice_layer_idx >= 0 && (int)layer_idx == vacant_notice_layer_idx) ||
-                (vacant_rehab_layer_idx >= 0 && (int)layer_idx == vacant_rehab_layer_idx) ||
-                (tax_lien_layer_idx >= 0 && (int)layer_idx == tax_lien_layer_idx) ||
-                (tax_sale_layer_idx >= 0 && (int)layer_idx == tax_sale_layer_idx);
-            if (project_to_parcels_only) continue;
+            if (shouldSkipRawSourceLayer(layer_idx, raw_source_layer_policy)) continue;
             const bool is_zoning_layer = ((int)layer_idx == zoning_layer_idx);
             const bool is_heat_layer = !l.heatmap_field.empty();
             float heat_min = std::numeric_limits<float>::infinity();
             float heat_max = -std::numeric_limits<float>::infinity();
+            std::vector<float> heat_values;
             if (is_heat_layer) {
+                heat_values.reserve(l.features.size());
                 for (size_t fi = 0; fi < l.features.size(); ++fi) {
                     const auto& fg = l.features[fi];
                     if (!feature_passes_filters(layer_idx, fi, fg)) continue;
                     float v = 0.0f;
                     if (!tryGetFeaturePropertyFloat(fg, l.heatmap_field, v)) continue;
+                    heat_values.push_back(v);
                     heat_min = std::min(heat_min, v);
                     heat_max = std::max(heat_max, v);
+                }
+                if (!heat_values.empty()) {
+                    const bool use_global =
+                        layer_idx >= layer_heatmap_use_global_settings.size() ||
+                        layer_heatmap_use_global_settings[layer_idx];
+                    const float clip_pct = std::clamp(
+                        use_global || layer_idx >= layer_heatmap_percentile_clip.size()
+                            ? heatmap_percentile_clip
+                            : layer_heatmap_percentile_clip[layer_idx],
+                        50.0f,
+                        100.0f);
+                    std::sort(heat_values.begin(), heat_values.end());
+                    heat_min = heat_values.front();
+                    if (clip_pct < 100.0f) {
+                        const size_t max_idx = heat_values.size() - 1;
+                        const size_t kth = (size_t)std::clamp(
+                            (int)std::floor((clip_pct / 100.0f) * (double)max_idx),
+                            0,
+                            (int)max_idx);
+                        heat_max = std::max(heat_min, heat_values[kth]);
+                    } else {
+                        heat_max = heat_values.back();
+                    }
                 }
             }
             const bool heat_range_valid = std::isfinite(heat_min) && std::isfinite(heat_max) && heat_max > heat_min;
             ImU32 c = ImGui::ColorConvertFloat4ToU32(l.color);
-            const bool layer_uses_heatmap_for_cache =
-                layer_idx < layer_heatmap_enabled.size() &&
-                layer_idx < layer_heatmap_max_zoom.size() &&
-                layer_heatmap_enabled[layer_idx] &&
-                zoom <= layer_heatmap_max_zoom[layer_idx];
+            const bool layer_uses_heatmap_for_cache = layer_uses_heatmap_aggregate(layer_idx);
             bool have_candidates = !should_recompute_heatmap || !layer_uses_heatmap_for_cache;
             if (have_candidates) {
                 have_candidates = queryLayerSpatialIndex(
@@ -252,11 +306,7 @@
             if (have_candidates) {
                 for (uint32_t fidx : render_candidates) {
                     prof_features_considered_frame++;
-                    const bool layer_uses_heatmap =
-                        layer_idx < layer_heatmap_enabled.size() &&
-                        layer_idx < layer_heatmap_max_zoom.size() &&
-                        layer_heatmap_enabled[layer_idx] &&
-                        zoom <= layer_heatmap_max_zoom[layer_idx];
+                    const bool layer_uses_heatmap = layer_uses_heatmap_aggregate(layer_idx);
                     if (smooth_only_heatmap && should_recompute_heatmap && layer_uses_heatmap && fidx % 2 != 0) continue;
                     if (fidx >= l.features.size()) continue;
                     auto& fg = l.features[(size_t)fidx];
@@ -311,7 +361,8 @@
 
                         for (const auto& r : world_rings) {
                             append_world_ring_line(r);
-                            draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+                            const auto& line = projection_cache.scratchLine();
+                            draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                         }
                     } else {
                         ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, math_zoom);
@@ -357,11 +408,7 @@
                 ImVec2 b = project_world(p1w);
                 ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
                 ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
-                const bool layer_uses_heatmap =
-                    layer_idx < layer_heatmap_enabled.size() &&
-                    layer_idx < layer_heatmap_max_zoom.size() &&
-                    layer_heatmap_enabled[layer_idx] &&
-                    zoom <= layer_heatmap_max_zoom[layer_idx];
+                const bool layer_uses_heatmap = layer_uses_heatmap_aggregate(layer_idx);
                 if (!layer_uses_heatmap && (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y)) continue;
                 if (layer_uses_heatmap) {
                     if (can_use_cached_heatmap) continue;
@@ -415,7 +462,8 @@
 
                     for (const auto& r : world_rings) {
                         append_world_ring_line(r);
-                        draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+                        const auto& line = projection_cache.scratchLine();
+                        draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                     }
                 } else {
                     ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, math_zoom);
@@ -431,6 +479,12 @@
         }
         prof_layer_ms_last.store(prof_ms_since(layer_prof_begin), std::memory_order_relaxed);
         prof_heat_samples_last.store(heat_samples.size(), std::memory_order_relaxed);
+        if (should_recompute_heatmap && heat_samples.empty()) {
+            heatmap_cached_cells.clear();
+            heatmap_cache_key = heatmap_key;
+            heatmap_cache_valid = true;
+            should_recompute_heatmap = false;
+        }
         if (should_recompute_heatmap && !heatmap_async_inflight) {
             const auto heat_prof_begin = std::chrono::steady_clock::now();
             const auto samples_copy = heat_samples;
@@ -491,44 +545,23 @@
             heatmap_cache_key = heatmap_key;
             heatmap_cache_valid = true;
         }
+        const std::vector<CachedHeatCell> empty_heat_cells;
         const std::vector<CachedHeatCell>& draw_cells =
             can_use_cached_heatmap ? heatmap_cached_cells :
-            (should_recompute_heatmap ? frame_heat_cells : heatmap_cached_cells);
-        const bool draw_stale_raster_while_rebuilding =
-            smooth_only_heatmap &&
-            heatmap_async_inflight &&
-            heatmap_raster_texture_valid;
-        const bool draw_current_raster =
-            heatmap_raster_texture_valid &&
-            heatmap_raster_cache_key == heatmap_key;
-        const bool drawing_heatmap_raster =
-            (draw_current_raster || draw_stale_raster_while_rebuilding) &&
-            heatmap_raster_texture.descriptor;
-        if (drawing_heatmap_raster) {
-            ImVec2 raster_nw = lonLatToWorldPx(heatmap_cached_raster_meta.min_lon, heatmap_cached_raster_meta.max_lat, math_zoom);
-            ImVec2 raster_se = lonLatToWorldPx(heatmap_cached_raster_meta.max_lon, heatmap_cached_raster_meta.min_lat, math_zoom);
-            ImVec2 rp0 = project_world(raster_nw);
-            ImVec2 rp1 = project_world(raster_se);
-            draw->AddImage((ImTextureID)heatmap_raster_texture.descriptor, rp0, rp1);
-        }
-        const bool suppress_vector_heat_cells = smooth_only_heatmap && drawing_heatmap_raster;
-        if (!suppress_vector_heat_cells) for (const auto& c : draw_cells) {
-            if (c.is_hex) {
-                ImVec2 pts[6] = {
-                    ImVec2(c.cx - c.hw, c.cy),
-                    ImVec2(c.cx - c.hw * 0.5f, c.cy - c.hh),
-                    ImVec2(c.cx + c.hw * 0.5f, c.cy - c.hh),
-                    ImVec2(c.cx + c.hw, c.cy),
-                    ImVec2(c.cx + c.hw * 0.5f, c.cy + c.hh),
-                    ImVec2(c.cx - c.hw * 0.5f, c.cy + c.hh),
-                };
-                draw->AddConvexPolyFilled(pts, 6, c.fill);
-                if (c.draw_outline) draw->AddPolyline(pts, 6, c.outline, ImDrawFlags_Closed, 1.0f);
-            } else {
-                draw->AddRectFilled(ImVec2(c.x0, c.y0), ImVec2(c.x1, c.y1), c.fill);
-                if (c.draw_outline) draw->AddRect(ImVec2(c.x0, c.y0), ImVec2(c.x1, c.y1), c.outline, 0.0f, 0, 1.0f);
-            }
-        }
+            (should_recompute_heatmap ? frame_heat_cells : empty_heat_cells);
+        MapHeatmapDrawContext heatmap_draw_ctx;
+        heatmap_draw_ctx.draw = draw;
+        heatmap_draw_ctx.math_zoom = math_zoom;
+        heatmap_draw_ctx.smooth_only_heatmap = any_active_heatmap && smooth_only_heatmap;
+        heatmap_draw_ctx.heatmap_async_inflight = any_active_heatmap && heatmap_async_inflight;
+        heatmap_draw_ctx.heatmap_raster_texture_valid = any_active_heatmap && heatmap_raster_texture_valid;
+        heatmap_draw_ctx.heatmap_raster_cache_key = heatmap_raster_cache_key;
+        heatmap_draw_ctx.heatmap_key = heatmap_key;
+        heatmap_draw_ctx.heatmap_raster_texture = &heatmap_raster_texture;
+        heatmap_draw_ctx.heatmap_raster = &heatmap_cached_raster_meta;
+        heatmap_draw_ctx.draw_cells = &draw_cells;
+        heatmap_draw_ctx.project_world = project_world;
+        drawHeatmapPass(heatmap_draw_ctx);
 
         const auto overlay_prof_begin = std::chrono::steady_clock::now();
         MapRenderContext overlay_ctx;
@@ -553,21 +586,17 @@
         overlay_ctx.parcel_tax_lien_by_feature = &parcel_tax_lien_by_feature;
         overlay_ctx.parcel_tax_sale_by_feature = &parcel_tax_sale_by_feature;
         overlay_ctx.feature_passes_filters = feature_passes_filters;
-        overlay_ctx.get_world_extent = get_world_extent;
-        overlay_ctx.get_world_rings = get_world_rings;
-        overlay_ctx.project_world = project_world;
         overlay_ctx.should_fill_layer_polygon = should_fill_layer_polygon;
-        overlay_ctx.draw_tessellated_fill = draw_tessellated_fill;
-        overlay_ctx.append_world_ring_line = append_world_ring_line;
-        overlay_ctx.scratch_line = &scratch_line;
+        overlay_ctx.projection = &projection_cache;
         const MapOverlayResult overlay_result = renderParcelSourceOverlays(overlay_ctx);
         visible_vacant_parcels_last_frame.store(overlay_result.visible_vacant_parcels, std::memory_order_relaxed);
         prof_overlay_ms_last.store(prof_ms_since(overlay_prof_begin), std::memory_order_relaxed);
 
-        render_fill_attempts_last_frame.store(fill_attempts_frame, std::memory_order_relaxed);
-        render_fill_success_last_frame.store(fill_success_frame, std::memory_order_relaxed);
-        render_fill_no_triangles_last_frame.store(fill_no_triangles_frame, std::memory_order_relaxed);
-        render_fill_bad_indices_last_frame.store(fill_bad_indices_frame, std::memory_order_relaxed);
+        const MapFillStats& fill_stats = projection_cache.fillStats();
+        render_fill_attempts_last_frame.store(fill_stats.attempts, std::memory_order_relaxed);
+        render_fill_success_last_frame.store(fill_stats.success, std::memory_order_relaxed);
+        render_fill_no_triangles_last_frame.store(fill_stats.no_triangles, std::memory_order_relaxed);
+        render_fill_bad_indices_last_frame.store(fill_stats.bad_indices, std::memory_order_relaxed);
 
         {
             char zoom_label[32];
@@ -672,24 +701,7 @@
             ImGui::EndTooltip();
         }
         if (zoning_hover_active && map_hovered && !(parcel_hover_active && hovered_parcel) && hovered_zone) {
-            std::string zone_key = zoningClassKey(*hovered_zone);
-            std::string zone_label = zoningClassLabel(*hovered_zone);
-            std::string zone_description;
-            auto meta_it = zoning_metadata.find(zone_key);
-            if (meta_it != zoning_metadata.end()) {
-                if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
-                zone_description = meta_it->second.description;
-            }
-            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(440.0f);
-            const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
-            ImGui::SetWindowFontScale(1.45f);
-            ImGui::TextWrapped("%s", display_zone);
-            ImGui::SetWindowFontScale(1.0f);
-            if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
+            drawZoningHoverTooltip(*hovered_zone, zoning_metadata);
         }
         ImGui::EndTabItem();
         }

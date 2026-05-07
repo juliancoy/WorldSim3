@@ -523,6 +523,7 @@
                 &layer_inspect_enabled,
                 &layer_heatmap_enabled,
                 &layer_heatmap_max_zoom,
+                &layer_parcel_detail_min_zoom,
                 &layer_heatmap_use_gradient,
                 &layer_heatmap_algo,
                 &layer_heatmap_use_global_settings,

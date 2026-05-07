@@ -163,6 +163,7 @@
             "Grid Binning",
             "KDE (Gaussian)",
             "GPU Splat + Blur",
+            "LOD Geometry",
             "Hex Binning",
             "Multi-res Pyramid"
         };
@@ -194,12 +195,17 @@
             }
             heatmap_settings_state_changed = true;
         }
-        heatmap_settings_state_changed |= ImGui::Combo("Heatmap Algorithm", &heatmap_algo, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items));
+        int heatmap_algo_ui = aggregateGlobalUiIndexFromAlgo(heatmap_algo);
+        if (ImGui::Combo("Aggregate Method", &heatmap_algo_ui, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items))) {
+            heatmap_algo = aggregateAlgoFromGlobalUiIndex(heatmap_algo_ui);
+            heatmap_settings_state_changed = true;
+        }
+        heatmap_controls_active |= ImGui::IsItemActive();
         ImGui::SameLine();
         if (ImGui::SmallButton("Apply Global To All")) {
             for (size_t i = 0; i < layer_heatmap_algo.size(); ++i) {
                 if (i < layer_heatmap_enabled.size()) layer_heatmap_enabled[i] = true;
-                layer_heatmap_algo[i] = -1; // Use global method
+                layer_heatmap_algo[i] = heatmap_algo;
                 if (i < layer_heatmap_use_global_settings.size()) layer_heatmap_use_global_settings[i] = true;
             }
             layer_heatmap_state_changed = true;
@@ -207,10 +213,13 @@
         }
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Clear per-layer overrides and force all heatmap layers to use global settings.");
+            ImGui::TextUnformatted("Copy the current global aggregate method and settings to all layers.");
             ImGui::EndTooltip();
         }
         heatmap_controls_active |= ImGui::IsItemActive();
+        if (heatmap_algo == kAggregateLodGeometry) {
+            ImGui::TextWrapped("LOD Geometry uses simplified geometry draw instead of heatmap cells.");
+        }
         heatmap_settings_state_changed |= heatmap_input_float_enter("Heatmap Cell (px)", global_heat_cell_px, 8.0f, 80.0f, "%.0f");
         heatmap_settings_state_changed |= heatmap_input_float_enter("Bandwidth (px)", heatmap_bandwidth_px, 2.0f, 96.0f, "%.1f");
         heatmap_settings_state_changed |= heatmap_input_float_enter("Blur Sigma (px)", heatmap_blur_sigma_px, 0.0f, 32.0f, "%.1f");
@@ -357,26 +366,48 @@
                         layer_inspect_state_changed = true;
                     }
 
-                    ImGui::SeparatorText("Heatmap");
+                    const bool is_value_parcel_layer = l.scale == "parcel" && !l.heatmap_field.empty();
+                    ImGui::SeparatorText(is_value_parcel_layer ? "Value visualization" : "Heatmap");
                     const char* layer_algo_items[] = {
                         "None",
-                        "Use Global",
                         "Grid Binning",
                         "KDE (Gaussian)",
                         "GPU Splat + Blur",
+                        "LOD Geometry",
                         "Hex Binning",
                         "Multi-res Pyramid"
                     };
                     int layer_algo_ui = 0;
                     const bool layer_heatmap_on = idx < layer_heatmap_enabled.size() ? layer_heatmap_enabled[idx] : true;
-                    if (layer_heatmap_on && idx < layer_heatmap_algo.size()) layer_algo_ui = std::clamp(layer_heatmap_algo[idx] + 2, 1, 6);
+                    if (layer_heatmap_on && idx < layer_heatmap_algo.size()) {
+                        const int layer_algo = layer_heatmap_algo[idx] < 0 ? heatmap_algo : layer_heatmap_algo[idx];
+                        layer_algo_ui = aggregateLayerUiIndexFromAlgo(layer_algo);
+                    }
                     if (ImGui::Combo("Aggregate method", &layer_algo_ui, layer_algo_items, IM_ARRAYSIZE(layer_algo_items)) && idx < layer_heatmap_algo.size()) {
                         if (idx < layer_heatmap_enabled.size()) layer_heatmap_enabled[idx] = layer_algo_ui != 0;
-                        if (layer_algo_ui != 0) layer_heatmap_algo[idx] = layer_algo_ui - 2;
+                        if (layer_algo_ui != 0) {
+                            layer_heatmap_algo[idx] = aggregateAlgoFromLayerUiIndex(layer_algo_ui);
+                        }
                         layer_heatmap_state_changed = true;
                     }
                     const bool aggregate_none = layer_algo_ui == 0;
-                    const int resolved_layer_algo = (layer_algo_ui <= 1) ? heatmap_algo : (layer_algo_ui - 2);
+                    const int resolved_layer_algo = aggregate_none ? heatmap_algo : aggregateAlgoFromLayerUiIndex(layer_algo_ui);
+                    const int aggregate_max_zoom = idx < layer_heatmap_max_zoom.size() ? layer_heatmap_max_zoom[idx] : 13;
+                    const int detail_min_zoom =
+                        idx < layer_parcel_detail_min_zoom.size() ? layer_parcel_detail_min_zoom[idx] : kParcelChoroplethMinZoom;
+                    const bool aggregate_active_now =
+                        !aggregate_none &&
+                        zoom <= aggregate_max_zoom &&
+                        !(is_value_parcel_layer && zoom >= detail_min_zoom);
+                    if (aggregate_none) {
+                        ImGui::TextDisabled("Resolved display: per-feature fill");
+                    } else if (is_value_parcel_layer && zoom >= detail_min_zoom) {
+                        ImGui::TextDisabled("Resolved display: parcel choropleth by %s", l.heatmap_field.c_str());
+                    } else if (aggregate_active_now) {
+                        ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
+                    } else {
+                        ImGui::TextDisabled("Resolved display: per-feature fill");
+                    }
                     auto sync_layer_heatmap_defaults = [&](size_t layer_i) {
                         if (layer_i >= layer_heatmap_cell_px.size()) return;
                         layer_heatmap_cell_px[layer_i] = global_heat_cell_px;
@@ -388,6 +419,7 @@
                         layer_heatmap_multires_blend[layer_i] = heatmap_multires_blend;
                     };
                     ImGui::BeginDisabled(aggregate_none);
+                    if (is_value_parcel_layer) ImGui::TextDisabled("Parcel detail draws per-parcel value fill.");
                     bool use_global_method_settings = idx < layer_heatmap_use_global_settings.size() ? layer_heatmap_use_global_settings[idx] : true;
                     if (ImGui::Checkbox("Use global method settings", &use_global_method_settings) && idx < layer_heatmap_use_global_settings.size()) {
                         layer_heatmap_use_global_settings[idx] = use_global_method_settings;
@@ -418,7 +450,9 @@
                             layer_heatmap_state_changed = true;
                         }
                         heatmap_controls_active |= ImGui::IsItemActive();
-                    } else if (resolved_layer_algo == 3) {
+                    } else if (resolved_layer_algo == kAggregateLodGeometry) {
+                        ImGui::TextWrapped("LOD Geometry draws simplified parcel/polygon geometry directly instead of generating heatmap cells.");
+                    } else if (resolved_layer_algo == kAggregateHexBinning) {
                         layer_heatmap_state_changed |= heatmap_input_float_enter("Hex size", layer_heatmap_cell_px[idx], 8.0f, 80.0f, "%.0f");
                         layer_heatmap_state_changed |= heatmap_input_float_enter("Hex clip", layer_heatmap_percentile_clip[idx], 50.0f, 100.0f, "%.0f");
                     } else {
@@ -435,10 +469,17 @@
                     }
                     ImGui::Unindent();
                     ImGui::EndDisabled();
-                    int hz = (idx < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[idx] : 13;
-                    if (ImGui::SliderInt("Heatmap max zoom", &hz, kMinZoom, kMaxZoom) && idx < layer_heatmap_max_zoom.size()) {
+                    int hz = aggregate_max_zoom;
+                    if (ImGui::SliderInt("Aggregate max zoom", &hz, kMinZoom, kMaxZoom) && idx < layer_heatmap_max_zoom.size()) {
                         layer_heatmap_max_zoom[idx] = hz;
                         layer_heatmap_state_changed = true;
+                    }
+                    if (is_value_parcel_layer) {
+                        int pz = idx < layer_parcel_detail_min_zoom.size() ? layer_parcel_detail_min_zoom[idx] : kParcelChoroplethMinZoom;
+                        if (ImGui::SliderInt("Parcel detail min zoom", &pz, kMinZoom, kMaxZoom) && idx < layer_parcel_detail_min_zoom.size()) {
+                            layer_parcel_detail_min_zoom[idx] = pz;
+                            layer_heatmap_state_changed = true;
+                        }
                     }
                     bool use_gradient = (idx < layer_heatmap_use_gradient.size()) ? layer_heatmap_use_gradient[idx] : true;
                     if (ImGui::Checkbox("Apply gradient colors", &use_gradient) && idx < layer_heatmap_use_gradient.size()) {
@@ -735,6 +776,7 @@
                             "Grid Binning",
                             "KDE (Gaussian)",
                             "GPU Splat + Blur",
+                            "LOD Geometry",
                             "Hex Binning",
                             "Multi-res Pyramid"
                         };
@@ -766,8 +808,15 @@
                             }
                             heatmap_settings_state_changed = true;
                         }
-                        heatmap_settings_state_changed |= ImGui::Combo("Aggregate Method", &heatmap_algo, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items));
+                        int heatmap_algo_ui = aggregateGlobalUiIndexFromAlgo(heatmap_algo);
+                        if (ImGui::Combo("Aggregate Method", &heatmap_algo_ui, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items))) {
+                            heatmap_algo = aggregateAlgoFromGlobalUiIndex(heatmap_algo_ui);
+                            heatmap_settings_state_changed = true;
+                        }
                         heatmap_controls_active |= ImGui::IsItemActive();
+                        if (heatmap_algo == kAggregateLodGeometry) {
+                            ImGui::TextWrapped("LOD Geometry uses simplified geometry draw instead of heatmap cells.");
+                        }
                         heatmap_settings_state_changed |= heatmap_input_float_enter("Cell Size", global_heat_cell_px, 8.0f, 80.0f, "%.0f");
                         heatmap_settings_state_changed |= heatmap_input_float_enter("Bandwidth", heatmap_bandwidth_px, 2.0f, 96.0f, "%.1f");
                         heatmap_settings_state_changed |= heatmap_input_float_enter("Blur Sigma", heatmap_blur_sigma_px, 0.0f, 32.0f, "%.1f");
