@@ -45,7 +45,7 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 
 void printWorldsimUsage() {
     std::cout
-        << "Usage: worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows]] [--include-large]\n"
+        << "Usage: worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|extended-events]] [--include-large]\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 

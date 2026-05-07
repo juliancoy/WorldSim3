@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "data" / "representations"
 ENERGY_DIR = ROOT / "data" / "energy"
 UA = "WorldSim3/1.0 (+additional-representations)"

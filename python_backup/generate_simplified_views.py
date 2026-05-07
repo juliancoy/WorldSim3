@@ -6,7 +6,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 LAYERS_DIR = ROOT / "data" / "layers"
 OUT_DIR = ROOT / "data" / "models"
 

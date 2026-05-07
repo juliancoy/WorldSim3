@@ -71,6 +71,10 @@
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+static void clearTileDiskPresenceCache() {
+    // Legacy hook: disk-presence memoization was removed during run-loop refactor.
+}
+
 
 int runWorldSim3App(int argc, char** argv) {
 

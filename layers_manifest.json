@@ -22,6 +22,28 @@
     "default_enabled": true
   },
   {
+    "name": "Property Value (Parcels)",
+    "file": "property_value_parcels.geojson",
+    "color": "#238b45",
+    "heatmap_field": "value_usd",
+    "description": "Derived parcel layer with estimated property value from real property records (tax base, assessed components, or sale price fallback).",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Parcel Intelligence (Derived)",
+    "file": "parcel_intelligence.geojson",
+    "color": "#7a0177",
+    "heatmap_field": "risk_score",
+    "description": "Derived parcel analytics layer: distress risk, investment momentum, ownership concentration, vacancy-duration proxies, tax/value ratios, chronology metrics, and relative z-scores.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
     "name": "Vacant Building Notices",
     "file": "vacant_building_notices.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",

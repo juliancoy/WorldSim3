@@ -5,7 +5,7 @@ import pathlib
 import sys
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "layers_manifest.json"
 DATA_DIR = ROOT / "data" / "layers"
 CAPITAL_FLOWS_DIR = ROOT / "data" / "capital_flows"
@@ -17,6 +17,7 @@ PHASE_MANIFESTS = {
     "nice-to-have": ROOT / "layers_manifest.nice_to_have.json",
     "heavy-data": ROOT / "layers_manifest.heavy_data.json",
     "capital-flows": ROOT / "layers_manifest.capital_flows.json",
+    "extended-events": ROOT / "layers_manifest.extended_events.json",
 }
 
 

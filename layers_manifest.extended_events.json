@@ -1,0 +1,68 @@
+[
+  {
+    "name": "FY14-20 Capital Improvement Projects (Point)",
+    "file": "cip_fy14_20_projects_point.geojson",
+    "url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/CIP_Equity_layers/MapServer/0/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#66bd63",
+    "description": "Baltimore City CIP point projects with fiscal year and funding-source dollar fields.",
+    "category": "housing",
+    "subcategory": "Economy",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Foreclosure Filings",
+    "file": "foreclosure_filings.geojson",
+    "url": "https://egisdata.baltimorecity.gov/egis/rest/services/Housing/DHCD_Open_Baltimore_Datasets/FeatureServer/11/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#d73027",
+    "description": "Baltimore foreclosure filing point records from DHCD Open Baltimore datasets.",
+    "category": "housing",
+    "subcategory": "Tax & Enforcement",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Receivership - Filed and Open",
+    "file": "receivership_filed_open.geojson",
+    "url": "https://egisdata.baltimorecity.gov/egis/rest/services/Housing/DHCD_Open_Baltimore_Datasets/FeatureServer/4/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#fc8d59",
+    "description": "Open receivership cases for nuisance/vacancy enforcement.",
+    "category": "housing",
+    "subcategory": "Tax & Enforcement",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Receivership - Settled",
+    "file": "receivership_settled.geojson",
+    "url": "https://egisdata.baltimorecity.gov/egis/rest/services/Housing/DHCD_Open_Baltimore_Datasets/FeatureServer/5/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#fee090",
+    "description": "Settled/closed receivership cases.",
+    "category": "housing",
+    "subcategory": "Tax & Enforcement",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Open Work Orders",
+    "file": "open_work_orders.geojson",
+    "url": "https://egisdata.baltimorecity.gov/egis/rest/services/Housing/DHCD_Open_Baltimore_Datasets/FeatureServer/9/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#4575b4",
+    "description": "Open DHCD work order records useful as inspection/enforcement activity signals.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Impact Investment Areas",
+    "file": "impact_investment_areas.geojson",
+    "url": "https://egisdata.baltimorecity.gov/egis/rest/services/Housing/DHCD_Open_Baltimore_Datasets/FeatureServer/10/query?where=1%3D1&outFields=*&f=geojson",
+    "color": "#1a9850",
+    "description": "DHCD designated impact investment areas (area-based government investment targeting).",
+    "category": "housing",
+    "subcategory": "Economy",
+    "scale": "neighborhood",
+    "default_enabled": false
+  }
+]

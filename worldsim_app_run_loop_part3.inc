@@ -186,21 +186,171 @@
             double tax_sale_amount = (selected_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[selected_parcel_idx] : 0.0;
             ImGui::TextUnformatted("Parcel Details");
             ImGui::Separator();
-            ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
-            ImGui::Text("Vacant Notices: %d", vac_notice);
-            ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
-            ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
-            if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
-            ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
-            if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
             const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
-            draw_real_property_summary(selected_rp);
-            ImGui::Separator();
+            struct ParcelEventRow {
+                std::string date;
+                std::string event_type;
+                std::string status;
+                std::string amount;
+                std::string source_layer;
+            };
+            std::vector<ParcelEventRow> parcel_events;
+            auto first_nonempty_prop = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) -> std::string {
+                for (const char* k : keys) {
+                    std::string v = getPropertyValue(fg, k);
+                    if (!v.empty()) return v;
+                }
+                return std::string();
+            };
+            auto append_events_from_layer = [&](int layer_idx,
+                                                const char* event_type_label,
+                                                std::initializer_list<const char*> date_keys,
+                                                std::initializer_list<const char*> status_keys,
+                                                std::initializer_list<const char*> amount_keys) {
+                if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
+                const auto& lf = layers[(size_t)layer_idx].features;
+                for (const auto& feat : lf) {
+                    std::string ev_blocklot = normalizeJoinKey(first_nonempty_prop(feat, {"BLOCKLOT", "BLOCK_LOT", "LOT"}));
+                    if (ev_blocklot.empty() || ev_blocklot != blocklot) continue;
+                    ParcelEventRow row;
+                    row.date = trimDisplayValue(first_nonempty_prop(feat, date_keys));
+                    row.event_type = event_type_label;
+                    row.status = trimDisplayValue(first_nonempty_prop(feat, status_keys));
+                    row.amount = trimDisplayValue(first_nonempty_prop(feat, amount_keys));
+                    row.source_layer = layers[(size_t)layer_idx].name;
+                    parcel_events.push_back(std::move(row));
+                }
+            };
+            auto append_events_from_layer_spatial = [&](int layer_idx,
+                                                        const char* event_type_label,
+                                                        std::initializer_list<const char*> date_keys,
+                                                        std::initializer_list<const char*> status_keys,
+                                                        std::initializer_list<const char*> amount_keys) {
+                if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
+                const auto& lf = layers[(size_t)layer_idx].features;
+                for (const auto& feat : lf) {
+                    if (!feat.rings.empty()) continue;
+                    const float lon = feat.extent.min_lon;
+                    const float lat = feat.extent.min_lat;
+                    if (!pointInFeature(selected, lon, lat)) continue;
+                    ParcelEventRow row;
+                    row.date = trimDisplayValue(first_nonempty_prop(feat, date_keys));
+                    row.event_type = event_type_label;
+                    row.status = trimDisplayValue(first_nonempty_prop(feat, status_keys));
+                    row.amount = trimDisplayValue(first_nonempty_prop(feat, amount_keys));
+                    row.source_layer = layers[(size_t)layer_idx].name;
+                    parcel_events.push_back(std::move(row));
+                }
+            };
+            append_events_from_layer(
+                vacant_notice_layer_idx,
+                "Vacant Notice",
+                {"DateNotice", "DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
+                {"Status", "STATUS", "CASE_STATUS", "STATE"},
+                {"Amount", "AMOUNT", "LIENAMOUNT", "TOTAL_LIEN"});
+            append_events_from_layer(
+                vacant_rehab_layer_idx,
+                "Vacant Rehab",
+                {"DateIssue", "DateIssued", "DATE", "RECORD_DATE", "CREATED_DATE"},
+                {"Status", "STATUS", "CASE_STATUS", "STATE"},
+                {"Amount", "AMOUNT", "LIENAMOUNT", "TOTAL_LIEN"});
+            append_events_from_layer(
+                tax_lien_layer_idx,
+                "Tax Lien",
+                {"DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE"},
+                {"LIENAMOUNT", "TOTAL_LIEN", "Amount", "AMOUNT"});
+            append_events_from_layer(
+                tax_sale_layer_idx,
+                "Tax Sale",
+                {"DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE"},
+                {"TOTAL_LIEN", "LIENAMOUNT", "Amount", "AMOUNT"});
+            auto find_layer_idx_by_file = [&](const char* file_name) -> int {
+                for (size_t i = 0; i < layers.size(); ++i) {
+                    if (layers[i].file == file_name) return (int)i;
+                }
+                return -1;
+            };
+            append_events_from_layer(
+                find_layer_idx_by_file("housing_building_permits_2019_present.geojson"),
+                "Building Permit (Cost)",
+                {"IssuedDate", "DATE", "RECORD_DATE", "CREATED_DATE"},
+                {"Description", "STATUS", "STATE"},
+                {"Cost", "AMOUNT", "Amount", "TOTAL"});
+            append_events_from_layer_spatial(
+                find_layer_idx_by_file("cip_fy14_20_projects_point.geojson"),
+                "CIP Project Allocation",
+                {"FY"},
+                {"Project_Title", "Name", "agency"},
+                {"Totals_1", "City_Bond_Funds", "Federal_Funds", "State_Funds", "Utility_Funds", "Revenue_Loans"});
+            append_events_from_layer(
+                find_layer_idx_by_file("foreclosure_filings.geojson"),
+                "Foreclosure Filing",
+                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE", "CASE_STATUS"},
+                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
+            append_events_from_layer(
+                find_layer_idx_by_file("receivership_filed_open.geojson"),
+                "Receivership (Open)",
+                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE", "CASE_STATUS"},
+                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
+            append_events_from_layer(
+                find_layer_idx_by_file("receivership_settled.geojson"),
+                "Receivership (Settled)",
+                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE", "CASE_STATUS"},
+                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
+            append_events_from_layer(
+                find_layer_idx_by_file("open_work_orders.geojson"),
+                "Open Work Order",
+                {"DATE", "RECORD_DATE", "DateIssued", "DateNotice", "CREATED_DATE"},
+                {"Status", "STATUS", "STATE", "CASE_STATUS"},
+                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
+            std::sort(parcel_events.begin(), parcel_events.end(), [](const ParcelEventRow& a, const ParcelEventRow& b) {
+                return a.date > b.date;
+            });
             ImGui::BeginChild("selected_parcel_fields", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            draw_feature_properties("All Parcel Geometry Fields", selected);
-            if (selected_rp) {
-                ImGui::Separator();
+            if (ImGui::CollapsingHeader("Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
+                ImGui::Text("Vacant Notices: %d", vac_notice);
+                ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
+                ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
+                if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
+                ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
+                if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
+                draw_real_property_summary(selected_rp);
+            }
+            if (ImGui::CollapsingHeader("Event Timeline", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (parcel_events.empty()) {
+                    ImGui::TextDisabled("No related parcel events found.");
+                } else {
+                    for (const auto& ev : parcel_events) {
+                        ImGui::Separator();
+                        ImGui::Text("%s%s%s",
+                                    ev.event_type.c_str(),
+                                    ev.date.empty() ? "" : " | ",
+                                    ev.date.empty() ? "" : ev.date.c_str());
+                        if (!ev.status.empty()) ImGui::TextWrapped("Status: %s", ev.status.c_str());
+                        if (!ev.amount.empty()) ImGui::TextWrapped("Amount: %s", ev.amount.c_str());
+                        ImGui::TextDisabled("Source: %s", ev.source_layer.c_str());
+                    }
+                }
+            }
+            if (ImGui::CollapsingHeader("Parcel Geometry Fields")) {
+                draw_feature_properties("All Parcel Geometry Fields", selected);
+            }
+            if (selected_rp && ImGui::CollapsingHeader("Real Property Fields")) {
                 draw_feature_properties("All Real Property Fields", *selected_rp);
+            }
+            if (ImGui::CollapsingHeader("Quick Stats")) {
+                ImGui::Text("Total Events: %d", (int)parcel_events.size());
+                int with_amount = 0;
+                for (const auto& ev : parcel_events) {
+                    if (!ev.amount.empty()) with_amount++;
+                }
+                ImGui::Text("Events With Amounts: %d", with_amount);
             }
             ImGui::EndChild();
         } else if (selected_zone_valid) {
@@ -780,26 +930,34 @@
             // Large-area layers still need low-zoom fill; parcel-scale fills are the expensive case.
             return !is_parcel_scale_layer(layer_idx) || allow_parcel_scale_fill;
         };
-        std::vector<std::vector<ImVec2>> scratch_world_rings;
-        std::pair<ImVec2, ImVec2> scratch_world_extent;
-        auto get_world_rings = [&](size_t, uint32_t, const LayerDef::FeatureGeom& fg)
+        auto feature_cache_key = [](size_t layer_idx, uint32_t feature_idx) -> uint64_t {
+            return (uint64_t(layer_idx) << 32) | uint64_t(feature_idx);
+        };
+        std::unordered_map<uint64_t, std::vector<std::vector<ImVec2>>> world_rings_cache;
+        std::unordered_map<uint64_t, std::pair<ImVec2, ImVec2>> world_extent_cache;
+        auto get_world_rings = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::vector<std::vector<ImVec2>>& {
-            scratch_world_rings.clear();
-            scratch_world_rings.reserve(fg.rings.size());
+            const uint64_t key = feature_cache_key(layer_idx, feature_idx);
+            auto it = world_rings_cache.find(key);
+            if (it != world_rings_cache.end()) return it->second;
+            std::vector<std::vector<ImVec2>> rings;
+            rings.reserve(fg.rings.size());
             for (const auto& r : fg.rings) {
                 std::vector<ImVec2> rr;
                 rr.reserve(r.size());
                 for (const ImVec2& ll : r) rr.push_back(lonLatToWorldPx(ll.x, ll.y, math_zoom));
-                scratch_world_rings.push_back(std::move(rr));
+                rings.push_back(std::move(rr));
             }
-            return scratch_world_rings;
+            return world_rings_cache.emplace(key, std::move(rings)).first->second;
         };
-        auto get_world_extent = [&](size_t, uint32_t, const LayerDef::FeatureGeom& fg)
+        auto get_world_extent = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::pair<ImVec2, ImVec2>& {
+            const uint64_t key = feature_cache_key(layer_idx, feature_idx);
+            auto it = world_extent_cache.find(key);
+            if (it != world_extent_cache.end()) return it->second;
             ImVec2 p0w = lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, math_zoom);
             ImVec2 p1w = lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, math_zoom);
-            scratch_world_extent = std::make_pair(p0w, p1w);
-            return scratch_world_extent;
+            return world_extent_cache.emplace(key, std::make_pair(p0w, p1w)).first->second;
         };
         std::vector<ImVec2> scratch_fill_verts;
         scratch_fill_verts.reserve(4096);
@@ -842,6 +1000,8 @@
                 fill_no_triangles_frame++;
                 return false;
             }
+            // Very dense polygons dominate CPU at low zoom; outline-only is acceptable there.
+            if (math_zoom <= 12 && fg.triangles.size() > 6000) return false;
             const size_t vcount = project_world_rings_for_fill(world_rings);
             if (vcount < 3) return false;
 

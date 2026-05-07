@@ -5,7 +5,7 @@ import pathlib
 import subprocess
 import collections
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 DATA = ROOT / 'data' / 'layers'
 YEAR = 2024
 COUNTY_FIPS = '24510'

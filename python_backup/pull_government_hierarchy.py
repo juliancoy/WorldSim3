@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from typing import Any
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "data" / "government"
 UA = "WorldSim3/1.0 (+hierarchy-fetcher)"
 

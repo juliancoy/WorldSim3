@@ -7,7 +7,7 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1]s[1]
 OUT = ROOT / "data" / "tiles"
 
 MIN_LON, MIN_LAT = -76.72, 39.20
