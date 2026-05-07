@@ -47,15 +47,20 @@ const std::pair<ImVec2, ImVec2>& MapProjectionCache::getWorldExtent(
 }
 
 void MapProjectionCache::appendWorldRingLine(const std::vector<ImVec2>& world_ring) {
+    appendWorldRingLine(world_ring, ring_step_);
+}
+
+void MapProjectionCache::appendWorldRingLine(const std::vector<ImVec2>& world_ring, int ring_step) {
     scratch_line_.clear();
     if (world_ring.empty()) return;
+    const int step = std::max(1, ring_step);
     const size_t n = world_ring.size();
-    if (ring_step_ == 1 || n <= 4) {
+    if (step == 1 || n <= 4) {
         for (const ImVec2& wp : world_ring) scratch_line_.push_back(project_world_(wp));
     } else {
-        scratch_line_.reserve((n / (size_t)ring_step_) + 2);
-        for (size_t i = 0; i < n; i += (size_t)ring_step_) scratch_line_.push_back(project_world_(world_ring[i]));
-        if ((n - 1) % (size_t)ring_step_ != 0) scratch_line_.push_back(project_world_(world_ring.back()));
+        scratch_line_.reserve((n / (size_t)step) + 2);
+        for (size_t i = 0; i < n; i += (size_t)step) scratch_line_.push_back(project_world_(world_ring[i]));
+        if ((n - 1) % (size_t)step != 0) scratch_line_.push_back(project_world_(world_ring.back()));
     }
 }
 

@@ -39,6 +39,8 @@
 #include "worldsim_cli.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_bootstrap.h"
+#include "cpu_affinity.h"
+#include "thread_utils.h"
 
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
@@ -91,12 +93,28 @@ int runWorldSim3App(int argc, char** argv) {
     const int cli_result = runWorldsimCliImmediate(root, cli_options);
     if (cli_result >= 0) return cli_result;
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    preloadLayersFromEnvironment(root);
-
     AppSettings app_settings;
     app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
     app_settings = loadAppSettings(root, app_settings);
+
+    int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
+    if (!cli_options.reserve_cores_set) {
+        if (const char* env = std::getenv("WORLD_SIM3_RESERVE_CORES")) {
+            reserve_cores = std::max(0, std::atoi(env));
+        }
+    }
+    if (reserve_cores > 0) {
+        std::string affinity_msg;
+        if (applyReservedCpuCores(reserve_cores, affinity_msg)) {
+            std::cerr << "[worldsim3] " << affinity_msg << "\n";
+        } else {
+            std::cerr << "[worldsim3] CPU reservation disabled: " << affinity_msg << "\n";
+        }
+    }
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    preloadLayersFromEnvironment(root);
+
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -424,7 +442,12 @@ int runWorldSim3App(int argc, char** argv) {
         if (idx >= layers.size()) return;
         std::lock_guard<std::mutex> lk(hydrate_req_mutex);
         if (required) hydration_required[idx] = true;
-        if (!hydration_requested[idx]) {
+        bool retry_failed = false;
+        if (hydration_requested[idx]) {
+            std::lock_guard<std::mutex> lk2(status_mutex);
+            retry_failed = idx < layer_states.size() && layer_states[idx].status == LayerPipelineStatus::Failed;
+        }
+        if (!hydration_requested[idx] || retry_failed) {
             if (is_parcel_priority_index(idx)) hydrate_requests.push_front(idx);
             else hydrate_requests.push_back(idx);
             hydration_requested[idx] = true;

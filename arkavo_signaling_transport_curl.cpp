@@ -1,5 +1,7 @@
 #include "arkavo_signaling_transport_curl.h"
 
+#include "thread_utils.h"
+
 #include <curl/curl.h>
 
 #include <chrono>
@@ -21,7 +23,10 @@ bool ArkavoSignalingTransportCurl::connect(const std::string& url, std::string& 
     }
     running_.store(true, std::memory_order_relaxed);
     connected_.store(false, std::memory_order_relaxed);
-    io_thread_ = std::thread([this, url]() { runLoop(url); });
+    io_thread_ = std::thread([this, url]() {
+        setCurrentThreadName("ws3-ark-curl");
+        runLoop(url);
+    });
     return true;
 }
 

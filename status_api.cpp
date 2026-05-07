@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "net_http_utils.h"
+#include "thread_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 #if !defined(_WIN32)
+#include <malloc.h>
 #include <sys/resource.h>
 #else
 #include <process.h>
@@ -25,6 +27,20 @@ struct ResourceUsageSnapshot {
     long long max_rss_kb = 0;
     long long voluntary_context_switches = 0;
     long long involuntary_context_switches = 0;
+};
+
+struct ProcMemorySnapshot {
+    size_t vm_size_kb = 0;
+    size_t vm_rss_kb = 0;
+    size_t vm_hwm_kb = 0;
+    size_t vm_data_kb = 0;
+    size_t vm_swap_kb = 0;
+    size_t threads = 0;
+    size_t smaps_rss_kb = 0;
+    size_t smaps_pss_kb = 0;
+    size_t private_dirty_kb = 0;
+    size_t anonymous_kb = 0;
+    size_t swap_kb = 0;
 };
 
 ResourceUsageSnapshot readResourceUsage() {
@@ -44,6 +60,40 @@ ResourceUsageSnapshot readResourceUsage() {
     return out;
 }
 
+ProcMemorySnapshot readProcMemory() {
+    ProcMemorySnapshot out;
+#if !defined(_WIN32)
+    {
+        std::ifstream status_in("/proc/self/status");
+        std::string key;
+        while (status_in >> key) {
+            if (key == "VmSize:") status_in >> out.vm_size_kb;
+            else if (key == "VmRSS:") status_in >> out.vm_rss_kb;
+            else if (key == "VmHWM:") status_in >> out.vm_hwm_kb;
+            else if (key == "VmData:") status_in >> out.vm_data_kb;
+            else if (key == "VmSwap:") status_in >> out.vm_swap_kb;
+            else if (key == "Threads:") status_in >> out.threads;
+            std::string rest;
+            std::getline(status_in, rest);
+        }
+    }
+    {
+        std::ifstream smaps_in("/proc/self/smaps_rollup");
+        std::string key;
+        while (smaps_in >> key) {
+            if (key == "Rss:") smaps_in >> out.smaps_rss_kb;
+            else if (key == "Pss:") smaps_in >> out.smaps_pss_kb;
+            else if (key == "Private_Dirty:") smaps_in >> out.private_dirty_kb;
+            else if (key == "Anonymous:") smaps_in >> out.anonymous_kb;
+            else if (key == "Swap:") smaps_in >> out.swap_kb;
+            std::string rest;
+            std::getline(smaps_in, rest);
+        }
+    }
+#endif
+    return out;
+}
+
 int currentProcessId() {
 #if defined(_WIN32)
     return _getpid();
@@ -55,6 +105,7 @@ int currentProcessId() {
 
 std::thread startStatusApiWorker(StatusApiContext ctx) {
     return std::thread([ctx]() mutable {
+        setCurrentThreadName("ws3-status-api");
 
         auto& hydration_stop = *ctx.stop;
         auto& layers = *ctx.layers;
@@ -223,6 +274,112 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"ring_points", total_points},
                     {"triangle_indices", total_tri_indices},
                     {"properties", total_properties}
+                };
+                return out;
+            };
+            auto build_memory_profile = [&]() {
+                constexpr size_t kImVec2Bytes = sizeof(ImVec2);
+                constexpr size_t kRingVectorBytes = sizeof(std::vector<ImVec2>);
+                constexpr size_t kFeatureGeomBytes = sizeof(LayerDef::FeatureGeom);
+                constexpr size_t kPropertyPairBytes = sizeof(std::pair<std::string, std::string>);
+                constexpr size_t kTriangleIndexBytes = sizeof(uint32_t);
+
+                auto lower_bound_bytes = [&](const LayerProfileSnapshot& layer) -> size_t {
+                    size_t bytes = 0;
+                    bytes += layer.features * kFeatureGeomBytes;
+                    bytes += layer.rings * kRingVectorBytes;
+                    bytes += layer.ring_points * kImVec2Bytes;
+                    bytes += layer.triangle_indices * kTriangleIndexBytes;
+                    bytes += layer.properties * kPropertyPairBytes;
+                    bytes += layer.spatial_index_cells * sizeof(std::vector<uint32_t>);
+                    bytes += layer.spatial_index_marks * sizeof(uint32_t);
+                    return bytes;
+                };
+
+                json layer_list = json::array();
+                size_t total_lower_bound_bytes = 0;
+                size_t total_features = 0;
+                size_t total_rings = 0;
+                size_t total_points = 0;
+                size_t total_tri_indices = 0;
+                size_t total_properties = 0;
+                {
+                    std::lock_guard<std::mutex> profile_lk(layer_profile_mutex);
+                    for (const auto& layer : layer_profile_snapshot) {
+                        const size_t bytes = lower_bound_bytes(layer);
+                        total_lower_bound_bytes += bytes;
+                        total_features += layer.features;
+                        total_rings += layer.rings;
+                        total_points += layer.ring_points;
+                        total_tri_indices += layer.triangle_indices;
+                        total_properties += layer.properties;
+                        layer_list.push_back({
+                            {"index", layer.index},
+                            {"name", layer.name},
+                            {"file", layer.file},
+                            {"enabled", layer.enabled},
+                            {"features", layer.features},
+                            {"rings", layer.rings},
+                            {"ring_points", layer.ring_points},
+                            {"triangle_indices", layer.triangle_indices},
+                            {"properties", layer.properties},
+                            {"spatial_index_cells", layer.spatial_index_cells},
+                            {"spatial_index_marks", layer.spatial_index_marks},
+                            {"estimated_lower_bound_bytes", bytes},
+                            {"estimated_lower_bound_mb", (double)bytes / (1024.0 * 1024.0)}
+                        });
+                    }
+                }
+
+                const ProcMemorySnapshot mem = readProcMemory();
+                const ResourceUsageSnapshot ru = readResourceUsage();
+                json out;
+                out["ok"] = true;
+                out["note"] = "Layer estimates are lower bounds: string character allocations, vector capacity slack, allocator arenas, JSON/cache transients, and GPU allocations are not fully attributable here.";
+                out["process"] = {
+                    {"pid", currentProcessId()},
+                    {"vm_size_kb", mem.vm_size_kb},
+                    {"vm_rss_kb", mem.vm_rss_kb},
+                    {"vm_hwm_kb", mem.vm_hwm_kb},
+                    {"vm_data_kb", mem.vm_data_kb},
+                    {"vm_swap_kb", mem.vm_swap_kb},
+                    {"threads", mem.threads},
+                    {"max_rss_kb", ru.max_rss_kb}
+                };
+                out["smaps_rollup"] = {
+                    {"rss_kb", mem.smaps_rss_kb},
+                    {"pss_kb", mem.smaps_pss_kb},
+                    {"private_dirty_kb", mem.private_dirty_kb},
+                    {"anonymous_kb", mem.anonymous_kb},
+                    {"swap_kb", mem.swap_kb}
+                };
+#if !defined(_WIN32)
+                const struct mallinfo2 mi = mallinfo2();
+                out["allocator"] = {
+                    {"arena_bytes", (size_t)mi.arena},
+                    {"ordblks", (size_t)mi.ordblks},
+                    {"hblkhd_bytes", (size_t)mi.hblkhd},
+                    {"uordblks_bytes", (size_t)mi.uordblks},
+                    {"fordblks_bytes", (size_t)mi.fordblks},
+                    {"keepcost_bytes", (size_t)mi.keepcost}
+                };
+#endif
+                out["sizeof"] = {
+                    {"FeatureGeom", kFeatureGeomBytes},
+                    {"ring_vector", kRingVectorBytes},
+                    {"ImVec2", kImVec2Bytes},
+                    {"property_pair_string_string", kPropertyPairBytes},
+                    {"triangle_index", kTriangleIndexBytes}
+                };
+                out["layers"] = std::move(layer_list);
+                out["totals"] = {
+                    {"features", total_features},
+                    {"rings", total_rings},
+                    {"ring_points", total_points},
+                    {"triangle_indices", total_tri_indices},
+                    {"properties", total_properties},
+                    {"estimated_lower_bound_bytes", total_lower_bound_bytes},
+                    {"estimated_lower_bound_mb", (double)total_lower_bound_bytes / (1024.0 * 1024.0)}
                 };
                 return out;
             };
@@ -417,6 +574,8 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/memory") {
+                send_json(200, "OK", build_memory_profile());
             } else if (path == "/profile" || path == "/profile/layers" || path == "/profile/reset") {
                 if (path == "/profile/reset") {
                     {

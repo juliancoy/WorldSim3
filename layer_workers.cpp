@@ -2,6 +2,7 @@
 
 #include "cache_io.h"
 #include "layer_geometry.h"
+#include "thread_utils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,7 +13,9 @@ namespace fs = std::filesystem;
 std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned int worker_count) {
     std::vector<std::thread> workers;
     for (unsigned int wi = 0; wi < worker_count; ++wi) {
-        workers.emplace_back([ctx]() mutable {
+        workers.emplace_back([ctx, wi]() mutable {
+            std::string thread_name = "ws3-hydrate-" + std::to_string(wi);
+            setCurrentThreadName(thread_name.c_str());
             auto& root = ctx.root;
             auto& layers = *ctx.layers;
             auto& hydration_stop = *ctx.stop;
@@ -95,6 +98,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
 
 std::thread startTriangulationWorker(LayerWorkersContext ctx) {
     return std::thread([ctx]() mutable {
+    setCurrentThreadName("ws3-triangulate");
 
     auto& root = ctx.root;
     auto& layers = *ctx.layers;

@@ -247,6 +247,11 @@
         if (ImGui::Checkbox("Greyscale underlying map", &app_settings.grayscale_basemap)) {
             saveAppSettings(root, app_settings);
         }
+        int reserve_cpu_cores_ui = std::clamp(app_settings.reserve_cpu_cores, 0, 8);
+        if (ImGui::SliderInt("Reserve CPU cores (restart required)", &reserve_cpu_cores_ui, 0, 8)) {
+            app_settings.reserve_cpu_cores = reserve_cpu_cores_ui;
+            saveAppSettings(root, app_settings);
+        }
         ImGui::Separator();
 
         if (ImGui::Button("Show All")) {
@@ -956,6 +961,7 @@
                     data_library_status_msg = "Downloading " + phase + " in background";
                     data_library_bulk_inflight = true;
                     data_library_bulk_future = std::async(std::launch::async, [root, phase, include_large, &data_library_bulk_mutex, &data_library_bulk_progress]() {
+                        setCurrentThreadName("ws3-data-fetch");
                         return downloadLayerManifestPhase(
                             root,
                             phase,

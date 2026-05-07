@@ -4,7 +4,9 @@
 #include "worldsim_app.h"
 #include "vacancy_overlay.h"
 
+#include <algorithm>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 
 namespace fs = std::filesystem;
@@ -35,6 +37,23 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.include_large_downloads = true;
             continue;
         }
+        if (arg == "--reserve-one-core") {
+            options.reserve_cores = 1;
+            options.reserve_cores_set = true;
+            continue;
+        }
+        if (arg == "--reserve-cores") {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                options.reserve_cores = std::max(0, std::atoi(argv[++i]));
+                options.reserve_cores_set = true;
+            }
+            continue;
+        }
+        if (arg.rfind("--reserve-cores=", 0) == 0) {
+            options.reserve_cores = std::max(0, std::atoi(arg.c_str() + std::strlen("--reserve-cores=")));
+            options.reserve_cores_set = true;
+            continue;
+        }
         if (arg == "--help" || arg == "-h") {
             options.show_help = true;
             continue;
@@ -45,7 +64,8 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 
 void printWorldsimUsage() {
     std::cout
-        << "Usage: worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
+        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 

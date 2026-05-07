@@ -1,6 +1,7 @@
 #include "time_cube_panel.h"
 
 #include "feature_props.h"
+#include "thread_utils.h"
 
 #include "imgui.h"
 
@@ -68,6 +69,7 @@ void drawTimeCubeTab(TimeCubePanelContext& ctx) {
                 time_cube_ui_status = rebuild ? "Rebuilding indexes..." : "Refreshing indexes...";
             }
             time_cube_ui_worker = std::thread([&, q, layer_meta = std::move(layer_meta), rebuild]() mutable {
+                setCurrentThreadName("ws3-time-cube");
                 TimeCubeResult result = time_cube_service.query(layer_meta, q);
                 {
                     std::lock_guard<std::mutex> lk(time_cube_ui_mutex);

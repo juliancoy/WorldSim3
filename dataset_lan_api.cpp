@@ -1,6 +1,7 @@
 #include "dataset_lan_api.h"
 
 #include "net_http_utils.h"
+#include "thread_utils.h"
 
 #include <chrono>
 #include <ctime>
@@ -13,6 +14,7 @@ namespace fs = std::filesystem;
 
 std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
     return std::thread([ctx]() mutable {
+        setCurrentThreadName("ws3-data-api");
 
         auto& hydration_stop = *ctx.stop;
         auto& root = ctx.root;
@@ -201,6 +203,7 @@ std::thread startDatasetApiWorker(DatasetLanApiContext ctx) {
 
 std::thread startLanDiscoveryWorker(DatasetLanApiContext ctx) {
     return std::thread([ctx]() mutable {
+        setCurrentThreadName("ws3-lan-disc");
 
         auto& hydration_stop = *ctx.stop;
         const char* kAppVersion = ctx.app_version;

@@ -1,5 +1,7 @@
 #include "arkavo_realtime_client.h"
 
+#include "thread_utils.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -139,6 +141,7 @@ void ArkavoRealtimeClient::scheduleReconnect() {
     if (!reconnect_pending_.compare_exchange_strong(expected, true)) return;
     cancelReconnect();
     reconnect_thread_ = std::thread([this]() {
+        setCurrentThreadName("ws3-ark-reconn");
         while (running_.load(std::memory_order_relaxed) && !intentional_stop_.load(std::memory_order_relaxed)) {
             int attempt = reconnect_attempt_.fetch_add(1, std::memory_order_relaxed);
             auto backoff = cfg_.reconnect_base * (1 << std::min(attempt, 12));

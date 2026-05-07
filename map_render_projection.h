@@ -31,6 +31,7 @@ public:
         const LayerDef::FeatureGeom& fg);
 
     void appendWorldRingLine(const std::vector<ImVec2>& world_ring);
+    void appendWorldRingLine(const std::vector<ImVec2>& world_ring, int ring_step);
     ImVec2 projectWorld(const ImVec2& world) const { return project_world_(world); }
 
     bool drawTessellatedFill(

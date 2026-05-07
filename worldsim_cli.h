@@ -8,6 +8,8 @@ struct WorldsimCliOptions {
     bool run_vacancy_selftest = false;
     bool run_download_layers = false;
     bool include_large_downloads = false;
+    int reserve_cores = 0;
+    bool reserve_cores_set = false;
     std::string download_phase;
 };
 

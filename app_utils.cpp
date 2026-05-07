@@ -168,4 +168,3 @@ void openUrlInBrowser(const std::string& url) {
     int rc = std::system(cmd.c_str());
     (void)rc;
 }
-

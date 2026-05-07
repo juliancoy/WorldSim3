@@ -114,7 +114,20 @@
                 return false;
             }
             if (layer_uses_parcel_choropleth_detail(layer_idx)) return false;
-            return isHeatmapAggregateMethod(resolve_layer_aggregate_algo(layer_idx));
+            const int aggregate_algo = resolve_layer_aggregate_algo(layer_idx);
+            return aggregate_algo != kAggregateLodGeometry && isHeatmapAggregateMethod(aggregate_algo);
+        };
+        auto layer_uses_lod_geometry = [&](size_t layer_idx) {
+            if (layer_idx >= layers.size() ||
+                !layers[layer_idx].enabled ||
+                layer_idx >= layer_heatmap_enabled.size() ||
+                layer_idx >= layer_heatmap_max_zoom.size() ||
+                !layer_heatmap_enabled[layer_idx] ||
+                zoom > layer_heatmap_max_zoom[layer_idx]) {
+                return false;
+            }
+            if (layer_uses_parcel_choropleth_detail(layer_idx)) return false;
+            return resolve_layer_aggregate_algo(layer_idx) == kAggregateLodGeometry;
         };
         auto resolve_layer_heat_settings = [&](size_t layer_idx, HeatSample& hs) {
             hs.layer = (int)layer_idx;
@@ -276,10 +289,34 @@
             tax_lien_layer_idx,
             tax_sale_layer_idx
         };
+        const bool vacant_notice_overlay_enabled =
+            vacant_notice_enabled &&
+            !(vacant_notice_layer_idx >= 0 &&
+              (layer_uses_heatmap_aggregate((size_t)vacant_notice_layer_idx) ||
+               layer_uses_lod_geometry((size_t)vacant_notice_layer_idx)));
+        const bool vacant_rehab_overlay_enabled =
+            vacant_rehab_enabled &&
+            !(vacant_rehab_layer_idx >= 0 &&
+              (layer_uses_heatmap_aggregate((size_t)vacant_rehab_layer_idx) ||
+               layer_uses_lod_geometry((size_t)vacant_rehab_layer_idx)));
+        const bool tax_lien_overlay_enabled =
+            tax_lien_enabled &&
+            !(tax_lien_layer_idx >= 0 &&
+              (layer_uses_heatmap_aggregate((size_t)tax_lien_layer_idx) ||
+               layer_uses_lod_geometry((size_t)tax_lien_layer_idx)));
+        const bool tax_sale_overlay_enabled =
+            tax_sale_enabled &&
+            !(tax_sale_layer_idx >= 0 &&
+              (layer_uses_heatmap_aggregate((size_t)tax_sale_layer_idx) ||
+               layer_uses_lod_geometry((size_t)tax_sale_layer_idx)));
         for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
             auto& l = layers[layer_idx];
             if (!l.enabled) continue;
-            if (shouldSkipRawSourceLayer(layer_idx, raw_source_layer_policy)) continue;
+            const bool layer_uses_heatmap_for_cache = layer_uses_heatmap_aggregate(layer_idx);
+            const bool layer_uses_lod_for_draw = layer_uses_lod_geometry(layer_idx);
+            if (shouldSkipRawSourceLayer(layer_idx, raw_source_layer_policy) &&
+                !layer_uses_heatmap_for_cache &&
+                !layer_uses_lod_for_draw) continue;
             const bool is_zoning_layer = ((int)layer_idx == zoning_layer_idx);
             const bool is_heat_layer = !l.heatmap_field.empty();
             float heat_min = std::numeric_limits<float>::infinity();
@@ -425,7 +462,6 @@
                 heat_samples.push_back(hs);
             };
             ImU32 c = ImGui::ColorConvertFloat4ToU32(l.color);
-            const bool layer_uses_heatmap_for_cache = layer_uses_heatmap_aggregate(layer_idx);
             bool have_candidates = !should_recompute_heatmap || !layer_uses_heatmap_for_cache;
             if (have_candidates) {
                 have_candidates = queryLayerSpatialIndex(
@@ -491,7 +527,7 @@
                         }
 
                         for (const auto& r : world_rings) {
-                            append_world_ring_line(r);
+                            append_world_ring_line(r, layer_uses_lod_for_draw ? lod_ring_step : 1);
                             const auto& line = projection_cache.scratchLine();
                             draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                         }
@@ -569,19 +605,19 @@
                     }
 
                     // Project vacant point datasets onto parcel polygons instead of drawing point markers.
-                    if (layer_idx == (size_t)parcel_layer_idx && (vacant_notice_enabled || vacant_rehab_enabled)) {
+                    if (layer_idx == (size_t)parcel_layer_idx && (vacant_notice_overlay_enabled || vacant_rehab_overlay_enabled)) {
                         int vac_notice = 0;
                         int vac_rehab = 0;
                         if (fi < parcel_vac_notice_by_feature.size()) vac_notice = parcel_vac_notice_by_feature[fi];
                         if (fi < parcel_vac_rehab_by_feature.size()) vac_rehab = parcel_vac_rehab_by_feature[fi];
 
-                        const int weight = overlayWeight(vacant_notice_enabled, vac_notice, vacant_rehab_enabled, vac_rehab);
+                        const int weight = overlayWeight(vacant_notice_overlay_enabled, vac_notice, vacant_rehab_overlay_enabled, vac_rehab);
                         if (weight > 0) {
-                            const bool notice_fill = vacant_notice_enabled &&
+                            const bool notice_fill = vacant_notice_overlay_enabled &&
                                 vacant_notice_layer_idx >= 0 &&
                                 (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() &&
                                 layer_fill_enabled[(size_t)vacant_notice_layer_idx];
-                            const bool rehab_fill = vacant_rehab_enabled &&
+                            const bool rehab_fill = vacant_rehab_overlay_enabled &&
                                 vacant_rehab_layer_idx >= 0 &&
                                 (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() &&
                                 layer_fill_enabled[(size_t)vacant_rehab_layer_idx];
@@ -595,7 +631,7 @@
                     }
 
                     for (const auto& r : world_rings) {
-                        append_world_ring_line(r);
+                        append_world_ring_line(r, layer_uses_lod_for_draw ? lod_ring_step : 1);
                         const auto& line = projection_cache.scratchLine();
                         draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
                     }
@@ -713,10 +749,10 @@
         overlay_ctx.size = size;
         overlay_ctx.layers = &layers;
         overlay_ctx.parcel_layer_idx = parcel_layer_idx >= 0 ? (size_t)parcel_layer_idx : (size_t)-1;
-        overlay_ctx.vacant_notice_enabled = vacant_notice_enabled;
-        overlay_ctx.vacant_rehab_enabled = vacant_rehab_enabled;
-        overlay_ctx.tax_lien_enabled = tax_lien_enabled;
-        overlay_ctx.tax_sale_enabled = tax_sale_enabled;
+        overlay_ctx.vacant_notice_enabled = vacant_notice_overlay_enabled;
+        overlay_ctx.vacant_rehab_enabled = vacant_rehab_overlay_enabled;
+        overlay_ctx.tax_lien_enabled = tax_lien_overlay_enabled;
+        overlay_ctx.tax_sale_enabled = tax_sale_overlay_enabled;
         overlay_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
         overlay_ctx.vacant_rehab_layer_idx = vacant_rehab_layer_idx;
         overlay_ctx.tax_lien_layer_idx = tax_lien_layer_idx;

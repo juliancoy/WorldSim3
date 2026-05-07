@@ -942,7 +942,7 @@
         bool tax_sale_enabled = tax_sale_layer_idx >= 0 && layers[(size_t)tax_sale_layer_idx].enabled;
         const ImVec4 vacancy_notice_color = (vacant_notice_layer_idx >= 0) ? layers[(size_t)vacant_notice_layer_idx].color : ImVec4(1, 0, 0, 1);
         const ImVec4 vacancy_rehab_color = (vacant_rehab_layer_idx >= 0) ? layers[(size_t)vacant_rehab_layer_idx].color : ImVec4(0, 1, 1, 1);
-        const int ring_step = lodRingStepForZoom(math_zoom);
+        const int lod_ring_step = lodRingStepForZoom(math_zoom);
         const bool allow_parcel_scale_fill = math_zoom >= 14;
         auto is_parcel_scale_layer = [&](size_t layer_idx) -> bool {
             return ((int)layer_idx == parcel_layer_idx ||
@@ -956,7 +956,7 @@
             // Large-area layers still need low-zoom fill; parcel-scale fills are the expensive case.
             return !is_parcel_scale_layer(layer_idx) || allow_parcel_scale_fill;
         };
-        MapProjectionCache projection_cache(math_zoom, ring_step, project_world);
+        MapProjectionCache projection_cache(math_zoom, 1, project_world);
         auto get_world_rings = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::vector<std::vector<ImVec2>>& {
             return projection_cache.getWorldRings(layer_idx, feature_idx, fg);
@@ -965,8 +965,8 @@
             -> const std::pair<ImVec2, ImVec2>& {
             return projection_cache.getWorldExtent(layer_idx, feature_idx, fg);
         };
-        auto append_world_ring_line = [&](const std::vector<ImVec2>& world_ring) {
-            projection_cache.appendWorldRingLine(world_ring);
+        auto append_world_ring_line = [&](const std::vector<ImVec2>& world_ring, int ring_step = 1) {
+            projection_cache.appendWorldRingLine(world_ring, ring_step);
         };
         auto draw_tessellated_fill = [&](const LayerDef::FeatureGeom& fg,
                                          const std::vector<std::vector<ImVec2>>& world_rings,
