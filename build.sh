@@ -4,6 +4,90 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
+install_packages() {
+  local missing_name="$1"
+  shift
+  local packages=("$@")
+  local installer=()
+
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "[build.sh] $missing_name is required, but sudo is not available to install it." >&2
+      exit 1
+    fi
+    installer=(sudo)
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    "${installer[@]}" apt-get update
+    "${installer[@]}" apt-get install -y "${packages[@]}"
+  elif command -v dnf >/dev/null 2>&1; then
+    "${installer[@]}" dnf install -y "${packages[@]}"
+  elif command -v yum >/dev/null 2>&1; then
+    "${installer[@]}" yum install -y "${packages[@]}"
+  elif command -v pacman >/dev/null 2>&1; then
+    "${installer[@]}" pacman -Sy --noconfirm "${packages[@]}"
+  elif command -v zypper >/dev/null 2>&1; then
+    "${installer[@]}" zypper --non-interactive install "${packages[@]}"
+  elif command -v brew >/dev/null 2>&1; then
+    brew install "${packages[@]}"
+  else
+    echo "[build.sh] $missing_name is required, but no supported package manager was found." >&2
+    exit 1
+  fi
+}
+
+install_required_build_tools() {
+  local packages=()
+
+  if command -v apt-get >/dev/null 2>&1 && command -v dpkg-query >/dev/null 2>&1; then
+    local apt_packages=(
+      cmake
+      g++
+      ninja-build
+      python3
+      libvulkan-dev
+      vulkan-tools
+      libcurl4-openssl-dev
+      libssl-dev
+      libglfw3-dev
+      xorg-dev
+      libwayland-dev
+    )
+
+    for package in "${apt_packages[@]}"; do
+      if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+        packages+=("$package")
+      fi
+    done
+  else
+    if ! command -v cmake >/dev/null 2>&1; then
+      packages+=(cmake)
+    fi
+
+    if ! command -v ninja >/dev/null 2>&1; then
+      packages+=(ninja)
+    fi
+  fi
+
+  if [[ ${#packages[@]} -eq 0 ]]; then
+    return
+  fi
+
+  echo "[build.sh] Missing build dependencies: ${packages[*]}; attempting to install them."
+  install_packages "build dependencies" "${packages[@]}"
+
+  if ! command -v cmake >/dev/null 2>&1; then
+    echo "[build.sh] cmake installation finished, but cmake is still not on PATH." >&2
+    exit 1
+  fi
+
+  if ! command -v ninja >/dev/null 2>&1; then
+    echo "[build.sh] ninja installation finished, but ninja is still not on PATH." >&2
+    exit 1
+  fi
+}
+
 usage() {
   cat <<USAGE
 Usage: ./build.sh [--asan] [--clean] [--build-dir DIR]
@@ -46,8 +130,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+install_required_build_tools
+
 if [[ $CLEAN -eq 1 ]]; then
   rm -rf "$BUILD_DIR"
+fi
+
+if [[ -f "$BUILD_DIR/CMakeCache.txt" ]] && grep -Eq '^(CMAKE_MAKE_PROGRAM|Vulkan_INCLUDE_DIR|Vulkan_LIBRARY|CURL_INCLUDE_DIR|CURL_LIBRARY|OPENSSL_CRYPTO_LIBRARY|OPENSSL_INCLUDE_DIR|OPENSSL_SSL_LIBRARY):.*NOTFOUND' "$BUILD_DIR/CMakeCache.txt"; then
+  echo "[build.sh] Removing stale CMake cache with missing build dependencies."
+  rm -f "$BUILD_DIR/CMakeCache.txt"
+  rm -rf "$BUILD_DIR/CMakeFiles"
 fi
 
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
