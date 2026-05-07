@@ -7,6 +7,7 @@
 #include <vector>
 
 struct CachedHeatCell {
+    bool world_space = false;
     bool is_hex = false;
     bool draw_outline = true;
     float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
@@ -38,6 +39,8 @@ struct HeatSample {
     float lon = 0.0f;
     float lat = 0.0f;
     ImVec4 color = ImVec4(1, 1, 1, 1);
+    float value = 0.0f;
+    bool has_value = false;
     bool prefer_gradient = true;
     int algo = 0;
     float cell_px = 24.0f;

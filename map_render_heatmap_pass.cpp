@@ -3,7 +3,7 @@
 #include "geo.h"
 
 namespace {
-void drawHeatCell(ImDrawList* draw, const CachedHeatCell& c) {
+void drawHeatCell(ImDrawList* draw, const CachedHeatCell& c, const std::function<ImVec2(const ImVec2&)>& project_world) {
     if (c.is_hex) {
         ImVec2 pts[6] = {
             ImVec2(c.cx - c.hw, c.cy),
@@ -13,11 +13,20 @@ void drawHeatCell(ImDrawList* draw, const CachedHeatCell& c) {
             ImVec2(c.cx + c.hw * 0.5f, c.cy + c.hh),
             ImVec2(c.cx - c.hw * 0.5f, c.cy + c.hh),
         };
+        if (c.world_space) {
+            for (ImVec2& pt : pts) pt = project_world(pt);
+        }
         draw->AddConvexPolyFilled(pts, 6, c.fill);
         if (c.draw_outline) draw->AddPolyline(pts, 6, c.outline, ImDrawFlags_Closed, 1.0f);
     } else {
-        draw->AddRectFilled(ImVec2(c.x0, c.y0), ImVec2(c.x1, c.y1), c.fill);
-        if (c.draw_outline) draw->AddRect(ImVec2(c.x0, c.y0), ImVec2(c.x1, c.y1), c.outline, 0.0f, 0, 1.0f);
+        ImVec2 p0(c.x0, c.y0);
+        ImVec2 p1(c.x1, c.y1);
+        if (c.world_space) {
+            p0 = project_world(p0);
+            p1 = project_world(p1);
+        }
+        draw->AddRectFilled(p0, p1, c.fill);
+        if (c.draw_outline) draw->AddRect(p0, p1, c.outline, 0.0f, 0, 1.0f);
     }
 }
 }
@@ -41,5 +50,5 @@ void drawHeatmapPass(const MapHeatmapDrawContext& ctx) {
     }
     const bool suppress_vector_heat_cells = ctx.smooth_only_heatmap && drawing_heatmap_raster;
     if (suppress_vector_heat_cells) return;
-    for (const auto& c : *ctx.draw_cells) drawHeatCell(ctx.draw, c);
+    for (const auto& c : *ctx.draw_cells) drawHeatCell(ctx.draw, c, ctx.project_world);
 }

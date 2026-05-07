@@ -577,6 +577,119 @@
             ImGui::TextWrapped("Map styling uses parcel-level derived status. Raw vacant points are treated as child records.");
         ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Gradient")) {
+            ImGui::TextUnformatted("Gradient Scaling");
+            ImGui::Separator();
+            ImGui::TextWrapped("Numeric layer colors use a blue-to-yellow-to-red gradient. Effective ranges are percentile-clipped so extreme outliers do not flatten normal parcel colors.");
+            ImGui::Separator();
+            auto compact_money = [](double value) {
+                std::ostringstream os;
+                if (value >= 1000000000.0) os << "$" << std::fixed << std::setprecision(1) << (value / 1000000000.0) << "B";
+                else if (value >= 1000000.0) os << "$" << std::fixed << std::setprecision(1) << (value / 1000000.0) << "M";
+                else if (value >= 1000.0) os << "$" << std::fixed << std::setprecision(0) << (value / 1000.0) << "K";
+                else os << "$" << std::fixed << std::setprecision(0) << value;
+                return os.str();
+            };
+            auto compact_number = [](double value) {
+                std::ostringstream os;
+                if (std::abs(value) >= 1000000000.0) os << std::fixed << std::setprecision(1) << (value / 1000000000.0) << "B";
+                else if (std::abs(value) >= 1000000.0) os << std::fixed << std::setprecision(1) << (value / 1000000.0) << "M";
+                else if (std::abs(value) >= 1000.0) os << std::fixed << std::setprecision(0) << (value / 1000.0) << "K";
+                else os << std::fixed << std::setprecision(2) << value;
+                return os.str();
+            };
+            auto format_gradient_value = [&](const std::string& field, double value) {
+                std::string lower_field = field;
+                std::transform(lower_field.begin(), lower_field.end(), lower_field.begin(), [](unsigned char c) {
+                    return (char)std::tolower(c);
+                });
+                if (lower_field.find("usd") != std::string::npos ||
+                    lower_field.find("value") != std::string::npos ||
+                    lower_field.find("amount") != std::string::npos ||
+                    lower_field.find("cost") != std::string::npos ||
+                    lower_field.find("price") != std::string::npos) {
+                    return compact_money(value);
+                }
+                return compact_number(value);
+            };
+            int gradient_layer_count = 0;
+            ImGui::BeginChild("gradient_scale_layers", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (size_t li = 0; li < layers.size(); ++li) {
+                const auto& layer = layers[li];
+                if (!layer.enabled || layer.heatmap_field.empty()) continue;
+                std::vector<float> values;
+                values.reserve(layer.features.size());
+                for (size_t fi = 0; fi < layer.features.size(); ++fi) {
+                    const auto& fg = layer.features[fi];
+                    float v = 0.0f;
+                    if (tryGetFeaturePropertyFloat(fg, layer.heatmap_field, v)) values.push_back(v);
+                }
+                if (values.empty()) continue;
+                gradient_layer_count++;
+                std::sort(values.begin(), values.end());
+                const float clip_pct = std::clamp(
+                    li < layer_heatmap_percentile_clip.size()
+                        ? layer_heatmap_percentile_clip[li]
+                        : heatmap_percentile_clip,
+                    50.0f,
+                    100.0f);
+                const size_t max_idx = values.size() - 1;
+                const size_t clip_idx = clip_pct < 100.0f
+                    ? (size_t)std::clamp((int)std::floor((clip_pct / 100.0f) * (double)max_idx), 0, (int)max_idx)
+                    : max_idx;
+                const float raw_min = values.front();
+                const float raw_max = values.back();
+                const float effective_min = raw_min;
+                const float effective_max = std::max(effective_min, values[clip_idx]);
+                const float median = values[max_idx / 2];
+                const bool layer_heatmap_on = li < layer_heatmap_enabled.size() && layer_heatmap_enabled[li];
+                const int aggregate_max_zoom = li < layer_heatmap_max_zoom.size() ? layer_heatmap_max_zoom[li] : 13;
+                const int detail_min_zoom = li < layer_parcel_detail_min_zoom.size()
+                    ? layer_parcel_detail_min_zoom[li]
+                    : kParcelChoroplethMinZoom;
+                const int aggregate_algo = (li < layer_heatmap_algo.size() && layer_heatmap_algo[li] >= 0)
+                    ? layer_heatmap_algo[li]
+                    : heatmap_algo;
+                const bool parcel_choropleth_now =
+                    layer.scale == "parcel" &&
+                    !layer.heatmap_field.empty() &&
+                    zoom >= detail_min_zoom;
+                const bool aggregate_now =
+                    layer_heatmap_on &&
+                    zoom <= aggregate_max_zoom &&
+                    !parcel_choropleth_now &&
+                    isHeatmapAggregateMethod(aggregate_algo);
+                std::string resolved = "per-feature fill";
+                if (parcel_choropleth_now) resolved = "parcel choropleth";
+                else if (aggregate_now) resolved = std::string("aggregate ") + aggregateStrategyName(aggregate_algo);
+
+                if (ImGui::CollapsingHeader(layer.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::Text("Field: %s", layer.heatmap_field.c_str());
+                    ImGui::Text("Resolved display: %s", resolved.c_str());
+                    ImGui::Text("Samples: %zu", values.size());
+                    ImGui::Text("Clip: %.0f%%", clip_pct);
+                    ImGui::Text("Blue floor: %s", format_gradient_value(layer.heatmap_field, effective_min).c_str());
+                    ImGui::Text("Yellow midpoint: %s", format_gradient_value(layer.heatmap_field, (effective_min + effective_max) * 0.5).c_str());
+                    ImGui::Text("Red ceiling: %s", format_gradient_value(layer.heatmap_field, effective_max).c_str());
+                    ImGui::TextDisabled("Median: %s", format_gradient_value(layer.heatmap_field, median).c_str());
+                    ImGui::TextDisabled("Raw max: %s", format_gradient_value(layer.heatmap_field, raw_max).c_str());
+                    if (raw_max > effective_max) {
+                        ImGui::TextWrapped("Values above the red ceiling are clamped to red. This prevents outliers from making ordinary parcels all blue.");
+                    }
+                    if (layer.scale == "parcel") {
+                        ImGui::TextDisabled("Aggregate max zoom: %d | Parcel detail min zoom: %d", aggregate_max_zoom, detail_min_zoom);
+                    } else {
+                        ImGui::TextDisabled("Aggregate max zoom: %d", aggregate_max_zoom);
+                    }
+                }
+            }
+            if (gradient_layer_count == 0) {
+                ImGui::TextDisabled("No enabled numeric gradient layers are loaded.");
+                ImGui::TextWrapped("Enable a layer with a heatmap field, such as Property Value (Parcels), to see its current gradient scale.");
+            }
+            ImGui::EndChild();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Owners")) {
             ImGui::TextUnformatted("Owner Rankings");
             ImGui::Separator();

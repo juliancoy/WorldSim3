@@ -68,7 +68,7 @@ struct AppShutdownContext {
     std::vector<int>* layer_parcel_detail_min_zoom = nullptr;
     std::vector<bool>* layer_heatmap_use_gradient = nullptr;
     std::vector<int>* layer_heatmap_algo = nullptr;
-    std::vector<bool>* layer_heatmap_use_global_settings = nullptr;
+    std::vector<int>* layer_normalize_mode = nullptr;
     std::vector<float>* layer_heatmap_cell_px = nullptr;
     std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
     std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;

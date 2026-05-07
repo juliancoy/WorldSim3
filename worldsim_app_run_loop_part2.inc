@@ -526,7 +526,7 @@
                 &layer_parcel_detail_min_zoom,
                 &layer_heatmap_use_gradient,
                 &layer_heatmap_algo,
-                &layer_heatmap_use_global_settings,
+                &layer_normalize_mode,
                 &layer_heatmap_cell_px,
                 &layer_heatmap_bandwidth_px,
                 &layer_heatmap_blur_sigma_px,

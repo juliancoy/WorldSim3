@@ -6,6 +6,7 @@ inline constexpr int kAggregateGpuSplatBlur = 2;
 inline constexpr int kAggregateHexBinning = 3;
 inline constexpr int kAggregateMultiResPyramid = 4;
 inline constexpr int kAggregateLodGeometry = 5;
+inline constexpr int kAggregateMedianChoropleth = 6;
 inline constexpr int kParcelChoroplethMinZoom = 14;
 
 bool isHeatmapAggregateMethod(int aggregate_algo);

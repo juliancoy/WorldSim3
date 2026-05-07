@@ -89,7 +89,7 @@ void loadLayerUiState(
     std::vector<int>* layer_parcel_detail_min_zoom,
     std::vector<bool>* layer_heatmap_use_gradient,
     std::vector<int>* layer_heatmap_algo,
-    std::vector<bool>* layer_heatmap_use_global_settings,
+    std::vector<int>* layer_normalize_mode,
     std::vector<float>* layer_heatmap_cell_px,
     std::vector<float>* layer_heatmap_bandwidth_px,
     std::vector<float>* layer_heatmap_blur_sigma_px,
@@ -205,6 +205,15 @@ void loadLayerUiState(
             }
         }
     }
+    if (layer_normalize_mode && j.contains("layer_normalize_mode") && j["layer_normalize_mode"].is_object()) {
+        const auto& obj = j["layer_normalize_mode"];
+        if (layer_normalize_mode->size() < layers.size()) layer_normalize_mode->resize(layers.size(), 0);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
+                (*layer_normalize_mode)[i] = std::clamp(obj[layers[i].file].get<int>(), 0, 2);
+            }
+        }
+    }
     auto load_float_layer_setting = [&](std::vector<float>* dst, const char* key, float fallback) {
         if (!dst || !j.contains(key) || !j[key].is_object()) return;
         const auto& obj = j[key];
@@ -225,7 +234,6 @@ void loadLayerUiState(
             }
         }
     };
-    load_bool_layer_setting(layer_heatmap_use_global_settings, "layer_heatmap_use_global_settings", true);
     load_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
     load_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
     load_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);
@@ -260,7 +268,7 @@ void saveLayerUiState(
     const std::vector<int>* layer_parcel_detail_min_zoom,
     const std::vector<bool>* layer_heatmap_use_gradient,
     const std::vector<int>* layer_heatmap_algo,
-    const std::vector<bool>* layer_heatmap_use_global_settings,
+    const std::vector<int>* layer_normalize_mode,
     const std::vector<float>* layer_heatmap_cell_px,
     const std::vector<float>* layer_heatmap_bandwidth_px,
     const std::vector<float>* layer_heatmap_blur_sigma_px,
@@ -344,6 +352,13 @@ void saveLayerUiState(
         }
         j["layer_heatmap_algo"] = std::move(ha);
     }
+    if (layer_normalize_mode) {
+        json nm = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            nm[layers[i].file] = i < layer_normalize_mode->size() ? (*layer_normalize_mode)[i] : 0;
+        }
+        j["layer_normalize_mode"] = std::move(nm);
+    }
     auto save_float_layer_setting = [&](const std::vector<float>* src, const char* key, float fallback) {
         if (!src) return;
         json obj = json::object();
@@ -360,7 +375,6 @@ void saveLayerUiState(
         }
         j[key] = std::move(obj);
     };
-    save_bool_layer_setting(layer_heatmap_use_global_settings, "layer_heatmap_use_global_settings", true);
     save_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
     save_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
     save_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);

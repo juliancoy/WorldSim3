@@ -50,6 +50,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -264,7 +265,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<int> layer_parcel_detail_min_zoom(layers.size(), kParcelChoroplethMinZoom);
     std::vector<bool> layer_heatmap_use_gradient(layers.size(), true);
     std::vector<int> layer_heatmap_algo(layers.size(), -1);
-    std::vector<bool> layer_heatmap_use_global_settings(layers.size(), true);
+    std::vector<int> layer_normalize_mode(layers.size(), 0);
     std::vector<float> layer_heatmap_cell_px(layers.size(), 24.0f);
     std::vector<float> layer_heatmap_bandwidth_px(layers.size(), 18.0f);
     std::vector<float> layer_heatmap_blur_sigma_px(layers.size(), 6.0f);
@@ -274,7 +275,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<float> layer_heatmap_multires_blend(layers.size(), 0.5f);
     // Heatmap runtime settings (loaded/saved via layer_ui_state.json)
     float global_heat_cell_px = 24.0f;
-    int heatmap_algo = 0; // 0=grid,1=kde,2=gpu_splat_blur,3=hex,4=multires
+    int heatmap_algo = kAggregateGpuSplatBlur;
     int heatmap_quality_preset = 1; // 0=fast,1=balanced,2=high
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;
@@ -291,6 +292,26 @@ int runWorldSim3App(int argc, char** argv) {
     bool heatmap_cache_valid = false;
     std::future<std::pair<uint64_t, HeatmapRenderData>> heatmap_async_future;
     bool heatmap_async_inflight = false;
+    uint64_t heatmap_pending_key = 0;
+    struct CachedAggregateTexture {
+        std::vector<CachedHeatCell> cells;
+        HeatmapRaster raster;
+        TileTexture texture;
+        uint64_t last_used_frame = 0;
+    };
+    std::unordered_map<uint64_t, CachedAggregateTexture> heatmap_texture_cache;
+    uint64_t heatmap_texture_cache_frame = 0;
+    constexpr size_t kMaxHeatmapTextureCacheEntries = 8;
+    auto prune_heatmap_texture_cache = [&]() {
+        while (heatmap_texture_cache.size() > kMaxHeatmapTextureCacheEntries) {
+            auto evict_it = heatmap_texture_cache.begin();
+            for (auto it = heatmap_texture_cache.begin(); it != heatmap_texture_cache.end(); ++it) {
+                if (it->second.last_used_frame < evict_it->second.last_used_frame) evict_it = it;
+            }
+            destroyTileTexture(evict_it->second.texture);
+            heatmap_texture_cache.erase(evict_it);
+        }
+    };
     bool hover_inspector_enabled = true;
     loadLayerUiState(
         root,
@@ -305,7 +326,7 @@ int runWorldSim3App(int argc, char** argv) {
         &layer_parcel_detail_min_zoom,
         &layer_heatmap_use_gradient,
         &layer_heatmap_algo,
-        &layer_heatmap_use_global_settings,
+        &layer_normalize_mode,
         &layer_heatmap_cell_px,
         &layer_heatmap_bandwidth_px,
         &layer_heatmap_blur_sigma_px,
@@ -322,6 +343,21 @@ int runWorldSim3App(int argc, char** argv) {
         &heatmap_zoom_adaptive_bandwidth,
         &heatmap_multires_enabled,
         &heatmap_multires_blend);
+    if (heatmap_algo == kAggregateGridBinning) heatmap_algo = kAggregateHexBinning;
+    for (size_t i = 0; i < layers.size() && i < layer_heatmap_algo.size(); ++i) {
+        std::string field = layers[i].heatmap_field;
+        std::transform(field.begin(), field.end(), field.begin(), [](unsigned char c) {
+            return (char)std::tolower(c);
+        });
+        if (layers[i].scale == "parcel" &&
+            (field == "value_usd" || field == "property_value_usd") &&
+            (layer_heatmap_algo[i] < 0 || layer_heatmap_algo[i] == kAggregateGridBinning)) {
+            layer_heatmap_algo[i] = kAggregateMedianChoropleth;
+            if (i < layer_normalize_mode.size()) layer_normalize_mode[i] = 0;
+        } else if (layer_heatmap_algo[i] == kAggregateGridBinning) {
+            layer_heatmap_algo[i] = kAggregateHexBinning;
+        }
+    }
     TimeCubeService time_cube_service(root);
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
@@ -672,6 +708,9 @@ int runWorldSim3App(int argc, char** argv) {
 #include "worldsim_app_run_loop_part2.inc"
 #include "worldsim_app_run_loop_part3.inc"
 #include "worldsim_app_run_loop_part4.inc"
+    vkDeviceWaitIdle(g_Device);
+    for (auto& kv : heatmap_texture_cache) destroyTileTextureNow(kv.second.texture);
+    heatmap_texture_cache.clear();
     AppShutdownContext shutdown_ctx;
     shutdown_ctx.root = &root;
     shutdown_ctx.app_settings = &app_settings;
@@ -687,7 +726,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
     shutdown_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
     shutdown_ctx.layer_heatmap_algo = &layer_heatmap_algo;
-    shutdown_ctx.layer_heatmap_use_global_settings = &layer_heatmap_use_global_settings;
+    shutdown_ctx.layer_normalize_mode = &layer_normalize_mode;
     shutdown_ctx.layer_heatmap_cell_px = &layer_heatmap_cell_px;
     shutdown_ctx.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
     shutdown_ctx.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
