@@ -14,6 +14,21 @@
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGuiIO& frame_io = ImGui::GetIO();
+        const bool text_scale_up =
+            frame_io.KeyCtrl &&
+            (ImGui::IsKeyPressed(ImGuiKey_Equal, false) ||
+             ImGui::IsKeyPressed(ImGuiKey_KeypadAdd, false));
+        const bool text_scale_down =
+            frame_io.KeyCtrl &&
+            (ImGui::IsKeyPressed(ImGuiKey_Minus, false) ||
+             ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract, false));
+        if (text_scale_up || text_scale_down) {
+            ui_text_scale = std::clamp(ui_text_scale + (text_scale_up ? 0.10f : -0.10f), 0.70f, 1.80f);
+            frame_io.FontGlobalScale = ui_text_scale;
+        } else if (std::abs(frame_io.FontGlobalScale - ui_text_scale) > 0.001f) {
+            frame_io.FontGlobalScale = ui_text_scale;
+        }
         drainRetiredTextures();
         const auto prof_frame_begin = std::chrono::steady_clock::now();
         auto prof_ms_since = [](std::chrono::steady_clock::time_point t) {

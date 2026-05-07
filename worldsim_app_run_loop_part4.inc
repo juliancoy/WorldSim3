@@ -86,50 +86,6 @@
             }
             return true;
         };
-        auto try_get_prop_float = [&](const LayerDef::FeatureGeom& fg, const std::string& key, float& out) -> bool {
-            if (key.empty()) return false;
-            for (const auto& kv : fg.properties) {
-                if (kv.first != key) continue;
-                char* end = nullptr;
-                const float v = std::strtof(kv.second.c_str(), &end);
-                if (end == kv.second.c_str() || (end && *end != '\0')) return false;
-                if (!std::isfinite(v)) return false;
-                out = v;
-                return true;
-            }
-            return false;
-        };
-        auto heat_color = [&](float t) -> ImVec4 {
-            t = std::clamp(t, 0.0f, 1.0f);
-            const ImVec4 cold(0.12f, 0.35f, 0.75f, 1.0f);
-            const ImVec4 mid(0.98f, 0.83f, 0.26f, 1.0f);
-            const ImVec4 hot(0.82f, 0.14f, 0.12f, 1.0f);
-            auto lerp = [](const ImVec4& a, const ImVec4& b, float u) {
-                return ImVec4(
-                    a.x + (b.x - a.x) * u,
-                    a.y + (b.y - a.y) * u,
-                    a.z + (b.z - a.z) * u,
-                    a.w + (b.w - a.w) * u);
-            };
-            if (t < 0.5f) return lerp(cold, mid, t * 2.0f);
-            return lerp(mid, hot, (t - 0.5f) * 2.0f);
-        };
-        auto hash_combine_u64 = [](uint64_t& seed, uint64_t v) {
-            seed ^= v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
-        };
-        auto hash_combine_f = [&](uint64_t& seed, float v) {
-            uint32_t bits = 0;
-            std::memcpy(&bits, &v, sizeof(bits));
-            hash_combine_u64(seed, (uint64_t)bits);
-        };
-        auto hash_combine_qd = [&](uint64_t& seed, double v, double scale) {
-            if (!std::isfinite(v)) {
-                hash_combine_u64(seed, 0xffffffffffffffffULL);
-                return;
-            }
-            const int64_t q = (int64_t)std::llround(v * scale);
-            hash_combine_u64(seed, (uint64_t)q);
-        };
         const float global_heat_cell = std::max(4.0f, global_heat_cell_px);
         std::vector<HeatSample> heat_samples;
         auto resolve_layer_heat_settings = [&](size_t layer_idx, HeatSample& hs) {
@@ -160,72 +116,72 @@
         }
         if (!any_active_heatmap) smooth_only_heatmap = false;
         uint64_t heatmap_key = 1469598103934665603ULL;
-        hash_combine_u64(heatmap_key, (uint64_t)zoom);
-        hash_combine_u64(heatmap_key, (uint64_t)math_zoom);
-        hash_combine_qd(heatmap_key, center_lon, 10000000.0);
-        hash_combine_qd(heatmap_key, center_lat, 10000000.0);
-        hash_combine_qd(heatmap_key, view_min_lon, 10000000.0);
-        hash_combine_qd(heatmap_key, view_min_lat, 10000000.0);
-        hash_combine_qd(heatmap_key, view_max_lon, 10000000.0);
-        hash_combine_qd(heatmap_key, view_max_lat, 10000000.0);
-        hash_combine_u64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.x)));
-        hash_combine_u64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.y)));
-        hash_combine_f(heatmap_key, global_heat_cell_px);
-        hash_combine_u64(heatmap_key, (uint64_t)heatmap_algo);
-        hash_combine_u64(heatmap_key, (uint64_t)heatmap_quality_preset);
-        hash_combine_f(heatmap_key, heatmap_bandwidth_px);
-        hash_combine_f(heatmap_key, heatmap_blur_sigma_px);
-        hash_combine_f(heatmap_key, heatmap_percentile_clip);
-        hash_combine_u64(heatmap_key, heatmap_zoom_adaptive_bandwidth ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, heatmap_multires_enabled ? 1ULL : 0ULL);
-        hash_combine_f(heatmap_key, heatmap_multires_blend);
-        hash_combine_u64(heatmap_key, filter_enabled ? 1ULL : 0ULL);
-        for (const char* p = filter_blocklot; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_status; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_address; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_owner; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        hashCombineU64(heatmap_key, (uint64_t)zoom);
+        hashCombineU64(heatmap_key, (uint64_t)math_zoom);
+        hashCombineQuantizedDouble(heatmap_key, center_lon, 10000000.0);
+        hashCombineQuantizedDouble(heatmap_key, center_lat, 10000000.0);
+        hashCombineQuantizedDouble(heatmap_key, view_min_lon, 10000000.0);
+        hashCombineQuantizedDouble(heatmap_key, view_min_lat, 10000000.0);
+        hashCombineQuantizedDouble(heatmap_key, view_max_lon, 10000000.0);
+        hashCombineQuantizedDouble(heatmap_key, view_max_lat, 10000000.0);
+        hashCombineU64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.x)));
+        hashCombineU64(heatmap_key, (uint64_t)std::max(1, (int)std::lround(size.y)));
+        hashCombineFloat(heatmap_key, global_heat_cell_px);
+        hashCombineU64(heatmap_key, (uint64_t)heatmap_algo);
+        hashCombineU64(heatmap_key, (uint64_t)heatmap_quality_preset);
+        hashCombineFloat(heatmap_key, heatmap_bandwidth_px);
+        hashCombineFloat(heatmap_key, heatmap_blur_sigma_px);
+        hashCombineFloat(heatmap_key, heatmap_percentile_clip);
+        hashCombineU64(heatmap_key, heatmap_zoom_adaptive_bandwidth ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, heatmap_multires_enabled ? 1ULL : 0ULL);
+        hashCombineFloat(heatmap_key, heatmap_multires_blend);
+        hashCombineU64(heatmap_key, filter_enabled ? 1ULL : 0ULL);
+        for (const char* p = filter_blocklot; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        for (const char* p = filter_status; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        for (const char* p = filter_address; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        for (const char* p = filter_owner; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
         if (!selected_owners.empty()) {
             std::vector<std::string> selected_owner_list(selected_owners.begin(), selected_owners.end());
             std::sort(selected_owner_list.begin(), selected_owner_list.end());
             for (const auto& owner : selected_owner_list) {
-                hash_combine_u64(heatmap_key, (uint64_t)owner.size());
-                for (unsigned char ch : owner) hash_combine_u64(heatmap_key, (uint64_t)ch);
+                hashCombineU64(heatmap_key, (uint64_t)owner.size());
+                for (unsigned char ch : owner) hashCombineU64(heatmap_key, (uint64_t)ch);
             }
         }
-        for (const char* p = filter_zip; *p; ++p) hash_combine_u64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        hash_combine_u64(heatmap_key, filter_use_date ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, (uint64_t)filter_year_min);
-        hash_combine_u64(heatmap_key, (uint64_t)filter_year_max);
-        hash_combine_u64(heatmap_key, crime_filter_enabled ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_use_year ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, (uint64_t)crime_year_min);
-        hash_combine_u64(heatmap_key, (uint64_t)crime_year_max);
-        hash_combine_u64(heatmap_key, crime_filter_homicide ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_robbery ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_assault ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_burglary ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_theft ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_auto_theft ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_drug ? 1ULL : 0ULL);
-        hash_combine_u64(heatmap_key, crime_filter_shooting ? 1ULL : 0ULL);
+        for (const char* p = filter_zip; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
+        hashCombineU64(heatmap_key, filter_use_date ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, (uint64_t)filter_year_min);
+        hashCombineU64(heatmap_key, (uint64_t)filter_year_max);
+        hashCombineU64(heatmap_key, crime_filter_enabled ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_use_year ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, (uint64_t)crime_year_min);
+        hashCombineU64(heatmap_key, (uint64_t)crime_year_max);
+        hashCombineU64(heatmap_key, crime_filter_homicide ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_robbery ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_assault ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_burglary ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_theft ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_auto_theft ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_drug ? 1ULL : 0ULL);
+        hashCombineU64(heatmap_key, crime_filter_shooting ? 1ULL : 0ULL);
         for (size_t i = 0; i < layers.size(); ++i) {
-            hash_combine_u64(heatmap_key, layers[i].enabled ? 1ULL : 0ULL);
-            hash_combine_u64(heatmap_key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
-            hash_combine_u64(heatmap_key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
-            hash_combine_u64(heatmap_key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
-            hash_combine_u64(heatmap_key, (uint64_t)((i < layer_heatmap_algo.size()) ? (layer_heatmap_algo[i] + 1) : 0));
+            hashCombineU64(heatmap_key, layers[i].enabled ? 1ULL : 0ULL);
+            hashCombineU64(heatmap_key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
+            hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
+            hashCombineU64(heatmap_key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
+            hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_algo.size()) ? (layer_heatmap_algo[i] + 1) : 0));
             const bool use_global = i >= layer_heatmap_use_global_settings.size() || layer_heatmap_use_global_settings[i];
-            hash_combine_u64(heatmap_key, use_global ? 1ULL : 0ULL);
+            hashCombineU64(heatmap_key, use_global ? 1ULL : 0ULL);
             if (!use_global) {
-                hash_combine_f(heatmap_key, i < layer_heatmap_cell_px.size() ? layer_heatmap_cell_px[i] : global_heat_cell_px);
-                hash_combine_f(heatmap_key, i < layer_heatmap_bandwidth_px.size() ? layer_heatmap_bandwidth_px[i] : heatmap_bandwidth_px);
-                hash_combine_f(heatmap_key, i < layer_heatmap_blur_sigma_px.size() ? layer_heatmap_blur_sigma_px[i] : heatmap_blur_sigma_px);
-                hash_combine_f(heatmap_key, i < layer_heatmap_percentile_clip.size() ? layer_heatmap_percentile_clip[i] : heatmap_percentile_clip);
-                hash_combine_u64(heatmap_key, (i < layer_heatmap_zoom_adaptive_bandwidth.size() && layer_heatmap_zoom_adaptive_bandwidth[i]) ? 1ULL : 0ULL);
-                hash_combine_u64(heatmap_key, (i < layer_heatmap_multires_enabled.size() && layer_heatmap_multires_enabled[i]) ? 1ULL : 0ULL);
-                hash_combine_f(heatmap_key, i < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[i] : heatmap_multires_blend);
+                hashCombineFloat(heatmap_key, i < layer_heatmap_cell_px.size() ? layer_heatmap_cell_px[i] : global_heat_cell_px);
+                hashCombineFloat(heatmap_key, i < layer_heatmap_bandwidth_px.size() ? layer_heatmap_bandwidth_px[i] : heatmap_bandwidth_px);
+                hashCombineFloat(heatmap_key, i < layer_heatmap_blur_sigma_px.size() ? layer_heatmap_blur_sigma_px[i] : heatmap_blur_sigma_px);
+                hashCombineFloat(heatmap_key, i < layer_heatmap_percentile_clip.size() ? layer_heatmap_percentile_clip[i] : heatmap_percentile_clip);
+                hashCombineU64(heatmap_key, (i < layer_heatmap_zoom_adaptive_bandwidth.size() && layer_heatmap_zoom_adaptive_bandwidth[i]) ? 1ULL : 0ULL);
+                hashCombineU64(heatmap_key, (i < layer_heatmap_multires_enabled.size() && layer_heatmap_multires_enabled[i]) ? 1ULL : 0ULL);
+                hashCombineFloat(heatmap_key, i < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[i] : heatmap_multires_blend);
             }
-            hash_combine_u64(heatmap_key, (uint64_t)layers[i].features.size());
+            hashCombineU64(heatmap_key, (uint64_t)layers[i].features.size());
         }
         if (heatmap_async_inflight && heatmap_async_future.valid() &&
             heatmap_async_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
@@ -276,7 +232,7 @@
                     const auto& fg = l.features[fi];
                     if (!feature_passes_filters(layer_idx, fi, fg)) continue;
                     float v = 0.0f;
-                    if (!try_get_prop_float(fg, l.heatmap_field, v)) continue;
+                    if (!tryGetFeaturePropertyFloat(fg, l.heatmap_field, v)) continue;
                     heat_min = std::min(heat_min, v);
                     heat_max = std::max(heat_max, v);
                 }
@@ -308,9 +264,9 @@
                     ImU32 feature_c = c;
                     if (is_heat_layer) {
                         float v = 0.0f;
-                        if (try_get_prop_float(fg, l.heatmap_field, v) && heat_range_valid) {
+                        if (tryGetFeaturePropertyFloat(fg, l.heatmap_field, v) && heat_range_valid) {
                             const float t = (v - heat_min) / (heat_max - heat_min);
-                            feature_c = ImGui::ColorConvertFloat4ToU32(heat_color(t));
+                            feature_c = ImGui::ColorConvertFloat4ToU32(heatColor(t));
                         }
                     }
                     if (is_zoning_layer) {
@@ -381,9 +337,9 @@
                 ImU32 feature_c = c;
                 if (is_heat_layer) {
                     float v = 0.0f;
-                    if (try_get_prop_float(fg, l.heatmap_field, v) && heat_range_valid) {
+                    if (tryGetFeaturePropertyFloat(fg, l.heatmap_field, v) && heat_range_valid) {
                         const float t = (v - heat_min) / (heat_max - heat_min);
-                        feature_c = ImGui::ColorConvertFloat4ToU32(heat_color(t));
+                        feature_c = ImGui::ColorConvertFloat4ToU32(heatColor(t));
                     }
                 }
                 if (is_zoning_layer) {
@@ -438,9 +394,7 @@
                         if (fi < parcel_vac_notice_by_feature.size()) vac_notice = parcel_vac_notice_by_feature[fi];
                         if (fi < parcel_vac_rehab_by_feature.size()) vac_rehab = parcel_vac_rehab_by_feature[fi];
 
-                        int weight = 0;
-                        if (vacant_notice_enabled) weight += vac_notice;
-                        if (vacant_rehab_enabled) weight += vac_rehab;
+                        const int weight = overlayWeight(vacant_notice_enabled, vac_notice, vacant_rehab_enabled, vac_rehab);
                         if (weight > 0) {
                             const bool notice_fill = vacant_notice_enabled &&
                                 vacant_notice_layer_idx >= 0 &&
@@ -451,8 +405,9 @@
                                 (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() &&
                                 layer_fill_enabled[(size_t)vacant_rehab_layer_idx];
                             if ((notice_fill || rehab_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
-                                const int alpha = std::clamp(95 + weight * 16, 95, 220);
-                                ImU32 vac_fill = color_with_alpha(vacancy_base_color(vac_notice, vac_rehab), alpha);
+                                const int alpha = scaledOverlayAlpha(95, 16, 95, 220, weight);
+                                ImVec4 vac_base = blendVacancyColor(vacancy_notice_color, vacancy_rehab_color, vac_notice, vac_rehab);
+                                ImU32 vac_fill = colorWithAlpha(vac_base, alpha);
                                 draw_tessellated_fill(fg, world_rings, vac_fill);
                             }
                         }
@@ -576,108 +531,38 @@
         }
 
         const auto overlay_prof_begin = std::chrono::steady_clock::now();
-        // Render vacant overlays as a final top pass so they remain visible regardless of layer order.
-        size_t visible_vacant_parcels_counter = 0;
-        if ((vacant_notice_enabled || vacant_rehab_enabled) && parcel_layer_idx >= 0) {
-            auto& parcel_layer = layers[(size_t)parcel_layer_idx];
-            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
-                auto& fg = parcel_layer.features[i];
-                if (!feature_passes_filters((size_t)parcel_layer_idx, i, fg)) continue;
-                const auto& ex = fg.extent;
-                const auto& pww = get_world_extent((size_t)parcel_layer_idx, (uint32_t)i, fg);
-                ImVec2 p0w = pww.first;
-                ImVec2 p1w = pww.second;
-                ImVec2 a = project_world(p0w);
-                ImVec2 b = project_world(p1w);
-                ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
-                ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
-                if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
-                if (fg.rings.empty()) continue;
-
-                int vac_notice = (i < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[i] : 0;
-                int vac_rehab = (i < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[i] : 0;
-
-                int weight = 0;
-                if (vacant_notice_enabled) weight += vac_notice;
-                if (vacant_rehab_enabled) weight += vac_rehab;
-                if (weight <= 0) continue;
-                visible_vacant_parcels_counter++;
-
-                const auto& world_rings = get_world_rings((size_t)parcel_layer_idx, (uint32_t)i, fg);
-                const int alpha = std::clamp(120 + weight * 18, 120, 230);
-                ImVec4 vac_base = vacancy_base_color(vac_notice, vac_rehab);
-                ImU32 vac_fill = color_with_alpha(vac_base, alpha);
-                ImU32 vac_outline = color_with_alpha(darken_color(vac_base, 0.62f), 235);
-                const bool notice_fill = vacant_notice_layer_idx >= 0 &&
-                    (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() &&
-                    layer_fill_enabled[(size_t)vacant_notice_layer_idx];
-                const bool rehab_fill = vacant_rehab_layer_idx >= 0 &&
-                    (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() &&
-                    layer_fill_enabled[(size_t)vacant_rehab_layer_idx];
-                if ((notice_fill || rehab_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
-                    draw_tessellated_fill(fg, world_rings, vac_fill);
-                }
-                for (const auto& r : world_rings) {
-                    append_world_ring_line(r);
-                    if (!scratch_line.empty()) draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), vac_outline, ImDrawFlags_Closed, 2.0f);
-                }
-            }
-        }
-        visible_vacant_parcels_last_frame.store(visible_vacant_parcels_counter, std::memory_order_relaxed);
+        MapRenderContext overlay_ctx;
+        overlay_ctx.draw = draw;
+        overlay_ctx.origin = origin;
+        overlay_ctx.size = size;
+        overlay_ctx.layers = &layers;
+        overlay_ctx.parcel_layer_idx = parcel_layer_idx >= 0 ? (size_t)parcel_layer_idx : (size_t)-1;
+        overlay_ctx.vacant_notice_enabled = vacant_notice_enabled;
+        overlay_ctx.vacant_rehab_enabled = vacant_rehab_enabled;
+        overlay_ctx.tax_lien_enabled = tax_lien_enabled;
+        overlay_ctx.tax_sale_enabled = tax_sale_enabled;
+        overlay_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
+        overlay_ctx.vacant_rehab_layer_idx = vacant_rehab_layer_idx;
+        overlay_ctx.tax_lien_layer_idx = tax_lien_layer_idx;
+        overlay_ctx.tax_sale_layer_idx = tax_sale_layer_idx;
+        overlay_ctx.vacancy_notice_color = vacancy_notice_color;
+        overlay_ctx.vacancy_rehab_color = vacancy_rehab_color;
+        overlay_ctx.layer_fill_enabled = &layer_fill_enabled;
+        overlay_ctx.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+        overlay_ctx.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+        overlay_ctx.parcel_tax_lien_by_feature = &parcel_tax_lien_by_feature;
+        overlay_ctx.parcel_tax_sale_by_feature = &parcel_tax_sale_by_feature;
+        overlay_ctx.feature_passes_filters = feature_passes_filters;
+        overlay_ctx.get_world_extent = get_world_extent;
+        overlay_ctx.get_world_rings = get_world_rings;
+        overlay_ctx.project_world = project_world;
+        overlay_ctx.should_fill_layer_polygon = should_fill_layer_polygon;
+        overlay_ctx.draw_tessellated_fill = draw_tessellated_fill;
+        overlay_ctx.append_world_ring_line = append_world_ring_line;
+        overlay_ctx.scratch_line = &scratch_line;
+        const MapOverlayResult overlay_result = renderParcelSourceOverlays(overlay_ctx);
+        visible_vacant_parcels_last_frame.store(overlay_result.visible_vacant_parcels, std::memory_order_relaxed);
         prof_overlay_ms_last.store(prof_ms_since(overlay_prof_begin), std::memory_order_relaxed);
-
-        // Render tax source records on matched parcel geometry, not as raw point dots.
-        if ((tax_lien_enabled || tax_sale_enabled) && parcel_layer_idx >= 0) {
-            auto& parcel_layer = layers[(size_t)parcel_layer_idx];
-            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
-                auto& fg = parcel_layer.features[i];
-                if (!feature_passes_filters((size_t)parcel_layer_idx, i, fg)) continue;
-                const auto& pww = get_world_extent((size_t)parcel_layer_idx, (uint32_t)i, fg);
-                ImVec2 a = project_world(pww.first);
-                ImVec2 b = project_world(pww.second);
-                ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
-                ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
-                if (p1.x < origin.x || p0.x > origin.x + size.x || p1.y < origin.y || p0.y > origin.y + size.y) continue;
-                if (fg.rings.empty()) continue;
-
-                const int lien_count = (i < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[i] : 0;
-                const int sale_count = (i < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[i] : 0;
-                int weight = 0;
-                if (tax_lien_enabled) weight += lien_count;
-                if (tax_sale_enabled) weight += sale_count;
-                if (weight <= 0) continue;
-
-                ImVec4 lien_c = (tax_lien_layer_idx >= 0) ? layers[(size_t)tax_lien_layer_idx].color : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
-                ImVec4 sale_c = (tax_sale_layer_idx >= 0) ? layers[(size_t)tax_sale_layer_idx].color : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
-                ImVec4 tax_base = lien_c;
-                if (tax_lien_enabled && tax_sale_enabled && lien_count > 0 && sale_count > 0) {
-                    tax_base = ImVec4((lien_c.x + sale_c.x) * 0.5f,
-                                      (lien_c.y + sale_c.y) * 0.5f,
-                                      (lien_c.z + sale_c.z) * 0.5f,
-                                      1.0f);
-                } else if (tax_sale_enabled && sale_count > 0) {
-                    tax_base = sale_c;
-                }
-                const auto& world_rings = get_world_rings((size_t)parcel_layer_idx, (uint32_t)i, fg);
-                const bool lien_fill = tax_lien_enabled &&
-                    tax_lien_layer_idx >= 0 &&
-                    (size_t)tax_lien_layer_idx < layer_fill_enabled.size() &&
-                    layer_fill_enabled[(size_t)tax_lien_layer_idx];
-                const bool sale_fill = tax_sale_enabled &&
-                    tax_sale_layer_idx >= 0 &&
-                    (size_t)tax_sale_layer_idx < layer_fill_enabled.size() &&
-                    layer_fill_enabled[(size_t)tax_sale_layer_idx];
-                if ((lien_fill || sale_fill) && should_fill_layer_polygon((size_t)parcel_layer_idx)) {
-                    const int alpha = std::clamp(90 + weight * 10, 90, 210);
-                    draw_tessellated_fill(fg, world_rings, color_with_alpha(tax_base, alpha));
-                }
-                ImU32 tax_outline = color_with_alpha(darken_color(tax_base, 0.58f), 240);
-                for (const auto& r : world_rings) {
-                    append_world_ring_line(r);
-                    if (!scratch_line.empty()) draw->AddPolyline(scratch_line.data(), (int)scratch_line.size(), tax_outline, ImDrawFlags_Closed, 2.0f);
-                }
-            }
-        }
 
         render_fill_attempts_last_frame.store(fill_attempts_frame, std::memory_order_relaxed);
         render_fill_success_last_frame.store(fill_success_frame, std::memory_order_relaxed);

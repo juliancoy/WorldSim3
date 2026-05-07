@@ -880,28 +880,8 @@
         bool vacant_rehab_enabled = vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled;
         bool tax_lien_enabled = tax_lien_layer_idx >= 0 && layers[(size_t)tax_lien_layer_idx].enabled;
         bool tax_sale_enabled = tax_sale_layer_idx >= 0 && layers[(size_t)tax_sale_layer_idx].enabled;
-        auto color_with_alpha = [](const ImVec4& c, int alpha) -> ImU32 {
-            const int r = std::clamp((int)std::lround(c.x * 255.0f), 0, 255);
-            const int g = std::clamp((int)std::lround(c.y * 255.0f), 0, 255);
-            const int b = std::clamp((int)std::lround(c.z * 255.0f), 0, 255);
-            return IM_COL32(r, g, b, alpha);
-        };
-        auto darken_color = [](const ImVec4& c, float mul) -> ImVec4 {
-            return ImVec4(std::clamp(c.x * mul, 0.0f, 1.0f),
-                          std::clamp(c.y * mul, 0.0f, 1.0f),
-                          std::clamp(c.z * mul, 0.0f, 1.0f), 1.0f);
-        };
-        auto vacancy_base_color = [&](int vac_notice, int vac_rehab) -> ImVec4 {
-            const ImVec4 notice_c = (vacant_notice_layer_idx >= 0) ? layers[(size_t)vacant_notice_layer_idx].color : ImVec4(1, 0, 0, 1);
-            const ImVec4 rehab_c = (vacant_rehab_layer_idx >= 0) ? layers[(size_t)vacant_rehab_layer_idx].color : ImVec4(0, 1, 1, 1);
-            if (vac_notice > 0 && vac_rehab > 0) {
-                return ImVec4((notice_c.x + rehab_c.x) * 0.5f,
-                              (notice_c.y + rehab_c.y) * 0.5f,
-                              (notice_c.z + rehab_c.z) * 0.5f, 1.0f);
-            }
-            if (vac_rehab > 0) return rehab_c;
-            return notice_c;
-        };
+        const ImVec4 vacancy_notice_color = (vacant_notice_layer_idx >= 0) ? layers[(size_t)vacant_notice_layer_idx].color : ImVec4(1, 0, 0, 1);
+        const ImVec4 vacancy_rehab_color = (vacant_rehab_layer_idx >= 0) ? layers[(size_t)vacant_rehab_layer_idx].color : ImVec4(0, 1, 1, 1);
         const int ring_step = lodRingStepForZoom(math_zoom);
         const bool allow_parcel_scale_fill = math_zoom >= 14;
         auto is_parcel_scale_layer = [&](size_t layer_idx) -> bool {

@@ -18,6 +18,8 @@
 #include "layer_runtime.h"
 #include "layer_geometry.h"
 #include "layer_workers.h"
+#include "map_render_overlays.h"
+#include "map_render_utils.h"
 #include "heatmap_render.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
@@ -496,6 +498,7 @@ int runWorldSim3App(int argc, char** argv) {
     int zoom = 12;
     double center_lon = -76.6122;
     double center_lat = 39.2904;
+    float ui_text_scale = 1.0f;
     std::vector<bool> last_enabled_state;
     last_enabled_state.reserve(layers.size());
     for (const auto& l : layers) last_enabled_state.push_back(l.enabled);

@@ -63,6 +63,8 @@ add_executable(worldsim3
   layer_runtime.cpp
   layer_workers.cpp
   layer_geometry.cpp
+  map_render_overlays.cpp
+  map_render_utils.cpp
   heatmap_render.cpp
   time_cube_panel.cpp
   policy_panel.cpp
