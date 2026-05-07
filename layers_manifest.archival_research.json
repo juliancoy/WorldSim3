@@ -1,0 +1,96 @@
+[
+  {
+    "name": "Baltimore City Property Tax Records Guide",
+    "file": "brg_4_bcptaxrecs.pdf",
+    "url": "https://mdhistory.msa.maryland.gov/msa_brg4/brg_4_bcptaxrecs.pdf",
+    "download": false,
+    "reason": "Human-readable archival PDF; requires manual review/OCR and citation tracking before normalization.",
+    "category": "archival-research",
+    "source": "Maryland State Archives / Baltimore City Archives",
+    "quality_tier": "official-document",
+    "temporal_coverage": "1797-1915 tax records guide and series description",
+    "description": "Guide to Baltimore City property tax records including general tax books, assessor tax records, and field assessor work books.",
+    "future_work": "Extract series/year/roll references into data/archival/sources and normalize owner/address/value events with confidence-scored joins."
+  },
+  {
+    "name": "Baltimore City Property Tax Records Online Guide",
+    "file": "bca_property_tax_records_page.html",
+    "url": "https://msa.maryland.gov/bca/research-at-the-baltimore-city-archives/property-tax-records-for-baltimore-city/",
+    "download": false,
+    "reason": "Research guide page; use as source index, not as a directly ingestible data layer.",
+    "category": "archival-research",
+    "source": "Baltimore City Archives",
+    "quality_tier": "official-document",
+    "temporal_coverage": "1797-1915 digitized tax records; assessor records 1800-1867; field assessor work books 1837-1896",
+    "description": "Research guide describing digitized Baltimore property tax records and access requirements."
+  },
+  {
+    "name": "Baltimore City Archives Geography Sources",
+    "file": "bca_geography_sources_page.html",
+    "url": "https://msa.maryland.gov/bca/research-at-the-baltimore-city-archives/the-geography-of-baltimore-city-sources/",
+    "download": false,
+    "reason": "Research guide for map/atlas sources; Sanborn and atlas sheets require georeferencing before use.",
+    "category": "archival-research",
+    "source": "Baltimore City Archives",
+    "quality_tier": "official-document",
+    "temporal_coverage": "Historic maps and atlases, including Sanborn updates through the 1950s in archive holdings",
+    "description": "Guide to Sanborn maps, Bromley and Thompson atlases, and Baltimore City block maps."
+  },
+  {
+    "name": "Library of Congress Sanborn Fire Insurance Maps Guide",
+    "file": "loc_sanborn_search_guide.html",
+    "url": "https://guides.loc.gov/fire-insurance-maps/sanborn-searching",
+    "download": false,
+    "reason": "Guide/search entry point; individual map sheets must be selected and georeferenced.",
+    "category": "archival-research",
+    "source": "Library of Congress",
+    "quality_tier": "official-document",
+    "temporal_coverage": "Historic Sanborn editions including Baltimore sheets where available",
+    "description": "Library of Congress guide for searching Sanborn fire insurance map holdings."
+  },
+  {
+    "name": "Baltimore Permit History Request",
+    "file": "baltimore_permit_history_request_page.html",
+    "url": "https://www.baltimorecitypermits.com/permit-history-request",
+    "download": false,
+    "reason": "Request workflow for archived permits/property files; not bulk machine-readable.",
+    "category": "archival-research",
+    "source": "Baltimore City Permits",
+    "quality_tier": "official-request-workflow",
+    "temporal_coverage": "Older permits, citations, building plans, inspection notes, certificates, occupancy reports",
+    "description": "Official workflow for requesting older permit and property records from Baltimore City."
+  },
+  {
+    "name": "Baltimore City Records Management",
+    "file": "baltimore_records_management_page.html",
+    "url": "https://beta.baltimorecity.gov.ifsight.net/legislative-reference/records-management",
+    "download": false,
+    "reason": "Records management reference; used to locate archival record transfer and inventory workflows.",
+    "category": "archival-research",
+    "source": "Baltimore City Department of Legislative Reference",
+    "quality_tier": "official-request-workflow",
+    "description": "Records Management Center information for temporary and permanent historical records."
+  },
+  {
+    "name": "Maryland Inventory of Historic Properties - Baltimore City Search",
+    "file": "mihp_baltimore_city_search.html",
+    "url": "https://apps.mht.maryland.gov/mihp/MIHP.aspx?County=Baltimore+City&Search=County",
+    "download": false,
+    "reason": "Search interface and scanned survey files; needs record-by-record extraction.",
+    "category": "archival-research",
+    "source": "Maryland Historical Trust",
+    "quality_tier": "official-document",
+    "description": "Baltimore City entries in the Maryland Inventory of Historic Properties."
+  },
+  {
+    "name": "Maryland Inventory of Historic Properties Map Service",
+    "file": "md_inventory_historic_properties_mapserver.html",
+    "url": "https://mdgeodata.md.gov/imap/rest/services/Historic/MD_InventoryHistoricProperties/MapServer",
+    "download": false,
+    "reason": "Machine-readable map service exists, but parcel-level use needs schema review and Baltimore City coverage validation.",
+    "category": "archival-research",
+    "source": "Maryland iMAP / Maryland Historical Trust",
+    "quality_tier": "official-api",
+    "description": "Statewide MIHP map service candidate for future historic-property overlays."
+  }
+]

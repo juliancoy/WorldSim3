@@ -28,8 +28,15 @@
 `historical-high-quality`
 : Older official structured records and additional capital-project layers. This currently includes 2015-2018 permits and DPW/CIP project layers.
 
+`archival-research`
+: Metadata-only register for pre-2010 human-readable sources such as property tax guides, Sanborn/map indexes, permit history request workflows, and scanned historic-property inventory files. Entries are intentionally marked `download: false`.
+
 `capital-flows`
 : Nonprofit, lending, federal award, LIHTC, CRA, and related capital flow sources. Some entries are intentionally metadata/API placeholders until a dedicated fetcher exists.
+
+## Machine-Native Cutoff
+
+For Baltimore parcel-relevant records verified so far, the earliest high-quality machine-native source in the app is the official 2015-2018 building permits dataset. Additional capital-project GIS layers cover modern/FY-era infrastructure records. Apparent data.gov hits for 2009-2010 tax sale CSVs were Cook County, Illinois records, not Baltimore, so they are intentionally excluded.
 
 ## Historical Ingestion Rule
 

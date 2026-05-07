@@ -448,6 +448,7 @@ std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std:
     if (phase == "capital-flows") return root / "layers_manifest.capital_flows.json";
     if (phase == "extended-events") return root / "layers_manifest.extended_events.json";
     if (phase == "historical-high-quality") return root / "layers_manifest.historical_high_quality.json";
+    if (phase == "archival-research") return root / "layers_manifest.archival_research.json";
     fs::path p(phase);
     return p.is_absolute() ? p : root / p;
 }

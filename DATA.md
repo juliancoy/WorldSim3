@@ -58,6 +58,9 @@ Use phased manifests to control download volume:
 # older/high-quality structured sources (2015-2018 permits, DPW/CIP project layers)
 ./build/worldsim3 --download-layers historical-high-quality
 
+# pre-2010 human-readable source register (metadata only; no bulk download)
+./build/worldsim3 --download-layers archival-research
+
 # include nationwide raw 990 XML archives marked large
 ./build/worldsim3 --download-layers capital-flows --include-large
 
@@ -72,6 +75,7 @@ Phase manifest files:
 - `layers_manifest.capital_flows.json`
 - `layers_manifest.extended_events.json`
 - `layers_manifest.historical_high_quality.json`
+- `layers_manifest.archival_research.json`
 
 ## HMDA mortgage layer
 
