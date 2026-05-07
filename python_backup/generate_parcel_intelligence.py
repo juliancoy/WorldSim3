@@ -105,6 +105,7 @@ def main() -> int:
     parcel = load_geojson("parcel.geojson")
     rp = load_geojson("real_property_information.geojson")
     permits = load_geojson("housing_building_permits_2019_present.geojson")
+    permits_2015_2018 = load_geojson("housing_building_permits_2015_2018.geojson")
     vac_notice = load_geojson("vacant_building_notices.geojson")
     vac_rehab = load_geojson("vacant_building_rehabs.geojson")
     tax_lien = load_geojson("tax_lien_certificate_sale_properties.geojson")
@@ -170,7 +171,7 @@ def main() -> int:
         dt = pick_date(p, ["DateIssue", "DateIssued"])
         add_event(bl, "vac_rehab", dt, 0.0)
 
-    for f in permits.get("features", []):
+    for f in permits.get("features", []) + permits_2015_2018.get("features", []):
         p = f.get("properties", {})
         bl = norm_key(p.get("BLOCKLOT"))
         dt = pick_date(p, ["IssuedDate"])

@@ -41,25 +41,28 @@ Use phased manifests to control download volume:
 
 ```bash
 # compact core set
-./build/worldsim3 --download-layers --phase must-have
+./build/worldsim3 --download-layers must-have
 
 # medium add-on set
-./build/worldsim3 --download-layers --phase nice-to-have
+./build/worldsim3 --download-layers nice-to-have
 
 # largest/heaviest layers
-./build/worldsim3 --download-layers --phase heavy-data
+./build/worldsim3 --download-layers heavy-data
 
 # nonprofit, public-award, lending, and housing-capital source data
-./build/worldsim3 --download-layers --phase capital-flows
+./build/worldsim3 --download-layers capital-flows
 
 # additional parcel-event sources (foreclosure, receivership, work orders, impact areas)
-./build/worldsim3 --download-layers --phase extended-events
+./build/worldsim3 --download-layers extended-events
+
+# older/high-quality structured sources (2015-2018 permits, DPW/CIP project layers)
+./build/worldsim3 --download-layers historical-high-quality
 
 # include nationwide raw 990 XML archives marked large
-./build/worldsim3 --download-layers --phase capital-flows --include-large
+./build/worldsim3 --download-layers capital-flows --include-large
 
 # full default set (used by run.sh)
-./build/worldsim3 --download-layers --phase all
+./build/worldsim3 --download-layers all
 ```
 
 Phase manifest files:
@@ -68,6 +71,7 @@ Phase manifest files:
 - `layers_manifest.heavy_data.json`
 - `layers_manifest.capital_flows.json`
 - `layers_manifest.extended_events.json`
+- `layers_manifest.historical_high_quality.json`
 
 ## HMDA mortgage layer
 

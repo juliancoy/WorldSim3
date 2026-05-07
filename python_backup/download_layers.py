@@ -18,6 +18,7 @@ PHASE_MANIFESTS = {
     "heavy-data": ROOT / "layers_manifest.heavy_data.json",
     "capital-flows": ROOT / "layers_manifest.capital_flows.json",
     "extended-events": ROOT / "layers_manifest.extended_events.json",
+    "historical-high-quality": ROOT / "layers_manifest.historical_high_quality.json",
 }
 
 
