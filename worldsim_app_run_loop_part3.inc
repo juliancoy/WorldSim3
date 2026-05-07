@@ -368,26 +368,12 @@
                 if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
                 zone_description = meta_it->second.description;
             }
-            ImVec4 zone_color = colorFromStableKey(zone_key);
-            auto it_col = zoning_zone_color.find(zone_key);
-            if (it_col != zoning_zone_color.end()) zone_color = it_col->second;
-            ImGui::TextUnformatted("Zoning Details");
+            const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
+            ImGui::SetWindowFontScale(1.6f);
+            ImGui::TextWrapped("%s", display_zone);
+            ImGui::SetWindowFontScale(1.0f);
             ImGui::Separator();
-            ImGui::ColorButton("##selected_zone_color", zone_color, ImGuiColorEditFlags_NoTooltip, ImVec2(18, 18));
-            ImGui::SameLine();
-            ImGui::Text("Zone: %s", zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
-            if (!zone_label.empty() && zone_label != zone_key) {
-                ImGui::TextWrapped("Label: %s", zone_label.c_str());
-            }
-            ImGui::TextWrapped("Description: %s", zone_description.empty() ? "No description available." : zone_description.c_str());
-            ImGui::Separator();
-            ImGui::TextUnformatted("All Zone Fields");
-            ImGui::BeginChild("selected_zone_fields", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            for (const auto& kv : selected.properties) {
-                if (kv.second.empty()) continue;
-                ImGui::TextWrapped("%s: %s", kv.first.c_str(), kv.second.c_str());
-            }
-            ImGui::EndChild();
+            ImGui::TextWrapped("%s", zone_description.empty() ? "No description available." : zone_description.c_str());
         } else {
             if (show_selected_parcel_details && !selected_valid) {
                 show_selected_parcel_details = false;

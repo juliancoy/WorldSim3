@@ -767,18 +767,11 @@
                     if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
                     zone_description = meta_it->second.description;
                 }
-                ImGui::Text("Zoning: %s", zone_key.empty() ? "(available, unlabeled)" : zone_key.c_str());
-                if (!zone_label.empty() && zone_label != zone_key) {
-                    ImGui::TextWrapped("Zoning Label: %s", zone_label.c_str());
-                }
-                if (!zone_description.empty()) {
-                    ImGui::TextWrapped("Description: %s", zone_description.c_str());
-                }
-                ImGui::TextUnformatted("Zoning Fields");
-                for (const auto& kv : hovered_zoning->properties) {
-                    if (kv.second.empty()) continue;
-                    ImGui::TextWrapped("%s: %s", kv.first.c_str(), kv.second.c_str());
-                }
+                const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
+                ImGui::SetWindowFontScale(1.45f);
+                ImGui::TextWrapped("%s", display_zone);
+                ImGui::SetWindowFontScale(1.0f);
+                if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
             } else if (zoning_layer_idx >= 0) {
                 ImGui::TextDisabled("Zoning: no intersecting zoning polygon found.");
             }
@@ -800,22 +793,11 @@
                 zone_description = meta_it->second.description;
             }
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Zoning Details");
-            ImGui::Separator();
-            ImGui::Text("Feature: %zu", hovered_zone_idx);
-            ImGui::Text("Zone: %s", zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
-            if (!zone_label.empty() && zone_label != zone_key) {
-                ImGui::TextWrapped("Label: %s", zone_label.c_str());
-            }
-            if (!zone_description.empty()) {
-                ImGui::TextWrapped("Description: %s", zone_description.c_str());
-            }
-            ImGui::Separator();
-            ImGui::TextUnformatted("All Zone Fields");
-            for (const auto& kv : hovered_zone->properties) {
-                if (kv.second.empty()) continue;
-                ImGui::TextWrapped("%s: %s", kv.first.c_str(), kv.second.c_str());
-            }
+            const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
+            ImGui::SetWindowFontScale(1.45f);
+            ImGui::TextWrapped("%s", display_zone);
+            ImGui::SetWindowFontScale(1.0f);
+            if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
             ImGui::EndTooltip();
         }
         ImGui::EndTabItem();
@@ -895,4 +877,3 @@
         frame_finalization_ctx.profile_sample_count = &profile_sample_count;
         finalizeWorldSimFrame(frame_finalization_ctx);
     }
-
