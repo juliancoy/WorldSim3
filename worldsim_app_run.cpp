@@ -365,6 +365,16 @@ int runWorldSim3App(int argc, char** argv) {
             (vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled);
         return vac_active && (int)idx == parcel_layer_idx;
     };
+    auto layer_data_available = [&](size_t idx) -> bool {
+        if (idx >= layers.size() || layers[idx].features.empty()) return false;
+        std::lock_guard<std::mutex> lk(status_mutex);
+        if (idx >= layer_states.size()) return false;
+        LayerPipelineStatus st = layer_states[idx].status;
+        return st == LayerPipelineStatus::Hydrated ||
+               st == LayerPipelineStatus::TriQueued ||
+               st == LayerPipelineStatus::Triangulating ||
+               st == LayerPipelineStatus::Ready;
+    };
     auto enqueue_hydration = [&](size_t idx, bool required = false) {
         if (idx >= layers.size()) return;
         std::lock_guard<std::mutex> lk(hydrate_req_mutex);
@@ -414,6 +424,9 @@ int runWorldSim3App(int argc, char** argv) {
         &layer_states,
         &layer_fill_mutex,
         &layer_fill_enabled,
+        &layer_hover_enabled,
+        &layer_inspect_enabled,
+        &layer_heatmap_enabled,
         &hydration_started_at,
         &hydrated_count,
         &triangulated_count,

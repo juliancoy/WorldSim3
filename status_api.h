@@ -29,6 +29,9 @@ struct StatusApiContext {
     std::vector<LayerRuntimeState>* layer_states = nullptr;
     std::mutex* layer_fill_mutex = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
+    std::vector<bool>* layer_hover_enabled = nullptr;
+    std::vector<bool>* layer_inspect_enabled = nullptr;
+    std::vector<bool>* layer_heatmap_enabled = nullptr;
     std::chrono::steady_clock::time_point* hydration_started_at = nullptr;
 
     std::atomic<size_t>* hydrated_count = nullptr;

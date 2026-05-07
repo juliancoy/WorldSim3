@@ -743,7 +743,9 @@
                 }
             }
 
+            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
             ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(440.0f);
             ImGui::TextUnformatted("Parcel Details");
             ImGui::Separator();
             ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
@@ -781,9 +783,10 @@
                 ImGui::Separator();
                 draw_feature_properties("All Real Property Fields", *hovered_rp);
             }
+            ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
-        if (zoning_hover_active && map_hovered && !hovered_parcel && hovered_zone) {
+        if (zoning_hover_active && map_hovered && !(parcel_hover_active && hovered_parcel) && hovered_zone) {
             std::string zone_key = zoningClassKey(*hovered_zone);
             std::string zone_label = zoningClassLabel(*hovered_zone);
             std::string zone_description;
@@ -792,12 +795,15 @@
                 if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
                 zone_description = meta_it->second.description;
             }
+            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
             ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(440.0f);
             const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
             ImGui::SetWindowFontScale(1.45f);
             ImGui::TextWrapped("%s", display_zone);
             ImGui::SetWindowFontScale(1.0f);
             if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
+            ImGui::PopTextWrapPos();
             ImGui::EndTooltip();
         }
         ImGui::EndTabItem();

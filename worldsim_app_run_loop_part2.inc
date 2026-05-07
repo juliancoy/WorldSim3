@@ -432,7 +432,9 @@
             }
         }
         if (!newly_enabled.empty()) {
-            for (size_t i : newly_enabled) enqueue_hydration(i);
+            for (size_t i : newly_enabled) {
+                if (!layer_data_available(i)) enqueue_hydration(i);
+            }
         }
         // Vacant overlays depend on parcel geometry even when parcel visibility is off.
         const bool vacant_layer_active =

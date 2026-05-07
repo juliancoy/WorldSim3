@@ -610,7 +610,9 @@
 	                                zoning_filters_changed = true;
 	                            }
 	                            if (ImGui::IsItemHovered()) {
+	                                ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
 	                                ImGui::BeginTooltip();
+	                                ImGui::PushTextWrapPos(440.0f);
 	                                ImGui::TextUnformatted(zkey.c_str());
 	                                auto mit = zoning_metadata.find(zkey);
 	                                if (mit != zoning_metadata.end()) {
@@ -620,6 +622,7 @@
 	                                        ImGui::TextWrapped("%s", mit->second.description.c_str());
 	                                    }
 	                                }
+	                                ImGui::PopTextWrapPos();
 	                                ImGui::EndTooltip();
 	                            }
 	                        }

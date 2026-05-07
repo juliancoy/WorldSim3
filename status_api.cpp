@@ -64,6 +64,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& layer_states = *ctx.layer_states;
         auto& layer_fill_mutex = *ctx.layer_fill_mutex;
         auto& layer_fill_enabled = *ctx.layer_fill_enabled;
+        auto& layer_hover_enabled = *ctx.layer_hover_enabled;
+        auto& layer_inspect_enabled = *ctx.layer_inspect_enabled;
+        auto& layer_heatmap_enabled = *ctx.layer_heatmap_enabled;
         auto& hydration_started_at = *ctx.hydration_started_at;
         auto& hydrated_count = *ctx.hydrated_count;
         auto& triangulated_count = *ctx.triangulated_count;
@@ -526,6 +529,45 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << "Content-Length: " << body.size() << "\r\n"
                    << "Connection: close\r\n\r\n"
                    << body;
+                std::string resp = os.str();
+                (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/ui") {
+                json out;
+                out["ok"] = true;
+                out["note"] = "Live layer UI checkbox state. Selected parcel/zone detail state is render-thread local and is not exposed here.";
+                out["view"] = {
+                    {"zoom", current_zoom_state.load(std::memory_order_relaxed)},
+                    {"center_lon", current_lon_state.load(std::memory_order_relaxed)},
+                    {"center_lat", current_lat_state.load(std::memory_order_relaxed)}
+                };
+                {
+                    std::lock_guard<std::mutex> lk(layer_fill_mutex);
+                    json layer_ui = json::array();
+                    for (size_t i = 0; i < layers.size(); ++i) {
+                        const auto& l = layers[i];
+                        layer_ui.push_back({
+                            {"index", i},
+                            {"file", l.file},
+                            {"name", l.name},
+                            {"enabled", l.enabled},
+                            {"fill_enabled", i < layer_fill_enabled.size() ? layer_fill_enabled[i] : true},
+                            {"hover_enabled", i < layer_hover_enabled.size() ? layer_hover_enabled[i] : true},
+                            {"inspect_enabled", i < layer_inspect_enabled.size() ? layer_inspect_enabled[i] : true},
+                            {"heatmap_enabled", i < layer_heatmap_enabled.size() ? layer_heatmap_enabled[i] : false}
+                        });
+                    }
+                    out["layers"] = std::move(layer_ui);
+                }
+                out["vacancy"] = {
+                    {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},
+                    {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)},
+                    {"triangulated_renderable_total", vacant_parcels_triangulated_renderable_total.load(std::memory_order_relaxed)},
+                    {"visible_last_frame", visible_vacant_parcels_last_frame.load(std::memory_order_relaxed)}
+                };
+                std::string body = out.dump();
+                std::ostringstream os;
+                os << "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " << body.size()
+                   << "\r\nConnection: close\r\n\r\n" << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
             } else if (path == "/vacancy_probe") {
