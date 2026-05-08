@@ -882,47 +882,61 @@
         if (zoning_hover_active && map_hovered && !(parcel_hover_active && hovered_parcel) && hovered_zone) {
             drawZoningHoverTooltip(*hovered_zone, zoning_metadata);
         }
+
+        // Overlay menu button for non-map analytical panels.
+        ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - 34.0f, origin.y + 8.0f));
+        if (ImGui::SmallButton("...")) ImGui::OpenPopup("map_overlay_panels_popup");
+        ImGui::SetNextWindowSize(ImVec2(std::min(980.0f, size.x - 24.0f), std::min(720.0f, size.y - 24.0f)), ImGuiCond_Appearing);
+        if (ImGui::BeginPopup("map_overlay_panels_popup")) {
+            if (ImGui::BeginTabBar("map_overlay_panels_tabs")) {
+                TimeCubePanelContext time_cube_panel_ctx;
+                time_cube_panel_ctx.service = &time_cube_service;
+                time_cube_panel_ctx.layers = &layers;
+                time_cube_panel_ctx.result = &time_cube_ui_result;
+                time_cube_panel_ctx.loaded = &time_cube_ui_loaded;
+                time_cube_panel_ctx.status = &time_cube_ui_status;
+                time_cube_panel_ctx.mutex = &time_cube_ui_mutex;
+                time_cube_panel_ctx.worker = &time_cube_ui_worker;
+                time_cube_panel_ctx.running = &time_cube_ui_running;
+                time_cube_panel_ctx.done = &time_cube_ui_done;
+                time_cube_panel_ctx.selected = &time_cube_selected;
+                time_cube_panel_ctx.year_min = &time_cube_year_min;
+                time_cube_panel_ctx.year_max = &time_cube_year_max;
+                time_cube_panel_ctx.normalize_mode = &time_cube_normalize_mode;
+                time_cube_panel_ctx.show_excluded = &time_cube_show_excluded;
+                drawTimeCubeTab(time_cube_panel_ctx);
+
+                PolicyPanelContext policy_panel_ctx;
+                policy_panel_ctx.hierarchy = &policy_hierarchy;
+                policy_panel_ctx.hierarchy_loaded = policy_hierarchy_loaded;
+                policy_panel_ctx.hierarchy_error = &policy_hierarchy_error;
+                policy_panel_ctx.query = policy_hierarchy_query;
+                policy_panel_ctx.query_capacity = sizeof(policy_hierarchy_query);
+                policy_panel_ctx.scope = &policy_hierarchy_scope;
+                policy_panel_ctx.roster = &public_servant_roster;
+                policy_panel_ctx.people_pay_cached_query = &people_pay_cached_query;
+                policy_panel_ctx.people_pay_cached_scope = &people_pay_cached_scope;
+                policy_panel_ctx.people_pay_cache_matched_count = &people_pay_cache_matched_count;
+                policy_panel_ctx.people_pay_visible_rows = &people_pay_visible_rows;
+                policy_panel_ctx.people_pay_cache_rebuilds = &people_pay_cache_rebuilds;
+                policy_panel_ctx.people_pay_rendered_rows_last = &people_pay_rendered_rows_last;
+                policy_panel_ctx.viz_root = &policy_viz_root;
+                policy_panel_ctx.viz_cached_query = &policy_viz_cached_query;
+                policy_panel_ctx.viz_cached_scope = &policy_viz_cached_scope;
+                policy_panel_ctx.viz_cached_metric = &policy_viz_cached_metric;
+                policy_panel_ctx.viz_metric = &policy_viz_metric;
+                policy_panel_ctx.viz_cache_rebuilds = &policy_viz_cache_rebuilds;
+                policy_panel_ctx.viz_node_count = &policy_viz_node_count;
+                drawPolicyHierarchyTab(policy_panel_ctx);
+
+                drawVisualModelTabs(layers.size());
+                ImGui::EndTabBar();
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::EndTabItem();
         }
-        TimeCubePanelContext time_cube_panel_ctx;
-        time_cube_panel_ctx.service = &time_cube_service;
-        time_cube_panel_ctx.layers = &layers;
-        time_cube_panel_ctx.result = &time_cube_ui_result;
-        time_cube_panel_ctx.loaded = &time_cube_ui_loaded;
-        time_cube_panel_ctx.status = &time_cube_ui_status;
-        time_cube_panel_ctx.mutex = &time_cube_ui_mutex;
-        time_cube_panel_ctx.worker = &time_cube_ui_worker;
-        time_cube_panel_ctx.running = &time_cube_ui_running;
-        time_cube_panel_ctx.done = &time_cube_ui_done;
-        time_cube_panel_ctx.selected = &time_cube_selected;
-        time_cube_panel_ctx.year_min = &time_cube_year_min;
-        time_cube_panel_ctx.year_max = &time_cube_year_max;
-        time_cube_panel_ctx.normalize_mode = &time_cube_normalize_mode;
-        time_cube_panel_ctx.show_excluded = &time_cube_show_excluded;
-        drawTimeCubeTab(time_cube_panel_ctx);
-        PolicyPanelContext policy_panel_ctx;
-        policy_panel_ctx.hierarchy = &policy_hierarchy;
-        policy_panel_ctx.hierarchy_loaded = policy_hierarchy_loaded;
-        policy_panel_ctx.hierarchy_error = &policy_hierarchy_error;
-        policy_panel_ctx.query = policy_hierarchy_query;
-        policy_panel_ctx.query_capacity = sizeof(policy_hierarchy_query);
-        policy_panel_ctx.scope = &policy_hierarchy_scope;
-        policy_panel_ctx.roster = &public_servant_roster;
-        policy_panel_ctx.people_pay_cached_query = &people_pay_cached_query;
-        policy_panel_ctx.people_pay_cached_scope = &people_pay_cached_scope;
-        policy_panel_ctx.people_pay_cache_matched_count = &people_pay_cache_matched_count;
-        policy_panel_ctx.people_pay_visible_rows = &people_pay_visible_rows;
-        policy_panel_ctx.people_pay_cache_rebuilds = &people_pay_cache_rebuilds;
-        policy_panel_ctx.people_pay_rendered_rows_last = &people_pay_rendered_rows_last;
-        policy_panel_ctx.viz_root = &policy_viz_root;
-        policy_panel_ctx.viz_cached_query = &policy_viz_cached_query;
-        policy_panel_ctx.viz_cached_scope = &policy_viz_cached_scope;
-        policy_panel_ctx.viz_cached_metric = &policy_viz_cached_metric;
-        policy_panel_ctx.viz_metric = &policy_viz_metric;
-        policy_panel_ctx.viz_cache_rebuilds = &policy_viz_cache_rebuilds;
-        policy_panel_ctx.viz_node_count = &policy_viz_node_count;
-        drawPolicyHierarchyTab(policy_panel_ctx);
-        drawVisualModelTabs(layers.size());
         ImGui::EndTabBar();
         }
 

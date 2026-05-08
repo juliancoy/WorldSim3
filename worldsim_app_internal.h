@@ -76,4 +76,4 @@ void drainRetiredTextures(bool force = false);
 void destroyTileTexture(TileTexture& tex);
 void destroyTileTextureNow(TileTexture& tex);
 bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, TileTexture& tex);
-TileSample getTileSample(const std::filesystem::path& root, int z, int x, int y);
+TileSample getTileSample(const std::filesystem::path& root, const std::string& tile_root_dir, int z, int x, int y);

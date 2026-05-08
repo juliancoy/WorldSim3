@@ -29,6 +29,7 @@
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
+#include "layer_settings.h"
 #include "app_lifecycle.h"
 #include "worldsim_app.h"
 #include "app_utils.h"
@@ -597,6 +598,21 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex data_library_bulk_mutex;
     std::string data_library_bulk_progress;
     std::future<LayerDownloadSummary> data_library_bulk_future;
+    bool basemap_download_inflight = false;
+    std::future<void> basemap_download_future;
+    std::mutex basemap_download_mutex;
+    std::string basemap_download_progress;
+    std::string basemap_download_label;
+    std::deque<std::pair<std::string, std::string>> basemap_download_queue;
+    std::chrono::steady_clock::time_point basemap_download_started_at{};
+    std::atomic<bool> basemap_download_stop_requested{false};
+    std::atomic<bool> basemap_download_stopped{false};
+    std::atomic<size_t> basemap_download_done{0};
+    std::atomic<size_t> basemap_download_total{0};
+    std::atomic<size_t> basemap_download_downloaded{0};
+    std::atomic<size_t> basemap_download_skipped{0};
+    std::atomic<size_t> basemap_download_failed{0};
+    std::atomic<size_t> basemap_download_bytes{0};
     bool filter_enabled = false;
     bool filter_use_date = false;
     int filter_year_min = 2000;

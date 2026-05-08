@@ -906,6 +906,26 @@
         int max_y = (int)std::floor((center_world.y + half_h_world) / 256.0) + 1;
         const int period = 1 << math_zoom;
         const int max_tile = period - 1;
+        const bool topo_tiles_available =
+            fs::exists(root / "data" / "tiles_topo") ||
+            fs::exists(root / "data" / "tiles_topographic");
+        const bool use_topo = (std::clamp(app_settings.basemap_style, 0, 1) == 1) && topo_tiles_available;
+        const std::string tile_root_dir = use_topo
+            ? (fs::exists(root / "data" / "tiles_topo") ? "tiles_topo" : "tiles_topographic")
+            : "tiles";
+        bool basemap_source_has_any_files = false;
+        {
+            std::error_code ec_walk;
+            const fs::path basemap_dir = root / "data" / tile_root_dir;
+            if (fs::exists(basemap_dir, ec_walk) && !ec_walk) {
+                for (fs::recursive_directory_iterator it(basemap_dir, ec_walk), end; !ec_walk && it != end; it.increment(ec_walk)) {
+                    if (it->is_regular_file(ec_walk)) {
+                        basemap_source_has_any_files = true;
+                        break;
+                    }
+                }
+            }
+        }
 
         const auto tile_prof_begin = std::chrono::steady_clock::now();
         for (int tx = min_x; tx <= max_x; ++tx) {
@@ -915,7 +935,7 @@
                 while (wrapped_x > max_tile) wrapped_x -= period;
                 if (ty < 0 || ty > max_tile) continue;
 
-                TileSample sample = getTileSample(root, math_zoom, wrapped_x, ty);
+                TileSample sample = getTileSample(root, tile_root_dir, math_zoom, wrapped_x, ty);
                 if (!sample.tex) continue;
 
                 ImVec2 tile_world((float)(tx * 256), (float)(ty * 256));
@@ -935,6 +955,19 @@
             }
         }
         prof_tile_ms_last.store(prof_ms_since(tile_prof_begin), std::memory_order_relaxed);
+        if (!basemap_source_has_any_files || (size.x > 0.0f && size.y > 0.0f && prof_tiles_drawn_frame == 0)) {
+            const ImVec2 warn_pos(origin.x + 14.0f, origin.y + 14.0f);
+            const ImVec2 warn_sz(std::min(560.0f, size.x - 28.0f), 94.0f);
+            draw->AddRectFilled(warn_pos, ImVec2(warn_pos.x + warn_sz.x, warn_pos.y + warn_sz.y), IM_COL32(120, 18, 14, 220), 6.0f);
+            draw->AddRect(warn_pos, ImVec2(warn_pos.x + warn_sz.x, warn_pos.y + warn_sz.y), IM_COL32(255, 180, 170, 230), 6.0f, 0, 1.0f);
+            draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 10.0f), IM_COL32(255, 235, 232, 255), "Basemap unavailable");
+            const std::string line1 = "No tiles found for source: data/" + tile_root_dir;
+            draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 32.0f), IM_COL32(255, 220, 216, 255), line1.c_str());
+            draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 52.0f), IM_COL32(255, 220, 216, 255),
+                          "Open Library to download required data/tiles, or switch basemap source.");
+            draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 72.0f), IM_COL32(255, 220, 216, 255),
+                          "Layer overlays may still render if local layer files are present.");
+        }
 
         bool vacant_notice_enabled = vacant_notice_layer_idx >= 0 && layers[(size_t)vacant_notice_layer_idx].enabled;
         bool vacant_rehab_enabled = vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled;

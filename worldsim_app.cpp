@@ -506,15 +506,15 @@ static bool loadTileTexture(const fs::path& tile_path, const std::string& key) {
     return true;
 }
 
-static TileTexture* getTileTexture(const fs::path& root, int z, int x, int y) {
-    const std::string key = std::to_string(z) + "/" + std::to_string(x) + "/" + std::to_string(y);
+static TileTexture* getTileTexture(const fs::path& root, const std::string& tile_root_dir, int z, int x, int y) {
+    const std::string key = tile_root_dir + ":" + std::to_string(z) + "/" + std::to_string(x) + "/" + std::to_string(y);
     auto it = g_TileCache.find(key);
     if (it != g_TileCache.end()) {
         touchLRU(key);
         return &it->second.tex;
     }
 
-    const fs::path tile_path = root / "data" / "tiles" / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
+    const fs::path tile_path = root / "data" / tile_root_dir / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
     if (!fs::exists(tile_path)) return nullptr;
     if (!loadTileTexture(tile_path, key)) return nullptr;
 
@@ -522,9 +522,27 @@ static TileTexture* getTileTexture(const fs::path& root, int z, int x, int y) {
     return loaded == g_TileCache.end() ? nullptr : &loaded->second.tex;
 }
 
-TileSample getTileSample(const fs::path& root, int z, int x, int y) {
+TileSample getTileSample(const fs::path& root, const std::string& tile_root_dir, int z, int x, int y) {
     if (z <= kMaxNativeTileZoom) {
-        return TileSample{getTileTexture(root, z, x, y), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f)};
+        TileTexture* direct = getTileTexture(root, tile_root_dir, z, x, y);
+        if (direct) return TileSample{direct, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f)};
+
+        // Missing native-zoom tile: walk up parent levels and sample a sub-rect.
+        for (int pz = z - 1; pz >= kMinZoom; --pz) {
+            const int dz = z - pz;
+            const int scale = 1 << dz;
+            const int parent_x = x / scale;
+            const int parent_y = y / scale;
+            const int ox = x % scale;
+            const int oy = y % scale;
+            TileTexture* parent = getTileTexture(root, tile_root_dir, pz, parent_x, parent_y);
+            if (!parent) continue;
+            const float step = 1.0f / (float)scale;
+            ImVec2 uv0((float)ox * step, (float)oy * step);
+            ImVec2 uv1(uv0.x + step, uv0.y + step);
+            return TileSample{parent, uv0, uv1};
+        }
+        return {};
     }
 
     const int dz = z - kMaxNativeTileZoom;
@@ -534,7 +552,7 @@ TileSample getTileSample(const fs::path& root, int z, int x, int y) {
     const int ox = x % scale;
     const int oy = y % scale;
 
-    TileTexture* parent = getTileTexture(root, kMaxNativeTileZoom, parent_x, parent_y);
+    TileTexture* parent = getTileTexture(root, tile_root_dir, kMaxNativeTileZoom, parent_x, parent_y);
     if (!parent) return {};
 
     const float step = 1.0f / (float)scale;

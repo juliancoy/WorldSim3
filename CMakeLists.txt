@@ -74,6 +74,15 @@ add_executable(worldsim3
   time_cube_panel.cpp
   policy_panel.cpp
   model_tabs_panel.cpp
+  layer_settings.cpp
+  graph_model_tab.cpp
+  star_schema_tab.cpp
+  spatial_index_tab.cpp
+  uncertainty_tab.cpp
+  change_log_tab.cpp
+  risk_scorecards_tab.cpp
+  causal_panel_tab.cpp
+  scenarios_tab.cpp
   arkavo_realtime_client.cpp
   arkavo_signaling_transport_curl.cpp
   arkavo_rtc_session_manager.cpp

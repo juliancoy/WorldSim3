@@ -24,6 +24,9 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("grayscale_basemap") && j["grayscale_basemap"].is_boolean()) {
         out.grayscale_basemap = j["grayscale_basemap"].get<bool>();
     }
+    if (j.contains("basemap_style") && j["basemap_style"].is_number_integer()) {
+        out.basemap_style = std::clamp(j["basemap_style"].get<int>(), 0, 1);
+    }
     if (j.contains("reserve_cpu_cores") && j["reserve_cpu_cores"].is_number_integer()) {
         out.reserve_cpu_cores = std::max(0, j["reserve_cpu_cores"].get<int>());
     }
@@ -35,6 +38,7 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     json j;
     j["vulkan_validation_enabled"] = settings.vulkan_validation_enabled;
     j["grayscale_basemap"] = settings.grayscale_basemap;
+    j["basemap_style"] = std::clamp(settings.basemap_style, 0, 1);
     j["reserve_cpu_cores"] = std::max(0, settings.reserve_cpu_cores);
     std::ofstream out(root / "data" / "app_settings.json");
     if (out) out << j.dump(2);

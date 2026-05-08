@@ -139,6 +139,127 @@
         current_zoom_state.store(zoom, std::memory_order_relaxed);
         current_lon_state.store(center_lon, std::memory_order_relaxed);
         current_lat_state.store(center_lat, std::memory_order_relaxed);
+        auto start_basemap_download = [&](const std::string& target_dir, const std::string& url_tmpl) {
+            basemap_download_inflight = true;
+            basemap_download_label = target_dir;
+            basemap_download_started_at = std::chrono::steady_clock::now();
+            basemap_download_stop_requested.store(false, std::memory_order_relaxed);
+            basemap_download_stopped.store(false, std::memory_order_relaxed);
+            basemap_download_done.store(0, std::memory_order_relaxed);
+            basemap_download_total.store(0, std::memory_order_relaxed);
+            basemap_download_downloaded.store(0, std::memory_order_relaxed);
+            basemap_download_skipped.store(0, std::memory_order_relaxed);
+            basemap_download_failed.store(0, std::memory_order_relaxed);
+            basemap_download_bytes.store(0, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(basemap_download_mutex);
+                basemap_download_progress = "Preparing download...";
+            }
+            data_library_status_msg = "Basemap download started (" + target_dir + ")";
+            basemap_download_future = std::async(std::launch::async, [&, root, target_dir, url_tmpl]() {
+                const fs::path base = root / "data" / target_dir;
+                fs::create_directories(base);
+                const double min_lon = -76.75;
+                const double max_lon = -76.45;
+                const double min_lat = 39.18;
+                const double max_lat = 39.40;
+                size_t total = 0;
+                for (int z = 11; z <= 18; ++z) {
+                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
+                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
+                    if (x0 > x1) std::swap(x0, x1);
+                    if (y_min > y_max) std::swap(y_min, y_max);
+                    total += (size_t)(x1 - x0 + 1) * (size_t)(y_max - y_min + 1);
+                }
+                basemap_download_total.store(total, std::memory_order_relaxed);
+                size_t done = 0;
+                for (int z = 11; z <= 18; ++z) {
+                    if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
+                        basemap_download_stopped.store(true, std::memory_order_relaxed);
+                        break;
+                    }
+                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
+                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
+                    if (x0 > x1) std::swap(x0, x1);
+                    if (y_min > y_max) std::swap(y_min, y_max);
+                    for (int x = x0; x <= x1; ++x) {
+                        if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
+                            basemap_download_stopped.store(true, std::memory_order_relaxed);
+                            break;
+                        }
+                        for (int y = y_min; y <= y_max; ++y) {
+                            if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
+                                basemap_download_stopped.store(true, std::memory_order_relaxed);
+                                break;
+                            }
+                            fs::path out = base / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
+                            std::error_code ec;
+                            if (fs::exists(out, ec) && !ec) {
+                                basemap_download_skipped.fetch_add(1, std::memory_order_relaxed);
+                            } else {
+                                std::string url = url_tmpl;
+                                auto replace_all = [&](const std::string& from, const std::string& to) {
+                                    size_t pos = 0;
+                                    while ((pos = url.find(from, pos)) != std::string::npos) {
+                                        url.replace(pos, from.size(), to);
+                                        pos += to.size();
+                                    }
+                                };
+                                replace_all("{z}", std::to_string(z));
+                                replace_all("{x}", std::to_string(x));
+                                replace_all("{y}", std::to_string(y));
+                                std::string err;
+                                if (downloadUrlToFile(url, out, err)) {
+                                    basemap_download_downloaded.fetch_add(1, std::memory_order_relaxed);
+                                    std::error_code sec;
+                                    const auto sz = fs::file_size(out, sec);
+                                    if (!sec) basemap_download_bytes.fetch_add((size_t)sz, std::memory_order_relaxed);
+                                } else {
+                                    basemap_download_failed.fetch_add(1, std::memory_order_relaxed);
+                                }
+                            }
+                            done++;
+                            basemap_download_done.store(done, std::memory_order_relaxed);
+                            if (done % 32 == 0 || done == total) {
+                                std::lock_guard<std::mutex> lk(basemap_download_mutex);
+                                basemap_download_progress =
+                                    "Tiles " + std::to_string(done) + "/" + std::to_string(total) +
+                                    " | downloaded " + std::to_string(basemap_download_downloaded.load(std::memory_order_relaxed)) +
+                                    ", skipped " + std::to_string(basemap_download_skipped.load(std::memory_order_relaxed)) +
+                                    ", failed " + std::to_string(basemap_download_failed.load(std::memory_order_relaxed));
+                            }
+                        }
+                        if (basemap_download_stopped.load(std::memory_order_relaxed)) break;
+                    }
+                    if (basemap_download_stopped.load(std::memory_order_relaxed)) break;
+                }
+            });
+        };
+        auto request_basemap_download = [&](const std::string& target_dir, const std::string& url_tmpl) {
+            if (basemap_download_inflight) {
+                basemap_download_queue.push_back({target_dir, url_tmpl});
+                data_library_status_msg = "Queued basemap download (" + target_dir + "). Queue size: " + std::to_string(basemap_download_queue.size());
+                return;
+            }
+            start_basemap_download(target_dir, url_tmpl);
+        };
+        if (basemap_download_inflight && basemap_download_future.valid() &&
+            basemap_download_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            basemap_download_future.get();
+            basemap_download_inflight = false;
+            const bool stopped = basemap_download_stopped.load(std::memory_order_relaxed);
+            data_library_status_msg = std::string(stopped ? "Basemap download stopped (" : "Basemap download (") + basemap_download_label + "): " +
+                std::to_string(basemap_download_downloaded.load(std::memory_order_relaxed)) + " downloaded, " +
+                std::to_string(basemap_download_skipped.load(std::memory_order_relaxed)) + " skipped, " +
+                std::to_string(basemap_download_failed.load(std::memory_order_relaxed)) + " failed";
+            if (!stopped && !basemap_download_queue.empty()) {
+                const auto next = basemap_download_queue.front();
+                basemap_download_queue.pop_front();
+                start_basemap_download(next.first, next.second);
+            } else if (stopped) {
+                basemap_download_queue.clear();
+            }
+        }
         ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(420, 760), ImGuiCond_Always);
         ImGui::Begin("Layers and Controls");
@@ -159,93 +280,28 @@
         ImGui::SliderScalar("Center Lat", ImGuiDataType_Double, &center_lat, &lat_min, &lat_max, "%.6f");
         ImGui::Checkbox("Enable Hover Inspector", &hover_inspector_enabled);
         ImGui::SeparatorText("Heatmap");
-        const char* heatmap_algo_items[] = {
-            "KDE (Gaussian)",
-            "GPU Splat + Blur",
-            "LOD Geometry",
-            "Hex Binning",
-            "Multi-res Pyramid",
-            "Median Choropleth"
-        };
-        const char* heatmap_quality_items[] = {"Fast", "Balanced", "High"};
-        int heatmap_quality_prev = heatmap_quality_preset;
-        heatmap_settings_state_changed |= ImGui::Combo("Heatmap Quality", &heatmap_quality_preset, heatmap_quality_items, IM_ARRAYSIZE(heatmap_quality_items));
-        heatmap_controls_active |= ImGui::IsItemActive();
-        if (heatmap_quality_preset != heatmap_quality_prev) {
-            if (heatmap_quality_preset == 0) {
-                global_heat_cell_px = 36.0f;
-                heatmap_bandwidth_px = 10.0f;
-                heatmap_blur_sigma_px = 3.0f;
-                heatmap_percentile_clip = 92.0f;
-                heatmap_multires_enabled = false;
-            } else if (heatmap_quality_preset == 1) {
-                global_heat_cell_px = 24.0f;
-                heatmap_bandwidth_px = 18.0f;
-                heatmap_blur_sigma_px = 6.0f;
-                heatmap_percentile_clip = 95.0f;
-                heatmap_multires_enabled = true;
-                heatmap_multires_blend = 0.5f;
-            } else {
-                global_heat_cell_px = 14.0f;
-                heatmap_bandwidth_px = 26.0f;
-                heatmap_blur_sigma_px = 10.0f;
-                heatmap_percentile_clip = 97.0f;
-                heatmap_multires_enabled = true;
-                heatmap_multires_blend = 0.65f;
-            }
-            heatmap_settings_state_changed = true;
-        }
-        int heatmap_algo_ui = aggregateGlobalUiIndexFromAlgo(heatmap_algo);
-        if (ImGui::Combo("Aggregate Method", &heatmap_algo_ui, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items))) {
-            heatmap_algo = aggregateAlgoFromGlobalUiIndex(heatmap_algo_ui);
-            heatmap_settings_state_changed = true;
-        }
-        heatmap_controls_active |= ImGui::IsItemActive();
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Apply Global To All")) {
-            for (size_t i = 0; i < layer_heatmap_algo.size(); ++i) {
-                if (i < layer_heatmap_enabled.size()) layer_heatmap_enabled[i] = true;
-                layer_heatmap_algo[i] = heatmap_algo;
-                if (i < layer_heatmap_cell_px.size()) layer_heatmap_cell_px[i] = global_heat_cell_px;
-                if (i < layer_heatmap_bandwidth_px.size()) layer_heatmap_bandwidth_px[i] = heatmap_bandwidth_px;
-                if (i < layer_heatmap_blur_sigma_px.size()) layer_heatmap_blur_sigma_px[i] = heatmap_blur_sigma_px;
-                if (i < layer_heatmap_percentile_clip.size()) layer_heatmap_percentile_clip[i] = heatmap_percentile_clip;
-                if (i < layer_heatmap_zoom_adaptive_bandwidth.size()) layer_heatmap_zoom_adaptive_bandwidth[i] = heatmap_zoom_adaptive_bandwidth;
-                if (i < layer_heatmap_multires_enabled.size()) layer_heatmap_multires_enabled[i] = heatmap_multires_enabled;
-                if (i < layer_heatmap_multires_blend.size()) layer_heatmap_multires_blend[i] = heatmap_multires_blend;
-            }
-            layer_heatmap_state_changed = true;
-            heatmap_settings_state_changed = true;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Copy the current global aggregate method and settings to all layers.");
-            ImGui::EndTooltip();
-        }
-        heatmap_controls_active |= ImGui::IsItemActive();
-        if (heatmap_algo == kAggregateLodGeometry) {
-            ImGui::TextWrapped("LOD Geometry uses simplified geometry draw instead of heatmap cells.");
-        }
-        heatmap_settings_state_changed |= heatmap_input_float_enter("Heatmap Cell (px)", global_heat_cell_px, 2.0f, 80.0f, "%.0f");
-        heatmap_settings_state_changed |= heatmap_input_float_enter("Bandwidth (px)", heatmap_bandwidth_px, 2.0f, 96.0f, "%.1f");
-        heatmap_settings_state_changed |= heatmap_input_float_enter("Blur Sigma (px)", heatmap_blur_sigma_px, 0.0f, 32.0f, "%.1f");
-        heatmap_settings_state_changed |= heatmap_input_float_enter("Normalization Clip (%)", heatmap_percentile_clip, 50.0f, 100.0f, "%.0f");
-        heatmap_settings_state_changed |= ImGui::Checkbox("Zoom-adaptive bandwidth", &heatmap_zoom_adaptive_bandwidth);
-        heatmap_controls_active |= ImGui::IsItemActive();
-        heatmap_settings_state_changed |= ImGui::Checkbox("Enable multi-res blending", &heatmap_multires_enabled);
-        heatmap_controls_active |= ImGui::IsItemActive();
-        ImGui::BeginDisabled(!heatmap_multires_enabled);
-        heatmap_settings_state_changed |= heatmap_input_float_enter("Multi-res blend", heatmap_multires_blend, 0.0f, 1.0f, "%.2f");
-        heatmap_controls_active |= ImGui::IsItemActive();
-        ImGui::EndDisabled();
+        ImGui::TextDisabled("Global heatmap controls removed.");
+        ImGui::TextDisabled("Use each layer's settings (⚙) to configure aggregate method and heatmap parameters.");
         bool validation_ui = g_EnableValidationLayers;
         if (ImGui::Checkbox("Vulkan Validation (restart required)", &validation_ui)) {
             g_EnableValidationLayers = validation_ui;
             app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
             saveAppSettings(root, app_settings);
         }
-        if (ImGui::Checkbox("Greyscale underlying map", &app_settings.grayscale_basemap)) {
+        const bool topo_tiles_available =
+            fs::exists(root / "data" / "tiles_topo") ||
+            fs::exists(root / "data" / "tiles_topographic");
+        const char* basemap_options[] = {"OpenStreetMap", "Topographic"};
+        int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
+        ImGui::BeginDisabled(!topo_tiles_available);
+        if (ImGui::Combo("Underlying map source", &basemap_style_ui, basemap_options, IM_ARRAYSIZE(basemap_options))) {
+            if (!topo_tiles_available && basemap_style_ui == 1) basemap_style_ui = 0;
+            app_settings.basemap_style = basemap_style_ui;
             saveAppSettings(root, app_settings);
+        }
+        ImGui::EndDisabled();
+        if (!topo_tiles_available) {
+            ImGui::TextDisabled("Topographic tiles unavailable (expected: data/tiles_topo or data/tiles_topographic).");
         }
         int reserve_cpu_cores_ui = std::clamp(app_settings.reserve_cpu_cores, 0, 8);
         if (ImGui::SliderInt("Reserve CPU cores (restart required)", &reserve_cpu_cores_ui, 0, 8)) {
@@ -260,6 +316,193 @@
         ImGui::SameLine();
         if (ImGui::Button("Hide All")) {
             for (auto& l : layers) l.enabled = false;
+        }
+
+        if (ImGui::CollapsingHeader("Basemap Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto dir_has_any_file = [&](const fs::path& p) {
+                std::error_code ec;
+                if (!fs::exists(p, ec) || ec) return false;
+                for (fs::recursive_directory_iterator it(p, ec), end; !ec && it != end; it.increment(ec)) {
+                    if (it->is_regular_file(ec)) return true;
+                }
+                return false;
+            };
+            auto count_missing_tiles = [&](const std::string& target_dir) -> std::pair<size_t, size_t> {
+                const fs::path base = root / "data" / target_dir;
+                const double min_lon = -76.75;
+                const double max_lon = -76.45;
+                const double min_lat = 39.18;
+                const double max_lat = 39.40;
+                size_t missing = 0;
+                size_t total = 0;
+                for (int z = 11; z <= 18; ++z) {
+                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
+                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
+                    if (x0 > x1) std::swap(x0, x1);
+                    if (y_min > y_max) std::swap(y_min, y_max);
+                    for (int x = x0; x <= x1; ++x) {
+                        for (int y = y_min; y <= y_max; ++y) {
+                            total++;
+                            std::error_code ec;
+                            fs::path out = base / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
+                            if (!(fs::exists(out, ec) && !ec)) missing++;
+                        }
+                    }
+                }
+                return {missing, total};
+            };
+            const auto [osm_missing, osm_total] = count_missing_tiles("tiles");
+            const auto [topo_missing, topo_total] = count_missing_tiles("tiles_topo");
+            const bool osm_tiles_available = dir_has_any_file(root / "data" / "tiles");
+            const bool topo_tiles_available = dir_has_any_file(root / "data" / "tiles_topo") || dir_has_any_file(root / "data" / "tiles_topographic");
+            const bool osm_incomplete = osm_total > 0 && osm_missing > 0;
+            const bool topo_incomplete = topo_total > 0 && topo_missing > 0;
+            int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
+            if (!osm_tiles_available || osm_incomplete) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
+                if (ImGui::SmallButton("D##osm_basemap")) {
+                    request_basemap_download("tiles", "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+                }
+                ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Download missing OpenStreetMap tiles");
+                    ImGui::EndTooltip();
+                }
+                ImGui::SameLine();
+            }
+            if (ImGui::RadioButton("OpenStreetMap", basemap_style_ui == 0)) {
+                app_settings.basemap_style = 0;
+                saveAppSettings(root, app_settings);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("?##osm_display_settings")) ImGui::OpenPopup("osm_display_settings");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Layer display settings");
+                ImGui::EndTooltip();
+            }
+            if (ImGui::BeginPopup("osm_display_settings")) {
+                ImGui::TextUnformatted("OpenStreetMap");
+                ImGui::Separator();
+                if (ImGui::Checkbox("Greyscale underlying map##osm", &app_settings.grayscale_basemap)) {
+                    saveAppSettings(root, app_settings);
+                }
+                ImGui::TextDisabled("Tile source: data/tiles");
+                ImGui::EndPopup();
+            }
+            if (!topo_tiles_available || topo_incomplete) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
+                if (ImGui::SmallButton("D##topo_basemap")) {
+                    request_basemap_download("tiles_topo", "https://tile.opentopomap.org/{z}/{x}/{y}.png");
+                }
+                ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Download missing Topographic tiles");
+                    ImGui::EndTooltip();
+                }
+                ImGui::SameLine();
+            }
+            ImGui::BeginDisabled(!topo_tiles_available);
+            if (ImGui::RadioButton("Topographic", basemap_style_ui == 1)) {
+                app_settings.basemap_style = 1;
+                saveAppSettings(root, app_settings);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!topo_tiles_available);
+            if (ImGui::SmallButton("?##topo_display_settings")) ImGui::OpenPopup("topo_display_settings");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Layer display settings");
+                ImGui::EndTooltip();
+            }
+            if (ImGui::BeginPopup("topo_display_settings")) {
+                ImGui::TextUnformatted("Topographic");
+                ImGui::Separator();
+                if (ImGui::Checkbox("Greyscale underlying map##topo", &app_settings.grayscale_basemap)) {
+                    saveAppSettings(root, app_settings);
+                }
+                ImGui::TextDisabled("Tile source: data/tiles_topo");
+                ImGui::EndPopup();
+            }
+            if (!topo_tiles_available) {
+                ImGui::TextDisabled("Topographic tiles unavailable.");
+            }
+            if (osm_total > 0) {
+                ImGui::TextDisabled("OSM coverage: %zu/%zu tiles present (z11-z18)", (size_t)(osm_total - osm_missing), osm_total);
+            }
+            if (topo_total > 0) {
+                ImGui::TextDisabled("Topo coverage: %zu/%zu tiles present (z11-z18)", (size_t)(topo_total - topo_missing), topo_total);
+            }
+            if (basemap_download_inflight) {
+                const size_t done = basemap_download_done.load(std::memory_order_relaxed);
+                const size_t total = std::max<size_t>(1, basemap_download_total.load(std::memory_order_relaxed));
+                const float frac = std::clamp((float)done / (float)total, 0.0f, 1.0f);
+                const double elapsed_s = std::max(0.001, std::chrono::duration<double>(std::chrono::steady_clock::now() - basemap_download_started_at).count());
+                const double tiles_per_s = (double)done / elapsed_s;
+                const double bytes_per_s = (double)basemap_download_bytes.load(std::memory_order_relaxed) / elapsed_s;
+                const size_t remaining = (done < total) ? (total - done) : 0;
+                const double eta_s = tiles_per_s > 0.001 ? ((double)remaining / tiles_per_s) : 0.0;
+                std::string progress_line;
+                {
+                    std::lock_guard<std::mutex> lk(basemap_download_mutex);
+                    progress_line = basemap_download_progress;
+                }
+                ImGui::Separator();
+                ImGui::TextUnformatted("Basemap download in progress...");
+                ImGui::ProgressBar(frac, ImVec2(-1.0f, 0.0f));
+                ImGui::Text("Speed: %.2f tiles/s | %.2f MB/s | ETA: %.0fs", tiles_per_s, bytes_per_s / (1024.0 * 1024.0), eta_s);
+                if (!basemap_download_queue.empty()) ImGui::TextDisabled("Queued requests: %zu", basemap_download_queue.size());
+                if (ImGui::Button("Stop Basemap Jobs")) {
+                    basemap_download_stop_requested.store(true, std::memory_order_relaxed);
+                    basemap_download_queue.clear();
+                    data_library_status_msg = "Stop requested for basemap downloads";
+                }
+                if (!progress_line.empty()) ImGui::TextWrapped("%s", progress_line.c_str());
+            }
+        }
+
+        if (basemap_download_inflight) {
+            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+            if (ImGui::Begin("Basemap Download", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+                const size_t done = basemap_download_done.load(std::memory_order_relaxed);
+                const size_t total = std::max<size_t>(1, basemap_download_total.load(std::memory_order_relaxed));
+                const float frac = std::clamp((float)done / (float)total, 0.0f, 1.0f);
+                const double elapsed_s = std::max(0.001, std::chrono::duration<double>(std::chrono::steady_clock::now() - basemap_download_started_at).count());
+                const double tiles_per_s = (double)done / elapsed_s;
+                const double bytes_per_s = (double)basemap_download_bytes.load(std::memory_order_relaxed) / elapsed_s;
+                const size_t remaining = (done < total) ? (total - done) : 0;
+                const double eta_s = tiles_per_s > 0.001 ? ((double)remaining / tiles_per_s) : 0.0;
+                std::string progress_line;
+                {
+                    std::lock_guard<std::mutex> lk(basemap_download_mutex);
+                    progress_line = basemap_download_progress;
+                }
+                ImGui::Text("Source: %s", basemap_download_label.c_str());
+                ImGui::ProgressBar(frac, ImVec2(420.0f, 0.0f));
+                ImGui::Text("Done: %zu / %zu", done, total);
+                ImGui::Text("Downloaded: %zu | Skipped: %zu | Failed: %zu",
+                            basemap_download_downloaded.load(std::memory_order_relaxed),
+                            basemap_download_skipped.load(std::memory_order_relaxed),
+                            basemap_download_failed.load(std::memory_order_relaxed));
+                ImGui::Text("Speed: %.2f tiles/s | %.2f MB/s | ETA: %.0fs", tiles_per_s, bytes_per_s / (1024.0 * 1024.0), eta_s);
+                ImGui::Text("Bytes downloaded: %.2f MB", (double)basemap_download_bytes.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
+                if (!basemap_download_queue.empty()) ImGui::TextDisabled("Queued requests: %zu", basemap_download_queue.size());
+                if (ImGui::Button("Stop Basemap Jobs##window")) {
+                    basemap_download_stop_requested.store(true, std::memory_order_relaxed);
+                    basemap_download_queue.clear();
+                    data_library_status_msg = "Stop requested for basemap downloads";
+                }
+                if (!progress_line.empty()) ImGui::TextWrapped("%s", progress_line.c_str());
+            }
+            ImGui::End();
         }
 
         auto draw_category = [&](LayerDef::Category cat, const char* label) {
@@ -356,151 +599,49 @@
                     ImGui::TextUnformatted("Layer display settings");
                     ImGui::EndTooltip();
                 }
-                if (ImGui::BeginPopup("layer_display_settings")) {
-                    ImGui::TextUnformatted(l.name.c_str());
-                    ImGui::Separator();
-
-                    bool fill_flag = (idx < layer_fill_enabled.size()) ? layer_fill_enabled[idx] : true;
-                    if (ImGui::Checkbox("Fill polygons", &fill_flag) && idx < layer_fill_enabled.size()) {
-                        std::lock_guard<std::mutex> lk_fill(layer_fill_mutex);
-                        layer_fill_enabled[idx] = fill_flag;
-                        layer_fill_state_changed = true;
-                    }
-                    bool hover_flag = (idx < layer_hover_enabled.size()) ? layer_hover_enabled[idx] : true;
-                    if (ImGui::Checkbox("Hover inspector", &hover_flag) && idx < layer_hover_enabled.size()) {
-                        layer_hover_enabled[idx] = hover_flag;
-                        layer_hover_state_changed = true;
-                    }
-                    bool inspect_flag = (idx < layer_inspect_enabled.size()) ? layer_inspect_enabled[idx] : true;
-                    if (ImGui::Checkbox("Click inspect", &inspect_flag) && idx < layer_inspect_enabled.size()) {
-                        layer_inspect_enabled[idx] = inspect_flag;
-                        layer_inspect_state_changed = true;
-                    }
-
-                    const bool is_value_parcel_layer = l.scale == "parcel" && !l.heatmap_field.empty();
-                    ImGui::SeparatorText(is_value_parcel_layer ? "Value visualization" : "Heatmap");
-                    const char* layer_algo_items[] = {
-                        "None",
-                        "KDE (Gaussian)",
-                        "GPU Splat + Blur",
-                        "LOD Geometry",
-                        "Hex Binning",
-                        "Multi-res Pyramid",
-                        "Median Choropleth"
+                LayerSettingsPopupContext layer_settings_ctx;
+                layer_settings_ctx.root = root;
+                layer_settings_ctx.local_layer_path = local_layer_path;
+                layer_settings_ctx.idx = idx;
+                layer_settings_ctx.layer = &l;
+                layer_settings_ctx.local_layer_exists = local_layer_exists;
+                layer_settings_ctx.zoom = zoom;
+                layer_settings_ctx.data_library_status_msg = &data_library_status_msg;
+                layer_settings_ctx.data_freshness_state = &data_freshness_state;
+                layer_settings_ctx.data_freshness_msg = &data_freshness_msg;
+                layer_settings_ctx.mark_local_layer_exists = [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); };
+                layer_settings_ctx.enqueue_hydration = [&](size_t i, bool required) { enqueue_hydration(i, required); };
+                layer_settings_ctx.layer_spatial = &layer_spatial;
+                layer_settings_ctx.layer_states = &layer_states;
+                layer_settings_ctx.status_mutex = &status_mutex;
+                layer_settings_ctx.layer_fill_enabled = &layer_fill_enabled;
+                layer_settings_ctx.layer_hover_enabled = &layer_hover_enabled;
+                layer_settings_ctx.layer_inspect_enabled = &layer_inspect_enabled;
+                layer_settings_ctx.layer_heatmap_enabled = &layer_heatmap_enabled;
+                layer_settings_ctx.layer_heatmap_algo = &layer_heatmap_algo;
+                layer_settings_ctx.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
+                layer_settings_ctx.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
+                layer_settings_ctx.layer_normalize_mode = &layer_normalize_mode;
+                layer_settings_ctx.layer_heatmap_cell_px = &layer_heatmap_cell_px;
+                layer_settings_ctx.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
+                layer_settings_ctx.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
+                layer_settings_ctx.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
+                layer_settings_ctx.layer_heatmap_multires_blend = &layer_heatmap_multires_blend;
+                layer_settings_ctx.layer_heatmap_zoom_adaptive_bandwidth = &layer_heatmap_zoom_adaptive_bandwidth;
+                layer_settings_ctx.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
+                layer_settings_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+                layer_settings_ctx.heatmap_algo = heatmap_algo;
+                layer_settings_ctx.layer_fill_mutex = &layer_fill_mutex;
+                layer_settings_ctx.layer_fill_state_changed = &layer_fill_state_changed;
+                layer_settings_ctx.layer_hover_state_changed = &layer_hover_state_changed;
+                layer_settings_ctx.layer_inspect_state_changed = &layer_inspect_state_changed;
+                layer_settings_ctx.layer_heatmap_state_changed = &layer_heatmap_state_changed;
+                layer_settings_ctx.heatmap_controls_active = &heatmap_controls_active;
+                layer_settings_ctx.heatmap_input_float_enter =
+                    [&](const char* label, float& value, float min_value, float max_value, const char* format) {
+                        return heatmap_input_float_enter(label, value, min_value, max_value, format);
                     };
-                    int layer_algo_ui = 0;
-                    const bool layer_heatmap_on = idx < layer_heatmap_enabled.size() ? layer_heatmap_enabled[idx] : true;
-                    if (layer_heatmap_on && idx < layer_heatmap_algo.size()) {
-                        const int layer_algo = layer_heatmap_algo[idx] < 0 ? heatmap_algo : layer_heatmap_algo[idx];
-                        layer_algo_ui = aggregateLayerUiIndexFromAlgo(layer_algo);
-                    }
-                    if (ImGui::Combo("Aggregate method", &layer_algo_ui, layer_algo_items, IM_ARRAYSIZE(layer_algo_items)) && idx < layer_heatmap_algo.size()) {
-                        if (idx < layer_heatmap_enabled.size()) layer_heatmap_enabled[idx] = layer_algo_ui != 0;
-                        if (layer_algo_ui != 0) {
-                            layer_heatmap_algo[idx] = aggregateAlgoFromLayerUiIndex(layer_algo_ui);
-                        }
-                        layer_heatmap_state_changed = true;
-                    }
-                    const bool aggregate_none = layer_algo_ui == 0;
-                    const int resolved_layer_algo = aggregate_none ? heatmap_algo : aggregateAlgoFromLayerUiIndex(layer_algo_ui);
-                    const int aggregate_max_zoom = idx < layer_heatmap_max_zoom.size() ? layer_heatmap_max_zoom[idx] : 13;
-                    const int detail_min_zoom =
-                        idx < layer_parcel_detail_min_zoom.size() ? layer_parcel_detail_min_zoom[idx] : kParcelChoroplethMinZoom;
-                    const bool aggregate_active_now =
-                        !aggregate_none &&
-                        zoom <= aggregate_max_zoom &&
-                        !(is_value_parcel_layer && zoom >= detail_min_zoom);
-                    if (aggregate_none) {
-                        ImGui::TextDisabled("Resolved display: per-feature fill");
-                    } else if (is_value_parcel_layer && zoom >= detail_min_zoom) {
-                        ImGui::TextDisabled("Resolved display: parcel choropleth by %s", l.heatmap_field.c_str());
-                    } else if (aggregate_active_now) {
-                        ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
-                    } else {
-                        ImGui::TextDisabled("Resolved display: per-feature fill");
-                    }
-                    if (!l.heatmap_field.empty()) {
-                        const char* normalize_items[] = {
-                            "Absolute clipped range",
-                            "Layer percentile",
-                            "Group/Zoning percentile"
-                        };
-                        int normalize_mode = idx < layer_normalize_mode.size() ? layer_normalize_mode[idx] : 0;
-                        normalize_mode = std::clamp(normalize_mode, 0, (int)IM_ARRAYSIZE(normalize_items) - 1);
-                        if (ImGui::Combo("Normalize", &normalize_mode, normalize_items, IM_ARRAYSIZE(normalize_items)) &&
-                            idx < layer_normalize_mode.size()) {
-                            layer_normalize_mode[idx] = normalize_mode;
-                            layer_heatmap_state_changed = true;
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::BeginTooltip();
-                            ImGui::TextWrapped("Controls how numeric layer values are converted to color before parcel or aggregate choropleth rendering.");
-                            ImGui::EndTooltip();
-                        }
-                    }
-                    ImGui::BeginDisabled(aggregate_none);
-                    if (is_value_parcel_layer) ImGui::TextDisabled("Parcel detail draws per-parcel value fill.");
-                    ImGui::Indent();
-                    if (resolved_layer_algo == kAggregateKdeGaussian) {
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("KDE bandwidth", layer_heatmap_bandwidth_px[idx], 2.0f, 96.0f, "%.1f");
-                        bool adaptive = layer_heatmap_zoom_adaptive_bandwidth[idx];
-                        if (ImGui::Checkbox("Adaptive KDE bandwidth", &adaptive)) {
-                            layer_heatmap_zoom_adaptive_bandwidth[idx] = adaptive;
-                            layer_heatmap_state_changed = true;
-                        }
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("KDE clip", layer_heatmap_percentile_clip[idx], 50.0f, 100.0f, "%.0f");
-                    } else if (resolved_layer_algo == kAggregateGpuSplatBlur) {
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Splat radius", layer_heatmap_bandwidth_px[idx], 2.0f, 96.0f, "%.1f");
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Blur sigma", layer_heatmap_blur_sigma_px[idx], 0.0f, 32.0f, "%.1f");
-                        bool adaptive = layer_heatmap_zoom_adaptive_bandwidth[idx];
-                        if (ImGui::Checkbox("Adaptive splat radius", &adaptive)) {
-                            layer_heatmap_zoom_adaptive_bandwidth[idx] = adaptive;
-                            layer_heatmap_state_changed = true;
-                        }
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                    } else if (resolved_layer_algo == kAggregateLodGeometry) {
-                        ImGui::TextWrapped("LOD Geometry draws simplified parcel/polygon geometry directly instead of generating heatmap cells.");
-                    } else if (resolved_layer_algo == kAggregateHexBinning) {
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Hex size", layer_heatmap_cell_px[idx], 2.0f, 80.0f, "%.0f");
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Hex clip", layer_heatmap_percentile_clip[idx], 50.0f, 100.0f, "%.0f");
-                    } else if (resolved_layer_algo == kAggregateMedianChoropleth) {
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Choropleth cell size", layer_heatmap_cell_px[idx], 2.0f, 80.0f, "%.0f");
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Value clip", layer_heatmap_percentile_clip[idx], 50.0f, 100.0f, "%.0f");
-                        ImGui::TextWrapped("Aggregates numeric field values by median and colors cells by the resulting value range.");
-                    } else {
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Fine cell size", layer_heatmap_cell_px[idx], 2.0f, 80.0f, "%.0f");
-                        bool multires_enabled = layer_heatmap_multires_enabled[idx];
-                        if (ImGui::Checkbox("Enable pyramid blend", &multires_enabled)) {
-                            layer_heatmap_multires_enabled[idx] = multires_enabled;
-                            layer_heatmap_state_changed = true;
-                        }
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        ImGui::BeginDisabled(!multires_enabled);
-                        layer_heatmap_state_changed |= heatmap_input_float_enter("Pyramid blend", layer_heatmap_multires_blend[idx], 0.0f, 1.0f, "%.2f");
-                        ImGui::EndDisabled();
-                    }
-                    ImGui::Unindent();
-                    int hz = aggregate_max_zoom;
-                    if (ImGui::SliderInt("Aggregate max zoom", &hz, kMinZoom, kMaxZoom) && idx < layer_heatmap_max_zoom.size()) {
-                        layer_heatmap_max_zoom[idx] = hz;
-                        layer_heatmap_state_changed = true;
-                    }
-                    if (is_value_parcel_layer) {
-                        int pz = idx < layer_parcel_detail_min_zoom.size() ? layer_parcel_detail_min_zoom[idx] : kParcelChoroplethMinZoom;
-                        if (ImGui::SliderInt("Parcel detail min zoom", &pz, kMinZoom, kMaxZoom) && idx < layer_parcel_detail_min_zoom.size()) {
-                            layer_parcel_detail_min_zoom[idx] = pz;
-                            layer_heatmap_state_changed = true;
-                        }
-                    }
-                    bool use_gradient = (idx < layer_heatmap_use_gradient.size()) ? layer_heatmap_use_gradient[idx] : true;
-                    if (ImGui::Checkbox("Apply gradient colors", &use_gradient) && idx < layer_heatmap_use_gradient.size()) {
-                        layer_heatmap_use_gradient[idx] = use_gradient;
-                        layer_heatmap_state_changed = true;
-                    }
-                    ImGui::EndDisabled();
-                    ImGui::EndPopup();
-                }
+                drawLayerDisplaySettingsPopup(layer_settings_ctx);
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Text, l.color);
                 ImGui::TextUnformatted(l.name.c_str());
@@ -784,62 +925,8 @@
                         ImGui::EndTabItem();
                     }
                     if (ImGui::BeginTabItem("Heatmap")) {
-                        const char* heatmap_algo_items[] = {
-                            "KDE (Gaussian)",
-                            "GPU Splat + Blur",
-                            "LOD Geometry",
-                            "Hex Binning",
-                            "Multi-res Pyramid",
-                            "Median Choropleth"
-                        };
-                        const char* heatmap_quality_items[] = {"Fast", "Balanced", "High"};
-                        int heatmap_quality_prev = heatmap_quality_preset;
-                        heatmap_settings_state_changed |= ImGui::Combo("Quality", &heatmap_quality_preset, heatmap_quality_items, IM_ARRAYSIZE(heatmap_quality_items));
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        if (heatmap_quality_preset != heatmap_quality_prev) {
-                            if (heatmap_quality_preset == 0) {
-                                global_heat_cell_px = 36.0f;
-                                heatmap_bandwidth_px = 10.0f;
-                                heatmap_blur_sigma_px = 3.0f;
-                                heatmap_percentile_clip = 92.0f;
-                                heatmap_multires_enabled = false;
-                            } else if (heatmap_quality_preset == 1) {
-                                global_heat_cell_px = 24.0f;
-                                heatmap_bandwidth_px = 18.0f;
-                                heatmap_blur_sigma_px = 6.0f;
-                                heatmap_percentile_clip = 95.0f;
-                                heatmap_multires_enabled = true;
-                                heatmap_multires_blend = 0.5f;
-                            } else {
-                                global_heat_cell_px = 14.0f;
-                                heatmap_bandwidth_px = 26.0f;
-                                heatmap_blur_sigma_px = 10.0f;
-                                heatmap_percentile_clip = 97.0f;
-                                heatmap_multires_enabled = true;
-                                heatmap_multires_blend = 0.65f;
-                            }
-                            heatmap_settings_state_changed = true;
-                        }
-                        int heatmap_algo_ui = aggregateGlobalUiIndexFromAlgo(heatmap_algo);
-                        if (ImGui::Combo("Aggregate Method", &heatmap_algo_ui, heatmap_algo_items, IM_ARRAYSIZE(heatmap_algo_items))) {
-                            heatmap_algo = aggregateAlgoFromGlobalUiIndex(heatmap_algo_ui);
-                            heatmap_settings_state_changed = true;
-                        }
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        if (heatmap_algo == kAggregateLodGeometry) {
-                            ImGui::TextWrapped("LOD Geometry uses simplified geometry draw instead of heatmap cells.");
-                        }
-                        heatmap_settings_state_changed |= heatmap_input_float_enter("Cell Size", global_heat_cell_px, 2.0f, 80.0f, "%.0f");
-                        heatmap_settings_state_changed |= heatmap_input_float_enter("Bandwidth", heatmap_bandwidth_px, 2.0f, 96.0f, "%.1f");
-                        heatmap_settings_state_changed |= heatmap_input_float_enter("Blur Sigma", heatmap_blur_sigma_px, 0.0f, 32.0f, "%.1f");
-                        heatmap_settings_state_changed |= heatmap_input_float_enter("Clip", heatmap_percentile_clip, 50.0f, 100.0f, "%.0f");
-                        heatmap_settings_state_changed |= ImGui::Checkbox("Zoom-adaptive bandwidth", &heatmap_zoom_adaptive_bandwidth);
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        heatmap_settings_state_changed |= ImGui::Checkbox("Multi-res blending", &heatmap_multires_enabled);
-                        heatmap_controls_active |= ImGui::IsItemActive();
-                        ImGui::BeginDisabled(!heatmap_multires_enabled);
-                        heatmap_settings_state_changed |= heatmap_input_float_enter("Multi-res Blend", heatmap_multires_blend, 0.0f, 1.0f, "%.2f");
-                        ImGui::EndDisabled();
+                        ImGui::TextDisabled("Heatmap controls are per-layer only.");
+                        ImGui::TextWrapped("Open a layer's settings (⚙) to edit aggregate method, bandwidth, blur, clip, adaptive bandwidth, and multi-res settings.");
                         ImGui::EndTabItem();
                     }
                     ImGui::EndTabBar();
