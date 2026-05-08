@@ -68,6 +68,7 @@ add_executable(worldsim3
   app_utils.cpp
   memory_utils.cpp
   zoning.cpp
+  parcel_matched_layers.cpp
   vacancy_overlay.cpp
   dataset_library.cpp
   net_http_utils.cpp

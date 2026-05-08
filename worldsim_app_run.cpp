@@ -43,6 +43,7 @@
 #include "worldsim_cli.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_bootstrap.h"
+#include "parcel_matched_layers.h"
 #include "cpu_affinity.h"
 #include "thread_utils.h"
 
@@ -118,6 +119,7 @@ int runWorldSim3App(int argc, char** argv) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     preloadLayersFromEnvironment(root);
+    ensureParcelMatchedEventLayers(root, false, &std::cerr);
 
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
     if (!glfwInit()) return 1;

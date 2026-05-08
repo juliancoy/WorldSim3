@@ -2,6 +2,7 @@
 
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
+#include "parcel_matched_layers.h"
 #include "vacancy_overlay.h"
 
 #include <algorithm>
@@ -26,6 +27,15 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             } else {
                 options.download_phase = "all";
             }
+            continue;
+        }
+        if (arg == "--build-parcel-matched-layers") {
+            options.run_build_parcel_matched_layers = true;
+            continue;
+        }
+        if (arg == "--force-build-parcel-matched-layers") {
+            options.run_build_parcel_matched_layers = true;
+            options.force_build_parcel_matched_layers = true;
             continue;
         }
         if (arg.rfind("--download-layers=", 0) == 0) {
@@ -66,6 +76,7 @@ void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
         << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
@@ -82,6 +93,10 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
             root,
             options.download_phase.empty() ? "all" : options.download_phase,
             options.include_large_downloads);
+    }
+    if (options.run_build_parcel_matched_layers) {
+        ensureParcelMatchedEventLayers(root, options.force_build_parcel_matched_layers, &std::cout);
+        return 0;
     }
     return -1;
 }

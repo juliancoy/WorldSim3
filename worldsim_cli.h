@@ -7,6 +7,8 @@ struct WorldsimCliOptions {
     bool show_help = false;
     bool run_vacancy_selftest = false;
     bool run_download_layers = false;
+    bool run_build_parcel_matched_layers = false;
+    bool force_build_parcel_matched_layers = false;
     bool include_large_downloads = false;
     int reserve_cores = 0;
     bool reserve_cores_set = false;
