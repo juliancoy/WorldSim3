@@ -119,6 +119,7 @@
             ImGui::End();
         }
         ImGui::End();
+
         ImGui::SetNextWindowPos(ImVec2(layout_margin, layout_margin + main_panel_h + layout_gap), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(left_panel_w, std::max(0.0f, layout_h - main_panel_h - layout_margin * 2.0f - layout_gap)), ImGuiCond_Always);
         ImGui::Begin("Performance and Stats", nullptr, ImGuiWindowFlags_NoCollapse);
