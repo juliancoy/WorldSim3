@@ -213,8 +213,9 @@
             hashCombineU64(key, crime_filter_drug ? 1ULL : 0ULL);
             hashCombineU64(key, crime_filter_shooting ? 1ULL : 0ULL);
             for (size_t i = 0; i < layers.size(); ++i) {
-                hashCombineU64(key, layers[i].enabled ? 1ULL : 0ULL);
-                hashCombineU64(key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
+                const bool layer_contributes_heatmap = layer_uses_heatmap_aggregate(i);
+                hashCombineU64(key, layer_contributes_heatmap ? 1ULL : 0ULL);
+                if (!layer_contributes_heatmap) continue;
                 hashCombineU64(key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
                 hashCombineU64(key, (uint64_t)((i < layer_parcel_detail_min_zoom.size()) ? layer_parcel_detail_min_zoom[i] : kParcelChoroplethMinZoom));
                 hashCombineU64(key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
@@ -228,10 +229,8 @@
                 hashCombineU64(key, (i < layer_heatmap_multires_enabled.size() && layer_heatmap_multires_enabled[i]) ? 1ULL : 0ULL);
                 hashCombineFloat(key, i < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[i] : heatmap_multires_blend);
                 hashCombineU64(key, (uint64_t)layers[i].features.size());
-                if (layers[i].enabled || !layers[i].features.empty()) {
-                    const std::string sig = fileSignature(root / "data" / "layers" / layers[i].file);
-                    for (unsigned char ch : sig) hashCombineU64(key, (uint64_t)ch);
-                }
+                const std::string sig = fileSignature(root / "data" / "layers" / layers[i].file);
+                for (unsigned char ch : sig) hashCombineU64(key, (uint64_t)ch);
             }
             return key;
         };
@@ -769,13 +768,23 @@
             heatmap_cache_key = heatmap_key;
             heatmap_cache_valid = true;
         }
+        const CachedAggregateTexture* draw_cached_aggregate = cached_aggregate_for_key;
+        uint64_t draw_cached_aggregate_key = heatmap_key;
+        if (!draw_cached_aggregate && heatmap_async_inflight && heatmap_cache_valid && heatmap_cache_key != 0) {
+            auto stale_it = heatmap_texture_cache.find(heatmap_cache_key);
+            if (stale_it != heatmap_texture_cache.end() && stale_it->second.texture.descriptor) {
+                stale_it->second.last_used_frame = ++heatmap_texture_cache_frame;
+                draw_cached_aggregate = &stale_it->second;
+                draw_cached_aggregate_key = heatmap_cache_key;
+            }
+        }
         const std::vector<CachedHeatCell> empty_heat_cells;
         const std::vector<CachedHeatCell>& draw_cells =
-            cached_aggregate_for_key ? cached_aggregate_for_key->cells :
+            draw_cached_aggregate ? draw_cached_aggregate->cells :
             (can_use_cached_heatmap ? heatmap_cached_cells :
             (should_recompute_heatmap ? frame_heat_cells : empty_heat_cells));
         const bool cached_aggregate_has_texture =
-            cached_aggregate_for_key && cached_aggregate_for_key->texture.descriptor;
+            draw_cached_aggregate && draw_cached_aggregate->texture.descriptor;
         MapHeatmapDrawContext heatmap_draw_ctx;
         heatmap_draw_ctx.draw = draw;
         heatmap_draw_ctx.math_zoom = math_zoom;
@@ -783,12 +792,12 @@
         heatmap_draw_ctx.heatmap_async_inflight = any_active_heatmap && heatmap_async_inflight;
         heatmap_draw_ctx.heatmap_raster_texture_valid =
             any_active_heatmap && (cached_aggregate_has_texture || heatmap_raster_texture_valid);
-        heatmap_draw_ctx.heatmap_raster_cache_key = cached_aggregate_has_texture ? heatmap_key : heatmap_raster_cache_key;
-        heatmap_draw_ctx.heatmap_key = heatmap_key;
+        heatmap_draw_ctx.heatmap_raster_cache_key = cached_aggregate_has_texture ? draw_cached_aggregate_key : heatmap_raster_cache_key;
+        heatmap_draw_ctx.heatmap_key = cached_aggregate_has_texture ? draw_cached_aggregate_key : heatmap_key;
         heatmap_draw_ctx.heatmap_raster_texture =
-            cached_aggregate_has_texture ? &cached_aggregate_for_key->texture : &heatmap_raster_texture;
+            cached_aggregate_has_texture ? &draw_cached_aggregate->texture : &heatmap_raster_texture;
         heatmap_draw_ctx.heatmap_raster =
-            cached_aggregate_for_key ? &cached_aggregate_for_key->raster : &heatmap_cached_raster_meta;
+            draw_cached_aggregate ? &draw_cached_aggregate->raster : &heatmap_cached_raster_meta;
         heatmap_draw_ctx.draw_cells = &draw_cells;
         heatmap_draw_ctx.project_world = project_world;
         prof_heatmap_gpu_splat_active.store(any_active_gpu_splat, std::memory_order_relaxed);
