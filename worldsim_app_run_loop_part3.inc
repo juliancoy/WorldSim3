@@ -214,9 +214,9 @@
                     for (const auto& ev : parcel_events) {
                         ImGui::Separator();
                         if (!ev.date.empty()) {
-                            ImGui::TextColored(ImVec4(0.86f, 0.92f, 1.0f, 1.0f), "%s", ev.date.c_str());
+                            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.36f, 1.0f), "Date: %s", ev.date.c_str());
                         } else {
-                            ImGui::TextDisabled("(Date unavailable)");
+                            ImGui::TextColored(ImVec4(0.82f, 0.84f, 0.88f, 1.0f), "Date unavailable");
                         }
                         ImGui::TextUnformatted(ev.event_type.c_str());
                         if (!ev.status.empty()) ImGui::TextWrapped("Status: %s", ev.status.c_str());
