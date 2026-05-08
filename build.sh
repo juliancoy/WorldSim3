@@ -142,6 +142,27 @@ if [[ -f "$BUILD_DIR/CMakeCache.txt" ]] && grep -Eq '^(CMAKE_MAKE_PROGRAM|Vulkan
   rm -rf "$BUILD_DIR/CMakeFiles"
 fi
 
+EXTRA_CMAKE_IGNORE_PREFIX_PATH=()
+GLFW3_DIR_OVERRIDE=""
+LOCAL_GLFW_CONFIG_DIR="${HOME}/.local/lib/cmake/glfw3"
+if [[ -d "$LOCAL_GLFW_CONFIG_DIR" ]] &&
+   grep -Rqs 'lib/libglfw3\.a' "$LOCAL_GLFW_CONFIG_DIR" &&
+   [[ ! -f "${HOME}/.local/lib/libglfw3.a" ]]; then
+  echo "[build.sh] Ignoring stale GLFW package in ${LOCAL_GLFW_CONFIG_DIR}; using system package or FetchContent instead."
+  EXTRA_CMAKE_IGNORE_PREFIX_PATH+=("${HOME}/.local")
+  for glfw_config_dir in \
+    "/usr/lib/$(gcc -print-multiarch 2>/dev/null || true)/cmake/glfw3" \
+    /usr/lib/*/cmake/glfw3 \
+    /usr/lib/cmake/glfw3 \
+    /usr/local/lib/cmake/glfw3
+  do
+    if [[ -f "${glfw_config_dir}/glfw3Config.cmake" ]]; then
+      GLFW3_DIR_OVERRIDE="$glfw_config_dir"
+      break
+    fi
+  done
+fi
+
 if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
   current_gen="$(grep -E '^CMAKE_GENERATOR:INTERNAL=' "$BUILD_DIR/CMakeCache.txt" | sed 's/^[^=]*=//')"
   if [[ "$current_gen" != "Ninja" ]]; then
@@ -164,6 +185,16 @@ CMAKE_ARGS=(
   -G Ninja
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
 )
+
+if [[ ${#EXTRA_CMAKE_IGNORE_PREFIX_PATH[@]} -gt 0 ]]; then
+  IFS=';'
+  CMAKE_ARGS+=("-DCMAKE_IGNORE_PREFIX_PATH=${EXTRA_CMAKE_IGNORE_PREFIX_PATH[*]}")
+  unset IFS
+fi
+
+if [[ -n "$GLFW3_DIR_OVERRIDE" ]]; then
+  CMAKE_ARGS+=("-Dglfw3_DIR=${GLFW3_DIR_OVERRIDE}")
+fi
 
 if [[ $ENABLE_ASAN -eq 1 ]]; then
   SAN_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"

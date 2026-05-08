@@ -49,6 +49,8 @@ struct StatusApiContext {
     std::atomic<double>* perf_frame_ms_avg = nullptr;
     std::atomic<double>* perf_frame_ms_last = nullptr;
     std::atomic<double>* perf_fps_avg = nullptr;
+    std::atomic<double>* ui_left_panel_frac = nullptr;
+    std::atomic<double>* ui_right_panel_frac = nullptr;
     std::atomic<size_t>* render_fill_attempts_last_frame = nullptr;
     std::atomic<size_t>* render_fill_success_last_frame = nullptr;
     std::atomic<size_t>* render_fill_no_triangles_last_frame = nullptr;

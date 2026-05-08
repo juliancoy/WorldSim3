@@ -119,8 +119,9 @@
             ImGui::End();
         }
         ImGui::End();
-        ImGui::SetNextWindowPos(ImVec2(12, 784), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(420, (float)h - 796.0f), ImGuiCond_Always);
+
+        ImGui::SetNextWindowPos(ImVec2(layout_margin, layout_margin + main_panel_h + layout_gap), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(left_panel_w, std::max(0.0f, layout_h - main_panel_h - layout_margin * 2.0f - layout_gap)), ImGuiCond_Always);
         ImGui::Begin("Performance and Stats", nullptr, ImGuiWindowFlags_NoCollapse);
         ImGui::Text("Hydration: %zu / %zu (%.1f%%)", hydrated_now, layers.size(), hydrated_frac * 100.0f);
         ImGui::ProgressBar(hydrated_frac, ImVec2(-1.0f, 0.0f));

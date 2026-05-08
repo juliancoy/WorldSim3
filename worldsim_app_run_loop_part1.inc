@@ -1,6 +1,15 @@
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
+        int fb_w = 0;
+        int fb_h = 0;
+        glfwGetFramebufferSize(window, &fb_w, &fb_h);
+        if (fb_w > 0 && fb_h > 0 && (fb_w != g_MainWindowData.Width || fb_h != g_MainWindowData.Height)) {
+            w = fb_w;
+            h = fb_h;
+            g_SwapChainRebuild = true;
+        }
+
         if (g_SwapChainRebuild) {
             glfwGetFramebufferSize(window, &w, &h);
             if (w > 0 && h > 0) {
@@ -16,6 +25,25 @@
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGuiIO& frame_io = ImGui::GetIO();
+        const float layout_w = std::max(1.0f, frame_io.DisplaySize.x);
+        const float layout_h = std::max(1.0f, frame_io.DisplaySize.y);
+        constexpr float layout_margin = 12.0f;
+        constexpr float layout_gap = 8.0f;
+        const float content_w = std::max(1.0f, layout_w - layout_margin * 2.0f - layout_gap * 2.0f);
+        double left_frac = std::clamp(ui_left_panel_frac.load(std::memory_order_relaxed), 0.08, 0.70);
+        double right_frac = std::clamp(ui_right_panel_frac.load(std::memory_order_relaxed), 0.08, 0.50);
+        if (left_frac + right_frac > 0.92) {
+            const double scale = 0.92 / (left_frac + right_frac);
+            left_frac *= scale;
+            right_frac *= scale;
+        }
+        ui_left_panel_frac.store(left_frac, std::memory_order_relaxed);
+        ui_right_panel_frac.store(right_frac, std::memory_order_relaxed);
+        const float left_panel_w = content_w * (float)left_frac;
+        const float right_panel_w = content_w * (float)right_frac;
+        const float map_w = std::max(1.0f, content_w - left_panel_w - right_panel_w);
+        const float map_x = left_panel_w + layout_margin + layout_gap;
+        const float main_panel_h = std::max(0.0f, layout_h - layout_margin * 2.0f);
         const bool text_scale_up =
             frame_io.KeyCtrl &&
             (ImGui::IsKeyPressed(ImGuiKey_Equal, false) ||
@@ -494,9 +522,9 @@
                 persist_layer_download_queue();
             }
         }
-        ImGui::SetNextWindowPos(ImVec2(12, 12), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(420, 760), ImGuiCond_Always);
-        ImGui::Begin("Layers and Controls");
+        ImGui::SetNextWindowPos(ImVec2(layout_margin, layout_margin), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(left_panel_w, main_panel_h), ImGuiCond_Always);
+        ImGui::Begin("Layers and Controls", nullptr, ImGuiWindowFlags_NoCollapse);
         if (ImGui::Button("Gear")) show_sources_panel = !show_sources_panel;
         ImGui::SameLine();
         if (ImGui::Button("Library")) show_data_library = !show_data_library;
