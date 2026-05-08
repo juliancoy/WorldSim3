@@ -273,6 +273,35 @@ VersionedDownloadResult downloadUrlVersioned(
     if (code == 304) {
         std::error_code ec;
         fs::remove(tmp, ec);
+        // Conditional metadata can say "not modified" even if the local file was deleted.
+        // In that case, force a full fetch to restore the on-disk copy.
+        if (!fs::exists(out_path)) {
+            std::string err;
+            if (!downloadUrlToFile(url, out_path, err)) {
+                res.message = "not-modified fallback fetch failed: " + err;
+                return res;
+            }
+            const uint64_t new_h = fnv1a64File(out_path);
+            const std::string new_hash = toHexU64(new_h);
+            const std::string stamp = isoNowUtcCompact();
+            meta["url"] = url;
+            meta["file"] = out_path.filename().string();
+            meta["etag"] = hc.etag.empty() ? prev_etag : hc.etag;
+            meta["last_modified"] = hc.last_modified.empty() ? prev_lm : hc.last_modified;
+            meta["status_code"] = code;
+            meta["content_hash"] = new_hash;
+            meta["fetched_at"] = stamp;
+            meta["checked_at"] = stamp;
+            meta["size_bytes"] = (long long)fs::file_size(out_path);
+            meta["version_counter"] = meta.value("version_counter", 0) + 1;
+            std::ofstream mo(meta_path);
+            if (mo) mo << meta.dump(2);
+            res.ok = true;
+            res.changed = true;
+            res.not_modified = false;
+            res.message = "restored missing local file via full fetch";
+            return res;
+        }
         meta["checked_at"] = isoNowUtcCompact();
         std::ofstream mo(meta_path);
         if (mo) mo << meta.dump(2);

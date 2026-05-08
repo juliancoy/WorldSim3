@@ -3,6 +3,7 @@
 #include "imgui.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,7 @@ struct HeatSample {
     bool zoom_adaptive_bandwidth = true;
     bool multires_enabled = true;
     float multires_blend = 0.5f;
+    bool allow_cpu_fallback = false;
 };
 
 std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
@@ -67,6 +69,16 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
     int max_zoom,
     int raster_base_px,
     int raster_max_px);
+
+bool loadHeatmapRasterCache(
+    const std::filesystem::path& cache_path,
+    uint64_t key,
+    HeatmapRaster& out);
+
+void saveHeatmapRasterCache(
+    const std::filesystem::path& cache_path,
+    uint64_t key,
+    const HeatmapRaster& raster);
 
 std::vector<CachedHeatCell> buildImmediateHeatmapCells(
     const std::vector<HeatSample>& heat_samples,

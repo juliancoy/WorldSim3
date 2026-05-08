@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -56,9 +57,16 @@ struct StatusApiContext {
     std::mutex* api_layer_mutex = nullptr;
     std::unordered_map<std::string, bool>* api_layer_enable_cmds = nullptr;
     std::unordered_map<std::string, bool>* api_layer_fill_cmds = nullptr;
+    std::vector<std::string>* api_layer_download_cmds = nullptr;
     std::atomic<int>* api_zoom_cmd = nullptr;
     std::atomic<double>* api_lon_cmd = nullptr;
     std::atomic<double>* api_lat_cmd = nullptr;
+    std::atomic<uint64_t>* api_ui_cmd_seq = nullptr;
+    std::atomic<int>* api_ui_cmd_kind = nullptr; // 0=none,1=click,2=move,3=scroll
+    std::atomic<double>* api_ui_cmd_x = nullptr;
+    std::atomic<double>* api_ui_cmd_y = nullptr;
+    std::atomic<int>* api_ui_cmd_button = nullptr;
+    std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
 
     std::mutex* layer_profile_mutex = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;

@@ -86,6 +86,7 @@ LAN sharing and peer signaling are available while the app runs:
 - LAN discovery/version check (UDP): broadcast probe `WS3_DISCOVER_V1` on port `8789`
 
 The app includes a `Scan LAN Peers` button that checks peer `protocol_version` compatibility before use.
+Layer downloads also auto-scan peers (cached ~30s), try compatible LAN peers first via `/dataset/file`, and fall back to each layer's `source_url` if no peer copy is available.
 
 ## Data acquisition
 

@@ -139,6 +139,7 @@
             hs.zoom_adaptive_bandwidth = layer_idx < layer_heatmap_zoom_adaptive_bandwidth.size() ? layer_heatmap_zoom_adaptive_bandwidth[layer_idx] : heatmap_zoom_adaptive_bandwidth;
             hs.multires_enabled = layer_idx < layer_heatmap_multires_enabled.size() ? layer_heatmap_multires_enabled[layer_idx] : heatmap_multires_enabled;
             hs.multires_blend = std::clamp(layer_idx < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[layer_idx] : heatmap_multires_blend, 0.0f, 1.0f);
+            hs.allow_cpu_fallback = heatmap_allow_cpu_fallback;
         };
         bool smooth_only_heatmap = true;
         bool any_active_heatmap = false;
@@ -151,64 +152,97 @@
             if (!isSmoothHeatmapAggregateMethod(aggregate_algo)) smooth_only_heatmap = false;
         }
         if (!any_active_heatmap) smooth_only_heatmap = false;
-        uint64_t heatmap_key = 1469598103934665603ULL;
-        hashCombineU64(heatmap_key, (uint64_t)zoom);
-        hashCombineU64(heatmap_key, (uint64_t)math_zoom);
-        hashCombineFloat(heatmap_key, global_heat_cell_px);
-        hashCombineU64(heatmap_key, (uint64_t)heatmap_algo);
-        hashCombineU64(heatmap_key, (uint64_t)heatmap_quality_preset);
-        hashCombineFloat(heatmap_key, heatmap_bandwidth_px);
-        hashCombineFloat(heatmap_key, heatmap_blur_sigma_px);
-        hashCombineFloat(heatmap_key, heatmap_percentile_clip);
-        hashCombineU64(heatmap_key, heatmap_zoom_adaptive_bandwidth ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, heatmap_multires_enabled ? 1ULL : 0ULL);
-        hashCombineFloat(heatmap_key, heatmap_multires_blend);
-        hashCombineU64(heatmap_key, filter_enabled ? 1ULL : 0ULL);
-        for (const char* p = filter_blocklot; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_status; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_address; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        for (const char* p = filter_owner; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        if (!selected_owners.empty()) {
-            std::vector<std::string> selected_owner_list(selected_owners.begin(), selected_owners.end());
-            std::sort(selected_owner_list.begin(), selected_owner_list.end());
-            for (const auto& owner : selected_owner_list) {
-                hashCombineU64(heatmap_key, (uint64_t)owner.size());
-                for (unsigned char ch : owner) hashCombineU64(heatmap_key, (uint64_t)ch);
+        const int requested_heatmap_quality_preset = std::clamp(heatmap_quality_preset, 0, 2);
+        const int effective_heatmap_quality_preset =
+            any_active_gpu_splat && !heatmap_allow_cpu_fallback ? 2 : requested_heatmap_quality_preset;
+        const bool high_quality_gpu_aggregate =
+            any_active_gpu_splat &&
+            !heatmap_allow_cpu_fallback;
+        const int smooth_heat_raster_base_px =
+            effective_heatmap_quality_preset == 0 ? 1024 :
+            effective_heatmap_quality_preset == 1 ? kSmoothHeatRasterBasePx :
+            2048;
+        const int smooth_heat_raster_max_px =
+            effective_heatmap_quality_preset == 0 ? 1536 :
+            effective_heatmap_quality_preset == 1 ? kSmoothHeatRasterMaxPx :
+            3072;
+        auto build_heatmap_key = [&](bool include_view_state) {
+            uint64_t key = 1469598103934665603ULL;
+            hashCombineU64(key, include_view_state ? 1ULL : 0ULL);
+            if (include_view_state) {
+                hashCombineU64(key, (uint64_t)zoom);
+                hashCombineU64(key, (uint64_t)math_zoom);
             }
-        }
-        for (const char* p = filter_zip; *p; ++p) hashCombineU64(heatmap_key, (uint64_t)(unsigned char)(*p));
-        hashCombineU64(heatmap_key, filter_use_date ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, (uint64_t)filter_year_min);
-        hashCombineU64(heatmap_key, (uint64_t)filter_year_max);
-        hashCombineU64(heatmap_key, crime_filter_enabled ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_use_year ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, (uint64_t)crime_year_min);
-        hashCombineU64(heatmap_key, (uint64_t)crime_year_max);
-        hashCombineU64(heatmap_key, crime_filter_homicide ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_robbery ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_assault ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_burglary ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_theft ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_auto_theft ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_drug ? 1ULL : 0ULL);
-        hashCombineU64(heatmap_key, crime_filter_shooting ? 1ULL : 0ULL);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            hashCombineU64(heatmap_key, layers[i].enabled ? 1ULL : 0ULL);
-            hashCombineU64(heatmap_key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
-            hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
-            hashCombineU64(heatmap_key, (uint64_t)((i < layer_parcel_detail_min_zoom.size()) ? layer_parcel_detail_min_zoom[i] : kParcelChoroplethMinZoom));
-            hashCombineU64(heatmap_key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
-            hashCombineU64(heatmap_key, (uint64_t)((i < layer_heatmap_algo.size()) ? (layer_heatmap_algo[i] + 1) : 0));
-            hashCombineU64(heatmap_key, (uint64_t)((i < layer_normalize_mode.size()) ? layer_normalize_mode[i] : 0));
-            hashCombineFloat(heatmap_key, i < layer_heatmap_cell_px.size() ? layer_heatmap_cell_px[i] : global_heat_cell_px);
-            hashCombineFloat(heatmap_key, i < layer_heatmap_bandwidth_px.size() ? layer_heatmap_bandwidth_px[i] : heatmap_bandwidth_px);
-            hashCombineFloat(heatmap_key, i < layer_heatmap_blur_sigma_px.size() ? layer_heatmap_blur_sigma_px[i] : heatmap_blur_sigma_px);
-            hashCombineFloat(heatmap_key, i < layer_heatmap_percentile_clip.size() ? layer_heatmap_percentile_clip[i] : heatmap_percentile_clip);
-            hashCombineU64(heatmap_key, (i < layer_heatmap_zoom_adaptive_bandwidth.size() && layer_heatmap_zoom_adaptive_bandwidth[i]) ? 1ULL : 0ULL);
-            hashCombineU64(heatmap_key, (i < layer_heatmap_multires_enabled.size() && layer_heatmap_multires_enabled[i]) ? 1ULL : 0ULL);
-            hashCombineFloat(heatmap_key, i < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[i] : heatmap_multires_blend);
-            hashCombineU64(heatmap_key, (uint64_t)layers[i].features.size());
-        }
+            hashCombineFloat(key, global_heat_cell_px);
+            hashCombineU64(key, (uint64_t)heatmap_algo);
+            hashCombineU64(key, (uint64_t)effective_heatmap_quality_preset);
+            hashCombineFloat(key, heatmap_bandwidth_px);
+            hashCombineFloat(key, heatmap_blur_sigma_px);
+            hashCombineFloat(key, heatmap_percentile_clip);
+            hashCombineU64(key, heatmap_zoom_adaptive_bandwidth ? 1ULL : 0ULL);
+            hashCombineU64(key, heatmap_multires_enabled ? 1ULL : 0ULL);
+            hashCombineFloat(key, heatmap_multires_blend);
+            hashCombineU64(key, heatmap_allow_cpu_fallback ? 1ULL : 0ULL);
+            hashCombineU64(key, filter_enabled ? 1ULL : 0ULL);
+            for (const char* p = filter_blocklot; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
+            for (const char* p = filter_status; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
+            for (const char* p = filter_address; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
+            for (const char* p = filter_owner; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
+            if (!selected_owners.empty()) {
+                std::vector<std::string> selected_owner_list(selected_owners.begin(), selected_owners.end());
+                std::sort(selected_owner_list.begin(), selected_owner_list.end());
+                for (const auto& owner : selected_owner_list) {
+                    hashCombineU64(key, (uint64_t)owner.size());
+                    for (unsigned char ch : owner) hashCombineU64(key, (uint64_t)ch);
+                }
+            }
+            for (const char* p = filter_zip; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
+            hashCombineU64(key, filter_use_date ? 1ULL : 0ULL);
+            hashCombineU64(key, (uint64_t)filter_year_min);
+            hashCombineU64(key, (uint64_t)filter_year_max);
+            hashCombineU64(key, crime_filter_enabled ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_use_year ? 1ULL : 0ULL);
+            hashCombineU64(key, (uint64_t)crime_year_min);
+            hashCombineU64(key, (uint64_t)crime_year_max);
+            hashCombineU64(key, crime_filter_homicide ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_robbery ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_assault ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_burglary ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_theft ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_auto_theft ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_drug ? 1ULL : 0ULL);
+            hashCombineU64(key, crime_filter_shooting ? 1ULL : 0ULL);
+            for (size_t i = 0; i < layers.size(); ++i) {
+                hashCombineU64(key, layers[i].enabled ? 1ULL : 0ULL);
+                hashCombineU64(key, (i < layer_heatmap_enabled.size() && layer_heatmap_enabled[i]) ? 1ULL : 0ULL);
+                hashCombineU64(key, (uint64_t)((i < layer_heatmap_max_zoom.size()) ? layer_heatmap_max_zoom[i] : 13));
+                hashCombineU64(key, (uint64_t)((i < layer_parcel_detail_min_zoom.size()) ? layer_parcel_detail_min_zoom[i] : kParcelChoroplethMinZoom));
+                hashCombineU64(key, (i < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[i]) ? 1ULL : 0ULL);
+                hashCombineU64(key, (uint64_t)((i < layer_heatmap_algo.size()) ? (layer_heatmap_algo[i] + 1) : 0));
+                hashCombineU64(key, (uint64_t)((i < layer_normalize_mode.size()) ? layer_normalize_mode[i] : 0));
+                hashCombineFloat(key, i < layer_heatmap_cell_px.size() ? layer_heatmap_cell_px[i] : global_heat_cell_px);
+                hashCombineFloat(key, i < layer_heatmap_bandwidth_px.size() ? layer_heatmap_bandwidth_px[i] : heatmap_bandwidth_px);
+                hashCombineFloat(key, i < layer_heatmap_blur_sigma_px.size() ? layer_heatmap_blur_sigma_px[i] : heatmap_blur_sigma_px);
+                hashCombineFloat(key, i < layer_heatmap_percentile_clip.size() ? layer_heatmap_percentile_clip[i] : heatmap_percentile_clip);
+                hashCombineU64(key, (i < layer_heatmap_zoom_adaptive_bandwidth.size() && layer_heatmap_zoom_adaptive_bandwidth[i]) ? 1ULL : 0ULL);
+                hashCombineU64(key, (i < layer_heatmap_multires_enabled.size() && layer_heatmap_multires_enabled[i]) ? 1ULL : 0ULL);
+                hashCombineFloat(key, i < layer_heatmap_multires_blend.size() ? layer_heatmap_multires_blend[i] : heatmap_multires_blend);
+                hashCombineU64(key, (uint64_t)layers[i].features.size());
+                if (layers[i].enabled || !layers[i].features.empty()) {
+                    const std::string sig = fileSignature(root / "data" / "layers" / layers[i].file);
+                    for (unsigned char ch : sig) hashCombineU64(key, (uint64_t)ch);
+                }
+            }
+            return key;
+        };
+        const uint64_t heatmap_view_key = build_heatmap_key(true);
+        const uint64_t heatmap_data_key = build_heatmap_key(false);
+        const uint64_t heatmap_key = high_quality_gpu_aggregate ? heatmap_data_key : heatmap_view_key;
+        auto aggregate_cache_path = [&](uint64_t key) {
+            std::ostringstream name;
+            name << std::hex << key << ".raster.bin";
+            return root / "data" / "cache" / "aggregate" / name.str();
+        };
         if (heatmap_async_inflight && heatmap_async_future.valid() &&
             heatmap_async_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             const auto heat_prof_begin = std::chrono::steady_clock::now();
@@ -220,6 +254,9 @@
             aggregate_entry.last_used_frame = ++heatmap_texture_cache_frame;
             bool aggregate_has_texture = false;
             if (done.second.has_raster && done.second.raster.w > 0 && done.second.raster.h > 0 && !done.second.raster.rgba.empty()) {
+                if (!high_quality_gpu_aggregate) {
+                    saveHeatmapRasterCache(aggregate_cache_path(done.first), done.first, done.second.raster);
+                }
                 aggregate_entry.raster = done.second.raster;
                 aggregate_has_texture = uploadRgbaTexture(
                     done.second.raster.rgba.data(),
@@ -227,29 +264,32 @@
                     (uint32_t)done.second.raster.h,
                     aggregate_entry.texture);
             }
-            auto old_cached_aggregate = heatmap_texture_cache.find(done.first);
-            if (old_cached_aggregate != heatmap_texture_cache.end()) {
-                destroyTileTexture(old_cached_aggregate->second.texture);
-                heatmap_texture_cache.erase(old_cached_aggregate);
-            }
-            heatmap_texture_cache.emplace(done.first, std::move(aggregate_entry));
-            prune_heatmap_texture_cache();
-            if (done.first == heatmap_key) {
-                const auto current_cached_aggregate = heatmap_texture_cache.find(done.first);
-                if (current_cached_aggregate != heatmap_texture_cache.end()) {
-                    heatmap_cached_cells = current_cached_aggregate->second.cells;
-                    heatmap_cached_raster_meta = current_cached_aggregate->second.raster;
-                    heatmap_raster_cache_key = aggregate_has_texture ? done.first : 0;
-                    heatmap_raster_texture_valid = aggregate_has_texture;
+            const bool aggregate_has_content = aggregate_has_texture || !aggregate_entry.cells.empty();
+            if (aggregate_has_content || !any_active_heatmap) {
+                auto old_cached_aggregate = heatmap_texture_cache.find(done.first);
+                if (old_cached_aggregate != heatmap_texture_cache.end()) {
+                    destroyTileTexture(old_cached_aggregate->second.texture);
+                    heatmap_texture_cache.erase(old_cached_aggregate);
                 }
-                if (!aggregate_has_texture && !smooth_only_heatmap) {
-                    destroyTileTexture(heatmap_raster_texture);
-                    heatmap_raster_texture_valid = false;
-                    heatmap_cached_raster_meta = {};
-                    heatmap_raster_cache_key = 0;
+                heatmap_texture_cache.emplace(done.first, std::move(aggregate_entry));
+                prune_heatmap_texture_cache();
+                if (done.first == heatmap_key) {
+                    const auto current_cached_aggregate = heatmap_texture_cache.find(done.first);
+                    if (current_cached_aggregate != heatmap_texture_cache.end()) {
+                        heatmap_cached_cells = current_cached_aggregate->second.cells;
+                        heatmap_cached_raster_meta = current_cached_aggregate->second.raster;
+                        heatmap_raster_cache_key = aggregate_has_texture ? done.first : 0;
+                        heatmap_raster_texture_valid = aggregate_has_texture;
+                    }
+                    if (!aggregate_has_texture && !smooth_only_heatmap) {
+                        destroyTileTexture(heatmap_raster_texture);
+                        heatmap_raster_texture_valid = false;
+                        heatmap_cached_raster_meta = {};
+                        heatmap_raster_cache_key = 0;
+                    }
+                    heatmap_cache_key = done.first;
+                    heatmap_cache_valid = true;
                 }
-                heatmap_cache_key = done.first;
-                heatmap_cache_valid = true;
             }
             prof_heatmap_ms_last.store(prof_ms_since(heat_prof_begin), std::memory_order_relaxed);
         }
@@ -271,6 +311,27 @@
                 cached_aggregate_for_key = &cached_it->second;
                 heatmap_cache_key = heatmap_key;
                 heatmap_cache_valid = true;
+            } else if (!heatmap_async_inflight && !high_quality_gpu_aggregate) {
+                HeatmapRaster disk_raster;
+                if (loadHeatmapRasterCache(aggregate_cache_path(heatmap_key), heatmap_key, disk_raster)) {
+                    CachedAggregateTexture disk_entry;
+                    disk_entry.raster = std::move(disk_raster);
+                    disk_entry.last_used_frame = ++heatmap_texture_cache_frame;
+                    if (uploadRgbaTexture(
+                            disk_entry.raster.rgba.data(),
+                            (uint32_t)disk_entry.raster.w,
+                            (uint32_t)disk_entry.raster.h,
+                            disk_entry.texture)) {
+                        auto inserted = heatmap_texture_cache.emplace(heatmap_key, std::move(disk_entry));
+                        prune_heatmap_texture_cache();
+                        auto current = heatmap_texture_cache.find(heatmap_key);
+                        if (current != heatmap_texture_cache.end()) {
+                            cached_aggregate_for_key = &current->second;
+                            heatmap_cache_key = heatmap_key;
+                            heatmap_cache_valid = true;
+                        }
+                    }
+                }
             }
         }
         const bool can_use_cached_heatmap =
@@ -463,6 +524,7 @@
             };
             ImU32 c = ImGui::ColorConvertFloat4ToU32(l.color);
             bool have_candidates = !should_recompute_heatmap || !layer_uses_heatmap_for_cache;
+            if (high_quality_gpu_aggregate && should_recompute_heatmap && layer_uses_heatmap_for_cache) have_candidates = false;
             if (have_candidates) {
                 have_candidates = queryLayerSpatialIndex(
                     layer_spatial[layer_idx], view_min_lon, view_min_lat, view_max_lon, view_max_lat, render_candidates);
@@ -471,7 +533,7 @@
                 for (uint32_t fidx : render_candidates) {
                     prof_features_considered_frame++;
                     const bool layer_uses_heatmap = layer_uses_heatmap_aggregate(layer_idx);
-                    if (smooth_only_heatmap && should_recompute_heatmap && layer_uses_heatmap && fidx % 2 != 0) continue;
+                    if (!high_quality_gpu_aggregate && smooth_only_heatmap && should_recompute_heatmap && layer_uses_heatmap && fidx % 2 != 0) continue;
                     if (fidx >= l.features.size()) continue;
                     auto& fg = l.features[(size_t)fidx];
                     if (!feature_passes_filters(layer_idx, (size_t)fidx, fg)) continue;
@@ -545,7 +607,7 @@
                 continue;
             }
             const size_t smooth_sample_stride =
-                (smooth_only_heatmap && should_recompute_heatmap && layer_uses_heatmap_for_cache && l.features.size() > kMaxSmoothHeatSamplesPerLayer)
+                (!high_quality_gpu_aggregate && smooth_only_heatmap && should_recompute_heatmap && layer_uses_heatmap_for_cache && l.features.size() > kMaxSmoothHeatSamplesPerLayer)
                     ? std::max<size_t>(1, (l.features.size() + kMaxSmoothHeatSamplesPerLayer - 1) / kMaxSmoothHeatSamplesPerLayer)
                     : 1;
             for (auto& fg : l.features) {
@@ -676,8 +738,8 @@
                     vh,
                     zoom_copy,
                     kMaxZoom,
-                    kSmoothHeatRasterBasePx,
-                    kSmoothHeatRasterMaxPx);
+                    smooth_heat_raster_base_px,
+                    smooth_heat_raster_max_px);
             });
             heatmap_async_inflight = true;
             heatmap_pending_key = key_copy;
@@ -856,12 +918,11 @@
             if (hovered_zoning) {
                 std::string zone_key = zoningClassKey(*hovered_zoning);
                 std::string zone_label = zoningClassLabel(*hovered_zoning);
-                std::string zone_description;
                 auto meta_it = zoning_metadata.find(zone_key);
                 if (meta_it != zoning_metadata.end()) {
                     if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
-                    zone_description = meta_it->second.description;
                 }
+                std::string zone_description = zoningDescription(*hovered_zoning, zoning_metadata);
                 const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
                 ImGui::SetWindowFontScale(1.45f);
                 ImGui::TextWrapped("%s", display_zone);
@@ -972,4 +1033,73 @@
         frame_finalization_ctx.profile_sample_pos = &profile_sample_pos;
         frame_finalization_ctx.profile_sample_count = &profile_sample_count;
         finalizeWorldSimFrame(frame_finalization_ctx);
+
+        if (download_queue_window && !glfwWindowShouldClose(download_queue_window)) {
+            if (download_queue_swapchain_rebuild) {
+                glfwGetFramebufferSize(download_queue_window, &dq_w, &dq_h);
+                if (dq_w > 0 && dq_h > 0) {
+                    ImGui::SetCurrentContext(download_queue_imgui_context);
+                    ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
+                    ImGui_ImplVulkanH_CreateOrResizeWindow(
+                        g_Instance,
+                        g_PhysicalDevice,
+                        g_Device,
+                        &download_queue_wd,
+                        g_QueueFamily,
+                        g_Allocator,
+                        dq_w,
+                        dq_h,
+                        g_MinImageCount);
+                    download_queue_wd.FrameIndex = 0;
+                    download_queue_swapchain_rebuild = false;
+                }
+            }
+            if (!download_queue_swapchain_rebuild) {
+                ImGui::SetCurrentContext(download_queue_imgui_context);
+                ImGui_ImplVulkan_NewFrame();
+                ImGui_ImplGlfw_NewFrame();
+                ImGui::NewFrame();
+                ImGuiIO& queue_io = ImGui::GetIO();
+                queue_io.FontGlobalScale = ui_text_scale;
+                ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
+                ImGui::SetNextWindowSize(queue_io.DisplaySize, ImGuiCond_Always);
+                if (ImGui::Begin(
+                        "Download Queue",
+                        nullptr,
+                        ImGuiWindowFlags_NoDecoration |
+                            ImGuiWindowFlags_NoMove |
+                            ImGuiWindowFlags_NoResize |
+                            ImGuiWindowFlags_NoCollapse)) {
+                    drawBasemapDownloadQueueSection(basemap_download, root, data_library_status_msg, resolve_download_label);
+                    ImGui::SeparatorText("Layer Data");
+                    if (layer_download_inflight && layer_download_active_idx < layers.size()) {
+                        ImGui::Text("Active: %s", layers[layer_download_active_idx].name.c_str());
+                        ImGui::TextDisabled("%s", layers[layer_download_active_idx].file.c_str());
+                    } else {
+                        ImGui::TextDisabled("No active layer download");
+                    }
+                    if (layer_download_queue.empty()) {
+                        ImGui::TextDisabled("No queued layer downloads");
+                    } else {
+                        for (size_t i = 0; i < layer_download_queue.size(); ++i) {
+                            const size_t idx = layer_download_queue[i];
+                            if (idx < layers.size()) ImGui::BulletText("%zu. %s", i + 1, layers[idx].name.c_str());
+                        }
+                    }
+                    if (!layer_download_last_event.empty()) ImGui::TextDisabled("Last queue event: %s", layer_download_last_event.c_str());
+                }
+                ImGui::End();
+                ImGui::Render();
+                ImDrawData* queue_draw_data = ImGui::GetDrawData();
+                if (queue_draw_data->DisplaySize.x > 0.0f && queue_draw_data->DisplaySize.y > 0.0f) {
+                    download_queue_wd.ClearValue.color.float32[0] = 0.95f;
+                    download_queue_wd.ClearValue.color.float32[1] = 0.95f;
+                    download_queue_wd.ClearValue.color.float32[2] = 0.96f;
+                    download_queue_wd.ClearValue.color.float32[3] = 1.00f;
+                    FrameRenderSecondary(&download_queue_wd, queue_draw_data, download_queue_swapchain_rebuild);
+                    FramePresentSecondary(&download_queue_wd, download_queue_swapchain_rebuild);
+                }
+                ImGui::SetCurrentContext(main_imgui_context);
+            }
+        }
     }

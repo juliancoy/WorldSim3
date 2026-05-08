@@ -12,6 +12,7 @@ void loadLayerUiState(
     const std::filesystem::path& root,
     std::vector<LayerDef>& layers,
     bool& hover_inspector_enabled,
+    int* hover_inspector_mode = nullptr,
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     std::vector<bool>* layer_fill_enabled = nullptr,
     std::vector<bool>* layer_hover_enabled = nullptr,
@@ -37,12 +38,14 @@ void loadLayerUiState(
     float* heatmap_percentile_clip = nullptr,
     bool* heatmap_zoom_adaptive_bandwidth = nullptr,
     bool* heatmap_multires_enabled = nullptr,
-    float* heatmap_multires_blend = nullptr);
+    float* heatmap_multires_blend = nullptr,
+    bool* heatmap_allow_cpu_fallback = nullptr);
 
 void saveLayerUiState(
     const std::filesystem::path& root,
     const std::vector<LayerDef>& layers,
     bool hover_inspector_enabled,
+    const int* hover_inspector_mode = nullptr,
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     const std::vector<bool>* layer_fill_enabled = nullptr,
     const std::vector<bool>* layer_hover_enabled = nullptr,
@@ -68,4 +71,5 @@ void saveLayerUiState(
     const float* heatmap_percentile_clip = nullptr,
     const bool* heatmap_zoom_adaptive_bandwidth = nullptr,
     const bool* heatmap_multires_enabled = nullptr,
-    const float* heatmap_multires_blend = nullptr);
+    const float* heatmap_multires_blend = nullptr,
+    const bool* heatmap_allow_cpu_fallback = nullptr);

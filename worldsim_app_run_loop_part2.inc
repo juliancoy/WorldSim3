@@ -64,21 +64,7 @@
                                     if (l.source_url.empty()) {
                                         data_library_status_msg = "No source URL for " + l.file;
                                     } else {
-                                        VersionedDownloadResult vd = downloadUrlVersioned(
-                                            l.source_url,
-                                            local_path,
-                                            root / "data" / "versions");
-                                        if (vd.ok) {
-                                            data_library_status_msg = (vd.not_modified ? "Checked " : "Downloaded/updated ") + l.file + " (" + vd.message + ")";
-                                            data_freshness_state[i] = FreshnessState::UpToDate;
-                                            data_freshness_msg[i] = vd.message;
-                                            mark_local_layer_exists(i, true);
-                                            enqueue_hydration(i, true);
-                                        } else {
-                                            data_library_status_msg = "Download failed for " + l.file + ": " + vd.message;
-                                            data_freshness_state[i] = FreshnessState::Error;
-                                            data_freshness_msg[i] = vd.message;
-                                        }
+                                        enqueue_layer_download_request(i);
                                     }
                                 }
                                 ImGui::PopStyleColor(3);
@@ -88,21 +74,7 @@
                                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.88f, 0.53f, 0.14f, 1.0f));
                                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.62f, 0.36f, 0.10f, 1.0f));
                                     if (ImGui::SmallButton("Update")) {
-                                        VersionedDownloadResult vd = downloadUrlVersioned(
-                                            l.source_url,
-                                            local_path,
-                                            root / "data" / "versions");
-                                        if (vd.ok) {
-                                            data_freshness_state[i] = FreshnessState::UpToDate;
-                                            data_freshness_msg[i] = vd.message;
-                                            data_library_status_msg = "Updated " + l.file + " (" + vd.message + ")";
-                                            mark_local_layer_exists(i, true);
-                                            enqueue_hydration(i, true);
-                                        } else {
-                                            data_freshness_state[i] = FreshnessState::Error;
-                                            data_freshness_msg[i] = vd.message;
-                                            data_library_status_msg = "Update failed for " + l.file + ": " + vd.message;
-                                        }
+                                        enqueue_layer_download_request(i);
                                     }
                                     ImGui::PopStyleColor(3);
                                 } else if (ImGui::SmallButton("Check")) {
@@ -147,7 +119,6 @@
             ImGui::End();
         }
         ImGui::End();
-
         ImGui::SetNextWindowPos(ImVec2(12, 784), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(420, (float)h - 796.0f), ImGuiCond_Always);
         ImGui::Begin("Performance and Stats", nullptr, ImGuiWindowFlags_NoCollapse);
@@ -242,73 +213,31 @@
         }
         ImGui::TextDisabled("status: %s", arkavo_status.c_str());
         if (!arkavo_err.empty()) ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "arkavo: %s", arkavo_err.c_str());
-        if (ImGui::Button("Scan LAN Peers")) {
-            lan_peers.clear();
-            if (!initNetworkSockets()) {
-                lan_scan_status = "Scan failed: network init error";
-            } else {
-                NetSocket s = ::socket(AF_INET, SOCK_DGRAM, 0);
-                if (s == kInvalidNetSocket) {
-                    lan_scan_status = "Scan failed: socket error";
-                } else {
-                    int on = 1;
-                    setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof(on));
-#if defined(_WIN32)
-                    DWORD rcv_to = 700;
-#else
-                    timeval rcv_to{};
-                    rcv_to.tv_sec = 0;
-                    rcv_to.tv_usec = 700000;
-#endif
-                    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&rcv_to), sizeof(rcv_to));
-                    sockaddr_in dst{};
-                    dst.sin_family = AF_INET;
-                    dst.sin_port = htons(8789);
-                    dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-                    const char* probe = "WS3_DISCOVER_V1";
-                    (void)netSendTo(s, probe, std::strlen(probe), (sockaddr*)&dst, sizeof(dst));
-                    std::unordered_set<std::string> seen;
-                    for (;;) {
-                        sockaddr_in src{};
-                        NetSockLen slen = sizeof(src);
-                        char rbuf[4096];
-                        NetSSize rn = netRecvFrom(s, rbuf, sizeof(rbuf) - 1, (sockaddr*)&src, &slen);
-                        if (rn <= 0) break;
-                        rbuf[rn] = '\0';
-                        json jr = json::parse(std::string(rbuf), nullptr, false);
-                        if (jr.is_discarded()) continue;
-                        char ipbuf[INET_ADDRSTRLEN] = {0};
-                        inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof(ipbuf));
-                        const std::string ip(ipbuf);
-                        if (seen.count(ip)) continue;
-                        seen.insert(ip);
-                        LanPeerInfo p;
-                        p.ip = ip;
-                        p.app_version = jr.value("app_version", "");
-                        p.protocol_version = jr.value("protocol_version", 0);
-                        p.dataset_port = jr.value("dataset_port", 8788);
-                        p.protocol_match = (p.protocol_version == kProtocolVersion);
-                        lan_peers.push_back(std::move(p));
-                    }
-                    netClose(s);
-                    size_t compatible = 0;
-                    for (const auto& p : lan_peers) if (p.protocol_match) compatible++;
-                    lan_scan_status = "Peers: " + std::to_string(lan_peers.size()) +
-                                      " | Compatible protocol: " + std::to_string(compatible);
-                }
-            }
-        }
+        if (ImGui::Button("Scan LAN Peers")) (void)scan_lan_peers(700, true);
         ImGui::SameLine();
         ImGui::TextDisabled("%s", lan_scan_status.c_str());
         if (!lan_peers.empty()) {
             ImGui::BeginChild("lan_peer_list", ImVec2(0, 90), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             for (const auto& p : lan_peers) {
-                ImGui::Text("%s:%d | app %s | protocol %d %s",
+                ImGui::Text("%s:%d | program %s %s | protocol %d %s",
                     p.ip.c_str(),
                     p.dataset_port,
+                    p.app_name.empty() ? "(unknown)" : p.app_name.c_str(),
                     p.app_version.empty() ? "(unknown)" : p.app_version.c_str(),
                     p.protocol_version,
                     p.protocol_match ? "[OK]" : "[MISMATCH]");
+            }
+            ImGui::EndChild();
+            std::unordered_map<std::string, int> program_counts;
+            for (const auto& p : lan_peers) {
+                const std::string name = p.app_name.empty() ? "(unknown)" : p.app_name;
+                const std::string ver = p.app_version.empty() ? "(unknown)" : p.app_version;
+                program_counts[name + " " + ver]++;
+            }
+            ImGui::TextDisabled("Peer Programs");
+            ImGui::BeginChild("lan_program_list", ImVec2(0, 70), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (const auto& kv : program_counts) {
+                ImGui::Text("%s | peers %d", kv.first.c_str(), kv.second);
             }
             ImGui::EndChild();
         }
@@ -365,24 +294,24 @@
             parcel_vacancy_generation_applied = -1;
             tax_maps_generation = 0;
             parcel_tax_generation_applied = -1;
-            parcel_vac_notice_by_feature.clear();
-            parcel_vac_rehab_by_feature.clear();
-            parcel_tax_lien_by_feature.clear();
-            parcel_tax_sale_by_feature.clear();
-            parcel_tax_lien_amount_by_feature.clear();
-            parcel_tax_sale_amount_by_feature.clear();
-            vacant_notice_count_by_blocklot.clear();
-            vacant_rehab_count_by_blocklot.clear();
-            tax_lien_count_by_blocklot.clear();
-            tax_lien_amount_by_blocklot.clear();
-            tax_sale_count_by_blocklot.clear();
-            tax_sale_amount_by_blocklot.clear();
-            real_property_by_blocklot.clear();
-            zoning_zone_label.clear();
-            zoning_zone_counts.clear();
-            zoning_zone_order.clear();
-            zoning_group_zones.clear();
-            zoning_group_order.clear();
+            releaseContainerStorage(parcel_vac_notice_by_feature);
+            releaseContainerStorage(parcel_vac_rehab_by_feature);
+            releaseContainerStorage(parcel_tax_lien_by_feature);
+            releaseContainerStorage(parcel_tax_sale_by_feature);
+            releaseContainerStorage(parcel_tax_lien_amount_by_feature);
+            releaseContainerStorage(parcel_tax_sale_amount_by_feature);
+            releaseContainerStorage(vacant_notice_count_by_blocklot);
+            releaseContainerStorage(vacant_rehab_count_by_blocklot);
+            releaseContainerStorage(tax_lien_count_by_blocklot);
+            releaseContainerStorage(tax_lien_amount_by_blocklot);
+            releaseContainerStorage(tax_sale_count_by_blocklot);
+            releaseContainerStorage(tax_sale_amount_by_blocklot);
+            releaseContainerStorage(real_property_by_blocklot);
+            releaseContainerStorage(zoning_zone_label);
+            releaseContainerStorage(zoning_zone_counts);
+            releaseContainerStorage(zoning_zone_order);
+            releaseContainerStorage(zoning_group_zones);
+            releaseContainerStorage(zoning_group_order);
             zoning_zone_discovered_feature_count = 0;
             visible_vacant_parcels_last_frame.store(0, std::memory_order_relaxed);
             vacant_parcels_matched_total.store(0, std::memory_order_relaxed);
@@ -390,7 +319,7 @@
             vacant_parcels_triangulated_renderable_total.store(0, std::memory_order_relaxed);
 
             for (size_t i = 0; i < layers.size(); ++i) {
-                layers[i].features.clear();
+                releaseContainerStorage(layers[i].features);
                 layer_spatial[i] = LayerSpatialIndex{};
                 if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
                 std::lock_guard<std::mutex> lk(status_mutex);
@@ -404,12 +333,13 @@
             for (size_t i = 0; i < layers.size(); ++i) {
                 if (layers[i].enabled) enqueue_hydration(i);
             }
+            trimProcessHeap();
             last_cache_clear_msg = "Cache cleared; rehydrating enabled layers.";
         }
         if (!last_cache_clear_msg.empty()) ImGui::TextDisabled("%s", last_cache_clear_msg.c_str());
         ImGui::End();
         bool ui_state_changed =
-            (hover_inspector_enabled != last_hover_inspector_enabled) ||
+            (hover_inspector_mode != last_hover_inspector_mode) ||
             zoning_filters_changed ||
             layer_fill_state_changed ||
             layer_hover_state_changed ||
@@ -517,6 +447,7 @@
                 root,
                 layers,
                 hover_inspector_enabled,
+                &hover_inspector_mode,
                 &zoning_zone_enabled,
                 &layer_fill_enabled,
                 &layer_hover_enabled,
@@ -542,11 +473,12 @@
                 &heatmap_percentile_clip,
                 &heatmap_zoom_adaptive_bandwidth,
                 &heatmap_multires_enabled,
-                &heatmap_multires_blend);
+                &heatmap_multires_blend,
+                &heatmap_allow_cpu_fallback);
             last_enabled_state.clear();
             last_enabled_state.reserve(layers.size());
             for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
-            last_hover_inspector_enabled = hover_inspector_enabled;
+            last_hover_inspector_mode = hover_inspector_mode;
         }
         {
             std::lock_guard<std::mutex> lk(hydrated_mutex);
@@ -616,6 +548,7 @@
                         tri_jobs.push_back(std::move(tj));
                     }
                     tri_cv.notify_one();
+                    trimProcessHeap();
                 }
             }
         }
@@ -633,6 +566,7 @@
                         triangulated_count.fetch_add(1, std::memory_order_relaxed);
                         std::lock_guard<std::mutex> lk3(status_mutex);
                         if (tr.index < layer_states.size()) layer_states[tr.index].status = LayerPipelineStatus::Ready;
+                        trimProcessHeap();
                     } else {
                         std::lock_guard<std::mutex> lk3(status_mutex);
                         if (tr.index < layer_states.size()) {
@@ -671,8 +605,13 @@
                             (meta_it != zoning_metadata.end() && !meta_it->second.label.empty()) ? meta_it->second.label : zlabel;
                     }
                     if (zoning_zone_color.find(zkey) == zoning_zone_color.end()) {
-                        zoning_zone_color[zkey] =
-                            (meta_it != zoning_metadata.end() && meta_it->second.has_color) ? meta_it->second.color : colorFromStableKey(zkey);
+                        if (app_settings.zoning_use_simcity_colors) {
+                            zoning_zone_color[zkey] = zoningShadeVariant(zoningColorFromConvention(zkey), zkey);
+                        } else {
+                            const ImVec4 base_color =
+                                (meta_it != zoning_metadata.end() && meta_it->second.has_color) ? meta_it->second.color : colorFromStableKey(zkey);
+                            zoning_zone_color[zkey] = zoningShadeVariant(base_color, zkey);
+                        }
                     }
                 }
                 std::sort(zoning_zone_order.begin(), zoning_zone_order.end());

@@ -30,6 +30,8 @@ public:
         uint32_t feature_idx,
         const LayerDef::FeatureGeom& fg);
 
+    void reserveWorldRings(size_t count);
+
     void appendWorldRingLine(const std::vector<ImVec2>& world_ring);
     void appendWorldRingLine(const std::vector<ImVec2>& world_ring, int ring_step);
     ImVec2 projectWorld(const ImVec2& world) const { return project_world_(world); }
@@ -52,6 +54,7 @@ private:
     std::function<ImVec2(const ImVec2&)> project_world_;
     std::unordered_map<uint64_t, std::vector<std::vector<ImVec2>>> world_rings_cache_;
     std::unordered_map<uint64_t, std::pair<ImVec2, ImVec2>> world_extent_cache_;
+    std::pair<ImVec2, ImVec2> last_world_extent_;
     std::vector<ImVec2> scratch_fill_verts_;
     std::vector<uint32_t> scratch_fill_indices_;
     std::vector<ImVec2> scratch_line_;

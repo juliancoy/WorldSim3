@@ -59,6 +59,7 @@ struct AppShutdownContext {
     GLFWwindow* window = nullptr;
     std::vector<LayerDef>* layers = nullptr;
     bool hover_inspector_enabled = true;
+    int* hover_inspector_mode = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
     std::vector<bool>* layer_hover_enabled = nullptr;
@@ -85,6 +86,7 @@ struct AppShutdownContext {
     bool* heatmap_zoom_adaptive_bandwidth = nullptr;
     bool* heatmap_multires_enabled = nullptr;
     float* heatmap_multires_blend = nullptr;
+    bool* heatmap_allow_cpu_fallback = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;
     std::thread* time_cube_ui_worker = nullptr;
     std::condition_variable* hydrate_req_cv = nullptr;
