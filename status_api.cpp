@@ -742,6 +742,15 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"tile_cache_size", prof_tile_cache_size.load(std::memory_order_relaxed)},
                     {"tile_cache_max", kMaxTileCache}
                 };
+                out["heatmap_aggregate"] = {
+                    {"gpu_splat_active", ctx.prof_heatmap_gpu_splat_active && ctx.prof_heatmap_gpu_splat_active->load(std::memory_order_relaxed)},
+                    {"high_quality", ctx.prof_heatmap_high_quality && ctx.prof_heatmap_high_quality->load(std::memory_order_relaxed)},
+                    {"cache_valid", ctx.prof_heatmap_cache_valid && ctx.prof_heatmap_cache_valid->load(std::memory_order_relaxed)},
+                    {"texture_resident", ctx.prof_heatmap_texture_resident && ctx.prof_heatmap_texture_resident->load(std::memory_order_relaxed)},
+                    {"async_inflight", ctx.prof_heatmap_async_inflight && ctx.prof_heatmap_async_inflight->load(std::memory_order_relaxed)},
+                    {"cache_key", ctx.prof_heatmap_cache_key ? ctx.prof_heatmap_cache_key->load(std::memory_order_relaxed) : 0},
+                    {"texture_cache_entries", ctx.prof_heatmap_texture_cache_entries ? ctx.prof_heatmap_texture_cache_entries->load(std::memory_order_relaxed) : 0}
+                };
                 json layer_profile = build_layer_profile();
                 out["layers"] = std::move(layer_profile["layers"]);
                 out["totals"] = std::move(layer_profile["totals"]);

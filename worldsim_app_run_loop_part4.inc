@@ -791,6 +791,17 @@
             cached_aggregate_for_key ? &cached_aggregate_for_key->raster : &heatmap_cached_raster_meta;
         heatmap_draw_ctx.draw_cells = &draw_cells;
         heatmap_draw_ctx.project_world = project_world;
+        prof_heatmap_gpu_splat_active.store(any_active_gpu_splat, std::memory_order_relaxed);
+        prof_heatmap_high_quality.store(high_quality_gpu_aggregate, std::memory_order_relaxed);
+        prof_heatmap_cache_valid.store(can_use_cached_heatmap, std::memory_order_relaxed);
+        prof_heatmap_texture_resident.store(
+            heatmap_draw_ctx.heatmap_raster_texture_valid &&
+            heatmap_draw_ctx.heatmap_raster_texture &&
+            heatmap_draw_ctx.heatmap_raster_texture->descriptor,
+            std::memory_order_relaxed);
+        prof_heatmap_async_inflight.store(heatmap_async_inflight, std::memory_order_relaxed);
+        prof_heatmap_cache_key.store(heatmap_cache_valid ? heatmap_cache_key : 0, std::memory_order_relaxed);
+        prof_heatmap_texture_cache_entries.store(heatmap_texture_cache.size(), std::memory_order_relaxed);
         drawHeatmapPass(heatmap_draw_ctx);
         if (any_active_gpu_splat && heatmap_async_inflight && !can_use_cached_heatmap) {
             const char* loading_label = "Generating Aggregate";

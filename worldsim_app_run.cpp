@@ -324,6 +324,13 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<size_t> prof_features_drawn_last{0};
     std::atomic<size_t> prof_heat_samples_last{0};
     std::atomic<size_t> prof_retired_textures{0};
+    std::atomic<bool> prof_heatmap_gpu_splat_active{false};
+    std::atomic<bool> prof_heatmap_high_quality{false};
+    std::atomic<bool> prof_heatmap_cache_valid{false};
+    std::atomic<bool> prof_heatmap_texture_resident{false};
+    std::atomic<bool> prof_heatmap_async_inflight{false};
+    std::atomic<uint64_t> prof_heatmap_cache_key{0};
+    std::atomic<size_t> prof_heatmap_texture_cache_entries{0};
     std::atomic<size_t> prof_tile_cache_size{0};
     std::mutex profile_mutex;
     std::vector<ProfileFrameSample> profile_samples(600);
@@ -635,7 +642,14 @@ int runWorldSim3App(int argc, char** argv) {
         &prof_features_considered_last,
         &prof_features_drawn_last,
         &prof_heat_samples_last,
-        &prof_retired_textures
+        &prof_retired_textures,
+        &prof_heatmap_gpu_splat_active,
+        &prof_heatmap_high_quality,
+        &prof_heatmap_cache_valid,
+        &prof_heatmap_texture_resident,
+        &prof_heatmap_async_inflight,
+        &prof_heatmap_cache_key,
+        &prof_heatmap_texture_cache_entries
     });
 
     std::mutex p2p_mutex;

@@ -88,6 +88,13 @@ struct StatusApiContext {
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
+    std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
+    std::atomic<bool>* prof_heatmap_high_quality = nullptr;
+    std::atomic<bool>* prof_heatmap_cache_valid = nullptr;
+    std::atomic<bool>* prof_heatmap_texture_resident = nullptr;
+    std::atomic<bool>* prof_heatmap_async_inflight = nullptr;
+    std::atomic<uint64_t>* prof_heatmap_cache_key = nullptr;
+    std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
 };
 
 std::thread startStatusApiWorker(StatusApiContext ctx);
