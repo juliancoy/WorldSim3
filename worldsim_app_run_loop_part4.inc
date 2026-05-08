@@ -20,15 +20,13 @@
             }
             const bool selected_owner_filter_active =
                 !selected_owners.empty() &&
-                parcel_layer_idx >= 0 &&
-                (int)layer_idx == parcel_layer_idx;
+                real_property_layer_idx >= 0 &&
+                (size_t)real_property_layer_idx < layers.size();
             if (!filter_enabled && !selected_owner_filter_active) return true;
             const LayerDef::FeatureGeom* rp_join = nullptr;
-            if (parcel_layer_idx >= 0 &&
-                (int)layer_idx == parcel_layer_idx &&
-                real_property_layer_idx >= 0 &&
+            if (real_property_layer_idx >= 0 &&
                 (size_t)real_property_layer_idx < layers.size()) {
-                std::string bl = normalizeJoinKey(first_prop(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"}));
+                std::string bl = featureBlockLotJoinKey(fg);
                 if (!bl.empty()) {
                     auto itrp = real_property_by_blocklot.find(bl);
                     if (itrp != real_property_by_blocklot.end() &&
