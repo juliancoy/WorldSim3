@@ -155,9 +155,8 @@
             filtered_aggregate_snapshot = {};
         }
 
-        const float right_panel_w = 360.0f;
-        ImGui::SetNextWindowPos(ImVec2((float)w - right_panel_w - 12.0f, 12.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(right_panel_w, (float)h - 24.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(layout_w - right_panel_w - layout_margin, layout_margin), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(right_panel_w, main_panel_h), ImGuiCond_Always);
         ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
         if (ImGui::BeginTabBar("right_tabs")) {
         if (ImGui::BeginTabItem("Filters")) {
@@ -765,11 +764,9 @@
         }
         ImGui::End();
 
-        const float map_x = 440.0f;
-        const float map_w = std::max(260.0f, (float)w - map_x - right_panel_w - 24.0f);
-        ImGui::SetNextWindowPos(ImVec2(map_x, 12), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(map_w, (float)h - 24.0f), ImGuiCond_Always);
-        ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::SetNextWindowPos(ImVec2(map_x, layout_margin), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(map_w, main_panel_h), ImGuiCond_Always);
+        ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (ImGui::BeginTabBar("main_view_tabs")) {
         if (ImGui::BeginTabItem("Map")) {
         ImVec2 origin = ImGui::GetCursorScreenPos();

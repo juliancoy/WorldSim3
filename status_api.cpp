@@ -132,6 +132,8 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& perf_frame_ms_avg = *ctx.perf_frame_ms_avg;
         auto& perf_frame_ms_last = *ctx.perf_frame_ms_last;
         auto& perf_fps_avg = *ctx.perf_fps_avg;
+        auto& ui_left_panel_frac = *ctx.ui_left_panel_frac;
+        auto& ui_right_panel_frac = *ctx.ui_right_panel_frac;
         auto& render_fill_attempts_last_frame = *ctx.render_fill_attempts_last_frame;
         auto& render_fill_success_last_frame = *ctx.render_fill_success_last_frame;
         auto& render_fill_no_triangles_last_frame = *ctx.render_fill_no_triangles_last_frame;
@@ -428,6 +430,22 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << "\r\nConnection: close\r\n\r\n" << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/set_ui") {
+                const std::string left = get_q("left_panel_frac");
+                const std::string right = get_q("right_panel_frac");
+                if (!left.empty()) {
+                    ui_left_panel_frac.store(std::clamp(std::stod(left), 0.08, 0.70), std::memory_order_relaxed);
+                }
+                if (!right.empty()) {
+                    ui_right_panel_frac.store(std::clamp(std::stod(right), 0.08, 0.50), std::memory_order_relaxed);
+                }
+                send_json(200, "OK", {
+                    {"ok", true},
+                    {"layout", {
+                        {"left_panel_frac", ui_left_panel_frac.load(std::memory_order_relaxed)},
+                        {"right_panel_frac", ui_right_panel_frac.load(std::memory_order_relaxed)}
+                    }}
+                });
             } else if (path == "/set_layer") {
                 std::string file = get_q("file");
                 std::string enabled = get_q("enabled");
@@ -699,6 +717,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"center_lon", current_lon_state.load(std::memory_order_relaxed)},
                     {"center_lat", current_lat_state.load(std::memory_order_relaxed)}
                 };
+                out["layout"] = {
+                    {"left_panel_frac", ui_left_panel_frac.load(std::memory_order_relaxed)},
+                    {"right_panel_frac", ui_right_panel_frac.load(std::memory_order_relaxed)}
+                };
                 {
                     std::lock_guard<std::mutex> lk(layer_fill_mutex);
                     json layer_ui = json::array();
@@ -743,15 +765,31 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
             } else if (path == "/screenshot") {
+                const std::string native_q = toLowerAscii(urlDecode(get_q("native")));
+                const std::string fullres_q = toLowerAscii(urlDecode(get_q("fullres")));
+                const std::string raw_q = toLowerAscii(urlDecode(get_q("raw")));
+                const bool request_native =
+                    native_q == "1" || native_q == "true" || native_q == "yes" || native_q == "on" ||
+                    fullres_q == "1" || fullres_q == "true" || fullres_q == "yes" || fullres_q == "on" ||
+                    raw_q == "1" || raw_q == "true" || raw_q == "yes" || raw_q == "on";
                 uint64_t req_id = 0;
                 {
                     std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
                     g_ScreenshotState.req_id += 1;
                     req_id = g_ScreenshotState.req_id;
                     g_ScreenshotState.pending = true;
+                    g_ScreenshotState.request_native = request_native;
                     g_ScreenshotState.ok = false;
                     g_ScreenshotState.path.clear();
                     g_ScreenshotState.error.clear();
+                    g_ScreenshotState.native_width = 0;
+                    g_ScreenshotState.native_height = 0;
+                    g_ScreenshotState.logical_width = 0;
+                    g_ScreenshotState.logical_height = 0;
+                    g_ScreenshotState.output_width = 0;
+                    g_ScreenshotState.output_height = 0;
+                    g_ScreenshotState.framebuffer_scale_x = 1.0f;
+                    g_ScreenshotState.framebuffer_scale_y = 1.0f;
                 }
                 bool ready = false;
                 {
@@ -764,6 +802,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 json out;
                 out["supported"] = true;
                 out["format"] = "ppm";
+                out["native_requested"] = request_native;
                 if (!ready) {
                     out["ok"] = false;
                     out["error"] = "timed out waiting for render-thread capture";
@@ -779,6 +818,14 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         out["ok"] = g_ScreenshotState.ok;
                         out["path"] = g_ScreenshotState.path;
                         out["error"] = g_ScreenshotState.error;
+                        out["native_width"] = g_ScreenshotState.native_width;
+                        out["native_height"] = g_ScreenshotState.native_height;
+                        out["logical_width"] = g_ScreenshotState.logical_width;
+                        out["logical_height"] = g_ScreenshotState.logical_height;
+                        out["output_width"] = g_ScreenshotState.output_width;
+                        out["output_height"] = g_ScreenshotState.output_height;
+                        out["framebuffer_scale_x"] = g_ScreenshotState.framebuffer_scale_x;
+                        out["framebuffer_scale_y"] = g_ScreenshotState.framebuffer_scale_y;
                     }
                     std::string body = out.dump();
                     std::ostringstream os;

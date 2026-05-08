@@ -10,8 +10,19 @@ include(FetchContent)
 
 find_package(Vulkan REQUIRED)
 find_package(CURL REQUIRED)
-find_package(glfw3 QUIET)
-if(NOT glfw3_FOUND)
+
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glfw/CMakeLists.txt")
+  add_subdirectory(third_party/glfw)
+else()
+  find_package(glfw3 QUIET)
+endif()
+
+if(NOT TARGET glfw)
   FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git

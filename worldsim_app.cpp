@@ -118,6 +118,71 @@ static bool writePpmRgb(
     return true;
 }
 
+static bool writePpmRgbResized(
+    const fs::path& out_path,
+    const uint8_t* pixels,
+    uint32_t src_width,
+    uint32_t src_height,
+    size_t row_pitch,
+    VkFormat fmt,
+    uint32_t out_width,
+    uint32_t out_height,
+    std::string& err) {
+    if (out_width == src_width && out_height == src_height) {
+        return writePpmRgb(out_path, pixels, src_width, src_height, row_pitch, fmt, err);
+    }
+
+    std::ofstream out(out_path, std::ios::binary);
+    if (!out) {
+        err = "failed to open screenshot output";
+        return false;
+    }
+    const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB);
+    const bool rgba = (fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_R8G8B8A8_SRGB);
+    if (!bgra && !rgba) {
+        err = "unsupported swapchain format for screenshot";
+        return false;
+    }
+
+    out << "P6\n" << out_width << " " << out_height << "\n255\n";
+    std::vector<uint8_t> line((size_t)out_width * 3);
+    for (uint32_t y = 0; y < out_height; ++y) {
+        const uint32_t sy0 = (uint32_t)(((uint64_t)y * src_height) / out_height);
+        uint32_t sy1 = (uint32_t)(((uint64_t)(y + 1) * src_height + out_height - 1) / out_height);
+        sy1 = std::max(sy0 + 1, std::min(sy1, src_height));
+        for (uint32_t x = 0; x < out_width; ++x) {
+            const uint32_t sx0 = (uint32_t)(((uint64_t)x * src_width) / out_width);
+            uint32_t sx1 = (uint32_t)(((uint64_t)(x + 1) * src_width + out_width - 1) / out_width);
+            sx1 = std::max(sx0 + 1, std::min(sx1, src_width));
+
+            uint64_t r_sum = 0;
+            uint64_t g_sum = 0;
+            uint64_t b_sum = 0;
+            uint64_t count = 0;
+            for (uint32_t sy = sy0; sy < sy1; ++sy) {
+                const uint8_t* row = pixels + (size_t)sy * row_pitch;
+                for (uint32_t sx = sx0; sx < sx1; ++sx) {
+                    const uint8_t* px = row + (size_t)sx * 4;
+                    r_sum += rgba ? px[0] : px[2];
+                    g_sum += px[1];
+                    b_sum += rgba ? px[2] : px[0];
+                    count++;
+                }
+            }
+            const size_t i = (size_t)x * 3;
+            line[i + 0] = (uint8_t)(r_sum / count);
+            line[i + 1] = (uint8_t)(g_sum / count);
+            line[i + 2] = (uint8_t)(b_sum / count);
+        }
+        out.write(reinterpret_cast<const char*>(line.data()), (std::streamsize)line.size());
+    }
+    if (!out.good()) {
+        err = "failed writing screenshot file";
+        return false;
+    }
+    return true;
+}
+
 
 VkAllocationCallbacks* g_Allocator = nullptr;
 VkInstance g_Instance = VK_NULL_HANDLE;
@@ -777,13 +842,28 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
 
     uint64_t shot_req_id = 0;
+    bool shot_request_native = false;
     {
         std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
-        if (g_ScreenshotState.pending) shot_req_id = g_ScreenshotState.req_id;
+        if (g_ScreenshotState.pending) {
+            shot_req_id = g_ScreenshotState.req_id;
+            shot_request_native = g_ScreenshotState.request_native;
+        }
     }
     if (shot_req_id == 0) return;
 
-    auto complete_screenshot = [&](bool ok, const std::string& path, const std::string& error) {
+    auto complete_screenshot = [&](
+        bool ok,
+        const std::string& path,
+        const std::string& error,
+        uint32_t native_width = 0,
+        uint32_t native_height = 0,
+        uint32_t logical_width = 0,
+        uint32_t logical_height = 0,
+        uint32_t output_width = 0,
+        uint32_t output_height = 0,
+        float framebuffer_scale_x = 1.0f,
+        float framebuffer_scale_y = 1.0f) {
         std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
         if (g_ScreenshotState.pending && g_ScreenshotState.req_id == shot_req_id) {
             g_ScreenshotState.pending = false;
@@ -791,6 +871,14 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
             g_ScreenshotState.ok = ok;
             g_ScreenshotState.path = path;
             g_ScreenshotState.error = error;
+            g_ScreenshotState.native_width = native_width;
+            g_ScreenshotState.native_height = native_height;
+            g_ScreenshotState.logical_width = logical_width;
+            g_ScreenshotState.logical_height = logical_height;
+            g_ScreenshotState.output_width = output_width;
+            g_ScreenshotState.output_height = output_height;
+            g_ScreenshotState.framebuffer_scale_x = framebuffer_scale_x;
+            g_ScreenshotState.framebuffer_scale_y = framebuffer_scale_y;
             g_ScreenshotState.cv.notify_all();
         }
     };
@@ -807,6 +895,13 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     VkDeviceMemory staging_mem = VK_NULL_HANDLE;
     const uint32_t width = wd->Width;
     const uint32_t height = wd->Height;
+    const ImVec2 framebuffer_scale = draw_data ? draw_data->FramebufferScale : ImVec2(1.0f, 1.0f);
+    const float scale_x = framebuffer_scale.x > 0.0f ? framebuffer_scale.x : 1.0f;
+    const float scale_y = framebuffer_scale.y > 0.0f ? framebuffer_scale.y : 1.0f;
+    const uint32_t logical_width = std::max(1u, (uint32_t)std::lround((float)width / scale_x));
+    const uint32_t logical_height = std::max(1u, (uint32_t)std::lround((float)height / scale_y));
+    const uint32_t output_width = shot_request_native ? width : std::min(width, logical_width);
+    const uint32_t output_height = shot_request_native ? height : std::min(height, logical_height);
     const VkDeviceSize image_size = (VkDeviceSize)width * (VkDeviceSize)height * 4;
     createBuffer(
         image_size,
@@ -909,13 +1004,15 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
                   std::chrono::system_clock::now().time_since_epoch())
                   .count();
     fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + ".ppm");
-    const bool ok = writePpmRgb(
+    const bool ok = writePpmRgbResized(
         out_file,
         static_cast<const uint8_t*>(mapped),
         width,
         height,
         (size_t)width * 4,
         wd->SurfaceFormat.format,
+        output_width,
+        output_height,
         capture_err);
     vkUnmapMemory(g_Device, staging_mem);
     if (ok) out_path = out_file.string();
@@ -925,7 +1022,18 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     vkDestroyBuffer(g_Device, staging, g_Allocator);
     vkFreeMemory(g_Device, staging_mem, g_Allocator);
 
-    complete_screenshot(ok, out_path, capture_err);
+    complete_screenshot(
+        ok,
+        out_path,
+        capture_err,
+        width,
+        height,
+        logical_width,
+        logical_height,
+        output_width,
+        output_height,
+        framebuffer_scale.x,
+        framebuffer_scale.y);
 }
 
 void FramePresent(ImGui_ImplVulkanH_Window* wd) {

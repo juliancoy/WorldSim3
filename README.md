@@ -80,6 +80,7 @@ Set `WORLD_SIM3_PRELOAD_DATA=1` before launch to download at startup; use `WORLD
 
 LAN sharing and peer signaling are available while the app runs:
 - Status API (local only): `http://127.0.0.1:8787/status`
+- Screenshot API (local only): `http://127.0.0.1:8787/screenshot` returns logical window pixels on HiDPI displays; add `?native=1` for raw framebuffer pixels.
 - Dataset API (LAN): `http://<host-ip>:8788/datasets`
 - File fetch (LAN): `http://<host-ip>:8788/dataset/file?path=data/layers/<file>.geojson`
 - P2P signaling (LAN): `http://<host-ip>:8788/p2p/register`, `/p2p/publish`, `/p2p/poll`

@@ -119,7 +119,20 @@ int runWorldSim3App(int argc, char** argv) {
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(1600, 1000, "Baltimore Vulkan Map", nullptr, nullptr);
+    int initial_window_w = 1600;
+    int initial_window_h = 1000;
+    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
+        int work_x = 0;
+        int work_y = 0;
+        int work_w = 0;
+        int work_h = 0;
+        glfwGetMonitorWorkarea(monitor, &work_x, &work_y, &work_w, &work_h);
+        if (work_w > 0 && work_h > 0) {
+            initial_window_w = std::min(initial_window_w, std::max(640, (int)std::floor((float)work_w * 0.90f)));
+            initial_window_h = std::min(initial_window_h, std::max(420, (int)std::floor((float)work_h * 0.85f)));
+        }
+    }
+    GLFWwindow* window = glfwCreateWindow(initial_window_w, initial_window_h, "Baltimore Vulkan Map", nullptr, nullptr);
 
     uint32_t extensions_count = 0;
     const char** extensions = glfwGetRequiredInstanceExtensions(&extensions_count);
@@ -235,6 +248,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<double> perf_frame_ms_avg{0.0};
     std::atomic<double> perf_frame_ms_last{0.0};
     std::atomic<double> perf_fps_avg{0.0};
+    std::atomic<double> ui_left_panel_frac{0.34};
+    std::atomic<double> ui_right_panel_frac{0.24};
     std::atomic<double> prof_ui_ms_last{0.0};
     std::atomic<double> prof_owner_ms_last{0.0};
     std::atomic<double> prof_tile_ms_last{0.0};
@@ -510,6 +525,8 @@ int runWorldSim3App(int argc, char** argv) {
         &perf_frame_ms_avg,
         &perf_frame_ms_last,
         &perf_fps_avg,
+        &ui_left_panel_frac,
+        &ui_right_panel_frac,
         &render_fill_attempts_last_frame,
         &render_fill_success_last_frame,
         &render_fill_no_triangles_last_frame,
