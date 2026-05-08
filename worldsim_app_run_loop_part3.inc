@@ -214,7 +214,20 @@
                     for (const auto& ev : parcel_events) {
                         ImGui::Separator();
                         if (!ev.date.empty()) {
-                            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.36f, 1.0f), "Date: %s", ev.date.c_str());
+                            const std::string date_label = std::string("Date: ") + ev.date;
+                            const ImVec2 date_pos = ImGui::GetCursorScreenPos();
+                            const ImVec2 date_text_size = ImGui::CalcTextSize(date_label.c_str());
+                            const ImVec2 date_pad(7.0f, 3.0f);
+                            ImDrawList* timeline_draw = ImGui::GetWindowDrawList();
+                            timeline_draw->AddRectFilled(
+                                date_pos,
+                                ImVec2(date_pos.x + date_text_size.x + date_pad.x * 2.0f,
+                                       date_pos.y + date_text_size.y + date_pad.y * 2.0f),
+                                IM_COL32(8, 10, 14, 235),
+                                4.0f);
+                            ImGui::SetCursorScreenPos(ImVec2(date_pos.x + date_pad.x, date_pos.y + date_pad.y));
+                            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.36f, 1.0f), "%s", date_label.c_str());
+                            ImGui::SetCursorScreenPos(ImVec2(date_pos.x, date_pos.y + date_text_size.y + date_pad.y * 2.0f + 2.0f));
                         } else {
                             ImGui::TextColored(ImVec4(0.82f, 0.84f, 0.88f, 1.0f), "Date unavailable");
                         }
