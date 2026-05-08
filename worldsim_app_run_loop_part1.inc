@@ -20,6 +20,7 @@
             }
         }
 
+        ImGui::SetCurrentContext(main_imgui_context);
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -131,6 +132,241 @@
             }
             std::fill(layer_profile_dirty.begin(), layer_profile_dirty.end(), false);
         };
+        auto layer_download_queue_path = [&]() {
+            return root / "data" / "layer_download_queue.json";
+        };
+        auto persist_layer_download_queue = [&]() {
+            json j = json::object();
+            j["schema_version"] = 1;
+            j["queued"] = json::array();
+            if (layer_download_inflight && layer_download_active_idx < layers.size()) {
+                j["queued"].push_back({{"file", layers[layer_download_active_idx].file}});
+            }
+            for (size_t idx : layer_download_queue) {
+                if (idx < layers.size()) j["queued"].push_back({{"file", layers[idx].file}});
+            }
+            fs::create_directories(root / "data");
+            std::ofstream out(layer_download_queue_path());
+            if (out) out << j.dump(2);
+        };
+        auto layer_download_pending = [&](size_t idx) {
+            if (idx >= layers.size()) return true;
+            if (layer_download_inflight && layer_download_active_idx == idx) return true;
+            for (size_t q : layer_download_queue) if (q == idx) return true;
+            return false;
+        };
+        auto load_layer_download_queue = [&]() {
+            if (layer_download_queue_loaded) return;
+            layer_download_queue_loaded = true;
+            std::ifstream in(layer_download_queue_path());
+            if (!in) return;
+            json j;
+            try {
+                in >> j;
+            } catch (...) {
+                layer_download_last_event = "Layer download queue file is invalid JSON; ignoring.";
+                data_library_status_msg = layer_download_last_event;
+                return;
+            }
+            if (!j.contains("queued") || !j["queued"].is_array()) return;
+            size_t loaded = 0;
+            for (const auto& row : j["queued"]) {
+                if (!row.is_object()) continue;
+                const std::string file = row.value("file", std::string());
+                if (file.empty()) continue;
+                for (size_t idx = 0; idx < layers.size(); ++idx) {
+                    if (layers[idx].file != file || layers[idx].source_url.empty() || layer_download_pending(idx)) continue;
+                    layer_download_queue.push_back(idx);
+                    loaded++;
+                    break;
+                }
+            }
+            if (loaded > 0) {
+                layer_download_last_event = "Loaded " + std::to_string(loaded) + " queued layer download(s) from previous run.";
+                data_library_status_msg = layer_download_last_event;
+            }
+        };
+        auto enqueue_layer_download_request = [&](size_t idx) {
+            if (idx >= layers.size()) return false;
+            if (layers[idx].source_url.empty()) {
+                layer_download_last_event = "No source URL for " + layers[idx].name;
+                data_library_status_msg = layer_download_last_event;
+                return false;
+            }
+            if (layer_download_inflight && layer_download_active_idx == idx) {
+                layer_download_last_event = "Already downloading: " + layers[idx].name;
+                data_library_status_msg = layer_download_last_event;
+                return false;
+            }
+            for (size_t q : layer_download_queue) {
+                if (q == idx) {
+                    layer_download_last_event = "Already queued: " + layers[idx].name;
+                    data_library_status_msg = layer_download_last_event;
+                    return false;
+                }
+            }
+            layer_download_queue.push_back(idx);
+            layer_download_last_event = "Queued layer download: " + layers[idx].name;
+            data_library_status_msg = layer_download_last_event;
+            persist_layer_download_queue();
+            return true;
+        };
+        auto scan_lan_peers = [&](int timeout_ms, bool update_status_text) {
+            lan_peers.clear();
+            if (!initNetworkSockets()) {
+                if (update_status_text) lan_scan_status = "Scan failed: network init error";
+                return size_t{0};
+            }
+            NetSocket s = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (s == kInvalidNetSocket) {
+                if (update_status_text) lan_scan_status = "Scan failed: socket error";
+                return size_t{0};
+            }
+            int on = 1;
+            setsockopt(s, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char*>(&on), sizeof(on));
+#if defined(_WIN32)
+            DWORD rcv_to = (DWORD)std::max(50, timeout_ms);
+#else
+            timeval rcv_to{};
+            rcv_to.tv_sec = std::max(0, timeout_ms) / 1000;
+            rcv_to.tv_usec = (std::max(0, timeout_ms) % 1000) * 1000;
+#endif
+            setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&rcv_to), sizeof(rcv_to));
+            sockaddr_in dst{};
+            dst.sin_family = AF_INET;
+            dst.sin_port = htons(8789);
+            dst.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+            const char* probe = "WS3_DISCOVER_V1";
+            (void)netSendTo(s, probe, std::strlen(probe), (sockaddr*)&dst, sizeof(dst));
+            std::unordered_set<std::string> seen;
+            for (;;) {
+                sockaddr_in src{};
+                NetSockLen slen = sizeof(src);
+                char rbuf[4096];
+                NetSSize rn = netRecvFrom(s, rbuf, sizeof(rbuf) - 1, (sockaddr*)&src, &slen);
+                if (rn <= 0) break;
+                rbuf[rn] = '\0';
+                json jr = json::parse(std::string(rbuf), nullptr, false);
+                if (jr.is_discarded()) continue;
+                char ipbuf[INET_ADDRSTRLEN] = {0};
+                inet_ntop(AF_INET, &src.sin_addr, ipbuf, sizeof(ipbuf));
+                const std::string ip(ipbuf);
+                if (seen.count(ip)) continue;
+                seen.insert(ip);
+                LanPeerInfo p;
+                p.ip = ip;
+                p.app_name = jr.value("app", "worldsim3");
+                p.app_version = jr.value("app_version", "");
+                p.protocol_version = jr.value("protocol_version", 0);
+                p.dataset_port = jr.value("dataset_port", 8788);
+                p.protocol_match = (p.protocol_version == kProtocolVersion);
+                lan_peers.push_back(std::move(p));
+            }
+            netClose(s);
+            lan_last_scan_at = std::chrono::steady_clock::now();
+            size_t compatible = 0;
+            for (const auto& p : lan_peers) if (p.protocol_match) compatible++;
+            if (update_status_text) {
+                lan_scan_status = "Peers: " + std::to_string(lan_peers.size()) +
+                                  " | Compatible protocol: " + std::to_string(compatible);
+            }
+            return compatible;
+        };
+        auto url_encode_component = [](const std::string& in) {
+            static const char* hex = "0123456789ABCDEF";
+            std::string out;
+            out.reserve(in.size() * 3);
+            for (unsigned char c : in) {
+                const bool safe =
+                    (c >= 'a' && c <= 'z') ||
+                    (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') ||
+                    c == '-' || c == '_' || c == '.' || c == '~' || c == '/';
+                if (safe) out.push_back((char)c);
+                else {
+                    out.push_back('%');
+                    out.push_back(hex[(c >> 4) & 0x0F]);
+                    out.push_back(hex[c & 0x0F]);
+                }
+            }
+            return out;
+        };
+        auto start_layer_download = [&](size_t idx) {
+            if (idx >= layers.size()) return;
+            layer_download_inflight = true;
+            layer_download_active_idx = idx;
+            layer_download_active_file = layers[idx].file;
+            const std::string source_url = layers[idx].source_url;
+            const fs::path local_layer_path = root / "data" / "layers" / layers[idx].file;
+            const auto now = std::chrono::steady_clock::now();
+            constexpr auto kLanAutoScanInterval = std::chrono::seconds(30);
+            if (now - lan_last_scan_at > kLanAutoScanInterval) {
+                (void)scan_lan_peers(250, false);
+            }
+            std::vector<std::pair<std::string, std::string>> peer_download_targets;
+            for (const auto& peer : lan_peers) {
+                if (!peer.protocol_match || peer.ip.empty() || peer.dataset_port <= 0) continue;
+                const std::string rel = "data/layers/" + layers[idx].file;
+                const std::string path_q = url_encode_component(rel);
+                std::string url = "http://" + peer.ip + ":" + std::to_string(peer.dataset_port) + "/dataset/file?path=" + path_q;
+                std::string label = peer.ip + ":" + std::to_string(peer.dataset_port);
+                peer_download_targets.push_back({std::move(label), std::move(url)});
+            }
+            layer_download_future = std::async(std::launch::async, [root, source_url, local_layer_path, peer_download_targets]() {
+                std::vector<std::string> peer_failures;
+                for (const auto& candidate : peer_download_targets) {
+                    VersionedDownloadResult peer_res = downloadUrlVersioned(candidate.second, local_layer_path, root / "data" / "versions");
+                    if (peer_res.ok) {
+                        peer_res.message = "LAN peer " + candidate.first + " | " + peer_res.message;
+                        return peer_res;
+                    }
+                    peer_failures.push_back(candidate.first + ": " + peer_res.message);
+                }
+                VersionedDownloadResult src_res = downloadUrlVersioned(source_url, local_layer_path, root / "data" / "versions");
+                if (!peer_failures.empty()) {
+                    if (src_res.ok) {
+                        src_res.message = "source fallback after LAN peer failures | " + src_res.message;
+                    } else {
+                        src_res.message = "LAN peers and source failed | " + src_res.message;
+                    }
+                }
+                return src_res;
+            });
+            layer_download_last_event = "Started layer download: " + layers[idx].name;
+            data_library_status_msg = layer_download_last_event;
+            persist_layer_download_queue();
+        };
+        auto queue_all_missing_layer_downloads = [&]() {
+            refresh_local_layer_exists_cache();
+            size_t queued = 0;
+            size_t missing_without_source = 0;
+            size_t already_present = 0;
+            size_t already_pending = 0;
+            for (size_t idx = 0; idx < layers.size(); ++idx) {
+                const bool local_exists = idx < local_layer_exists_cache.size() ? local_layer_exists_cache[idx] : false;
+                if (local_exists) {
+                    already_present++;
+                    continue;
+                }
+                if (layers[idx].source_url.empty()) {
+                    missing_without_source++;
+                    continue;
+                }
+                if (layer_download_pending(idx)) {
+                    already_pending++;
+                    continue;
+                }
+                if (enqueue_layer_download_request(idx)) queued++;
+            }
+            data_library_status_msg =
+                "Download All queued " + std::to_string(queued) +
+                " missing layer(s); " + std::to_string(already_present) +
+                " already present, " + std::to_string(already_pending) +
+                " already queued/active, " + std::to_string(missing_without_source) +
+                " missing without source URL";
+            layer_download_last_event = data_library_status_msg;
+            return queued;
+        };
         // Apply REST control commands on main thread.
         {
             int zc = api_zoom_cmd.exchange(-1, std::memory_order_relaxed);
@@ -163,129 +399,127 @@
                 }
                 api_layer_fill_cmds.clear();
             }
+            if (!api_layer_download_cmds.empty()) {
+                for (const auto& file : api_layer_download_cmds) {
+                    bool matched = false;
+                    for (size_t idx = 0; idx < layers.size(); ++idx) {
+                        if (layers[idx].file != file) continue;
+                        matched = true;
+                        if (layers[idx].source_url.empty()) {
+                            data_library_status_msg = "No source URL for " + layers[idx].file;
+                        } else {
+                            enqueue_layer_download_request(idx);
+                        }
+                        break;
+                    }
+                    if (!matched) {
+                        data_library_status_msg = "Download request ignored (unknown layer file): " + file;
+                    }
+                }
+                api_layer_download_cmds.clear();
+            }
+            const uint64_t ui_seq = api_ui_cmd_seq.load(std::memory_order_relaxed);
+            ImGuiIO& io = ImGui::GetIO();
+            if (api_ui_mouse_release_pending) {
+                io.AddMouseButtonEvent(std::clamp(api_ui_mouse_release_button, 0, 4), false);
+                api_ui_mouse_release_pending = false;
+            }
+            if (ui_seq != api_ui_cmd_last_seq) {
+                api_ui_cmd_last_seq = ui_seq;
+                const int kind = api_ui_cmd_kind.load(std::memory_order_relaxed);
+                const float x = (float)api_ui_cmd_x.load(std::memory_order_relaxed);
+                const float y = (float)api_ui_cmd_y.load(std::memory_order_relaxed);
+                const int button = std::clamp(api_ui_cmd_button.load(std::memory_order_relaxed), 0, 4);
+                const float scroll_y = (float)api_ui_cmd_scroll_y.load(std::memory_order_relaxed);
+                if (kind == 1) {
+                    io.AddMousePosEvent(x, y);
+                    io.AddMouseButtonEvent(button, true);
+                    api_ui_mouse_release_pending = true;
+                    api_ui_mouse_release_button = button;
+                } else if (kind == 2) {
+                    io.AddMousePosEvent(x, y);
+                } else if (kind == 3) {
+                    io.AddMouseWheelEvent(0.0f, scroll_y);
+                }
+            }
         }
         current_zoom_state.store(zoom, std::memory_order_relaxed);
         current_lon_state.store(center_lon, std::memory_order_relaxed);
         current_lat_state.store(center_lat, std::memory_order_relaxed);
-        auto start_basemap_download = [&](const std::string& target_dir, const std::string& url_tmpl) {
-            basemap_download_inflight = true;
-            basemap_download_label = target_dir;
-            basemap_download_started_at = std::chrono::steady_clock::now();
-            basemap_download_stop_requested.store(false, std::memory_order_relaxed);
-            basemap_download_stopped.store(false, std::memory_order_relaxed);
-            basemap_download_done.store(0, std::memory_order_relaxed);
-            basemap_download_total.store(0, std::memory_order_relaxed);
-            basemap_download_downloaded.store(0, std::memory_order_relaxed);
-            basemap_download_skipped.store(0, std::memory_order_relaxed);
-            basemap_download_failed.store(0, std::memory_order_relaxed);
-            basemap_download_bytes.store(0, std::memory_order_relaxed);
-            {
-                std::lock_guard<std::mutex> lk(basemap_download_mutex);
-                basemap_download_progress = "Preparing download...";
-            }
-            data_library_status_msg = "Basemap download started (" + target_dir + ")";
-            basemap_download_future = std::async(std::launch::async, [&, root, target_dir, url_tmpl]() {
-                const fs::path base = root / "data" / target_dir;
-                fs::create_directories(base);
-                const double min_lon = -76.75;
-                const double max_lon = -76.45;
-                const double min_lat = 39.18;
-                const double max_lat = 39.40;
-                size_t total = 0;
-                for (int z = 11; z <= 18; ++z) {
-                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
-                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
-                    if (x0 > x1) std::swap(x0, x1);
-                    if (y_min > y_max) std::swap(y_min, y_max);
-                    total += (size_t)(x1 - x0 + 1) * (size_t)(y_max - y_min + 1);
-                }
-                basemap_download_total.store(total, std::memory_order_relaxed);
-                size_t done = 0;
-                for (int z = 11; z <= 18; ++z) {
-                    if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
-                        basemap_download_stopped.store(true, std::memory_order_relaxed);
-                        break;
-                    }
-                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
-                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
-                    if (x0 > x1) std::swap(x0, x1);
-                    if (y_min > y_max) std::swap(y_min, y_max);
-                    for (int x = x0; x <= x1; ++x) {
-                        if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
-                            basemap_download_stopped.store(true, std::memory_order_relaxed);
-                            break;
-                        }
-                        for (int y = y_min; y <= y_max; ++y) {
-                            if (basemap_download_stop_requested.load(std::memory_order_relaxed)) {
-                                basemap_download_stopped.store(true, std::memory_order_relaxed);
-                                break;
-                            }
-                            fs::path out = base / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
-                            std::error_code ec;
-                            if (fs::exists(out, ec) && !ec) {
-                                basemap_download_skipped.fetch_add(1, std::memory_order_relaxed);
-                            } else {
-                                std::string url = url_tmpl;
-                                auto replace_all = [&](const std::string& from, const std::string& to) {
-                                    size_t pos = 0;
-                                    while ((pos = url.find(from, pos)) != std::string::npos) {
-                                        url.replace(pos, from.size(), to);
-                                        pos += to.size();
-                                    }
-                                };
-                                replace_all("{z}", std::to_string(z));
-                                replace_all("{x}", std::to_string(x));
-                                replace_all("{y}", std::to_string(y));
-                                std::string err;
-                                if (downloadUrlToFile(url, out, err)) {
-                                    basemap_download_downloaded.fetch_add(1, std::memory_order_relaxed);
-                                    std::error_code sec;
-                                    const auto sz = fs::file_size(out, sec);
-                                    if (!sec) basemap_download_bytes.fetch_add((size_t)sz, std::memory_order_relaxed);
-                                } else {
-                                    basemap_download_failed.fetch_add(1, std::memory_order_relaxed);
-                                }
-                            }
-                            done++;
-                            basemap_download_done.store(done, std::memory_order_relaxed);
-                            if (done % 32 == 0 || done == total) {
-                                std::lock_guard<std::mutex> lk(basemap_download_mutex);
-                                basemap_download_progress =
-                                    "Tiles " + std::to_string(done) + "/" + std::to_string(total) +
-                                    " | downloaded " + std::to_string(basemap_download_downloaded.load(std::memory_order_relaxed)) +
-                                    ", skipped " + std::to_string(basemap_download_skipped.load(std::memory_order_relaxed)) +
-                                    ", failed " + std::to_string(basemap_download_failed.load(std::memory_order_relaxed));
-                            }
-                        }
-                        if (basemap_download_stopped.load(std::memory_order_relaxed)) break;
-                    }
-                    if (basemap_download_stopped.load(std::memory_order_relaxed)) break;
-                }
-            });
-        };
         auto request_basemap_download = [&](const std::string& target_dir, const std::string& url_tmpl) {
-            if (basemap_download_inflight) {
-                basemap_download_queue.push_back({target_dir, url_tmpl});
-                data_library_status_msg = "Queued basemap download (" + target_dir + "). Queue size: " + std::to_string(basemap_download_queue.size());
-                return;
-            }
-            start_basemap_download(target_dir, url_tmpl);
+            requestBasemapDownload(basemap_download, root, target_dir, url_tmpl, data_library_status_msg);
+            basemap_coverage_dirty = true;
         };
-        if (basemap_download_inflight && basemap_download_future.valid() &&
-            basemap_download_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-            basemap_download_future.get();
-            basemap_download_inflight = false;
-            const bool stopped = basemap_download_stopped.load(std::memory_order_relaxed);
-            data_library_status_msg = std::string(stopped ? "Basemap download stopped (" : "Basemap download (") + basemap_download_label + "): " +
-                std::to_string(basemap_download_downloaded.load(std::memory_order_relaxed)) + " downloaded, " +
-                std::to_string(basemap_download_skipped.load(std::memory_order_relaxed)) + " skipped, " +
-                std::to_string(basemap_download_failed.load(std::memory_order_relaxed)) + " failed";
-            if (!stopped && !basemap_download_queue.empty()) {
-                const auto next = basemap_download_queue.front();
-                basemap_download_queue.pop_front();
-                start_basemap_download(next.first, next.second);
-            } else if (stopped) {
-                basemap_download_queue.clear();
+        loadBasemapDownloadQueue(basemap_download, root, data_library_status_msg);
+        load_layer_download_queue();
+        tickBasemapDownloadQueue(basemap_download, root, data_library_status_msg);
+        auto count_missing_tiles = [&](const std::string& target_dir) -> std::pair<size_t, size_t> {
+            const fs::path base = root / "data" / target_dir;
+            const double min_lon = -76.75;
+            const double max_lon = -76.45;
+            const double min_lat = 39.18;
+            const double max_lat = 39.40;
+            size_t missing = 0;
+            size_t total = 0;
+            for (int z = 11; z <= 18; ++z) {
+                auto [x0, y_max] = deg2num(min_lat, min_lon, z);
+                auto [x1, y_min] = deg2num(max_lat, max_lon, z);
+                if (x0 > x1) std::swap(x0, x1);
+                if (y_min > y_max) std::swap(y_min, y_max);
+                for (int x = x0; x <= x1; ++x) {
+                    for (int y = y_min; y <= y_max; ++y) {
+                        total++;
+                        std::error_code ec;
+                        const fs::path out = base / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
+                        if (!(fs::exists(out, ec) && !ec)) missing++;
+                    }
+                }
+            }
+            return {missing, total};
+        };
+        const auto basemap_now = std::chrono::steady_clock::now();
+        if (basemap_coverage_dirty ||
+            basemap_availability_last_check.time_since_epoch().count() == 0 ||
+            (basemap_now - basemap_availability_last_check) >= kBasemapCoverageRefreshInterval) {
+            std::tie(osm_missing_tiles_cached, osm_total_tiles_cached) = count_missing_tiles("tiles");
+            std::tie(topo_missing_tiles_cached, topo_total_tiles_cached) = count_missing_tiles("tiles_topo");
+            basemap_source_has_any_files_cached =
+                osm_total_tiles_cached > 0 && osm_missing_tiles_cached < osm_total_tiles_cached;
+            topo_tiles_available_cached =
+                (topo_total_tiles_cached > 0 && topo_missing_tiles_cached < topo_total_tiles_cached) ||
+                fs::exists(root / "data" / "tiles_topographic");
+            topo_vector_available_cached = fs::exists(root / "data" / "tiles_topo_vector.geojson");
+            basemap_availability_last_check = basemap_now;
+            basemap_coverage_dirty = false;
+        }
+        if (!layer_download_inflight && !layer_download_queue.empty()) {
+            const size_t idx = layer_download_queue.front();
+            layer_download_queue.pop_front();
+            persist_layer_download_queue();
+            start_layer_download(idx);
+        }
+        if (layer_download_inflight && layer_download_future.valid() &&
+            layer_download_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+            VersionedDownloadResult vd = layer_download_future.get();
+            const size_t idx = layer_download_active_idx;
+            layer_download_inflight = false;
+            layer_download_active_idx = (size_t)-1;
+            if (idx < layers.size()) {
+                if (vd.ok) {
+                    data_library_status_msg =
+                        (vd.not_modified ? "Checked " : "Downloaded/updated ") + layers[idx].file + " (" + vd.message + ")";
+                    if (idx < data_freshness_state.size()) data_freshness_state[idx] = FreshnessState::UpToDate;
+                    if (idx < data_freshness_msg.size()) data_freshness_msg[idx] = vd.message;
+                    mark_local_layer_exists(idx, true);
+                    enqueue_hydration(idx, true);
+                    layer_download_last_event = "Completed: " + layers[idx].name;
+                } else {
+                    data_library_status_msg = "Download failed for " + layers[idx].file + ": " + vd.message;
+                    if (idx < data_freshness_state.size()) data_freshness_state[idx] = FreshnessState::Error;
+                    if (idx < data_freshness_msg.size()) data_freshness_msg[idx] = vd.message;
+                    layer_download_last_event = "Failed: " + layers[idx].name + " (" + vd.message + ")";
+                }
+                persist_layer_download_queue();
             }
         }
         ImGui::SetNextWindowPos(ImVec2(layout_margin, layout_margin), ImGuiCond_Always);
@@ -297,8 +531,14 @@
         ImGui::SameLine();
         ImGui::Text("Vulkan map + Vulkan UI");
         size_t local_layer_count = 0;
+        size_t downloadable_missing_layer_count = 0;
+        size_t queueable_missing_layer_count = 0;
         for (size_t i = 0; i < local_layer_exists_cache.size(); ++i) {
             if (local_layer_exists_cache[i]) local_layer_count++;
+            else if (i < layers.size() && !layers[i].source_url.empty()) {
+                downloadable_missing_layer_count++;
+                if (!layer_download_pending(i)) queueable_missing_layer_count++;
+            }
         }
         ImGui::TextDisabled("Local data: %zu/%zu", local_layer_count, layers.size());
         ImGui::SliderInt("Zoom", &zoom, kMinZoom, kMaxZoom);
@@ -306,7 +546,11 @@
         const double lat_min = 39.18, lat_max = 39.40;
         ImGui::SliderScalar("Center Lon", ImGuiDataType_Double, &center_lon, &lon_min, &lon_max, "%.6f");
         ImGui::SliderScalar("Center Lat", ImGuiDataType_Double, &center_lat, &lat_min, &lat_max, "%.6f");
-        ImGui::Checkbox("Enable Hover Inspector", &hover_inspector_enabled);
+        const char* hover_inspector_mode_options[] = {"None", "Parcels", "Zoning", "Parcels + Zoning"};
+        if (ImGui::Combo("Hover Inspector", &hover_inspector_mode, hover_inspector_mode_options, IM_ARRAYSIZE(hover_inspector_mode_options))) {
+            hover_inspector_mode = std::clamp(hover_inspector_mode, 0, 3);
+            hover_inspector_enabled = hover_inspector_mode != 0;
+        }
         ImGui::SeparatorText("Heatmap");
         ImGui::TextDisabled("Global heatmap controls removed.");
         ImGui::TextDisabled("Use each layer's settings (⚙) to configure aggregate method and heatmap parameters.");
@@ -316,9 +560,7 @@
             app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
             saveAppSettings(root, app_settings);
         }
-        const bool topo_tiles_available =
-            fs::exists(root / "data" / "tiles_topo") ||
-            fs::exists(root / "data" / "tiles_topographic");
+        const bool topo_tiles_available = topo_tiles_available_cached;
         const char* basemap_options[] = {"OpenStreetMap", "Topographic"};
         int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
         ImGui::BeginDisabled(!topo_tiles_available);
@@ -345,44 +587,29 @@
         if (ImGui::Button("Hide All")) {
             for (auto& l : layers) l.enabled = false;
         }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(queueable_missing_layer_count == 0);
+        if (ImGui::Button("Download All")) {
+            queue_all_missing_layer_downloads();
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::BeginTooltip();
+            ImGui::Text("Queue all missing layer datasets with source URLs");
+            ImGui::TextDisabled("Missing downloadable: %zu", downloadable_missing_layer_count);
+            ImGui::TextDisabled("Queueable now: %zu", queueable_missing_layer_count);
+            ImGui::EndTooltip();
+        }
 
         if (ImGui::CollapsingHeader("Basemap Layers", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto dir_has_any_file = [&](const fs::path& p) {
-                std::error_code ec;
-                if (!fs::exists(p, ec) || ec) return false;
-                for (fs::recursive_directory_iterator it(p, ec), end; !ec && it != end; it.increment(ec)) {
-                    if (it->is_regular_file(ec)) return true;
-                }
-                return false;
-            };
-            auto count_missing_tiles = [&](const std::string& target_dir) -> std::pair<size_t, size_t> {
-                const fs::path base = root / "data" / target_dir;
-                const double min_lon = -76.75;
-                const double max_lon = -76.45;
-                const double min_lat = 39.18;
-                const double max_lat = 39.40;
-                size_t missing = 0;
-                size_t total = 0;
-                for (int z = 11; z <= 18; ++z) {
-                    auto [x0, y_max] = deg2num(min_lat, min_lon, z);
-                    auto [x1, y_min] = deg2num(max_lat, max_lon, z);
-                    if (x0 > x1) std::swap(x0, x1);
-                    if (y_min > y_max) std::swap(y_min, y_max);
-                    for (int x = x0; x <= x1; ++x) {
-                        for (int y = y_min; y <= y_max; ++y) {
-                            total++;
-                            std::error_code ec;
-                            fs::path out = base / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
-                            if (!(fs::exists(out, ec) && !ec)) missing++;
-                        }
-                    }
-                }
-                return {missing, total};
-            };
-            const auto [osm_missing, osm_total] = count_missing_tiles("tiles");
-            const auto [topo_missing, topo_total] = count_missing_tiles("tiles_topo");
-            const bool osm_tiles_available = dir_has_any_file(root / "data" / "tiles");
-            const bool topo_tiles_available = dir_has_any_file(root / "data" / "tiles_topo") || dir_has_any_file(root / "data" / "tiles_topographic");
+            const size_t osm_missing = osm_missing_tiles_cached;
+            const size_t osm_total = osm_total_tiles_cached;
+            const size_t topo_missing = topo_missing_tiles_cached;
+            const size_t topo_total = topo_total_tiles_cached;
+            const bool osm_tiles_available = basemap_source_has_any_files_cached;
+            const bool topo_tiles_available = topo_tiles_available_cached;
+            const bool topo_vector_available = topo_vector_available_cached;
+            const bool topo_any_available = topo_tiles_available || topo_vector_available;
             const bool osm_incomplete = osm_total > 0 && osm_missing > 0;
             const bool topo_incomplete = topo_total > 0 && topo_missing > 0;
             int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
@@ -436,14 +663,14 @@
                 }
                 ImGui::SameLine();
             }
-            ImGui::BeginDisabled(!topo_tiles_available);
+            ImGui::BeginDisabled(!topo_any_available);
             if (ImGui::RadioButton("Topographic", basemap_style_ui == 1)) {
                 app_settings.basemap_style = 1;
                 saveAppSettings(root, app_settings);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::BeginDisabled(!topo_tiles_available);
+            ImGui::BeginDisabled(!topo_any_available);
             if (ImGui::SmallButton("?##topo_display_settings")) ImGui::OpenPopup("topo_display_settings");
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered()) {
@@ -454,14 +681,47 @@
             if (ImGui::BeginPopup("topo_display_settings")) {
                 ImGui::TextUnformatted("Topographic");
                 ImGui::Separator();
+                if (ImGui::Checkbox("Use vector representation##topo_vector", &app_settings.topo_vector_enabled)) {
+                    saveAppSettings(root, app_settings);
+                }
                 if (ImGui::Checkbox("Greyscale underlying map##topo", &app_settings.grayscale_basemap)) {
                     saveAppSettings(root, app_settings);
                 }
                 ImGui::TextDisabled("Tile source: data/tiles_topo");
+                ImGui::TextDisabled("Vector source: data/tiles_topo_vector.geojson");
+                if (!topo_vector_available) {
+                    if (ImGui::SmallButton("D##topo_vector_geojson")) {
+                        const std::string url =
+                            "https://carto.nationalmap.gov/arcgis/rest/services/contours/MapServer/14/query"
+                            "?where=1%3D1&outFields=CONTOURELE&f=geojson"
+                            "&geometry=-76.75,39.18,-76.45,39.40"
+                            "&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects";
+                        std::string err;
+                        const fs::path out = root / "data" / "tiles_topo_vector.geojson";
+                        if (downloadUrlToFile(url, out, err)) {
+                            data_library_status_msg = "Downloaded topographic vector source.";
+                            basemap_coverage_dirty = true;
+                        } else {
+                            data_library_status_msg = std::string("Topographic vector download failed: ") + err;
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("Download vector contour GeoJSON for the Baltimore area");
+                        ImGui::EndTooltip();
+                    }
+                }
                 ImGui::EndPopup();
             }
-            if (!topo_tiles_available) {
-                ImGui::TextDisabled("Topographic tiles unavailable.");
+            if (!topo_tiles_available && !topo_vector_available) {
+                ImGui::TextDisabled("Topographic source unavailable: missing data/tiles_topo (or data/tiles_topographic) and data/tiles_topo_vector.geojson.");
+                ImGui::TextDisabled("Use D next to Topographic for raster tiles, or ? -> D for vector contours.");
+                if (basemap_download.inflight || !basemap_download.queue.empty()) {
+                    ImGui::TextDisabled("A basemap download job is active or queued. See Download Queue window.");
+                }
+            }
+            if (app_settings.topo_vector_enabled && !topo_vector_available) {
+                ImGui::TextDisabled("Topographic vector source unavailable (data/tiles_topo_vector.geojson).");
             }
             if (osm_total > 0) {
                 ImGui::TextDisabled("OSM coverage: %zu/%zu tiles present (z11-z18)", (size_t)(osm_total - osm_missing), osm_total);
@@ -469,70 +729,19 @@
             if (topo_total > 0) {
                 ImGui::TextDisabled("Topo coverage: %zu/%zu tiles present (z11-z18)", (size_t)(topo_total - topo_missing), topo_total);
             }
-            if (basemap_download_inflight) {
-                const size_t done = basemap_download_done.load(std::memory_order_relaxed);
-                const size_t total = std::max<size_t>(1, basemap_download_total.load(std::memory_order_relaxed));
-                const float frac = std::clamp((float)done / (float)total, 0.0f, 1.0f);
-                const double elapsed_s = std::max(0.001, std::chrono::duration<double>(std::chrono::steady_clock::now() - basemap_download_started_at).count());
-                const double tiles_per_s = (double)done / elapsed_s;
-                const double bytes_per_s = (double)basemap_download_bytes.load(std::memory_order_relaxed) / elapsed_s;
-                const size_t remaining = (done < total) ? (total - done) : 0;
-                const double eta_s = tiles_per_s > 0.001 ? ((double)remaining / tiles_per_s) : 0.0;
-                std::string progress_line;
-                {
-                    std::lock_guard<std::mutex> lk(basemap_download_mutex);
-                    progress_line = basemap_download_progress;
-                }
+            if (basemap_download.inflight) {
                 ImGui::Separator();
-                ImGui::TextUnformatted("Basemap download in progress...");
-                ImGui::ProgressBar(frac, ImVec2(-1.0f, 0.0f));
-                ImGui::Text("Speed: %.2f tiles/s | %.2f MB/s | ETA: %.0fs", tiles_per_s, bytes_per_s / (1024.0 * 1024.0), eta_s);
-                if (!basemap_download_queue.empty()) ImGui::TextDisabled("Queued requests: %zu", basemap_download_queue.size());
-                if (ImGui::Button("Stop Basemap Jobs")) {
-                    basemap_download_stop_requested.store(true, std::memory_order_relaxed);
-                    basemap_download_queue.clear();
-                    data_library_status_msg = "Stop requested for basemap downloads";
-                }
-                if (!progress_line.empty()) ImGui::TextWrapped("%s", progress_line.c_str());
+                ImGui::TextDisabled("Basemap download is active. See the Download Queue window.");
             }
         }
-
-        if (basemap_download_inflight) {
-            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
-            if (ImGui::Begin("Basemap Download", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
-                const size_t done = basemap_download_done.load(std::memory_order_relaxed);
-                const size_t total = std::max<size_t>(1, basemap_download_total.load(std::memory_order_relaxed));
-                const float frac = std::clamp((float)done / (float)total, 0.0f, 1.0f);
-                const double elapsed_s = std::max(0.001, std::chrono::duration<double>(std::chrono::steady_clock::now() - basemap_download_started_at).count());
-                const double tiles_per_s = (double)done / elapsed_s;
-                const double bytes_per_s = (double)basemap_download_bytes.load(std::memory_order_relaxed) / elapsed_s;
-                const size_t remaining = (done < total) ? (total - done) : 0;
-                const double eta_s = tiles_per_s > 0.001 ? ((double)remaining / tiles_per_s) : 0.0;
-                std::string progress_line;
-                {
-                    std::lock_guard<std::mutex> lk(basemap_download_mutex);
-                    progress_line = basemap_download_progress;
-                }
-                ImGui::Text("Source: %s", basemap_download_label.c_str());
-                ImGui::ProgressBar(frac, ImVec2(420.0f, 0.0f));
-                ImGui::Text("Done: %zu / %zu", done, total);
-                ImGui::Text("Downloaded: %zu | Skipped: %zu | Failed: %zu",
-                            basemap_download_downloaded.load(std::memory_order_relaxed),
-                            basemap_download_skipped.load(std::memory_order_relaxed),
-                            basemap_download_failed.load(std::memory_order_relaxed));
-                ImGui::Text("Speed: %.2f tiles/s | %.2f MB/s | ETA: %.0fs", tiles_per_s, bytes_per_s / (1024.0 * 1024.0), eta_s);
-                ImGui::Text("Bytes downloaded: %.2f MB", (double)basemap_download_bytes.load(std::memory_order_relaxed) / (1024.0 * 1024.0));
-                if (!basemap_download_queue.empty()) ImGui::TextDisabled("Queued requests: %zu", basemap_download_queue.size());
-                if (ImGui::Button("Stop Basemap Jobs##window")) {
-                    basemap_download_stop_requested.store(true, std::memory_order_relaxed);
-                    basemap_download_queue.clear();
-                    data_library_status_msg = "Stop requested for basemap downloads";
-                }
-                if (!progress_line.empty()) ImGui::TextWrapped("%s", progress_line.c_str());
+        auto resolve_download_label = [&](const std::string& key) -> std::string {
+            if (key == "tiles") return "OpenStreetMap";
+            if (key == "tiles_topo" || key == "tiles_topographic") return "Topographic";
+            for (const auto& layer : layers) {
+                if (layer.file == key || layer.name == key) return layer.name;
             }
-            ImGui::End();
-        }
-
+            return key;
+        };
         auto draw_category = [&](LayerDef::Category cat, const char* label) {
             if (!ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) return;
             std::string show_id = std::string("Show ") + label;
@@ -562,21 +771,7 @@
                     bool can_download = !l.source_url.empty();
                     if (ImGui::SmallButton("D")) {
                         if (can_download) {
-                            VersionedDownloadResult vd = downloadUrlVersioned(
-                                l.source_url,
-                                local_layer_path,
-                                root / "data" / "versions");
-                            if (vd.ok) {
-                                data_library_status_msg = (vd.not_modified ? "Checked " : "Downloaded/updated ") + l.file + " (" + vd.message + ")";
-                                data_freshness_state[idx] = FreshnessState::UpToDate;
-                                data_freshness_msg[idx] = vd.message;
-                                mark_local_layer_exists(idx, true);
-                                enqueue_hydration(idx, true);
-                            } else {
-                                data_library_status_msg = "Download failed for " + l.file + ": " + vd.message;
-                                data_freshness_state[idx] = FreshnessState::Error;
-                                data_freshness_msg[idx] = vd.message;
-                            }
+                            enqueue_layer_download_request(idx);
                         } else {
                             data_library_status_msg = "No source URL for " + l.file;
                         }
@@ -659,6 +854,7 @@
                 layer_settings_ctx.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
                 layer_settings_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
                 layer_settings_ctx.heatmap_algo = heatmap_algo;
+                layer_settings_ctx.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
                 layer_settings_ctx.layer_fill_mutex = &layer_fill_mutex;
                 layer_settings_ctx.layer_fill_state_changed = &layer_fill_state_changed;
                 layer_settings_ctx.layer_hover_state_changed = &layer_hover_state_changed;
@@ -793,6 +989,24 @@
         draw_category(LayerDef::Category::Zoning, "Zoning");
         bool zoning_filters_changed = false;
         if (zoning_layer_idx >= 0 && ImGui::CollapsingHeader("Zoning Filters", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Use SimCity zoning colors##zoning_simcity_colors", &app_settings.zoning_use_simcity_colors)) {
+                for (const auto& zkey : zoning_zone_order) {
+                    auto meta_it = zoning_metadata.find(zkey);
+                    if (app_settings.zoning_use_simcity_colors) {
+                        zoning_zone_color[zkey] = zoningShadeVariant(zoningColorFromConvention(zkey), zkey);
+                    } else {
+                        const ImVec4 base_color =
+                            (meta_it != zoning_metadata.end() && meta_it->second.has_color) ? meta_it->second.color : colorFromStableKey(zkey);
+                        zoning_zone_color[zkey] = zoningShadeVariant(base_color, zkey);
+                    }
+                }
+                saveAppSettings(root, app_settings);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("ON: SimCity-style palette (R=green, C=blue, I=yellow). OFF: zoning metadata/default colors.");
+                ImGui::EndTooltip();
+            }
             if (ImGui::Button("Show All Zones")) {
                 for (auto& kv : zoning_zone_enabled) {
                     if (!kv.second) zoning_filters_changed = true;
@@ -1063,6 +1277,19 @@
                 if (ImGui::Button("Rescan Local Files")) {
                     refresh_local_layer_exists_cache();
                     data_library_status_msg = "Rescanned local layer files";
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(queueable_missing_layer_count == 0);
+                if (ImGui::Button("Download All##data_library")) {
+                    queue_all_missing_layer_downloads();
+                }
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("Queue all missing layer datasets with source URLs");
+                    ImGui::TextDisabled("Missing downloadable: %zu", downloadable_missing_layer_count);
+                    ImGui::TextDisabled("Queueable now: %zu", queueable_missing_layer_count);
+                    ImGui::EndTooltip();
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(data_library_bulk_inflight);

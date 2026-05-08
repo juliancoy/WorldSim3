@@ -105,12 +105,11 @@ void drawZoningHoverTooltip(
     const std::unordered_map<std::string, ZoneMetadata>& zoning_metadata) {
     std::string zone_key = zoningClassKey(zone);
     std::string zone_label = zoningClassLabel(zone);
-    std::string zone_description;
     auto meta_it = zoning_metadata.find(zone_key);
     if (meta_it != zoning_metadata.end()) {
         if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
-        zone_description = meta_it->second.description;
     }
+    std::string zone_description = zoningDescription(zone, zoning_metadata);
     ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(440.0f);

@@ -80,6 +80,7 @@ void loadLayerUiState(
     const fs::path& root,
     std::vector<LayerDef>& layers,
     bool& hover_inspector_enabled,
+    int* hover_inspector_mode,
     std::unordered_map<std::string, bool>* zoning_zone_enabled,
     std::vector<bool>* layer_fill_enabled,
     std::vector<bool>* layer_hover_enabled,
@@ -105,7 +106,8 @@ void loadLayerUiState(
     float* heatmap_percentile_clip,
     bool* heatmap_zoom_adaptive_bandwidth,
     bool* heatmap_multires_enabled,
-    float* heatmap_multires_blend) {
+    float* heatmap_multires_blend,
+    bool* heatmap_allow_cpu_fallback) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -114,10 +116,19 @@ void loadLayerUiState(
     } catch (...) {
         return;
     }
-    if (j.contains("hover_inspector_enabled") && j["hover_inspector_enabled"].is_boolean()) {
-        hover_inspector_enabled = j["hover_inspector_enabled"].get<bool>();
-    } else if (j.contains("parcel_hover_enabled") && j["parcel_hover_enabled"].is_boolean()) {
-        hover_inspector_enabled = j["parcel_hover_enabled"].get<bool>();
+    bool have_mode = false;
+    if (hover_inspector_mode && j.contains("hover_inspector_mode") && j["hover_inspector_mode"].is_number_integer()) {
+        *hover_inspector_mode = std::clamp(j["hover_inspector_mode"].get<int>(), 0, 3);
+        hover_inspector_enabled = *hover_inspector_mode != 0;
+        have_mode = true;
+    }
+    if (!have_mode) {
+        if (j.contains("hover_inspector_enabled") && j["hover_inspector_enabled"].is_boolean()) {
+            hover_inspector_enabled = j["hover_inspector_enabled"].get<bool>();
+        } else if (j.contains("parcel_hover_enabled") && j["parcel_hover_enabled"].is_boolean()) {
+            hover_inspector_enabled = j["parcel_hover_enabled"].get<bool>();
+        }
+        if (hover_inspector_mode) *hover_inspector_mode = hover_inspector_enabled ? 3 : 0;
     }
     if (j.contains("layers") && j["layers"].is_object()) {
         const auto& obj = j["layers"];
@@ -252,6 +263,7 @@ void loadLayerUiState(
         if (heatmap_zoom_adaptive_bandwidth && hs.contains("zoom_adaptive_bandwidth") && hs["zoom_adaptive_bandwidth"].is_boolean()) *heatmap_zoom_adaptive_bandwidth = hs["zoom_adaptive_bandwidth"].get<bool>();
         if (heatmap_multires_enabled && hs.contains("multires_enabled") && hs["multires_enabled"].is_boolean()) *heatmap_multires_enabled = hs["multires_enabled"].get<bool>();
         if (heatmap_multires_blend && hs.contains("multires_blend") && hs["multires_blend"].is_number()) *heatmap_multires_blend = hs["multires_blend"].get<float>();
+        if (heatmap_allow_cpu_fallback && hs.contains("allow_cpu_fallback") && hs["allow_cpu_fallback"].is_boolean()) *heatmap_allow_cpu_fallback = hs["allow_cpu_fallback"].get<bool>();
     }
 }
 
@@ -259,6 +271,7 @@ void saveLayerUiState(
     const fs::path& root,
     const std::vector<LayerDef>& layers,
     bool hover_inspector_enabled,
+    const int* hover_inspector_mode,
     const std::unordered_map<std::string, bool>* zoning_zone_enabled,
     const std::vector<bool>* layer_fill_enabled,
     const std::vector<bool>* layer_hover_enabled,
@@ -284,10 +297,12 @@ void saveLayerUiState(
     const float* heatmap_percentile_clip,
     const bool* heatmap_zoom_adaptive_bandwidth,
     const bool* heatmap_multires_enabled,
-    const float* heatmap_multires_blend) {
+    const float* heatmap_multires_blend,
+    const bool* heatmap_allow_cpu_fallback) {
     fs::create_directories(root / "data");
     json j;
     j["hover_inspector_enabled"] = hover_inspector_enabled;
+    if (hover_inspector_mode) j["hover_inspector_mode"] = std::clamp(*hover_inspector_mode, 0, 3);
     json flags = json::object();
     for (const auto& l : layers) flags[l.file] = l.enabled;
     j["layers"] = flags;
@@ -394,6 +409,7 @@ void saveLayerUiState(
         if (heatmap_zoom_adaptive_bandwidth) hs["zoom_adaptive_bandwidth"] = *heatmap_zoom_adaptive_bandwidth;
         if (heatmap_multires_enabled) hs["multires_enabled"] = *heatmap_multires_enabled;
         if (heatmap_multires_blend) hs["multires_blend"] = *heatmap_multires_blend;
+        if (heatmap_allow_cpu_fallback) hs["allow_cpu_fallback"] = *heatmap_allow_cpu_fallback;
         j["heatmap_settings"] = std::move(hs);
     }
     std::ofstream out(root / "data" / "layer_ui_state.json");

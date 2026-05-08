@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -58,9 +59,16 @@ struct StatusApiContext {
     std::mutex* api_layer_mutex = nullptr;
     std::unordered_map<std::string, bool>* api_layer_enable_cmds = nullptr;
     std::unordered_map<std::string, bool>* api_layer_fill_cmds = nullptr;
+    std::vector<std::string>* api_layer_download_cmds = nullptr;
     std::atomic<int>* api_zoom_cmd = nullptr;
     std::atomic<double>* api_lon_cmd = nullptr;
     std::atomic<double>* api_lat_cmd = nullptr;
+    std::atomic<uint64_t>* api_ui_cmd_seq = nullptr;
+    std::atomic<int>* api_ui_cmd_kind = nullptr; // 0=none,1=click,2=move,3=scroll
+    std::atomic<double>* api_ui_cmd_x = nullptr;
+    std::atomic<double>* api_ui_cmd_y = nullptr;
+    std::atomic<int>* api_ui_cmd_button = nullptr;
+    std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
 
     std::mutex* layer_profile_mutex = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;
@@ -82,6 +90,13 @@ struct StatusApiContext {
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
+    std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
+    std::atomic<bool>* prof_heatmap_high_quality = nullptr;
+    std::atomic<bool>* prof_heatmap_cache_valid = nullptr;
+    std::atomic<bool>* prof_heatmap_texture_resident = nullptr;
+    std::atomic<bool>* prof_heatmap_async_inflight = nullptr;
+    std::atomic<uint64_t>* prof_heatmap_cache_key = nullptr;
+    std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
 };
 
 std::thread startStatusApiWorker(StatusApiContext ctx);

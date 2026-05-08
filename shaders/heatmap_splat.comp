@@ -1,0 +1,79 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+struct GpuSample {
+    vec4 a; // lon, lat, r, g
+    vec4 b; // b, prefer_gradient, pad, pad
+};
+
+layout(std430, binding = 0) readonly buffer Samples {
+    GpuSample samples[];
+};
+
+layout(std430, binding = 1) buffer Accum {
+    // 7 uints per pixel: density, r, g, b, w, grad_votes, solid_votes
+    uint data[];
+};
+
+layout(push_constant) uniform Push {
+    uint sample_count;
+    uint width;
+    uint height;
+    uint radius;
+    float min_lon;
+    float min_lat;
+    float max_lon;
+    float max_lat;
+    float sigma_r;
+} pc;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.sample_count || pc.width == 0u || pc.height == 0u) return;
+
+    GpuSample s = samples[i];
+    float lon = s.a.x;
+    float lat = s.a.y;
+    float cr = clamp(s.a.z, 0.0, 1.0);
+    float cg = clamp(s.a.w, 0.0, 1.0);
+    float cb = clamp(s.b.x, 0.0, 1.0);
+    bool prefer_gradient = s.b.y >= 0.5;
+
+    float lon_span = max(1e-6, pc.max_lon - pc.min_lon);
+    float lat_span = max(1e-6, pc.max_lat - pc.min_lat);
+    float px = (lon - pc.min_lon) * float(pc.width) / lon_span;
+    float py = (pc.max_lat - lat) * float(pc.height) / lat_span;
+
+    int cx = clamp(int(floor(px)), 0, int(pc.width) - 1);
+    int cy = clamp(int(floor(py)), 0, int(pc.height) - 1);
+
+    float sigma = max(1.0, pc.sigma_r);
+    float two_sigma2 = 2.0 * sigma * sigma;
+    int radius_i = int(pc.radius);
+
+    for (int dy = -radius_i; dy <= radius_i; ++dy) {
+        int y = cy + dy;
+        if (y < 0 || y >= int(pc.height)) continue;
+        for (int dx = -radius_i; dx <= radius_i; ++dx) {
+            int x = cx + dx;
+            if (x < 0 || x >= int(pc.width)) continue;
+
+            float d2 = float(dx * dx + dy * dy);
+            float w = exp(-d2 / two_sigma2);
+            uint wu = uint(clamp(w * 1024.0, 0.0, 4294967295.0));
+            if (wu == 0u) continue;
+
+            uint pix = uint(y) * pc.width + uint(x);
+            uint base = pix * 7u;
+
+            atomicAdd(data[base + 0u], wu);
+            atomicAdd(data[base + 1u], uint(cr * float(wu) * 255.0));
+            atomicAdd(data[base + 2u], uint(cg * float(wu) * 255.0));
+            atomicAdd(data[base + 3u], uint(cb * float(wu) * 255.0));
+            atomicAdd(data[base + 4u], wu);
+            if (prefer_gradient) atomicAdd(data[base + 5u], 1u);
+            else atomicAdd(data[base + 6u], 1u);
+        }
+    }
+}

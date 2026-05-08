@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <list>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -55,6 +56,7 @@ extern VkPhysicalDevice g_PhysicalDevice;
 extern VkDevice g_Device;
 extern uint32_t g_QueueFamily;
 extern VkQueue g_Queue;
+extern std::mutex g_QueueSubmitMutex;
 extern VkDescriptorPool g_DescriptorPool;
 extern VkSampler g_TileSampler;
 extern ImGui_ImplVulkanH_Window g_MainWindowData;
@@ -72,8 +74,11 @@ void CleanupVulkanWindow();
 void CleanupVulkan();
 void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data);
 void FramePresent(ImGui_ImplVulkanH_Window* wd);
+void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, bool& swapchain_rebuild);
+void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild);
 void drainRetiredTextures(bool force = false);
 void destroyTileTexture(TileTexture& tex);
 void destroyTileTextureNow(TileTexture& tex);
 bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, TileTexture& tex);
 TileSample getTileSample(const std::filesystem::path& root, const std::string& tile_root_dir, int z, int x, int y);
+const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path& root);

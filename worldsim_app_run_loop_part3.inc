@@ -186,129 +186,14 @@
             ImGui::TextUnformatted("Parcel Details");
             ImGui::Separator();
             const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
-            struct ParcelEventRow {
-                std::string date;
-                std::string event_type;
-                std::string status;
-                std::string amount;
-                std::string source_layer;
-            };
-            std::vector<ParcelEventRow> parcel_events;
-            auto first_nonempty_prop = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) -> std::string {
-                for (const char* k : keys) {
-                    std::string v = getPropertyValue(fg, k);
-                    if (!v.empty()) return v;
-                }
-                return std::string();
-            };
-            auto append_events_from_layer = [&](int layer_idx,
-                                                const char* event_type_label,
-                                                std::initializer_list<const char*> date_keys,
-                                                std::initializer_list<const char*> status_keys,
-                                                std::initializer_list<const char*> amount_keys) {
-                if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
-                const auto& lf = layers[(size_t)layer_idx].features;
-                for (const auto& feat : lf) {
-                    std::string ev_blocklot = normalizeJoinKey(first_nonempty_prop(feat, {"BLOCKLOT", "BLOCK_LOT", "LOT"}));
-                    if (ev_blocklot.empty() || ev_blocklot != blocklot) continue;
-                    ParcelEventRow row;
-                    row.date = trimDisplayValue(first_nonempty_prop(feat, date_keys));
-                    row.event_type = event_type_label;
-                    row.status = trimDisplayValue(first_nonempty_prop(feat, status_keys));
-                    row.amount = trimDisplayValue(first_nonempty_prop(feat, amount_keys));
-                    row.source_layer = layers[(size_t)layer_idx].name;
-                    parcel_events.push_back(std::move(row));
-                }
-            };
-            auto append_events_from_layer_spatial = [&](int layer_idx,
-                                                        const char* event_type_label,
-                                                        std::initializer_list<const char*> date_keys,
-                                                        std::initializer_list<const char*> status_keys,
-                                                        std::initializer_list<const char*> amount_keys) {
-                if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
-                const auto& lf = layers[(size_t)layer_idx].features;
-                for (const auto& feat : lf) {
-                    if (!feat.rings.empty()) continue;
-                    const float lon = feat.extent.min_lon;
-                    const float lat = feat.extent.min_lat;
-                    if (!pointInFeature(selected, lon, lat)) continue;
-                    ParcelEventRow row;
-                    row.date = trimDisplayValue(first_nonempty_prop(feat, date_keys));
-                    row.event_type = event_type_label;
-                    row.status = trimDisplayValue(first_nonempty_prop(feat, status_keys));
-                    row.amount = trimDisplayValue(first_nonempty_prop(feat, amount_keys));
-                    row.source_layer = layers[(size_t)layer_idx].name;
-                    parcel_events.push_back(std::move(row));
-                }
-            };
-            append_events_from_layer(
+            const std::vector<ParcelTimelineEvent> parcel_events = buildParcelTimeline(ParcelTimelineRequest{
+                &layers,
+                &selected,
+                selected_rp,
                 vacant_notice_layer_idx,
-                "Vacant Notice",
-                {"DateNotice", "DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
-                {"Status", "STATUS", "CASE_STATUS", "STATE"},
-                {"Amount", "AMOUNT", "LIENAMOUNT", "TOTAL_LIEN"});
-            append_events_from_layer(
                 vacant_rehab_layer_idx,
-                "Vacant Rehab",
-                {"DateIssue", "DateIssued", "DATE", "RECORD_DATE", "CREATED_DATE"},
-                {"Status", "STATUS", "CASE_STATUS", "STATE"},
-                {"Amount", "AMOUNT", "LIENAMOUNT", "TOTAL_LIEN"});
-            append_events_from_layer(
                 tax_lien_layer_idx,
-                "Tax Lien",
-                {"DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE"},
-                {"LIENAMOUNT", "TOTAL_LIEN", "Amount", "AMOUNT"});
-            append_events_from_layer(
-                tax_sale_layer_idx,
-                "Tax Sale",
-                {"DATE", "RECORD_DATE", "DateIssue", "DateIssued", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE"},
-                {"TOTAL_LIEN", "LIENAMOUNT", "Amount", "AMOUNT"});
-            auto find_layer_idx_by_file = [&](const char* file_name) -> int {
-                for (size_t i = 0; i < layers.size(); ++i) {
-                    if (layers[i].file == file_name) return (int)i;
-                }
-                return -1;
-            };
-            append_events_from_layer(
-                find_layer_idx_by_file("housing_building_permits_2019_present.geojson"),
-                "Building Permit (Cost)",
-                {"IssuedDate", "DATE", "RECORD_DATE", "CREATED_DATE"},
-                {"Description", "STATUS", "STATE"},
-                {"Cost", "AMOUNT", "Amount", "TOTAL"});
-            append_events_from_layer_spatial(
-                find_layer_idx_by_file("cip_fy14_20_projects_point.geojson"),
-                "CIP Project Allocation",
-                {"FY"},
-                {"Project_Title", "Name", "agency"},
-                {"Totals_1", "City_Bond_Funds", "Federal_Funds", "State_Funds", "Utility_Funds", "Revenue_Loans"});
-            append_events_from_layer(
-                find_layer_idx_by_file("foreclosure_filings.geojson"),
-                "Foreclosure Filing",
-                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE", "CASE_STATUS"},
-                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
-            append_events_from_layer(
-                find_layer_idx_by_file("receivership_filed_open.geojson"),
-                "Receivership (Open)",
-                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE", "CASE_STATUS"},
-                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
-            append_events_from_layer(
-                find_layer_idx_by_file("receivership_settled.geojson"),
-                "Receivership (Settled)",
-                {"DATE", "RECORD_DATE", "DateFiled", "FILED_DATE", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE", "CASE_STATUS"},
-                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
-            append_events_from_layer(
-                find_layer_idx_by_file("open_work_orders.geojson"),
-                "Open Work Order",
-                {"DATE", "RECORD_DATE", "DateIssued", "DateNotice", "CREATED_DATE"},
-                {"Status", "STATUS", "STATE", "CASE_STATUS"},
-                {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"});
-            std::sort(parcel_events.begin(), parcel_events.end(), [](const ParcelEventRow& a, const ParcelEventRow& b) {
-                return a.date > b.date;
+                tax_sale_layer_idx
             });
             ImGui::BeginChild("selected_parcel_fields", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             if (ImGui::CollapsingHeader("Summary", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -327,10 +212,25 @@
                 } else {
                     for (const auto& ev : parcel_events) {
                         ImGui::Separator();
-                        ImGui::Text("%s%s%s",
-                                    ev.event_type.c_str(),
-                                    ev.date.empty() ? "" : " | ",
-                                    ev.date.empty() ? "" : ev.date.c_str());
+                        if (!ev.date.empty()) {
+                            const std::string date_label = std::string("Date: ") + ev.date;
+                            const ImVec2 date_pos = ImGui::GetCursorScreenPos();
+                            const ImVec2 date_text_size = ImGui::CalcTextSize(date_label.c_str());
+                            const ImVec2 date_pad(7.0f, 3.0f);
+                            ImDrawList* timeline_draw = ImGui::GetWindowDrawList();
+                            timeline_draw->AddRectFilled(
+                                date_pos,
+                                ImVec2(date_pos.x + date_text_size.x + date_pad.x * 2.0f,
+                                       date_pos.y + date_text_size.y + date_pad.y * 2.0f),
+                                IM_COL32(8, 10, 14, 235),
+                                4.0f);
+                            ImGui::SetCursorScreenPos(ImVec2(date_pos.x + date_pad.x, date_pos.y + date_pad.y));
+                            ImGui::TextColored(ImVec4(1.0f, 0.86f, 0.36f, 1.0f), "%s", date_label.c_str());
+                            ImGui::SetCursorScreenPos(ImVec2(date_pos.x, date_pos.y + date_text_size.y + date_pad.y * 2.0f + 2.0f));
+                        } else {
+                            ImGui::TextColored(ImVec4(0.82f, 0.84f, 0.88f, 1.0f), "Date unavailable");
+                        }
+                        ImGui::TextUnformatted(ev.event_type.c_str());
                         if (!ev.status.empty()) ImGui::TextWrapped("Status: %s", ev.status.c_str());
                         if (!ev.amount.empty()) ImGui::TextWrapped("Amount: %s", ev.amount.c_str());
                         ImGui::TextDisabled("Source: %s", ev.source_layer.c_str());
@@ -361,12 +261,11 @@
             ImGui::Separator();
             std::string zone_key = zoningClassKey(selected);
             std::string zone_label = zoningClassLabel(selected);
-            std::string zone_description;
             auto meta_it = zoning_metadata.find(zone_key);
             if (meta_it != zoning_metadata.end()) {
                 if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
-                zone_description = meta_it->second.description;
             }
+            std::string zone_description = zoningDescription(selected, zoning_metadata);
             const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
             ImGui::SetWindowFontScale(1.6f);
             ImGui::TextWrapped("%s", display_zone);
@@ -872,9 +771,12 @@
         auto layer_inspect_active = [&](int idx) -> bool {
             return idx >= 0 && (size_t)idx < layer_inspect_enabled.size() && layer_inspect_enabled[(size_t)idx];
         };
-        const bool parcel_hover_active = hover_inspector_enabled && layer_hover_active(parcel_layer_idx);
+        const bool hover_parcels_enabled = (hover_inspector_mode == 1 || hover_inspector_mode == 3);
+        const bool hover_zoning_enabled = (hover_inspector_mode == 2 || hover_inspector_mode == 3);
+        hover_inspector_enabled = (hover_inspector_mode != 0);
+        const bool parcel_hover_active = hover_parcels_enabled && layer_hover_active(parcel_layer_idx);
         const bool parcel_inspect_active = layer_inspect_active(parcel_layer_idx);
-        const bool zoning_hover_active = hover_inspector_enabled && layer_hover_active(zoning_layer_idx);
+        const bool zoning_hover_active = hover_zoning_enabled && layer_hover_active(zoning_layer_idx);
         const bool zoning_inspect_active = layer_inspect_active(zoning_layer_idx);
 
         MapHoverQuery hover_query;
@@ -903,52 +805,85 @@
         int max_y = (int)std::floor((center_world.y + half_h_world) / 256.0) + 1;
         const int period = 1 << math_zoom;
         const int max_tile = period - 1;
-        const bool topo_tiles_available =
-            fs::exists(root / "data" / "tiles_topo") ||
-            fs::exists(root / "data" / "tiles_topographic");
-        const bool use_topo = (std::clamp(app_settings.basemap_style, 0, 1) == 1) && topo_tiles_available;
-        const std::string tile_root_dir = use_topo
-            ? (fs::exists(root / "data" / "tiles_topo") ? "tiles_topo" : "tiles_topographic")
-            : "tiles";
-        bool basemap_source_has_any_files = false;
-        {
-            std::error_code ec_walk;
-            const fs::path basemap_dir = root / "data" / tile_root_dir;
-            if (fs::exists(basemap_dir, ec_walk) && !ec_walk) {
-                for (fs::recursive_directory_iterator it(basemap_dir, ec_walk), end; !ec_walk && it != end; it.increment(ec_walk)) {
-                    if (it->is_regular_file(ec_walk)) {
-                        basemap_source_has_any_files = true;
-                        break;
+        const auto now_basemap_check = std::chrono::steady_clock::now();
+        if (basemap_availability_last_check.time_since_epoch().count() == 0 ||
+            std::chrono::duration<double>(now_basemap_check - basemap_availability_last_check).count() > 5.0) {
+            basemap_availability_last_check = now_basemap_check;
+            topo_tiles_available_cached =
+                fs::exists(root / "data" / "tiles_topo") ||
+                fs::exists(root / "data" / "tiles_topographic");
+            topo_vector_available_cached = fs::exists(root / "data" / "tiles_topo_vector.geojson");
+            const bool topo_dir_is_preferred = fs::exists(root / "data" / "tiles_topo");
+            const bool use_topo_for_cache =
+                (std::clamp(app_settings.basemap_style, 0, 1) == 1) &&
+                (topo_tiles_available_cached || topo_vector_available_cached);
+            tile_root_dir_cached = use_topo_for_cache
+                ? (topo_dir_is_preferred ? "tiles_topo" : "tiles_topographic")
+                : "tiles";
+            const bool use_topo_vector_for_cache =
+                use_topo_for_cache && app_settings.topo_vector_enabled && topo_vector_available_cached;
+            basemap_source_has_any_files_cached = use_topo_vector_for_cache;
+            if (!use_topo_vector_for_cache) {
+                std::error_code ec_walk;
+                const fs::path basemap_dir = root / "data" / tile_root_dir_cached;
+                if (fs::exists(basemap_dir, ec_walk) && !ec_walk) {
+                    for (fs::recursive_directory_iterator it(basemap_dir, ec_walk), end; !ec_walk && it != end; it.increment(ec_walk)) {
+                        if (it->is_regular_file(ec_walk)) {
+                            basemap_source_has_any_files_cached = true;
+                            break;
+                        }
                     }
                 }
             }
         }
+        const bool topo_tiles_available = topo_tiles_available_cached;
+        const bool topo_vector_available = topo_vector_available_cached;
+        const bool use_topo = (std::clamp(app_settings.basemap_style, 0, 1) == 1) && (topo_tiles_available || topo_vector_available);
+        const bool use_topo_vector = use_topo && app_settings.topo_vector_enabled && topo_vector_available;
+        const std::string& tile_root_dir = tile_root_dir_cached;
+        const bool basemap_source_has_any_files = basemap_source_has_any_files_cached;
 
         const auto tile_prof_begin = std::chrono::steady_clock::now();
-        for (int tx = min_x; tx <= max_x; ++tx) {
-            for (int ty = min_y; ty <= max_y; ++ty) {
-                int wrapped_x = tx;
-                while (wrapped_x < 0) wrapped_x += period;
-                while (wrapped_x > max_tile) wrapped_x -= period;
-                if (ty < 0 || ty > max_tile) continue;
-
-                TileSample sample = getTileSample(root, tile_root_dir, math_zoom, wrapped_x, ty);
-                if (!sample.tex) continue;
-
-                ImVec2 tile_world((float)(tx * 256), (float)(ty * 256));
-                ImVec2 p0 = project_world(tile_world);
-                ImVec2 p1(p0.x + (float)(256.0 * zoom_scale), p0.y + (float)(256.0 * zoom_scale));
-                draw->AddImage(
-                    (ImTextureID)sample.tex->descriptor,
-                    p0,
-                    p1,
-                    sample.uv0,
-                    sample.uv1,
-                    app_settings.grayscale_basemap ? IM_COL32(178, 178, 178, 255) : IM_COL32_WHITE);
-                if (app_settings.grayscale_basemap) {
-                    draw->AddRectFilled(p0, p1, IM_COL32(244, 244, 244, 78));
+        if (use_topo_vector) {
+            const auto& topo_lines = getTopoVectorLines(root);
+            const ImU32 line_col = app_settings.grayscale_basemap ? IM_COL32(98, 98, 98, 170) : IM_COL32(106, 84, 62, 168);
+            for (const auto& line_ll : topo_lines) {
+                if (line_ll.size() < 2) continue;
+                for (size_t i = 1; i < line_ll.size(); ++i) {
+                    const ImVec2 a_world = lonLatToWorldPx(line_ll[i - 1].x, line_ll[i - 1].y, math_zoom);
+                    const ImVec2 b_world = lonLatToWorldPx(line_ll[i].x, line_ll[i].y, math_zoom);
+                    const ImVec2 a = project_world(a_world);
+                    const ImVec2 b = project_world(b_world);
+                    draw->AddLine(a, b, line_col, 1.0f);
+                    prof_tiles_drawn_frame++;
                 }
-                prof_tiles_drawn_frame++;
+            }
+        } else {
+            for (int tx = min_x; tx <= max_x; ++tx) {
+                for (int ty = min_y; ty <= max_y; ++ty) {
+                    int wrapped_x = tx;
+                    while (wrapped_x < 0) wrapped_x += period;
+                    while (wrapped_x > max_tile) wrapped_x -= period;
+                    if (ty < 0 || ty > max_tile) continue;
+
+                    TileSample sample = getTileSample(root, tile_root_dir, math_zoom, wrapped_x, ty);
+                    if (!sample.tex) continue;
+
+                    ImVec2 tile_world((float)(tx * 256), (float)(ty * 256));
+                    ImVec2 p0 = project_world(tile_world);
+                    ImVec2 p1(p0.x + (float)(256.0 * zoom_scale), p0.y + (float)(256.0 * zoom_scale));
+                    draw->AddImage(
+                        (ImTextureID)sample.tex->descriptor,
+                        p0,
+                        p1,
+                        sample.uv0,
+                        sample.uv1,
+                        app_settings.grayscale_basemap ? IM_COL32(178, 178, 178, 255) : IM_COL32_WHITE);
+                    if (app_settings.grayscale_basemap) {
+                        draw->AddRectFilled(p0, p1, IM_COL32(244, 244, 244, 78));
+                    }
+                    prof_tiles_drawn_frame++;
+                }
             }
         }
         prof_tile_ms_last.store(prof_ms_since(tile_prof_begin), std::memory_order_relaxed);
@@ -958,7 +893,9 @@
             draw->AddRectFilled(warn_pos, ImVec2(warn_pos.x + warn_sz.x, warn_pos.y + warn_sz.y), IM_COL32(120, 18, 14, 220), 6.0f);
             draw->AddRect(warn_pos, ImVec2(warn_pos.x + warn_sz.x, warn_pos.y + warn_sz.y), IM_COL32(255, 180, 170, 230), 6.0f, 0, 1.0f);
             draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 10.0f), IM_COL32(255, 235, 232, 255), "Basemap unavailable");
-            const std::string line1 = "No tiles found for source: data/" + tile_root_dir;
+            const std::string line1 = use_topo_vector
+                ? std::string("No vector lines found: data/tiles_topo_vector.geojson")
+                : ("No tiles found for source: data/" + tile_root_dir);
             draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 32.0f), IM_COL32(255, 220, 216, 255), line1.c_str());
             draw->AddText(ImVec2(warn_pos.x + 10.0f, warn_pos.y + 52.0f), IM_COL32(255, 220, 216, 255),
                           "Open Library to download required data/tiles, or switch basemap source.");
@@ -987,6 +924,7 @@
             return !is_parcel_scale_layer(layer_idx) || allow_parcel_scale_fill;
         };
         MapProjectionCache projection_cache(math_zoom, 1, project_world);
+        projection_cache.reserveWorldRings(8192);
         auto get_world_rings = [&](size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg)
             -> const std::vector<std::vector<ImVec2>>& {
             return projection_cache.getWorldRings(layer_idx, feature_idx, fg);

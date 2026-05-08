@@ -24,7 +24,6 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - present_prof_begin).count(),
             std::memory_order_relaxed);
     }
-
     auto now_frame = std::chrono::steady_clock::now();
     double frame_ms = std::chrono::duration<double, std::milli>(now_frame - *ctx.last_frame_ts).count();
     *ctx.last_frame_ts = now_frame;
@@ -69,6 +68,7 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         *ctx.root,
         *ctx.layers,
         ctx.hover_inspector_enabled,
+        ctx.hover_inspector_mode,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
         ctx.layer_hover_enabled,
@@ -94,7 +94,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.heatmap_percentile_clip,
         ctx.heatmap_zoom_adaptive_bandwidth,
         ctx.heatmap_multires_enabled,
-        ctx.heatmap_multires_blend);
+        ctx.heatmap_multires_blend,
+        ctx.heatmap_allow_cpu_fallback);
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);
     ctx.hydration_stop->store(true, std::memory_order_relaxed);

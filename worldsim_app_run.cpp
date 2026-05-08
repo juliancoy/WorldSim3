@@ -18,6 +18,7 @@
 #include "layer_runtime.h"
 #include "layer_geometry.h"
 #include "layer_workers.h"
+#include "memory_utils.h"
 #include "aggregate_visualization_strategies.h"
 #include "map_render_heatmap_pass.h"
 #include "map_render_hover.h"
@@ -25,11 +26,13 @@
 #include "map_render_overlays.h"
 #include "map_render_projection.h"
 #include "map_render_utils.h"
+#include "parcel_timeline.h"
 #include "heatmap_render.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
 #include "layer_settings.h"
+#include "download_queue.h"
 #include "app_lifecycle.h"
 #include "worldsim_app.h"
 #include "app_utils.h"
@@ -149,6 +152,7 @@ int runWorldSim3App(int argc, char** argv) {
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImGuiContext* main_imgui_context = ImGui::GetCurrentContext();
     ImGui::StyleColorsLight();
 
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -184,6 +188,79 @@ int runWorldSim3App(int argc, char** argv) {
         check_vk_result(vkDeviceWaitIdle(g_Device));
         ImGui_ImplVulkan_DestroyFontsTexture();
     }
+
+    GLFWwindow* download_queue_window = glfwCreateWindow(500, 320, "Download Queue", nullptr, nullptr);
+    if (!download_queue_window) return 1;
+    int main_x = 0;
+    int main_y = 0;
+    glfwGetWindowPos(window, &main_x, &main_y);
+    glfwSetWindowPos(download_queue_window, main_x + 1620, main_y + 96);
+    VkSurfaceKHR download_queue_surface;
+    err = glfwCreateWindowSurface(g_Instance, download_queue_window, g_Allocator, &download_queue_surface);
+    if (err != VK_SUCCESS) return 1;
+    ImGui_ImplVulkanH_Window download_queue_wd{};
+    int dq_w = 0;
+    int dq_h = 0;
+    glfwGetFramebufferSize(download_queue_window, &dq_w, &dq_h);
+    SetupVulkanWindow(&download_queue_wd, download_queue_surface, dq_w, dq_h);
+    bool download_queue_swapchain_rebuild = false;
+
+    ImGuiContext* download_queue_imgui_context = ImGui::CreateContext();
+    ImGui::SetCurrentContext(download_queue_imgui_context);
+    ImGui::StyleColorsLight();
+    ImGui_ImplGlfw_InitForVulkan(download_queue_window, false);
+    glfwSetWindowUserPointer(download_queue_window, download_queue_imgui_context);
+    glfwSetWindowFocusCallback(download_queue_window, [](GLFWwindow* cb_window, int focused) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_WindowFocusCallback(cb_window, focused);
+    });
+    glfwSetCursorEnterCallback(download_queue_window, [](GLFWwindow* cb_window, int entered) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_CursorEnterCallback(cb_window, entered);
+    });
+    glfwSetCursorPosCallback(download_queue_window, [](GLFWwindow* cb_window, double x, double y) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_CursorPosCallback(cb_window, x, y);
+    });
+    glfwSetMouseButtonCallback(download_queue_window, [](GLFWwindow* cb_window, int button, int action, int mods) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_MouseButtonCallback(cb_window, button, action, mods);
+    });
+    glfwSetScrollCallback(download_queue_window, [](GLFWwindow* cb_window, double xoffset, double yoffset) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_ScrollCallback(cb_window, xoffset, yoffset);
+    });
+    glfwSetKeyCallback(download_queue_window, [](GLFWwindow* cb_window, int key, int scancode, int action, int mods) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_KeyCallback(cb_window, key, scancode, action, mods);
+    });
+    glfwSetCharCallback(download_queue_window, [](GLFWwindow* cb_window, unsigned int c) {
+        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
+        ImGui_ImplGlfw_CharCallback(cb_window, c);
+    });
+    ImGui_ImplVulkan_InitInfo queue_init_info = init_info;
+    queue_init_info.RenderPass = download_queue_wd.RenderPass;
+    queue_init_info.ImageCount = download_queue_wd.ImageCount;
+    ImGui_ImplVulkan_Init(&queue_init_info);
+    {
+        VkCommandPool command_pool = download_queue_wd.Frames[download_queue_wd.FrameIndex].CommandPool;
+        VkCommandBuffer command_buffer = download_queue_wd.Frames[download_queue_wd.FrameIndex].CommandBuffer;
+        check_vk_result(vkResetCommandPool(g_Device, command_pool, 0));
+        VkCommandBufferBeginInfo begin_info{};
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        check_vk_result(vkBeginCommandBuffer(command_buffer, &begin_info));
+        ImGui_ImplVulkan_CreateFontsTexture();
+        check_vk_result(vkEndCommandBuffer(command_buffer));
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &command_buffer;
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+        check_vk_result(vkDeviceWaitIdle(g_Device));
+        ImGui_ImplVulkan_DestroyFontsTexture();
+    }
+    ImGui::SetCurrentContext(main_imgui_context);
 
     BootstrapProgress bootstrap;
     bootstrap.running.store(false, std::memory_order_relaxed);
@@ -262,6 +339,13 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<size_t> prof_features_drawn_last{0};
     std::atomic<size_t> prof_heat_samples_last{0};
     std::atomic<size_t> prof_retired_textures{0};
+    std::atomic<bool> prof_heatmap_gpu_splat_active{false};
+    std::atomic<bool> prof_heatmap_high_quality{false};
+    std::atomic<bool> prof_heatmap_cache_valid{false};
+    std::atomic<bool> prof_heatmap_texture_resident{false};
+    std::atomic<bool> prof_heatmap_async_inflight{false};
+    std::atomic<uint64_t> prof_heatmap_cache_key{0};
+    std::atomic<size_t> prof_heatmap_texture_cache_entries{0};
     std::atomic<size_t> prof_tile_cache_size{0};
     std::mutex profile_mutex;
     std::vector<ProfileFrameSample> profile_samples(600);
@@ -287,9 +371,16 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<int> api_zoom_cmd{-1};
     std::atomic<double> api_lon_cmd{std::numeric_limits<double>::quiet_NaN()};
     std::atomic<double> api_lat_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<uint64_t> api_ui_cmd_seq{0};
+    std::atomic<int> api_ui_cmd_kind{0};
+    std::atomic<double> api_ui_cmd_x{0.0};
+    std::atomic<double> api_ui_cmd_y{0.0};
+    std::atomic<int> api_ui_cmd_button{0};
+    std::atomic<double> api_ui_cmd_scroll_y{0.0};
     std::mutex api_layer_mutex;
     std::unordered_map<std::string, bool> api_layer_enable_cmds;
     std::unordered_map<std::string, bool> api_layer_fill_cmds;
+    std::vector<std::string> api_layer_download_cmds;
     std::mutex layer_fill_mutex;
     std::vector<bool> layer_fill_enabled(layers.size(), true);
     std::vector<bool> layer_hover_enabled(layers.size(), true);
@@ -317,6 +408,7 @@ int runWorldSim3App(int argc, char** argv) {
     bool heatmap_zoom_adaptive_bandwidth = true;
     bool heatmap_multires_enabled = true;
     float heatmap_multires_blend = 0.5f;
+    bool heatmap_allow_cpu_fallback = false;
     std::vector<CachedHeatCell> heatmap_cached_cells;
     TileTexture heatmap_raster_texture;
     bool heatmap_raster_texture_valid = false;
@@ -346,11 +438,13 @@ int runWorldSim3App(int argc, char** argv) {
             heatmap_texture_cache.erase(evict_it);
         }
     };
+    int hover_inspector_mode = 3; // 0=None, 1=Parcels, 2=Zoning, 3=Both
     bool hover_inspector_enabled = true;
     loadLayerUiState(
         root,
         layers,
         hover_inspector_enabled,
+        &hover_inspector_mode,
         &zoning_zone_enabled,
         &layer_fill_enabled,
         &layer_hover_enabled,
@@ -376,8 +470,11 @@ int runWorldSim3App(int argc, char** argv) {
         &heatmap_percentile_clip,
         &heatmap_zoom_adaptive_bandwidth,
         &heatmap_multires_enabled,
-        &heatmap_multires_blend);
+        &heatmap_multires_blend,
+        &heatmap_allow_cpu_fallback);
     if (heatmap_algo == kAggregateGridBinning) heatmap_algo = kAggregateHexBinning;
+    if (heatmap_algo == kAggregateGpuSplatBlur) heatmap_quality_preset = 2;
+    heatmap_quality_preset = std::clamp(heatmap_quality_preset, 0, 2);
     for (size_t i = 0; i < layers.size() && i < layer_heatmap_algo.size(); ++i) {
         std::string field = layers[i].heatmap_field;
         std::transform(field.begin(), field.end(), field.begin(), [](unsigned char c) {
@@ -534,9 +631,16 @@ int runWorldSim3App(int argc, char** argv) {
         &api_layer_mutex,
         &api_layer_enable_cmds,
         &api_layer_fill_cmds,
+        &api_layer_download_cmds,
         &api_zoom_cmd,
         &api_lon_cmd,
         &api_lat_cmd,
+        &api_ui_cmd_seq,
+        &api_ui_cmd_kind,
+        &api_ui_cmd_x,
+        &api_ui_cmd_y,
+        &api_ui_cmd_button,
+        &api_ui_cmd_scroll_y,
         &layer_profile_mutex,
         &layer_profile_snapshot,
         &profile_mutex,
@@ -555,7 +659,14 @@ int runWorldSim3App(int argc, char** argv) {
         &prof_features_considered_last,
         &prof_features_drawn_last,
         &prof_heat_samples_last,
-        &prof_retired_textures
+        &prof_retired_textures,
+        &prof_heatmap_gpu_splat_active,
+        &prof_heatmap_high_quality,
+        &prof_heatmap_cache_valid,
+        &prof_heatmap_texture_resident,
+        &prof_heatmap_async_inflight,
+        &prof_heatmap_cache_key,
+        &prof_heatmap_texture_cache_entries
     });
 
     std::mutex p2p_mutex;
@@ -583,10 +694,13 @@ int runWorldSim3App(int argc, char** argv) {
     double center_lon = -76.6122;
     double center_lat = 39.2904;
     float ui_text_scale = 1.0f;
+    uint64_t api_ui_cmd_last_seq = 0;
+    bool api_ui_mouse_release_pending = false;
+    int api_ui_mouse_release_button = 0;
     std::vector<bool> last_enabled_state;
     last_enabled_state.reserve(layers.size());
     for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
-    bool last_hover_inspector_enabled = hover_inspector_enabled;
+    int last_hover_inspector_mode = hover_inspector_mode;
     bool show_sources_panel = false;
     bool show_data_library = false;
     char data_library_query[128] = "";
@@ -615,21 +729,14 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex data_library_bulk_mutex;
     std::string data_library_bulk_progress;
     std::future<LayerDownloadSummary> data_library_bulk_future;
-    bool basemap_download_inflight = false;
-    std::future<void> basemap_download_future;
-    std::mutex basemap_download_mutex;
-    std::string basemap_download_progress;
-    std::string basemap_download_label;
-    std::deque<std::pair<std::string, std::string>> basemap_download_queue;
-    std::chrono::steady_clock::time_point basemap_download_started_at{};
-    std::atomic<bool> basemap_download_stop_requested{false};
-    std::atomic<bool> basemap_download_stopped{false};
-    std::atomic<size_t> basemap_download_done{0};
-    std::atomic<size_t> basemap_download_total{0};
-    std::atomic<size_t> basemap_download_downloaded{0};
-    std::atomic<size_t> basemap_download_skipped{0};
-    std::atomic<size_t> basemap_download_failed{0};
-    std::atomic<size_t> basemap_download_bytes{0};
+    DownloadQueueState basemap_download;
+    std::deque<size_t> layer_download_queue;
+    bool layer_download_inflight = false;
+    size_t layer_download_active_idx = (size_t)-1;
+    std::future<VersionedDownloadResult> layer_download_future;
+    std::string layer_download_active_file;
+    std::string layer_download_last_event;
+    bool layer_download_queue_loaded = false;
     bool filter_enabled = false;
     bool filter_use_date = false;
     int filter_year_min = 2000;
@@ -669,6 +776,17 @@ int runWorldSim3App(int argc, char** argv) {
     size_t selected_parcel_idx = (size_t)-1;
     bool show_selected_zone_details = false;
     size_t selected_zone_idx = (size_t)-1;
+    bool basemap_source_has_any_files_cached = false;
+    bool topo_tiles_available_cached = false;
+    bool topo_vector_available_cached = false;
+    size_t osm_missing_tiles_cached = 0;
+    size_t osm_total_tiles_cached = 0;
+    size_t topo_missing_tiles_cached = 0;
+    size_t topo_total_tiles_cached = 0;
+    bool basemap_coverage_dirty = true;
+    constexpr auto kBasemapCoverageRefreshInterval = std::chrono::seconds(2);
+    std::string tile_root_dir_cached = "tiles";
+    auto basemap_availability_last_check = std::chrono::steady_clock::time_point{};
     auto last_frame_ts = std::chrono::steady_clock::now();
     double ema_frame_ms = 0.0;
     constexpr double kPerfAlpha = 0.12;
@@ -745,6 +863,7 @@ int runWorldSim3App(int argc, char** argv) {
     size_t policy_viz_node_count = 0;
     struct LanPeerInfo {
         std::string ip;
+        std::string app_name;
         std::string app_version;
         int protocol_version = 0;
         int dataset_port = 0;
@@ -752,6 +871,7 @@ int runWorldSim3App(int argc, char** argv) {
     };
     std::vector<LanPeerInfo> lan_peers;
     std::string lan_scan_status = "Not scanned";
+    std::chrono::steady_clock::time_point lan_last_scan_at{};
     char arkavo_room_id[128] = "worldsim-default-room";
     std::string arkavo_status = "idle";
     std::string arkavo_err;
@@ -765,6 +885,19 @@ int runWorldSim3App(int argc, char** argv) {
 #include "worldsim_app_run_loop_part3.inc"
 #include "worldsim_app_run_loop_part4.inc"
     vkDeviceWaitIdle(g_Device);
+    if (download_queue_imgui_context) {
+        ImGui::SetCurrentContext(download_queue_imgui_context);
+        ImGui_ImplVulkan_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(download_queue_imgui_context);
+        download_queue_imgui_context = nullptr;
+    }
+    ImGui_ImplVulkanH_DestroyWindow(g_Instance, g_Device, &download_queue_wd, g_Allocator);
+    if (download_queue_window) {
+        glfwDestroyWindow(download_queue_window);
+        download_queue_window = nullptr;
+    }
+    ImGui::SetCurrentContext(main_imgui_context);
     for (auto& kv : heatmap_texture_cache) destroyTileTextureNow(kv.second.texture);
     heatmap_texture_cache.clear();
     AppShutdownContext shutdown_ctx;
@@ -773,6 +906,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.window = window;
     shutdown_ctx.layers = &layers;
     shutdown_ctx.hover_inspector_enabled = hover_inspector_enabled;
+    shutdown_ctx.hover_inspector_mode = &hover_inspector_mode;
     shutdown_ctx.zoning_zone_enabled = &zoning_zone_enabled;
     shutdown_ctx.layer_fill_enabled = &layer_fill_enabled;
     shutdown_ctx.layer_hover_enabled = &layer_hover_enabled;
@@ -799,6 +933,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.heatmap_zoom_adaptive_bandwidth = &heatmap_zoom_adaptive_bandwidth;
     shutdown_ctx.heatmap_multires_enabled = &heatmap_multires_enabled;
     shutdown_ctx.heatmap_multires_blend = &heatmap_multires_blend;
+    shutdown_ctx.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
     shutdown_ctx.hydration_stop = &hydration_stop;
     shutdown_ctx.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_ctx.hydrate_req_cv = &hydrate_req_cv;

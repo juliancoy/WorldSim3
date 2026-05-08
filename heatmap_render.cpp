@@ -1,15 +1,79 @@
 #include "heatmap_render.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "heatmap_gpu_aggregate.h"
+#include "heatmap_strategy_ops.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cctype>
+#include <cstring>
+#include <fstream>
 #include <limits>
 #include <unordered_map>
 
 ImVec4 defaultHeatColor(float t);
+
+namespace {
+constexpr char kHeatmapRasterCacheMagic[8] = {'W', 'S', '3', 'A', 'G', 'G', '1', '\0'};
+}
+
+bool loadHeatmapRasterCache(
+    const std::filesystem::path& cache_path,
+    uint64_t key,
+    HeatmapRaster& out) {
+    std::ifstream in(cache_path, std::ios::binary);
+    if (!in) return false;
+    char magic[8]{};
+    uint64_t file_key = 0;
+    HeatmapRaster raster;
+    uint64_t rgba_size = 0;
+    in.read(magic, sizeof(magic));
+    in.read(reinterpret_cast<char*>(&file_key), sizeof(file_key));
+    in.read(reinterpret_cast<char*>(&raster.w), sizeof(raster.w));
+    in.read(reinterpret_cast<char*>(&raster.h), sizeof(raster.h));
+    in.read(reinterpret_cast<char*>(&raster.min_lon), sizeof(raster.min_lon));
+    in.read(reinterpret_cast<char*>(&raster.min_lat), sizeof(raster.min_lat));
+    in.read(reinterpret_cast<char*>(&raster.max_lon), sizeof(raster.max_lon));
+    in.read(reinterpret_cast<char*>(&raster.max_lat), sizeof(raster.max_lat));
+    in.read(reinterpret_cast<char*>(&rgba_size), sizeof(rgba_size));
+    if (!in ||
+        std::memcmp(magic, kHeatmapRasterCacheMagic, sizeof(magic)) != 0 ||
+        file_key != key ||
+        raster.w <= 0 ||
+        raster.h <= 0 ||
+        rgba_size != (uint64_t)raster.w * (uint64_t)raster.h * 4ULL) {
+        return false;
+    }
+    raster.rgba.resize((size_t)rgba_size);
+    in.read(reinterpret_cast<char*>(raster.rgba.data()), (std::streamsize)raster.rgba.size());
+    if (!in) return false;
+    out = std::move(raster);
+    return true;
+}
+
+void saveHeatmapRasterCache(
+    const std::filesystem::path& cache_path,
+    uint64_t key,
+    const HeatmapRaster& raster) {
+    if (raster.w <= 0 || raster.h <= 0 || raster.rgba.size() != (size_t)raster.w * (size_t)raster.h * 4ULL) return;
+    std::error_code ec;
+    std::filesystem::create_directories(cache_path.parent_path(), ec);
+    std::ofstream out(cache_path, std::ios::binary);
+    if (!out) return;
+    const uint64_t rgba_size = (uint64_t)raster.rgba.size();
+    out.write(kHeatmapRasterCacheMagic, sizeof(kHeatmapRasterCacheMagic));
+    out.write(reinterpret_cast<const char*>(&key), sizeof(key));
+    out.write(reinterpret_cast<const char*>(&raster.w), sizeof(raster.w));
+    out.write(reinterpret_cast<const char*>(&raster.h), sizeof(raster.h));
+    out.write(reinterpret_cast<const char*>(&raster.min_lon), sizeof(raster.min_lon));
+    out.write(reinterpret_cast<const char*>(&raster.min_lat), sizeof(raster.min_lat));
+    out.write(reinterpret_cast<const char*>(&raster.max_lon), sizeof(raster.max_lon));
+    out.write(reinterpret_cast<const char*>(&raster.max_lat), sizeof(raster.max_lat));
+    out.write(reinterpret_cast<const char*>(&rgba_size), sizeof(rgba_size));
+    out.write(reinterpret_cast<const char*>(raster.rgba.data()), (std::streamsize)raster.rgba.size());
+}
 
 std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
     uint64_t key,
@@ -223,15 +287,19 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     const HeatSample& settings = group.front();
                     const float sx = (float)rw / std::max(0.0001f, raster_max_lon - raster_min_lon);
                     const float sy = (float)rh / std::max(0.0001f, raster_max_lat - raster_min_lat);
+                    const bool preserved_gpu_splat =
+                        settings.algo == kAggregateGpuSplatBlur && !settings.allow_cpu_fallback;
                     const float screen_span_x =
                         viewport_w * (raster_max_lon - raster_min_lon) /
                         std::max(0.0001f, view_max_lon - view_min_lon);
                     const float screen_span_y =
                         viewport_h * (raster_max_lat - raster_min_lat) /
                         std::max(0.0001f, view_max_lat - view_min_lat);
-                    const float screen_px_per_raster_px = std::max(
-                        0.0001f,
-                        0.5f * (screen_span_x / std::max(1, rw) + screen_span_y / std::max(1, rh)));
+                    const float screen_px_per_raster_px = preserved_gpu_splat
+                        ? 1.0f
+                        : std::max(
+                            0.0001f,
+                            0.5f * (screen_span_x / std::max(1, rw) + screen_span_y / std::max(1, rh)));
                     const float zf = settings.zoom_adaptive_bandwidth
                         ? std::clamp(1.0f + 0.12f * (float)(max_zoom - zoom), 1.0f, 3.0f)
                         : 1.0f;
@@ -243,19 +311,28 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     std::vector<float> cr(density.size(), 0.0f), cg(density.size(), 0.0f), cb(density.size(), 0.0f), cw(density.size(), 0.0f);
                     std::vector<float> gv(density.size(), 0.0f), sv(density.size(), 0.0f);
                     auto idx = [&](int x, int y) -> size_t { return (size_t)y * (size_t)rw + (size_t)x; };
-                    for (const auto& s : group) {
-                        const float px = (s.lon - raster_min_lon) * sx;
-                        const float py = (raster_max_lat - s.lat) * sy;
-                        const int x = std::clamp((int)std::floor(px), 0, rw - 1);
-                        const int y = std::clamp((int)std::floor(py), 0, rh - 1);
-                        const size_t i = idx(x, y);
-                        density[i] += 1.0f;
-                        cr[i] += s.color.x;
-                        cg[i] += s.color.y;
-                        cb[i] += s.color.z;
-                        cw[i] += 1.0f;
-                        if (s.prefer_gradient) gv[i] += 1.0f; else sv[i] += 1.0f;
+                    bool gpu_ok = false;
+                    if (settings.algo == kAggregateGpuSplatBlur) {
+                        std::string gpu_err;
+                        gpu_ok = buildGpuSplatAggregate(
+                            group,
+                            rw,
+                            rh,
+                            raster_min_lon,
+                            raster_min_lat,
+                            raster_max_lon,
+                            raster_max_lat,
+                            sigma_r,
+                            density,
+                            cr,
+                            cg,
+                            cb,
+                            cw,
+                            gv,
+                            sv,
+                            &gpu_err);
                     }
+
                     auto blur_field = [&](std::vector<float>& src, bool horizontal) {
                         if (sigma_r <= 0.05f) return;
                         const int radius = std::max(1, (int)std::ceil(3.0f * sigma_r));
@@ -281,9 +358,30 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         }
                         src.swap(dst);
                     };
-                    for (auto* field : {&density, &cr, &cg, &cb, &cw, &gv, &sv}) {
-                        blur_field(*field, true);
-                        blur_field(*field, false);
+
+                    if (!gpu_ok && !settings.allow_cpu_fallback && settings.algo == kAggregateGpuSplatBlur) {
+                        return;
+                    }
+                    if (!gpu_ok) {
+                        for (const auto& s : group) {
+                            const float px = (s.lon - raster_min_lon) * sx;
+                            const float py = (raster_max_lat - s.lat) * sy;
+                            const int x = std::clamp((int)std::floor(px), 0, rw - 1);
+                            const int y = std::clamp((int)std::floor(py), 0, rh - 1);
+                            const size_t i = idx(x, y);
+                            density[i] += 1.0f;
+                            cr[i] += s.color.x;
+                            cg[i] += s.color.y;
+                            cb[i] += s.color.z;
+                            cw[i] += 1.0f;
+                            if (s.prefer_gradient) gv[i] += 1.0f; else sv[i] += 1.0f;
+                        }
+                    }
+                    if (!gpu_ok || settings.algo == kAggregateGpuSplatBlur) {
+                        for (auto* field : {&density, &cr, &cg, &cb, &cw, &gv, &sv}) {
+                            blur_field(*field, true);
+                            blur_field(*field, false);
+                        }
                     }
                     std::vector<float> vals;
                     vals.reserve(density.size());
@@ -360,39 +458,6 @@ static std::vector<CachedHeatCell> buildImmediateHeatmapCellsForSettings(
     bool heatmap_multires_enabled,
     float heatmap_multires_blend) {
     std::vector<CachedHeatCell> frame_heat_cells;
-struct HeatBin {
-        double density = 0.0;
-        double color_w_sum = 0.0;
-        double r_sum = 0.0;
-        double g_sum = 0.0;
-        double b_sum = 0.0;
-        double rr_sum = 0.0;
-        double gg_sum = 0.0;
-        double bb_sum = 0.0;
-        int gradient_votes = 0;
-        int solid_votes = 0;
-        std::vector<float> values;
-    };
-auto pack_bin = [](int bx, int by) -> uint64_t {
-        return ((uint64_t)(uint32_t)bx << 32) | (uint32_t)by;
-    };
-auto unpack_bin = [](uint64_t key, int& bx, int& by) {
-        bx = (int)(uint32_t)(key >> 32);
-        by = (int)(uint32_t)(key & 0xffffffffu);
-    };
-auto accum_bin = [&](HeatBin& b, const HeatSample& s, double w) {
-        b.density += w;
-        b.color_w_sum += w;
-        b.r_sum += s.color.x * w;
-        b.g_sum += s.color.y * w;
-        b.b_sum += s.color.z * w;
-        b.rr_sum += s.color.x * s.color.x * w;
-        b.gg_sum += s.color.y * s.color.y * w;
-        b.bb_sum += s.color.z * s.color.z * w;
-        if (s.prefer_gradient) b.gradient_votes++;
-        else b.solid_votes++;
-        if (s.has_value) b.values.push_back(s.value);
-    };
 
 std::unordered_map<uint64_t, HeatBin> global_heat_bins;
 std::unordered_map<uint64_t, HeatBin> coarse_heat_bins;
@@ -401,166 +466,25 @@ const float zoom_factor = heatmap_zoom_adaptive_bandwidth ? std::clamp(1.0f + 0.
 const float bw_px = std::max(1.0f, heatmap_bandwidth_px * zoom_factor);
 const float blur_sigma = std::max(0.0f, heatmap_blur_sigma_px);
 
-auto add_grid_sample = [&](const HeatSample& s, float cell, double w) {
-        const int bx = (int)((s.x - origin_x) / cell);
-        const int by = (int)((s.y - origin_y) / cell);
-        HeatBin& b = global_heat_bins[pack_bin(bx, by)];
-        accum_bin(b, s, w);
-    };
-auto add_kde_sample = [&](const HeatSample& s, float cell, float sigma_px, double wscale) {
-        const float sigma = std::max(1.0f, sigma_px);
-        const int radius = std::max(1, (int)std::ceil((3.0f * sigma) / cell));
-        const int cbx = (int)((s.x - origin_x) / cell);
-        const int cby = (int)((s.y - origin_y) / cell);
-        const float two_sigma2 = 2.0f * sigma * sigma;
-        for (int dy = -radius; dy <= radius; ++dy) {
-            for (int dx = -radius; dx <= radius; ++dx) {
-                const float cx = origin_x + (cbx + dx + 0.5f) * cell;
-                const float cy = origin_y + (cby + dy + 0.5f) * cell;
-                const float d2 = (cx - s.x) * (cx - s.x) + (cy - s.y) * (cy - s.y);
-                const double w = std::exp(-(double)d2 / (double)two_sigma2) * wscale;
-                if (w < 1e-5) continue;
-                HeatBin& b = global_heat_bins[pack_bin(cbx + dx, cby + dy)];
-                accum_bin(b, s, w);
-            }
-        }
-    };
-
 if (heatmap_algo == kAggregateGridBinning || heatmap_algo == kAggregateMedianChoropleth) {
-        for (const auto& s : heat_samples) add_grid_sample(s, global_heat_cell, 1.0);
+        applyGridStrategy(heat_samples, global_heat_bins, origin_x, origin_y, global_heat_cell);
 } else if (heatmap_algo == kAggregateKdeGaussian) {
-        for (const auto& s : heat_samples) add_kde_sample(s, global_heat_cell, bw_px, 1.0);
+        applyKdeStrategy(heat_samples, global_heat_bins, origin_x, origin_y, global_heat_cell, bw_px);
 } else if (heatmap_algo == kAggregateGpuSplatBlur) {
-        // Explicit splat grid + separable blur pipeline (CPU implementation of the same model).
-        if (!heat_samples.empty()) {
-            const int grid_w = std::max(1, (int)std::ceil(viewport_w / global_heat_cell));
-            const int grid_h = std::max(1, (int)std::ceil(viewport_h / global_heat_cell));
-            const size_t n = (size_t)grid_w * (size_t)grid_h;
-            std::vector<float> dens(n, 0.0f);
-            std::vector<float> rsum(n, 0.0f);
-            std::vector<float> gsum(n, 0.0f);
-            std::vector<float> bsum(n, 0.0f);
-            std::vector<float> wsum(n, 0.0f);
-            std::vector<float> grad_votes(n, 0.0f);
-            std::vector<float> solid_votes(n, 0.0f);
-            auto idx2 = [&](int x, int y) -> size_t { return (size_t)y * (size_t)grid_w + (size_t)x; };
-
-            // Splat pass.
-            for (const auto& s : heat_samples) {
-                const int bx = (int)((s.x - origin_x) / global_heat_cell);
-                const int by = (int)((s.y - origin_y) / global_heat_cell);
-                if (bx < 0 || by < 0 || bx >= grid_w || by >= grid_h) continue;
-                const size_t ii = idx2(bx, by);
-                dens[ii] += 1.0f;
-                rsum[ii] += s.color.x;
-                gsum[ii] += s.color.y;
-                bsum[ii] += s.color.z;
-                wsum[ii] += 1.0f;
-                if (s.prefer_gradient) grad_votes[ii] += 1.0f;
-                else solid_votes[ii] += 1.0f;
-            }
-
-            auto blur_1d = [&](std::vector<float>& src, int w, int h, float sigma, bool horizontal) {
-                if (sigma <= 0.05f) return;
-                const int radius = std::max(1, (int)std::ceil(3.0f * sigma));
-                std::vector<float> kernel((size_t)(radius * 2 + 1), 0.0f);
-                float ksum = 0.0f;
-                for (int i = -radius; i <= radius; ++i) {
-                    const float v = std::exp(-(float)(i * i) / (2.0f * sigma * sigma));
-                    kernel[(size_t)(i + radius)] = v;
-                    ksum += v;
-                }
-                if (ksum > 0.0f) for (float& v : kernel) v /= ksum;
-                std::vector<float> out(src.size(), 0.0f);
-                for (int y = 0; y < h; ++y) {
-                    for (int x = 0; x < w; ++x) {
-                        float acc = 0.0f;
-                        for (int k = -radius; k <= radius; ++k) {
-                            const int sx = horizontal ? std::clamp(x + k, 0, w - 1) : x;
-                            const int sy = horizontal ? y : std::clamp(y + k, 0, h - 1);
-                            acc += src[idx2(sx, sy)] * kernel[(size_t)(k + radius)];
-                        }
-                        out[idx2(x, y)] = acc;
-                    }
-                }
-                src.swap(out);
-            };
-
-            const float sigma_cells = std::max(0.0f, blur_sigma / global_heat_cell);
-            blur_1d(dens, grid_w, grid_h, sigma_cells, true);
-            blur_1d(dens, grid_w, grid_h, sigma_cells, false);
-            blur_1d(rsum, grid_w, grid_h, sigma_cells, true);
-            blur_1d(rsum, grid_w, grid_h, sigma_cells, false);
-            blur_1d(gsum, grid_w, grid_h, sigma_cells, true);
-            blur_1d(gsum, grid_w, grid_h, sigma_cells, false);
-            blur_1d(bsum, grid_w, grid_h, sigma_cells, true);
-            blur_1d(bsum, grid_w, grid_h, sigma_cells, false);
-            blur_1d(wsum, grid_w, grid_h, sigma_cells, true);
-            blur_1d(wsum, grid_w, grid_h, sigma_cells, false);
-            blur_1d(grad_votes, grid_w, grid_h, sigma_cells, true);
-            blur_1d(grad_votes, grid_w, grid_h, sigma_cells, false);
-            blur_1d(solid_votes, grid_w, grid_h, sigma_cells, true);
-            blur_1d(solid_votes, grid_w, grid_h, sigma_cells, false);
-
-            // Import blurred fields into generic bins.
-            for (int y = 0; y < grid_h; ++y) {
-                for (int x = 0; x < grid_w; ++x) {
-                    const size_t ii = idx2(x, y);
-                    const double d = dens[ii];
-                    if (d <= 1e-6) continue;
-                    HeatBin b;
-                    b.density = d;
-                    b.color_w_sum = std::max(1e-6, (double)wsum[ii]);
-                    b.r_sum = rsum[ii];
-                    b.g_sum = gsum[ii];
-                    b.b_sum = bsum[ii];
-                    const double invw = 1.0 / b.color_w_sum;
-                    const double rm = b.r_sum * invw;
-                    const double gm = b.g_sum * invw;
-                    const double bm = b.b_sum * invw;
-                    b.rr_sum = rm * rm * b.color_w_sum;
-                    b.gg_sum = gm * gm * b.color_w_sum;
-                    b.bb_sum = bm * bm * b.color_w_sum;
-                    b.gradient_votes = (int)std::round(grad_votes[ii]);
-                    b.solid_votes = (int)std::round(solid_votes[ii]);
-                    global_heat_bins[pack_bin(x, y)] = b;
-                }
-            }
-        }
+        applyGpuSplatBlurStrategy(
+            heat_samples, global_heat_bins, origin_x, origin_y, viewport_w, viewport_h, global_heat_cell, blur_sigma);
 } else if (heatmap_algo == kAggregateHexBinning) {
-        const float hex_w = global_heat_cell;
-        const float hex_h = std::max(1.0f, hex_w * 0.8660254f);
-        for (const auto& s : heat_samples) {
-            const float gx = (s.x - origin_x) / hex_w;
-            const float gy = (s.y - origin_y) / hex_h;
-            const int q = (int)std::round(gx - gy * 0.5f);
-            const int r = (int)std::round(gy);
-            HeatBin& b = global_heat_bins[pack_bin(q, r)];
-            accum_bin(b, s, 1.0);
-        }
+        applyHexStrategy(heat_samples, global_heat_bins, origin_x, origin_y, global_heat_cell);
 } else {
-        const float fine = global_heat_cell;
-        const float coarse = global_heat_cell * 2.0f;
-        for (const auto& s : heat_samples) {
-            add_grid_sample(s, fine, 1.0);
-            const int bx = (int)((s.x - origin_x) / coarse);
-            const int by = (int)((s.y - origin_y) / coarse);
-            HeatBin& b = coarse_heat_bins[pack_bin(bx, by)];
-            accum_bin(b, s, 1.0);
-        }
-        if (heatmap_multires_enabled) {
-            const double blend = std::clamp((double)heatmap_multires_blend, 0.0, 1.0);
-            for (auto& kv : global_heat_bins) {
-                int bx = 0, by = 0;
-                unpack_bin(kv.first, bx, by);
-                const int cbx = bx / 2;
-                const int cby = by / 2;
-                auto it = coarse_heat_bins.find(pack_bin(cbx, cby));
-                if (it != coarse_heat_bins.end()) {
-                    kv.second.density = kv.second.density * (1.0 - blend) + it->second.density * blend;
-                }
-            }
-        }
+        applyMultiResStrategy(
+            heat_samples,
+            global_heat_bins,
+            coarse_heat_bins,
+            origin_x,
+            origin_y,
+            global_heat_cell,
+            heatmap_multires_enabled,
+            heatmap_multires_blend);
     }
 
 const bool median_choropleth = heatmap_algo == kAggregateMedianChoropleth;
@@ -603,7 +527,7 @@ if (!global_heat_bins.empty()) {
     if (!global_heat_bins.empty() && (median_choropleth || max_density > 0.0)) {
         for (const auto& kv : global_heat_bins) {
             int bx = 0, by = 0;
-            unpack_bin(kv.first, bx, by);
+            heatUnpackBin(kv.first, bx, by);
             const HeatBin& bin = kv.second;
             if (median_choropleth && bin.values.empty()) continue;
             const double metric = median_choropleth ? (double)bin.values[bin.values.size() / 2] : bin.density;
