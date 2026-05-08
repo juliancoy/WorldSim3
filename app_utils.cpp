@@ -9,6 +9,7 @@
 #include <fstream>
 #include <numbers>
 #include <sstream>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -95,6 +96,79 @@ bool containsCaseInsensitive(const std::string& haystack, const std::string& nee
     const std::string h = toLowerAscii(haystack);
     const std::string n = toLowerAscii(needle);
     return h.find(n) != std::string::npos;
+}
+
+std::string normalizeAddressSearchText(const std::string& s) {
+    static const std::unordered_map<std::string, std::string> kCanonical{
+        {"avenue", "ave"}, {"av", "ave"},
+        {"boulevard", "blvd"}, {"boul", "blvd"},
+        {"circle", "cir"}, {"court", "ct"}, {"drive", "dr"},
+        {"highway", "hwy"}, {"lane", "ln"}, {"parkway", "pkwy"},
+        {"place", "pl"}, {"road", "rd"}, {"square", "sq"},
+        {"street", "st"}, {"terrace", "ter"}, {"trail", "trl"},
+        {"north", "n"}, {"south", "s"}, {"east", "e"}, {"west", "w"},
+        {"northeast", "ne"}, {"northwest", "nw"}, {"southeast", "se"}, {"southwest", "sw"},
+        {"apartment", "apt"}, {"unit", "apt"}, {"suite", "ste"},
+    };
+
+    std::string cleaned;
+    cleaned.reserve(s.size());
+    for (unsigned char ch : s) {
+        if (std::isalnum(ch)) cleaned.push_back((char)std::tolower(ch));
+        else cleaned.push_back(' ');
+    }
+
+    std::istringstream in(cleaned);
+    std::ostringstream out;
+    std::string token;
+    bool first = true;
+    while (in >> token) {
+        if (token.size() > 2) {
+            const std::string suffix = token.substr(token.size() - 2);
+            const bool ordinal_suffix = suffix == "st" || suffix == "nd" || suffix == "rd" || suffix == "th";
+            if (ordinal_suffix && std::all_of(token.begin(), token.end() - 2, [](unsigned char ch) {
+                    return std::isdigit(ch) != 0;
+                })) {
+                token.resize(token.size() - 2);
+            }
+        }
+        auto it = kCanonical.find(token);
+        if (it != kCanonical.end()) token = it->second;
+        if (!first) out << ' ';
+        out << token;
+        first = false;
+    }
+    return out.str();
+}
+
+int addressSearchScore(const std::string& address, const std::string& query) {
+    const std::string q = trimDisplayValue(query);
+    if (q.empty()) return 0;
+    const std::string address_lc = toLowerAscii(address);
+    const std::string q_lc = toLowerAscii(q);
+    if (address_lc == q_lc) return 120;
+
+    const std::string normalized_address = normalizeAddressSearchText(address);
+    const std::string normalized_query = normalizeAddressSearchText(q);
+    if (normalized_query.empty()) return 0;
+    if (normalized_address == normalized_query) return 110;
+    if (normalized_address.rfind(normalized_query, 0) == 0) return 100;
+    if (normalized_address.find(normalized_query) != std::string::npos) return 90;
+
+    std::istringstream tokens(normalized_query);
+    std::string token;
+    int token_count = 0;
+    while (tokens >> token) {
+        token_count++;
+        if (normalized_address.find(token) == std::string::npos) return 0;
+    }
+    return token_count > 0 ? 40 + token_count : 0;
+}
+
+bool addressMatchesSearch(const std::string& address, const std::string& query) {
+    if (trimDisplayValue(query).empty()) return true;
+    if (containsCaseInsensitive(address, query)) return true;
+    return addressSearchScore(address, query) > 0;
 }
 
 int extractYearMaybe(const std::string& s) {

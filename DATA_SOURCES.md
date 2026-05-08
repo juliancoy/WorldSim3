@@ -34,6 +34,11 @@
 `capital-flows`
 : Nonprofit, lending, federal award, LIHTC, CRA, and related capital flow sources. Some entries are intentionally metadata/API placeholders until a dedicated fetcher exists.
 
+## Dedicated API Pullers
+
+`scripts/pull_md_dhcd_housing_layers.py`
+: Pulls official Maryland iMAP/DHCD ArcGIS FeatureServer data into `data/layers`: multifamily housing development sites plus DHCD housing-designated areas such as Qualified Census Tracts, Communities of Opportunity, BRHP Opportunity Designations, and Just Communities. These sources are paginated because the ArcGIS API caps single GeoJSON responses.
+
 ## Machine-Native Cutoff
 
 For Baltimore parcel-relevant records verified so far, the earliest high-quality machine-native source in the app is the official 2015-2018 building permits dataset. Additional capital-project GIS layers cover modern/FY-era infrastructure records. Apparent data.gov hits for 2009-2010 tax sale CSVs were Cook County, Illinois records, not Baltimore, so they are intentionally excluded.

@@ -160,6 +160,68 @@
         ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
         if (ImGui::BeginTabBar("right_tabs")) {
         if (ImGui::BeginTabItem("Filters")) {
+        auto locate_property_by_address = [&]() {
+            const std::string query = trimDisplayValue(filter_address);
+            if (query.empty()) {
+                address_locate_status = "Enter an address to locate a property.";
+                return;
+            }
+            if (parcel_layer_idx < 0 || (size_t)parcel_layer_idx >= layers.size()) {
+                address_locate_status = "Parcel layer is not available.";
+                return;
+            }
+            const auto& parcel_layer = layers[(size_t)parcel_layer_idx];
+            if (parcel_layer.features.empty()) {
+                address_locate_status = "Parcel layer is still loading or missing.";
+                return;
+            }
+            auto property_address_for = [&](const LayerDef::FeatureGeom& parcel) {
+                std::string address = firstDisplayProperty(parcel, {
+                    "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                    "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                    "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                });
+                if (!address.empty()) return address;
+                if (const LayerDef::FeatureGeom* rp = real_property_for_parcel(parcel)) {
+                    address = firstDisplayProperty(*rp, {
+                        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                    });
+                }
+                return address;
+            };
+
+            size_t best_idx = (size_t)-1;
+            int best_score = 0;
+            std::string best_address;
+            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+                const auto& parcel = parcel_layer.features[i];
+                const std::string address = property_address_for(parcel);
+                const int score = addressSearchScore(address, query);
+                if (score > best_score) {
+                    best_score = score;
+                    best_idx = i;
+                    best_address = address;
+                    if (score >= 110) break;
+                }
+            }
+            if (best_idx == (size_t)-1) {
+                address_locate_status = "No matching property address found.";
+                return;
+            }
+            const auto& parcel = parcel_layer.features[best_idx];
+            center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
+            center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
+            zoom = std::max(zoom, 18);
+            show_selected_parcel_details = true;
+            selected_parcel_idx = best_idx;
+            show_selected_zone_details = false;
+            selected_zone_idx = (size_t)-1;
+            address_locate_status = best_address.empty()
+                ? "Located matching parcel."
+                : "Located: " + best_address;
+        };
         const bool selected_valid =
             show_selected_parcel_details && parcel_layer_idx >= 0 &&
             (size_t)parcel_layer_idx < layers.size() &&
@@ -288,10 +350,28 @@
             ImGui::SliderInt("Year Max", &filter_year_max, 1900, 2100);
             if (filter_year_min > filter_year_max) std::swap(filter_year_min, filter_year_max);
             ImGui::EndDisabled();
-            ImGui::SeparatorText("Common Fields");
+            ImGui::SeparatorText("Address Search");
+            const float locate_button_w = 78.0f;
+            ImGui::SetNextItemWidth(std::max(80.0f, ImGui::GetContentRegionAvail().x - locate_button_w - ImGui::GetStyle().ItemSpacing.x));
+            const bool locate_enter = ImGui::InputTextWithHint(
+                "##address_search",
+                "Search property address, e.g. 123 N Charles, Charles 123, or 123 north charles street",
+                filter_address,
+                sizeof(filter_address),
+                ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::SameLine();
+            if (ImGui::Button("Locate", ImVec2(locate_button_w, 0.0f)) || locate_enter) {
+                locate_property_by_address();
+            }
+            if (!address_locate_status.empty()) ImGui::TextWrapped("%s", address_locate_status.c_str());
+            if (!filter_enabled) {
+                ImGui::TextDisabled("Locate works anytime. Enable filters to also narrow visible records by address.");
+            } else {
+                ImGui::TextDisabled("Address search ignores case, punctuation, token order, and common street suffix variants.");
+            }
+            ImGui::SeparatorText("Other Fields");
             ImGui::InputText("Block/Lot", filter_blocklot, sizeof(filter_blocklot));
             ImGui::InputText("Status", filter_status, sizeof(filter_status));
-            ImGui::InputText("Address", filter_address, sizeof(filter_address));
             ImGui::InputText("Owner", filter_owner, sizeof(filter_owner));
             ImGui::InputText("ZIP", filter_zip, sizeof(filter_zip));
             if (ImGui::Button("Clear Field Filters")) {

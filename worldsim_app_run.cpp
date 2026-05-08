@@ -745,7 +745,8 @@ int runWorldSim3App(int argc, char** argv) {
     int filter_year_max = 2026;
     char filter_blocklot[64] = "";
     char filter_status[64] = "";
-    char filter_address[96] = "";
+    char filter_address[160] = "";
+    std::string address_locate_status;
     char filter_owner[96] = "";
     char filter_zip[24] = "";
     bool crime_filter_enabled = false;

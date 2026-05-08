@@ -819,12 +819,23 @@
                 ImGui::TextDisabled("Source expected: data/layers/real_property_information.geojson");
                 return;
             }
+            const std::string property_address = firstDisplayProperty(*rp, {
+                "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+            });
+            if (!property_address.empty()) {
+                ImGui::TextDisabled("Property Address");
+                ImGui::SetWindowFontScale(1.22f);
+                ImGui::TextWrapped("%s", property_address.c_str());
+                ImGui::SetWindowFontScale(1.0f);
+                ImGui::Separator();
+            }
             text_prop("Owner 1", firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME"}));
             text_prop("Owner 2", firstDisplayProperty(*rp, {"OWNER_2"}));
             text_prop("Owner 3", firstDisplayProperty(*rp, {"OWNER_3"}));
             text_prop("Owner Abbrev", firstDisplayProperty(*rp, {"OWNER_ABBR"}));
             text_prop("Mailing Address", firstDisplayProperty(*rp, {"MAILTOADD"}));
-            text_prop("Property Address", firstDisplayProperty(*rp, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS"}));
             text_prop("Use Group", firstDisplayProperty(*rp, {"USEGROUP"}));
             text_prop("DHCD Use", firstDisplayProperty(*rp, {"DHCDUSE1"}));
             text_prop("Zone Code", firstDisplayProperty(*rp, {"ZONECODE"}));

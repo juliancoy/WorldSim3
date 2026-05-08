@@ -68,9 +68,19 @@
                 if (!containsCaseInsensitive(st, q_status)) return false;
             }
             if (!q_address.empty()) {
-                std::string ad = first_prop(fg, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
-                if (ad.empty() && rp_join) ad = first_prop(*rp_join, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
-                if (!containsCaseInsensitive(ad, q_address)) return false;
+                std::string ad = first_prop(fg, {
+                    "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                    "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                    "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                });
+                if (ad.empty() && rp_join) {
+                    ad = first_prop(*rp_join, {
+                        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                    });
+                }
+                if (!addressMatchesSearch(ad, q_address)) return false;
             }
             if (!q_owner.empty()) {
                 std::string ow = first_prop(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
