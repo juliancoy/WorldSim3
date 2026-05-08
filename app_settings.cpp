@@ -27,6 +27,12 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("basemap_style") && j["basemap_style"].is_number_integer()) {
         out.basemap_style = std::clamp(j["basemap_style"].get<int>(), 0, 1);
     }
+    if (j.contains("topo_vector_enabled") && j["topo_vector_enabled"].is_boolean()) {
+        out.topo_vector_enabled = j["topo_vector_enabled"].get<bool>();
+    }
+    if (j.contains("zoning_use_simcity_colors") && j["zoning_use_simcity_colors"].is_boolean()) {
+        out.zoning_use_simcity_colors = j["zoning_use_simcity_colors"].get<bool>();
+    }
     if (j.contains("reserve_cpu_cores") && j["reserve_cpu_cores"].is_number_integer()) {
         out.reserve_cpu_cores = std::max(0, j["reserve_cpu_cores"].get<int>());
     }
@@ -39,6 +45,8 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     j["vulkan_validation_enabled"] = settings.vulkan_validation_enabled;
     j["grayscale_basemap"] = settings.grayscale_basemap;
     j["basemap_style"] = std::clamp(settings.basemap_style, 0, 1);
+    j["topo_vector_enabled"] = settings.topo_vector_enabled;
+    j["zoning_use_simcity_colors"] = settings.zoning_use_simcity_colors;
     j["reserve_cpu_cores"] = std::max(0, settings.reserve_cpu_cores);
     std::ofstream out(root / "data" / "app_settings.json");
     if (out) out << j.dump(2);

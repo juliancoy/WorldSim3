@@ -190,6 +190,7 @@ VkPhysicalDevice g_PhysicalDevice = VK_NULL_HANDLE;
 VkDevice g_Device = VK_NULL_HANDLE;
 uint32_t g_QueueFamily = (uint32_t)-1;
 VkQueue g_Queue = VK_NULL_HANDLE;
+std::mutex g_QueueSubmitMutex;
 VkDescriptorPool g_DescriptorPool = VK_NULL_HANDLE;
 VkSampler g_TileSampler = VK_NULL_HANDLE;
 static VkCommandPool g_UploadCommandPool = VK_NULL_HANDLE;
@@ -205,6 +206,13 @@ std::list<std::string> g_TileLRU;
 bool g_EnableValidationLayers = false;
 std::vector<TileTexture> g_RetiredTextures;
 static int g_TextureRetireFrames = 0;
+
+struct TopoVectorCache {
+    fs::file_time_type mtime{};
+    bool loaded = false;
+    std::vector<std::vector<ImVec2>> lines_lonlat;
+};
+static TopoVectorCache g_TopoVectorCache;
 
 void check_vk_result(VkResult err) {
     if (err == 0) return;
@@ -384,7 +392,10 @@ static void submitUploadCommands(std::function<void(VkCommandBuffer)> record) {
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &g_UploadCommandBuffer;
-    check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+    }
     check_vk_result(vkQueueWaitIdle(g_Queue));
 }
 
@@ -626,6 +637,71 @@ TileSample getTileSample(const fs::path& root, const std::string& tile_root_dir,
     return TileSample{parent, uv0, uv1};
 }
 
+const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const fs::path& root) {
+    const fs::path p = root / "data" / "tiles_topo_vector.geojson";
+    std::error_code ec;
+    if (!fs::exists(p, ec) || ec) {
+        g_TopoVectorCache.lines_lonlat.clear();
+        g_TopoVectorCache.loaded = false;
+        return g_TopoVectorCache.lines_lonlat;
+    }
+    const fs::file_time_type mt = fs::last_write_time(p, ec);
+    if (!ec && g_TopoVectorCache.loaded && mt == g_TopoVectorCache.mtime) {
+        return g_TopoVectorCache.lines_lonlat;
+    }
+
+    g_TopoVectorCache.lines_lonlat.clear();
+    std::ifstream in(p);
+    if (!in) {
+        g_TopoVectorCache.loaded = false;
+        return g_TopoVectorCache.lines_lonlat;
+    }
+    json j;
+    try {
+        in >> j;
+    } catch (...) {
+        g_TopoVectorCache.loaded = false;
+        return g_TopoVectorCache.lines_lonlat;
+    }
+    if (!j.is_object() || !j.contains("features") || !j["features"].is_array()) {
+        g_TopoVectorCache.loaded = false;
+        return g_TopoVectorCache.lines_lonlat;
+    }
+
+    auto append_line = [&](const json& coords) {
+        if (!coords.is_array()) return;
+        std::vector<ImVec2> line;
+        line.reserve(coords.size());
+        for (const auto& pt : coords) {
+            if (!pt.is_array() || pt.size() < 2 || !pt[0].is_number() || !pt[1].is_number()) continue;
+            line.emplace_back((float)pt[0].get<double>(), (float)pt[1].get<double>());
+        }
+        if (line.size() >= 2) g_TopoVectorCache.lines_lonlat.push_back(std::move(line));
+    };
+    for (const auto& f : j["features"]) {
+        if (!f.is_object() || !f.contains("geometry") || !f["geometry"].is_object()) continue;
+        const auto& geom = f["geometry"];
+        const std::string type = geom.value("type", "");
+        if (!geom.contains("coordinates")) continue;
+        const auto& c = geom["coordinates"];
+        if (type == "LineString") {
+            append_line(c);
+        } else if (type == "MultiLineString" && c.is_array()) {
+            for (const auto& line : c) append_line(line);
+        } else if (type == "Polygon" && c.is_array()) {
+            for (const auto& ring : c) append_line(ring);
+        } else if (type == "MultiPolygon" && c.is_array()) {
+            for (const auto& poly : c) {
+                if (!poly.is_array()) continue;
+                for (const auto& ring : poly) append_line(ring);
+            }
+        }
+    }
+    g_TopoVectorCache.mtime = mt;
+    g_TopoVectorCache.loaded = true;
+    return g_TopoVectorCache.lines_lonlat;
+}
+
 void SetupVulkan(const char** extensions, uint32_t extensions_count) {
     VkApplicationInfo app_info{};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -839,7 +915,10 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     submit.pCommandBuffers = &fd->CommandBuffer;
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &render_complete_semaphore;
-    check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+    }
 
     uint64_t shot_req_id = 0;
     bool shot_request_native = false;
@@ -988,7 +1067,10 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     cap_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     cap_submit.commandBufferCount = 1;
     cap_submit.pCommandBuffers = &cap_cmd;
-    check_vk_result(vkQueueSubmit(g_Queue, 1, &cap_submit, VK_NULL_HANDLE));
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &cap_submit, VK_NULL_HANDLE));
+    }
     check_vk_result(vkQueueWaitIdle(g_Queue));
 
     std::string out_path;
@@ -1046,9 +1128,86 @@ void FramePresent(ImGui_ImplVulkanH_Window* wd) {
     info.swapchainCount = 1;
     info.pSwapchains = &wd->Swapchain;
     info.pImageIndices = &wd->FrameIndex;
-    VkResult err = vkQueuePresentKHR(g_Queue, &info);
+    VkResult err = VK_SUCCESS;
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        err = vkQueuePresentKHR(g_Queue, &info);
+    }
     if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
         g_SwapChainRebuild = true;
+        return;
+    }
+    check_vk_result(err);
+    wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
+}
+
+void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, bool& swapchain_rebuild) {
+    VkSemaphore image_acquired_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
+    VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
+    VkResult err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
+    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
+        swapchain_rebuild = true;
+        return;
+    }
+    check_vk_result(err);
+
+    ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
+    check_vk_result(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX));
+    check_vk_result(vkResetFences(g_Device, 1, &fd->Fence));
+    check_vk_result(vkResetCommandPool(g_Device, fd->CommandPool, 0));
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check_vk_result(vkBeginCommandBuffer(fd->CommandBuffer, &begin));
+
+    VkRenderPassBeginInfo rp{};
+    rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp.renderPass = wd->RenderPass;
+    rp.framebuffer = fd->Framebuffer;
+    rp.renderArea.extent.width = wd->Width;
+    rp.renderArea.extent.height = wd->Height;
+    rp.clearValueCount = 1;
+    rp.pClearValues = &wd->ClearValue;
+    vkCmdBeginRenderPass(fd->CommandBuffer, &rp, VK_SUBPASS_CONTENTS_INLINE);
+
+    ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
+    vkCmdEndRenderPass(fd->CommandBuffer);
+    check_vk_result(vkEndCommandBuffer(fd->CommandBuffer));
+
+    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.waitSemaphoreCount = 1;
+    submit.pWaitSemaphores = &image_acquired_semaphore;
+    submit.pWaitDstStageMask = &wait_stage;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &fd->CommandBuffer;
+    submit.signalSemaphoreCount = 1;
+    submit.pSignalSemaphores = &render_complete_semaphore;
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+    }
+}
+
+void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild) {
+    if (swapchain_rebuild) return;
+    VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
+    VkPresentInfoKHR info{};
+    info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    info.waitSemaphoreCount = 1;
+    info.pWaitSemaphores = &render_complete_semaphore;
+    info.swapchainCount = 1;
+    info.pSwapchains = &wd->Swapchain;
+    info.pImageIndices = &wd->FrameIndex;
+    VkResult err = VK_SUCCESS;
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        err = vkQueuePresentKHR(g_Queue, &info);
+    }
+    if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR) {
+        swapchain_rebuild = true;
         return;
     }
     check_vk_result(err);

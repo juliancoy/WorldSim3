@@ -50,6 +50,7 @@ struct LayerSettingsPopupContext {
     std::vector<bool>* layer_heatmap_use_gradient = nullptr;
 
     int heatmap_algo = 0;
+    bool* heatmap_allow_cpu_fallback = nullptr;
 
     std::mutex* layer_fill_mutex = nullptr;
 

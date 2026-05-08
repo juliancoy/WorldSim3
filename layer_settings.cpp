@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "dataset_library.h"
+#include "memory_utils.h"
 #include "worldsim_app_internal.h"
 
 #include "imgui.h"
@@ -81,8 +82,9 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         const bool removed = fs::remove(ctx.local_layer_path, rm_ec);
         if (removed || !fs::exists(ctx.local_layer_path)) {
             l.enabled = false;
-            l.features.clear();
+            releaseContainerStorage(l.features);
             if (ctx.idx < ctx.layer_spatial->size()) (*ctx.layer_spatial)[ctx.idx] = LayerSpatialIndex{};
+            trimProcessHeap();
             {
                 std::lock_guard<std::mutex> lk_status(*ctx.status_mutex);
                 if (ctx.idx < ctx.layer_states->size()) {
@@ -184,6 +186,16 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         if (ImGui::Checkbox("Adaptive splat radius", &adaptive)) {
             (*ctx.layer_heatmap_zoom_adaptive_bandwidth)[ctx.idx] = adaptive;
             *ctx.layer_heatmap_state_changed = true;
+        }
+        if (ctx.heatmap_allow_cpu_fallback) {
+            bool allow_fallback = *ctx.heatmap_allow_cpu_fallback;
+            if (ImGui::Checkbox("Allow CPU fallback if GPU path fails", &allow_fallback)) {
+                *ctx.heatmap_allow_cpu_fallback = allow_fallback;
+                *ctx.layer_heatmap_state_changed = true;
+            }
+            if (!allow_fallback) {
+                ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
+            }
         }
         *ctx.heatmap_controls_active |= ImGui::IsItemActive();
     } else if (resolved_layer_algo == kAggregateLodGeometry) {

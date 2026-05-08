@@ -2,6 +2,7 @@
 
 #include "cache_io.h"
 #include "layer_geometry.h"
+#include "memory_utils.h"
 #include "thread_utils.h"
 
 #include <algorithm>
@@ -75,10 +76,14 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         }
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
                         hydrated_queue.push_back(HydratedLayer{i, {}, true, false, ""});
+                        releaseContainerStorage(cached_features);
+                        trimProcessHeap();
                         continue;
                     } else {
                         std::error_code ec;
                         fs::remove(cache_path, ec);
+                        releaseContainerStorage(cached_features);
+                        trimProcessHeap();
                     }
                 }
 
@@ -158,6 +163,8 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
                 std::lock_guard<std::mutex> lk(tri_mutex);
                 tri_results.push_back(std::move(result));
             }
+            releaseContainerStorage(job.rings_per_feature);
+            trimProcessHeap();
         }
     
     });

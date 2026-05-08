@@ -1,10 +1,12 @@
 #include "status_api.h"
 
 #include "app_utils.h"
+#include "memory_utils.h"
 #include "net_http_utils.h"
 #include "thread_utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -19,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace {
 struct ResourceUsageSnapshot {
@@ -94,6 +97,14 @@ ProcMemorySnapshot readProcMemory() {
     return out;
 }
 
+std::string readTextFileIfExists(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) return {};
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 int currentProcessId() {
 #if defined(_WIN32)
     return _getpid();
@@ -141,9 +152,16 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& api_layer_mutex = *ctx.api_layer_mutex;
         auto& api_layer_enable_cmds = *ctx.api_layer_enable_cmds;
         auto& api_layer_fill_cmds = *ctx.api_layer_fill_cmds;
+        auto& api_layer_download_cmds = *ctx.api_layer_download_cmds;
         auto& api_zoom_cmd = *ctx.api_zoom_cmd;
         auto& api_lon_cmd = *ctx.api_lon_cmd;
         auto& api_lat_cmd = *ctx.api_lat_cmd;
+        auto& api_ui_cmd_seq = *ctx.api_ui_cmd_seq;
+        auto& api_ui_cmd_kind = *ctx.api_ui_cmd_kind;
+        auto& api_ui_cmd_x = *ctx.api_ui_cmd_x;
+        auto& api_ui_cmd_y = *ctx.api_ui_cmd_y;
+        auto& api_ui_cmd_button = *ctx.api_ui_cmd_button;
+        auto& api_ui_cmd_scroll_y = *ctx.api_ui_cmd_scroll_y;
         auto& layer_profile_mutex = *ctx.layer_profile_mutex;
         auto& layer_profile_snapshot = *ctx.layer_profile_snapshot;
         auto& profile_mutex = *ctx.profile_mutex;
@@ -215,6 +233,34 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 return std::make_pair(pq.substr(0, q), q == std::string::npos ? std::string() : pq.substr(q + 1));
             };
             auto [path, query] = split_q(path_q);
+            auto url_decode = [](const std::string& in) -> std::string {
+                std::string out;
+                out.reserve(in.size());
+                for (size_t i = 0; i < in.size(); ++i) {
+                    const char ch = in[i];
+                    if (ch == '+') {
+                        out.push_back(' ');
+                        continue;
+                    }
+                    if (ch == '%' && i + 2 < in.size()) {
+                        auto hex = [](char c) -> int {
+                            if (c >= '0' && c <= '9') return c - '0';
+                            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+                            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+                            return -1;
+                        };
+                        const int hi = hex(in[i + 1]);
+                        const int lo = hex(in[i + 2]);
+                        if (hi >= 0 && lo >= 0) {
+                            out.push_back((char)((hi << 4) | lo));
+                            i += 2;
+                            continue;
+                        }
+                    }
+                    out.push_back(ch);
+                }
+                return out;
+            };
             auto get_q = [&](const std::string& key) -> std::string {
                 size_t pos = 0;
                 while (pos < query.size()) {
@@ -222,7 +268,11 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     std::string kv = query.substr(pos, (amp == std::string::npos ? query.size() : amp) - pos);
                     size_t eq = kv.find('=');
                     std::string k = eq == std::string::npos ? kv : kv.substr(0, eq);
-                    if (k == key) return eq == std::string::npos ? std::string() : kv.substr(eq + 1);
+                    k = url_decode(k);
+                    if (k == key) {
+                        if (eq == std::string::npos) return {};
+                        return url_decode(kv.substr(eq + 1));
+                    }
                     if (amp == std::string::npos) break;
                     pos = amp + 1;
                 }
@@ -594,6 +644,20 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 (void)writeAll(client_fd, resp.data(), resp.size());
             } else if (path == "/memory") {
                 send_json(200, "OK", build_memory_profile());
+            } else if (path == "/memory/trim") {
+                json before = build_memory_profile();
+                const ProcessMemoryTrimResult trim = trimProcessHeap();
+                json after = build_memory_profile();
+                send_json(200, "OK", {
+                    {"ok", true},
+                    {"trim", {
+                        {"supported", trim.supported},
+                        {"attempted", trim.attempted},
+                        {"released", trim.released}
+                    }},
+                    {"before", std::move(before)},
+                    {"after", std::move(after)}
+                });
             } else if (path == "/profile" || path == "/profile/layers" || path == "/profile/reset") {
                 if (path == "/profile/reset") {
                     {
@@ -696,6 +760,15 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"tile_cache_size", prof_tile_cache_size.load(std::memory_order_relaxed)},
                     {"tile_cache_max", kMaxTileCache}
                 };
+                out["heatmap_aggregate"] = {
+                    {"gpu_splat_active", ctx.prof_heatmap_gpu_splat_active && ctx.prof_heatmap_gpu_splat_active->load(std::memory_order_relaxed)},
+                    {"high_quality", ctx.prof_heatmap_high_quality && ctx.prof_heatmap_high_quality->load(std::memory_order_relaxed)},
+                    {"cache_valid", ctx.prof_heatmap_cache_valid && ctx.prof_heatmap_cache_valid->load(std::memory_order_relaxed)},
+                    {"texture_resident", ctx.prof_heatmap_texture_resident && ctx.prof_heatmap_texture_resident->load(std::memory_order_relaxed)},
+                    {"async_inflight", ctx.prof_heatmap_async_inflight && ctx.prof_heatmap_async_inflight->load(std::memory_order_relaxed)},
+                    {"cache_key", ctx.prof_heatmap_cache_key ? ctx.prof_heatmap_cache_key->load(std::memory_order_relaxed) : 0},
+                    {"texture_cache_entries", ctx.prof_heatmap_texture_cache_entries ? ctx.prof_heatmap_texture_cache_entries->load(std::memory_order_relaxed) : 0}
+                };
                 json layer_profile = build_layer_profile();
                 out["layers"] = std::move(layer_profile["layers"]);
                 out["totals"] = std::move(layer_profile["totals"]);
@@ -712,6 +785,104 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 json out;
                 out["ok"] = true;
                 out["note"] = "Live layer UI checkbox state. Selected parcel/zone detail state is render-thread local and is not exposed here.";
+                const std::string include_hierarchy = get_q("include_hierarchy");
+                const std::string action = get_q("action");
+                if (!action.empty()) {
+                    try {
+                        if (action == "click") {
+                            const double x = std::stod(get_q("x"));
+                            const double y = std::stod(get_q("y"));
+                            const std::string braw = get_q("button");
+                            const int button = braw.empty() ? 0 : std::clamp(std::stoi(braw), 0, 4);
+                            api_ui_cmd_x.store(x, std::memory_order_relaxed);
+                            api_ui_cmd_y.store(y, std::memory_order_relaxed);
+                            api_ui_cmd_button.store(button, std::memory_order_relaxed);
+                            api_ui_cmd_kind.store(1, std::memory_order_relaxed);
+                            api_ui_cmd_seq.fetch_add(1, std::memory_order_relaxed);
+                            out["action"] = {{"type", "click"}, {"x", x}, {"y", y}, {"button", button}};
+                        } else if (action == "move") {
+                            const double x = std::stod(get_q("x"));
+                            const double y = std::stod(get_q("y"));
+                            api_ui_cmd_x.store(x, std::memory_order_relaxed);
+                            api_ui_cmd_y.store(y, std::memory_order_relaxed);
+                            api_ui_cmd_kind.store(2, std::memory_order_relaxed);
+                            api_ui_cmd_seq.fetch_add(1, std::memory_order_relaxed);
+                            out["action"] = {{"type", "move"}, {"x", x}, {"y", y}};
+                        } else if (action == "scroll") {
+                            const std::string draw = get_q("dy");
+                            const double dy = draw.empty() ? 0.0 : std::stod(draw);
+                            api_ui_cmd_scroll_y.store(dy, std::memory_order_relaxed);
+                            api_ui_cmd_kind.store(3, std::memory_order_relaxed);
+                            api_ui_cmd_seq.fetch_add(1, std::memory_order_relaxed);
+                            out["action"] = {{"type", "scroll"}, {"dy", dy}};
+                        } else if (action == "download_layer") {
+                            std::string file = get_q("file");
+                            auto lower = [](std::string s) {
+                                for (char& c : s) c = (char)std::tolower((unsigned char)c);
+                                return s;
+                            };
+                            if (file.empty()) {
+                                const std::string idx_raw = get_q("index");
+                                if (!idx_raw.empty()) {
+                                    const int idx = std::stoi(idx_raw);
+                                    if (idx >= 0 && (size_t)idx < layers.size()) file = layers[(size_t)idx].file;
+                                }
+                            }
+                            if (file.empty()) {
+                                const std::string name = get_q("name");
+                                if (!name.empty()) {
+                                    for (const auto& l : layers) {
+                                        if (l.name == name) {
+                                            file = l.file;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            if (file.empty()) {
+                                out["ok"] = false;
+                                out["error"] = "download_layer requires one of: file, index, or name";
+                            } else {
+                                size_t matched = layers.size();
+                                const std::string needle = lower(file);
+                                for (size_t i = 0; i < layers.size(); ++i) {
+                                    if (lower(layers[i].file) == needle || lower(layers[i].name) == needle) {
+                                        matched = i;
+                                        break;
+                                    }
+                                }
+                                if (matched == layers.size()) {
+                                    out["ok"] = false;
+                                    out["error"] = std::string("download_layer target not found: ") + file;
+                                } else {
+                                    file = layers[matched].file;
+                                    const auto& layer = layers[matched];
+                                    if (layer.source_url.empty()) {
+                                        out["ok"] = false;
+                                        out["error"] = "layer has no source URL";
+                                    } else {
+                                        std::lock_guard<std::mutex> lk(api_layer_mutex);
+                                        api_layer_download_cmds.push_back(file);
+                                    }
+                                    out["action"] = {
+                                        {"type", "download_layer"},
+                                        {"file", file},
+                                        {"index", matched},
+                                        {"name", layer.name},
+                                        {"has_source_url", !layer.source_url.empty()},
+                                        {"enqueued", !layer.source_url.empty()}
+                                    };
+                                }
+                            }
+                        } else {
+                            out["ok"] = false;
+                            out["error"] = "unsupported action; use click|move|scroll|download_layer";
+                        }
+                    } catch (...) {
+                        out["ok"] = false;
+                        out["error"] = "invalid ui action parameters";
+                    }
+                }
                 out["view"] = {
                     {"zoom", current_zoom_state.load(std::memory_order_relaxed)},
                     {"center_lon", current_lon_state.load(std::memory_order_relaxed)},
@@ -724,8 +895,19 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 {
                     std::lock_guard<std::mutex> lk(layer_fill_mutex);
                     json layer_ui = json::array();
+                    std::unordered_map<std::string, json> by_category;
                     for (size_t i = 0; i < layers.size(); ++i) {
                         const auto& l = layers[i];
+                        const std::string category = categoryToString(l.category);
+                        by_category[category]["name"] = category;
+                        if (!by_category[category].contains("children")) by_category[category]["children"] = json::array();
+                        by_category[category]["children"].push_back({
+                            {"id", l.file},
+                            {"label", l.name},
+                            {"kind", "layer"},
+                            {"index", i},
+                            {"downloadable", !l.source_url.empty()}
+                        });
                         layer_ui.push_back({
                             {"index", i},
                             {"file", l.file},
@@ -738,6 +920,40 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         });
                     }
                     out["layers"] = std::move(layer_ui);
+                    if (include_hierarchy == "1" || include_hierarchy == "true" || include_hierarchy.empty()) {
+                        json cats = json::array();
+                        for (const auto& cat : {"Housing", "Public Health", "Safety", "Infrastructure", "Zoning"}) {
+                            auto it = by_category.find(cat);
+                            if (it != by_category.end()) cats.push_back(it->second);
+                        }
+                        out["ui_hierarchy"] = {
+                            {"windows", json::array({
+                                {{"id", "layers_controls"}, {"label", "Layers and Controls"}},
+                                {{"id", "map"}, {"label", "Map"}},
+                                {{"id", "record_filters"}, {"label", "Record Filters"}},
+                                {{"id", "download_queue"}, {"label", "Download Queue"}, {"conditional", true}},
+                                {{"id", "gear_panel"}, {"label", "Gear Panel"}, {"conditional", true}}
+                            })},
+                            {"layers_and_controls", {
+                                {"sections", json::array({
+                                    "Basemap controls",
+                                    "Basemap Layers",
+                                    "Housing",
+                                    "Public Health",
+                                    "Safety",
+                                    "Infrastructure",
+                                    "Zoning",
+                                    "Zoning Filters",
+                                    "Performance and Stats"
+                                })},
+                                {"categories", std::move(cats)},
+                                {"row_controls", json::array({"D", "V", "⚙"})}
+                            }},
+                            {"record_filters_tabs", json::array({"Filters", "Vacancy-Parcel", "Gradient", "Owners"})}
+                        };
+                        const std::string md = readTextFileIfExists("UI_HIERARCHY.md");
+                        if (!md.empty()) out["ui_hierarchy_markdown"] = md;
+                    }
                 }
                 out["vacancy"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},

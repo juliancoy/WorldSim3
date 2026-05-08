@@ -41,9 +41,15 @@ const std::pair<ImVec2, ImVec2>& MapProjectionCache::getWorldExtent(
     const uint64_t key = featureCacheKey(layer_idx, feature_idx);
     auto it = world_extent_cache_.find(key);
     if (it != world_extent_cache_.end()) return it->second;
-    ImVec2 p0w = lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, math_zoom_);
-    ImVec2 p1w = lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, math_zoom_);
-    return world_extent_cache_.emplace(key, std::make_pair(p0w, p1w)).first->second;
+    last_world_extent_ = {
+        lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, math_zoom_),
+        lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, math_zoom_)
+    };
+    return world_extent_cache_.emplace(key, last_world_extent_).first->second;
+}
+
+void MapProjectionCache::reserveWorldRings(size_t count) {
+    world_rings_cache_.reserve(count);
 }
 
 void MapProjectionCache::appendWorldRingLine(const std::vector<ImVec2>& world_ring) {
