@@ -116,6 +116,26 @@
     "default_enabled": false
   },
   {
+    "name": "CodeMap Recently Rehabbed Vacant Buildings",
+    "file": "codemap_recently_rehabbed_vacant_buildings.geojson",
+    "color": "#00a6a6",
+    "description": "CodeMap Datamax point layer for recently rehabbed vacant buildings since 2022. Strong public success proxy; generated from dmxLandPlanning/MapServer/38 by scripts/build_codemap_rehab_layers.py.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "CodeMap Recently Rehabbed VBN Parcels",
+    "file": "codemap_recently_rehabbed_vbn_parcels.geojson",
+    "color": "#008f5a",
+    "description": "CodeMap Datamax parcel polygon layer for recently rehabbed vacant building notices since 2022. Use for parcel fill/joins; generated from dmxLandPlanning/MapServer/27 by scripts/build_codemap_rehab_layers.py.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
     "name": "Tax Lien Certificate Sale Properties",
     "file": "tax_lien_certificate_sale_properties.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
