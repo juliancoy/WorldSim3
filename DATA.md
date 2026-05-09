@@ -110,6 +110,17 @@ python3 python_backup/generate_property_value_parcels.py
 Output:
 - `data/layers/property_value_parcels.geojson`
 
+## Year-built parcel layer
+
+Generate a derived parcel choropleth layer from Real Property Information `YEAR_BUILD`:
+
+```bash
+python3 scripts/generate_year_built_parcels.py
+```
+
+Output:
+- `data/layers/year_built_parcels.geojson`
+
 ## Parcel intelligence layer
 
 Generate a derived parcel analytics layer with risk, investment, owner concentration, vacancy/tax lifecycle proxies, and relative z-scores:
@@ -164,3 +175,47 @@ Cloudflare Worker signaling template:
 - `cloudflare/worker-signaling.js`
 
 Note: signaling enables peers to exchange WebRTC ICE/SDP offers; NAT traversal itself depends on STUN/TURN from the clients.
+## Regional parcel layer
+
+Build the canonical regional parcel layer after converting county parcel downloads to GeoJSON. The app prefers `data/layers/regional_parcels.geojson` when it exists and falls back to Baltimore City `parcel.geojson` otherwise.
+
+Start with the current Baltimore City data:
+
+```bash
+python3 scripts/build_regional_parcels.py \
+  --input BaltimoreCity:data/layers/parcel.geojson \
+  --property-input BaltimoreCity:data/layers/real_property_information.geojson \
+  --output data/layers/regional_parcels.geojson
+```
+
+Add Baltimore County and Howard County after downloading official parcel/property GIS data and converting it to GeoJSON, for example with `ogr2ogr`:
+
+```bash
+ogr2ogr -f GeoJSON data/inbox/baltimore_county/parcels.geojson /path/to/baltimore_county_source.gdb Parcels
+ogr2ogr -f GeoJSON data/inbox/howard_county/parcels.geojson /path/to/howard_county_source.shp
+
+python3 scripts/build_regional_parcels.py \
+  --input BaltimoreCity:data/layers/parcel.geojson \
+  --property-input BaltimoreCity:data/layers/real_property_information.geojson \
+  --input BaltimoreCounty:data/inbox/baltimore_county/parcels.geojson \
+  --input HowardCounty:data/inbox/howard_county/parcels.geojson \
+  --output data/layers/regional_parcels.geojson
+```
+
+If a county publishes assessment/owner records separately from parcel geometry, pass it with matching jurisdiction:
+
+```bash
+python3 scripts/build_regional_parcels.py \
+  --input BaltimoreCounty:data/inbox/baltimore_county/parcels.geojson \
+  --property-input BaltimoreCounty:data/inbox/baltimore_county/property_records.geojson \
+  --input HowardCounty:data/inbox/howard_county/parcels.geojson \
+  --property-input HowardCounty:data/inbox/howard_county/property_records.geojson
+```
+
+Official starting points:
+- Baltimore County GIS Data Download: https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download
+- Howard County Data Download and Viewer: https://data.howardcountymd.gov/
+- Maryland Planning parcel products: https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx
+
+Do not scrape SDAT Real Property Search pages; use official bulk GIS/property downloads.
+

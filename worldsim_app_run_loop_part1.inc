@@ -446,13 +446,9 @@
         current_zoom_state.store(zoom, std::memory_order_relaxed);
         current_lon_state.store(center_lon, std::memory_order_relaxed);
         current_lat_state.store(center_lat, std::memory_order_relaxed);
-        auto request_basemap_download = [&](const std::string& target_dir, const std::string& url_tmpl) {
-            requestBasemapDownload(basemap_download, root, target_dir, url_tmpl, data_library_status_msg);
-            basemap_coverage_dirty = true;
-        };
-        loadBasemapDownloadQueue(basemap_download, root, data_library_status_msg);
+        loadLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
         load_layer_download_queue();
-        tickBasemapDownloadQueue(basemap_download, root, data_library_status_msg);
+        tickLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
         auto count_missing_tiles = [&](const std::string& target_dir) -> std::pair<size_t, size_t> {
             const fs::path base = root / "data" / target_dir;
             const double min_lon = -76.75;
@@ -483,11 +479,8 @@
             (basemap_now - basemap_availability_last_check) >= kBasemapCoverageRefreshInterval) {
             std::tie(osm_missing_tiles_cached, osm_total_tiles_cached) = count_missing_tiles("tiles");
             std::tie(topo_missing_tiles_cached, topo_total_tiles_cached) = count_missing_tiles("tiles_topo");
-            basemap_source_has_any_files_cached =
-                osm_total_tiles_cached > 0 && osm_missing_tiles_cached < osm_total_tiles_cached;
-            topo_tiles_available_cached =
-                (topo_total_tiles_cached > 0 && topo_missing_tiles_cached < topo_total_tiles_cached) ||
-                fs::exists(root / "data" / "tiles_topographic");
+            basemap_source_has_any_files_cached = true;
+            topo_tiles_available_cached = true;
             topo_vector_available_cached = fs::exists(root / "data" / "tiles_topo_vector.geojson");
             basemap_availability_last_check = basemap_now;
             basemap_coverage_dirty = false;
@@ -542,8 +535,8 @@
         }
         ImGui::TextDisabled("Local data: %zu/%zu", local_layer_count, layers.size());
         ImGui::SliderInt("Zoom", &zoom, kMinZoom, kMaxZoom);
-        const double lon_min = -76.75, lon_max = -76.45;
-        const double lat_min = 39.18, lat_max = 39.40;
+        const double lon_min = -77.25, lon_max = -76.25;
+        const double lat_min = 39.05, lat_max = 39.75;
         ImGui::SliderScalar("Center Lon", ImGuiDataType_Double, &center_lon, &lon_min, &lon_max, "%.6f");
         ImGui::SliderScalar("Center Lat", ImGuiDataType_Double, &center_lat, &lat_min, &lat_max, "%.6f");
         const char* hover_inspector_mode_options[] = {"None", "Parcels", "Zoning", "Parcels + Zoning"};
@@ -560,19 +553,7 @@
             app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
             saveAppSettings(root, app_settings);
         }
-        const bool topo_tiles_available = topo_tiles_available_cached;
-        const char* basemap_options[] = {"OpenStreetMap", "Topographic"};
-        int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
-        ImGui::BeginDisabled(!topo_tiles_available);
-        if (ImGui::Combo("Underlying map source", &basemap_style_ui, basemap_options, IM_ARRAYSIZE(basemap_options))) {
-            if (!topo_tiles_available && basemap_style_ui == 1) basemap_style_ui = 0;
-            app_settings.basemap_style = basemap_style_ui;
-            saveAppSettings(root, app_settings);
-        }
-        ImGui::EndDisabled();
-        if (!topo_tiles_available) {
-            ImGui::TextDisabled("Topographic tiles unavailable (expected: data/tiles_topo or data/tiles_topographic).");
-        }
+        ImGui::TextDisabled("Underlying map sources are independent layers below.");
         int reserve_cpu_cores_ui = std::clamp(app_settings.reserve_cpu_cores, 0, 8);
         if (ImGui::SliderInt("Reserve CPU cores (restart required)", &reserve_cpu_cores_ui, 0, 8)) {
             app_settings.reserve_cpu_cores = reserve_cpu_cores_ui;
@@ -606,30 +587,12 @@
             const size_t osm_total = osm_total_tiles_cached;
             const size_t topo_missing = topo_missing_tiles_cached;
             const size_t topo_total = topo_total_tiles_cached;
-            const bool osm_tiles_available = basemap_source_has_any_files_cached;
             const bool topo_tiles_available = topo_tiles_available_cached;
             const bool topo_vector_available = topo_vector_available_cached;
             const bool topo_any_available = topo_tiles_available || topo_vector_available;
-            const bool osm_incomplete = osm_total > 0 && osm_missing > 0;
-            const bool topo_incomplete = topo_total > 0 && topo_missing > 0;
-            int basemap_style_ui = std::clamp(app_settings.basemap_style, 0, 1);
-            if (!osm_tiles_available || osm_incomplete) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
-                if (ImGui::SmallButton("D##osm_basemap")) {
-                    request_basemap_download("tiles", "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
-                }
-                ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Download missing OpenStreetMap tiles");
-                    ImGui::EndTooltip();
-                }
-                ImGui::SameLine();
-            }
-            if (ImGui::RadioButton("OpenStreetMap", basemap_style_ui == 0)) {
-                app_settings.basemap_style = 0;
+            bool osm_enabled_ui = app_settings.basemap_osm_enabled;
+            if (ImGui::Checkbox("OpenStreetMap", &osm_enabled_ui)) {
+                app_settings.basemap_osm_enabled = osm_enabled_ui;
                 saveAppSettings(root, app_settings);
             }
             ImGui::SameLine();
@@ -642,33 +605,21 @@
             if (ImGui::BeginPopup("osm_display_settings")) {
                 ImGui::TextUnformatted("OpenStreetMap");
                 ImGui::Separator();
+                if (ImGui::SliderFloat("Opacity##osm", &app_settings.basemap_osm_opacity, 0.0f, 1.0f, "%.2f")) {
+                    saveAppSettings(root, app_settings);
+                }
                 if (ImGui::Checkbox("Greyscale underlying map##osm", &app_settings.grayscale_basemap)) {
                     saveAppSettings(root, app_settings);
                 }
                 ImGui::TextDisabled("Tile source: data/tiles");
+                ImGui::TextDisabled("Visible tiles are fetched lazily and cached on disk.");
                 ImGui::EndPopup();
             }
-            if (!topo_tiles_available || topo_incomplete) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
-                if (ImGui::SmallButton("D##topo_basemap")) {
-                    request_basemap_download("tiles_topo", "https://tile.opentopomap.org/{z}/{x}/{y}.png");
-                }
-                ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Download missing Topographic tiles");
-                    ImGui::EndTooltip();
-                }
-                ImGui::SameLine();
-            }
-            ImGui::BeginDisabled(!topo_any_available);
-            if (ImGui::RadioButton("Topographic", basemap_style_ui == 1)) {
-                app_settings.basemap_style = 1;
+            bool topo_enabled_ui = app_settings.basemap_topographic_enabled;
+            if (ImGui::Checkbox("Topographic", &topo_enabled_ui)) {
+                app_settings.basemap_topographic_enabled = topo_enabled_ui;
                 saveAppSettings(root, app_settings);
             }
-            ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(!topo_any_available);
             if (ImGui::SmallButton("?##topo_display_settings")) ImGui::OpenPopup("topo_display_settings");
@@ -681,6 +632,9 @@
             if (ImGui::BeginPopup("topo_display_settings")) {
                 ImGui::TextUnformatted("Topographic");
                 ImGui::Separator();
+                if (ImGui::SliderFloat("Opacity##topo", &app_settings.basemap_topographic_opacity, 0.0f, 1.0f, "%.2f")) {
+                    saveAppSettings(root, app_settings);
+                }
                 if (ImGui::Checkbox("Use vector representation##topo_vector", &app_settings.topo_vector_enabled)) {
                     saveAppSettings(root, app_settings);
                 }
@@ -689,6 +643,7 @@
                 }
                 ImGui::TextDisabled("Tile source: data/tiles_topo");
                 ImGui::TextDisabled("Vector source: data/tiles_topo_vector.geojson");
+                ImGui::TextDisabled("Raster tiles are fetched lazily and cached on disk.");
                 if (!topo_vector_available) {
                     if (ImGui::SmallButton("D##topo_vector_geojson")) {
                         const std::string url =
@@ -713,15 +668,45 @@
                 }
                 ImGui::EndPopup();
             }
+            bool satellite_enabled_ui = app_settings.basemap_satellite_enabled;
+            if (ImGui::Checkbox("Satellite", &satellite_enabled_ui)) {
+                app_settings.basemap_satellite_enabled = satellite_enabled_ui;
+                saveAppSettings(root, app_settings);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("?##satellite_display_settings")) ImGui::OpenPopup("satellite_display_settings");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Layer display settings");
+                ImGui::EndTooltip();
+            }
+            if (ImGui::BeginPopup("satellite_display_settings")) {
+                ImGui::TextUnformatted("Satellite");
+                ImGui::Separator();
+                if (ImGui::SliderFloat("Opacity##satellite", &app_settings.basemap_satellite_opacity, 0.0f, 1.0f, "%.2f")) {
+                    saveAppSettings(root, app_settings);
+                }
+                if (ImGui::Checkbox("Greyscale underlying map##satellite", &app_settings.grayscale_basemap)) {
+                    saveAppSettings(root, app_settings);
+                }
+                ImGui::TextDisabled("Tile source: data/tiles_satellite");
+                ImGui::TextDisabled("Raster tiles are fetched lazily and cached on disk.");
+                ImGui::EndPopup();
+            }
             if (!topo_tiles_available && !topo_vector_available) {
                 ImGui::TextDisabled("Topographic source unavailable: missing data/tiles_topo (or data/tiles_topographic) and data/tiles_topo_vector.geojson.");
-                ImGui::TextDisabled("Use D next to Topographic for raster tiles, or ? -> D for vector contours.");
+                ImGui::TextDisabled("Raster tiles will be fetched lazily; use ? -> D only for vector contours.");
                 if (basemap_download.inflight || !basemap_download.queue.empty()) {
                     ImGui::TextDisabled("A basemap download job is active or queued. See Download Queue window.");
                 }
             }
             if (app_settings.topo_vector_enabled && !topo_vector_available) {
                 ImGui::TextDisabled("Topographic vector source unavailable (data/tiles_topo_vector.geojson).");
+            }
+            if (!app_settings.basemap_osm_enabled &&
+                !app_settings.basemap_topographic_enabled &&
+                !app_settings.basemap_satellite_enabled) {
+                ImGui::TextDisabled("No basemap source enabled.");
             }
             if (osm_total > 0) {
                 ImGui::TextDisabled("OSM coverage: %zu/%zu tiles present (z11-z18)", (size_t)(osm_total - osm_missing), osm_total);
@@ -733,10 +718,15 @@
                 ImGui::Separator();
                 ImGui::TextDisabled("Basemap download is active. See the Download Queue window.");
             }
+            ImGui::TextDisabled(
+                "Lazy cache this run: %zu downloaded, %zu queued",
+                lazy_tile_download.downloaded.load(std::memory_order_relaxed),
+                lazy_tile_download.queue.size());
         }
         auto resolve_download_label = [&](const std::string& key) -> std::string {
             if (key == "tiles") return "OpenStreetMap";
             if (key == "tiles_topo" || key == "tiles_topographic") return "Topographic";
+            if (key == "tiles_satellite") return "Satellite";
             for (const auto& layer : layers) {
                 if (layer.file == key || layer.name == key) return layer.name;
             }
@@ -1112,70 +1102,7 @@
         const double hydrate_idle_s = std::chrono::duration<double>(now - last_hydration_progress_at).count();
         const double tri_idle_s = std::chrono::duration<double>(now - last_tri_progress_at).count();
 
-        if (show_sources_panel) {
-            ImGui::SetNextWindowSize(ImVec2(540, 420), ImGuiCond_FirstUseEver);
-            if (ImGui::Begin("Gear Panel", &show_sources_panel, ImGuiWindowFlags_NoCollapse)) {
-                if (ImGui::BeginTabBar("gear_tabs")) {
-                    if (ImGui::BeginTabItem("Sources")) {
-                        std::vector<std::string> past_work;
-                        std::vector<std::string> future_work;
-                        std::vector<std::string> skipped_layer_files;
-                        std::string todo_text = readTextFile(root / "TODO.md");
-                        collectTodoWork(todo_text, past_work, future_work);
-                        {
-                            std::lock_guard<std::mutex> lk(bootstrap.msg_mutex);
-                            skipped_layer_files = bootstrap.skipped_layer_files;
-                        }
-                        size_t skipped_layers = bootstrap.skipped_layers.load(std::memory_order_relaxed);
-                        size_t skipped_tiles = bootstrap.skipped_tiles.load(std::memory_order_relaxed);
-                        ImGui::Text("Past: %zu", past_work.size());
-                        ImGui::SameLine();
-                        ImGui::Text("Future: %zu", future_work.size());
-                        ImGui::SameLine();
-                        ImGui::Text("Skipped: %zuL/%zuT", skipped_layers, skipped_tiles);
-                        ImGui::Separator();
-                        if (ImGui::BeginTabBar("work_tabs")) {
-                            if (ImGui::BeginTabItem("Past Work")) {
-                                ImGui::BeginChild("past_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-                                if (past_work.empty()) ImGui::TextDisabled("No completed checklist items found in TODO.md");
-                                else for (const auto& item : past_work) ImGui::BulletText("%s", item.c_str());
-                                ImGui::EndChild();
-                                ImGui::EndTabItem();
-                            }
-                            if (ImGui::BeginTabItem("Future Work")) {
-                                ImGui::BeginChild("future_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-                                if (future_work.empty()) ImGui::TextDisabled("No pending items found in TODO.md");
-                                else for (const auto& item : future_work) ImGui::BulletText("%s", item.c_str());
-                                ImGui::EndChild();
-                                ImGui::EndTabItem();
-                            }
-                            if (ImGui::BeginTabItem("Skipped This Run")) {
-                                ImGui::BeginChild("skipped_work_scroll", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-                                ImGui::Text("Layers already present (not downloaded this run): %zu", skipped_layers);
-                                ImGui::Text("Tiles already present (not downloaded this run): %zu", skipped_tiles);
-                                ImGui::Separator();
-                                if (skipped_layer_files.empty()) ImGui::TextDisabled("No skipped layers recorded for this run.");
-                                else {
-                                    ImGui::TextUnformatted("Skipped layer files:");
-                                    for (const auto& f : skipped_layer_files) ImGui::BulletText("%s", f.c_str());
-                                }
-                                ImGui::EndChild();
-                                ImGui::EndTabItem();
-                            }
-                            ImGui::EndTabBar();
-                        }
-                        ImGui::EndTabItem();
-                    }
-                    if (ImGui::BeginTabItem("Heatmap")) {
-                        ImGui::TextDisabled("Heatmap controls are per-layer only.");
-                        ImGui::TextWrapped("Open a layer's settings (⚙) to edit aggregate method, bandwidth, blur, clip, adaptive bandwidth, and multi-res settings.");
-                        ImGui::EndTabItem();
-                    }
-                    ImGui::EndTabBar();
-                }
-            }
-            ImGui::End();
-        }
+        drawGearPanel(&show_sources_panel, root, bootstrap);
         if (show_data_library) {
             ImGui::SetNextWindowSize(ImVec2(860, 560), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Data Library", &show_data_library, ImGuiWindowFlags_NoCollapse)) {

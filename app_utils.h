@@ -37,6 +37,8 @@ int addressSearchScore(const std::string& address, const std::string& query);
 bool addressMatchesSearch(const std::string& address, const std::string& query);
 int extractYearMaybe(const std::string& s);
 double parseNumericField(const std::string& s);
+std::string formatUsNumber(double value, int decimals = 0);
+std::string formatUsd(double value, int decimals = 0);
 std::string trimDisplayValue(std::string s);
 std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys);
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);

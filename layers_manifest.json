@@ -1,5 +1,41 @@
 [
   {
+    "name": "Regional Parcels",
+    "file": "regional_parcels.geojson",
+    "color": "#ffd92f",
+    "description": "Canonical generated parcel layer for Baltimore City, Baltimore County, Howard County, and future regional jurisdictions. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
+    "download": false,
+    "reason": "Generated locally from county parcel/property downloads by scripts/build_regional_parcels.py",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": true
+  },
+  {
+    "name": "Baltimore County Parcels",
+    "file": "baltimore_county_parcels.geojson",
+    "color": "#a6cee3",
+    "description": "Normalized Baltimore County parcel geometry staging layer. Obtain source data from Baltimore County GIS Data Download, convert to GeoJSON, then include it in regional_parcels.geojson.",
+    "download": false,
+    "reason": "County source is distributed through the Baltimore County GIS Data Download portal/FTP and may require format conversion from shapefile/geodatabase.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Howard County Parcels",
+    "file": "howard_county_parcels.geojson",
+    "color": "#b2df8a",
+    "description": "Normalized Howard County parcel geometry staging layer. Obtain source data from Howard County Data Download and Viewer, convert to GeoJSON, then include it in regional_parcels.geojson.",
+    "download": false,
+    "reason": "County source is distributed through Howard County GIS download services and may require format conversion from shapefile/geodatabase.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
     "name": "Real Property Information",
     "file": "real_property_information.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
@@ -27,6 +63,19 @@
     "color": "#238b45",
     "heatmap_field": "value_usd",
     "description": "Derived parcel layer with estimated property value from real property records (tax base, assessed components, or sale price fallback).",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false
+  },
+  {
+    "name": "Year Built (Parcels)",
+    "file": "year_built_parcels.geojson",
+    "color": "#2c7fb8",
+    "heatmap_field": "year_built",
+    "description": "Derived parcel choropleth layer joining Real Property Information YEAR_BUILD onto official parcel geometry by normalized BLOCKLOT. Includes building_age_years and source metadata.",
+    "download": false,
+    "reason": "Generated locally from parcel.geojson and real_property_information.geojson",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
@@ -626,6 +675,41 @@
     "category": "public_health",
     "subcategory": "Housing Finance",
     "scale": "tract",
+    "default_enabled": false
+  },
+  {
+    "name": "HUD Continuum of Care Boundaries (Maryland)",
+    "file": "hud_coc_boundaries_maryland.geojson",
+    "url": "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/CoC_Geo_Type/FeatureServer/0/query?where=ST_1%3D%27MD%27&outFields=ST_1,STATE_NAME,COCNUM,COCNAME,HudNum,Geo_Type&returnGeometry=true&f=geojson",
+    "color": "#2b8cbe",
+    "description": "HUD Continuum of Care (CoC) boundary polygons for Maryland CoCs. Use as planning geography for homelessness service-system analysis and PIT/HIC joins.",
+    "category": "public_health",
+    "subcategory": "Homelessness",
+    "scale": "region",
+    "default_enabled": false
+  },
+  {
+    "name": "HUD Continuum of Care Boundary (Baltimore City CoC MD-503)",
+    "file": "hud_coc_boundary_baltimore_city_md503.geojson",
+    "url": "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/CoC_Geo_Type/FeatureServer/0/query?where=COCNUM%3D%27MD-503%27&outFields=ST_1,STATE_NAME,COCNUM,COCNAME,HudNum,Geo_Type&returnGeometry=true&f=geojson",
+    "color": "#08519c",
+    "description": "HUD CoC boundary for Baltimore City (MD-503), the primary reporting geography for PIT/HIC homelessness statistics in Baltimore City.",
+    "category": "public_health",
+    "subcategory": "Homelessness",
+    "scale": "region",
+    "default_enabled": false
+  },
+  {
+    "name": "HUD PIT Homelessness Trends by CoC (2007-2024)",
+    "file": "hud_pit_homelessness_2007_2024_by_coc.geojson",
+    "color": "#7b3294",
+    "heatmap_field": "PIT_2024_Total",
+    "description": "Generated CoC-level PIT homelessness trend layer (2007-2024) by joining HUD AHAR PIT tables to HUD CoC boundary geometry.",
+    "download": false,
+    "reason": "Generated locally from HUD USER PIT files and CoC boundary geometry",
+    "category": "public_health",
+    "subcategory": "Homelessness",
+    "scale": "region",
     "default_enabled": false
   },
   {

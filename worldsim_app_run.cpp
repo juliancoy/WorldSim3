@@ -22,21 +22,36 @@
 #include "memory_utils.h"
 #include "aggregate_visualization_strategies.h"
 #include "map_render_heatmap_pass.h"
+#include "map_render_basemap.h"
 #include "map_render_hover.h"
+#include "map_render_hud.h"
+#include "map_inspection.h"
+#include "map_overlay_panels.h"
 #include "map_render_layers.h"
 #include "map_render_overlays.h"
 #include "map_render_projection.h"
+#include "map_render_selection.h"
 #include "map_render_utils.h"
+#include "map_viewport.h"
 #include "parcel_timeline.h"
 #include "parcel_unified.h"
 #include "heatmap_render.h"
+#include "gear_panel.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
 #include "layer_settings.h"
 #include "download_queue.h"
+#include "tiles.h"
+#include "owner_info.h"
+#include "owners_tab.h"
+#include "gradient_tab.h"
+#include "vacancy_parcel_tab.h"
+#include "parcel_info_tab.h"
+#include "filters_tab.h"
 #include "duckdb_analytics.h"
 #include "sql_tab.h"
+#include "selection.h"
 #include "app_lifecycle.h"
 #include "worldsim_app.h"
 #include "app_utils.h"
@@ -506,13 +521,6 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
     std::vector<uint32_t> render_candidates;
-    struct OwnerAggregate {
-        std::string owner;
-        std::string owner_class;
-        size_t property_count = 0;
-        double area_m2 = 0.0;
-        double value_usd = 0.0;
-    };
     std::vector<OwnerAggregate> owner_aggregates;
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
@@ -523,16 +531,6 @@ int runWorldSim3App(int argc, char** argv) {
     int owner_class_filter_mode = 0; // 0=all
     int owner_class_assign_mode = 1; // default government
     int selected_owner_anchor = -1;
-    struct FilteredAggregateSnapshot {
-        bool valid = false;
-        uint64_t selection_key = 0;
-        uint64_t data_key = 0;
-        size_t vacancy_parcels_matched = 0;
-        size_t vacancy_parcels_with_geometry = 0;
-        size_t owner_property_count = 0;
-        double owner_area_m2 = 0.0;
-        double owner_value_usd = 0.0;
-    };
     FilteredAggregateSnapshot filtered_aggregate_snapshot;
     bool owner_aggregates_dirty = true;
     int owner_sort_mode = 0; // 0=count,1=area,2=value
@@ -750,6 +748,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::string data_library_bulk_progress;
     std::future<LayerDownloadSummary> data_library_bulk_future;
     DownloadQueueState basemap_download;
+    LazyTileDownloadState lazy_tile_download;
     std::deque<size_t> layer_download_queue;
     bool layer_download_inflight = false;
     size_t layer_download_active_idx = (size_t)-1;
@@ -765,15 +764,16 @@ int runWorldSim3App(int argc, char** argv) {
     auto& filter_status = map_filter_state.status;
     auto& filter_address = map_filter_state.address;
     std::string address_locate_status;
-    struct AddressLocateMatch {
-        size_t parcel_idx = (size_t)-1;
-        int score = 0;
-        std::string address;
-    };
     std::vector<AddressLocateMatch> address_locate_matches;
     auto& filter_owner = map_filter_state.owner;
     char owner_search_query[96] = "";
-    std::string owner_info_owner;
+    char owner_info_property_query[128] = "";
+    ElementInfoUiState element_info_state{{}, (size_t)-1, false, owner_info_property_query, sizeof(owner_info_property_query)};
+    ParcelSelectionState parcel_selection;
+    bool& show_selected_parcel_details = parcel_selection.show_details;
+    size_t& selected_parcel_idx = parcel_selection.active_idx;
+    auto& selected_parcel_indices = parcel_selection.indices;
+    auto& selected_parcel_index_set = parcel_selection.index_set;
     auto& filter_zip = map_filter_state.zip;
     auto& crime_filter_enabled = map_filter_state.crime.enabled;
     auto& crime_filter_homicide = map_filter_state.crime.homicide;
@@ -818,6 +818,18 @@ int runWorldSim3App(int argc, char** argv) {
         owner_search_query,
         sizeof(owner_search_query),
         &selected_owners);
+    loadMapUiState(
+        root,
+        &center_lon,
+        &center_lat,
+        &zoom,
+        &selected_parcel_idx,
+        &selected_parcel_indices);
+    zoom = std::clamp(zoom, kMinZoom, kMaxZoom);
+    center_lat = std::clamp(center_lat, -85.0, 85.0);
+    selected_parcel_index_set.clear();
+    for (size_t idx : selected_parcel_indices) selected_parcel_index_set.insert(idx);
+    show_selected_parcel_details = !selected_parcel_indices.empty() && selected_parcel_idx != (size_t)-1;
     std::vector<std::pair<std::string, int>> crime_breakdown;
     std::vector<int> record_year_hist(201, 0); // 1900..2100
     std::vector<float> record_year_hist_plot(201, 0.0f);
@@ -832,8 +844,6 @@ int runWorldSim3App(int argc, char** argv) {
     bool selected_record_year_dirty = true;
     int selected_record_year_total = 0;
     std::vector<std::string> selected_record_year_samples;
-    bool show_selected_parcel_details = false;
-    size_t selected_parcel_idx = (size_t)-1;
     bool show_selected_zone_details = false;
     size_t selected_zone_idx = (size_t)-1;
     bool basemap_source_has_any_files_cached = false;
@@ -1017,6 +1027,11 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.crime_year_max = &crime_year_max;
     shutdown_ctx.owner_search_query = owner_search_query;
     shutdown_ctx.selected_owners = &selected_owners;
+    shutdown_ctx.center_lon = &center_lon;
+    shutdown_ctx.center_lat = &center_lat;
+    shutdown_ctx.zoom = &zoom;
+    shutdown_ctx.selected_parcel_idx = &selected_parcel_idx;
+    shutdown_ctx.selected_parcel_indices = &selected_parcel_indices;
     shutdown_ctx.hydration_stop = &hydration_stop;
     shutdown_ctx.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_ctx.hydrate_req_cv = &hydrate_req_cv;

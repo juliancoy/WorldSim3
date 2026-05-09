@@ -24,8 +24,40 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("grayscale_basemap") && j["grayscale_basemap"].is_boolean()) {
         out.grayscale_basemap = j["grayscale_basemap"].get<bool>();
     }
+    int legacy_basemap_style = 0;
     if (j.contains("basemap_style") && j["basemap_style"].is_number_integer()) {
-        out.basemap_style = std::clamp(j["basemap_style"].get<int>(), 0, 1);
+        legacy_basemap_style = std::clamp(j["basemap_style"].get<int>(), 0, 2);
+    }
+    const bool has_independent_basemaps =
+        j.contains("basemap_osm_enabled") ||
+        j.contains("basemap_topographic_enabled") ||
+        j.contains("basemap_satellite_enabled");
+    if (has_independent_basemaps) {
+        if (j.contains("basemap_osm_enabled") && j["basemap_osm_enabled"].is_boolean()) {
+            out.basemap_osm_enabled = j["basemap_osm_enabled"].get<bool>();
+        }
+        if (j.contains("basemap_topographic_enabled") && j["basemap_topographic_enabled"].is_boolean()) {
+            out.basemap_topographic_enabled = j["basemap_topographic_enabled"].get<bool>();
+        }
+        if (j.contains("basemap_satellite_enabled") && j["basemap_satellite_enabled"].is_boolean()) {
+            out.basemap_satellite_enabled = j["basemap_satellite_enabled"].get<bool>();
+        }
+    } else {
+        out.basemap_osm_enabled = legacy_basemap_style == 0;
+        out.basemap_topographic_enabled = legacy_basemap_style == 1;
+        out.basemap_satellite_enabled = legacy_basemap_style == 2;
+    }
+    if (j.contains("basemap_osm_opacity") && j["basemap_osm_opacity"].is_number()) {
+        out.basemap_osm_opacity = std::clamp(j["basemap_osm_opacity"].get<float>(), 0.0f, 1.0f);
+    }
+    if (j.contains("basemap_topographic_opacity") && j["basemap_topographic_opacity"].is_number()) {
+        out.basemap_topographic_opacity = std::clamp(j["basemap_topographic_opacity"].get<float>(), 0.0f, 1.0f);
+    }
+    if (j.contains("basemap_satellite_opacity") && j["basemap_satellite_opacity"].is_number()) {
+        out.basemap_satellite_opacity = std::clamp(j["basemap_satellite_opacity"].get<float>(), 0.0f, 1.0f);
+    }
+    if (!out.basemap_osm_enabled && !out.basemap_topographic_enabled && !out.basemap_satellite_enabled) {
+        out.basemap_osm_enabled = true;
     }
     if (j.contains("topo_vector_enabled") && j["topo_vector_enabled"].is_boolean()) {
         out.topo_vector_enabled = j["topo_vector_enabled"].get<bool>();
@@ -44,7 +76,12 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     json j;
     j["vulkan_validation_enabled"] = settings.vulkan_validation_enabled;
     j["grayscale_basemap"] = settings.grayscale_basemap;
-    j["basemap_style"] = std::clamp(settings.basemap_style, 0, 1);
+    j["basemap_osm_enabled"] = settings.basemap_osm_enabled;
+    j["basemap_topographic_enabled"] = settings.basemap_topographic_enabled;
+    j["basemap_satellite_enabled"] = settings.basemap_satellite_enabled;
+    j["basemap_osm_opacity"] = std::clamp(settings.basemap_osm_opacity, 0.0f, 1.0f);
+    j["basemap_topographic_opacity"] = std::clamp(settings.basemap_topographic_opacity, 0.0f, 1.0f);
+    j["basemap_satellite_opacity"] = std::clamp(settings.basemap_satellite_opacity, 0.0f, 1.0f);
     j["topo_vector_enabled"] = settings.topo_vector_enabled;
     j["zoning_use_simcity_colors"] = settings.zoning_use_simcity_colors;
     j["reserve_cpu_cores"] = std::max(0, settings.reserve_cpu_cores);

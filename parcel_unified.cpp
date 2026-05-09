@@ -15,20 +15,20 @@ double money(const LayerDef::FeatureGeom* fg, std::initializer_list<const char*>
 }
 
 std::string ownerDisplay(const LayerDef::FeatureGeom* rp, const LayerDef::FeatureGeom& parcel) {
-    std::string owner = rp ? prop(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"}) : "";
-    if (owner.empty()) owner = prop(parcel, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
+    std::string owner = rp ? prop(*rp, {"owner", "owner_name", "OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"}) : "";
+    if (owner.empty()) owner = prop(parcel, {"owner", "owner_name", "OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
     return trimDisplayValue(owner);
 }
 
 std::string addressFor(const LayerDef::FeatureGeom* rp, const LayerDef::FeatureGeom& parcel) {
     std::string address = prop(parcel, {
-        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+        "address", "property_address", "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
         "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
         "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
     });
     if (address.empty() && rp) {
         address = prop(*rp, {
-            "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+            "address", "property_address", "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
             "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
             "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
         });
@@ -75,15 +75,19 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
         row.owner_display = ownerDisplay(row.real_property, parcel);
         row.owner = toLowerAscii(row.owner_display);
         row.address = addressFor(row.real_property, parcel);
-        row.zip = row.real_property ? prop(*row.real_property, {"ZIP", "ZIPCODE", "POSTAL_CODE"}) : "";
-        if (row.zip.empty()) row.zip = prop(parcel, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
+        row.zip = row.real_property ? prop(*row.real_property, {"zip", "ZIP", "ZIPCODE", "POSTAL_CODE"}) : "";
+        if (row.zip.empty()) row.zip = prop(parcel, {"zip", "ZIP", "ZIPCODE", "POSTAL_CODE"});
         row.status = row.real_property ? prop(*row.real_property, {"STATUS", "STATE", "CASE_STATUS"}) : "";
         if (row.status.empty()) row.status = prop(parcel, {"STATUS", "STATE", "CASE_STATUS"});
 
-        row.current_land = money(row.real_property, {"CURRLAND"});
-        row.current_improvements = money(row.real_property, {"CURRIMPR"});
-        row.tax_base = money(row.real_property, {"TAXBASE", "ARTAXBAS"});
-        row.sale_price = money(row.real_property, {"SALEPRIC"});
+        row.current_land = money(row.real_property, {"land_value", "CURRLAND"});
+        if (row.current_land <= 0.0) row.current_land = money(&parcel, {"land_value", "CURRLAND"});
+        row.current_improvements = money(row.real_property, {"improvement_value", "CURRIMPR"});
+        if (row.current_improvements <= 0.0) row.current_improvements = money(&parcel, {"improvement_value", "CURRIMPR"});
+        row.tax_base = money(row.real_property, {"current_value", "tax_base", "TAXBASE", "ARTAXBAS"});
+        if (row.tax_base <= 0.0) row.tax_base = money(&parcel, {"current_value", "tax_base", "TAXBASE", "ARTAXBAS"});
+        row.sale_price = money(row.real_property, {"sale_price", "SALEPRIC"});
+        if (row.sale_price <= 0.0) row.sale_price = money(&parcel, {"sale_price", "SALEPRIC"});
         if (row.tax_base > 0.0) row.current_value = row.tax_base;
         else if (row.current_land + row.current_improvements > 0.0) row.current_value = row.current_land + row.current_improvements;
         else row.current_value = std::max(0.0, row.sale_price);

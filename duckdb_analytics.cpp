@@ -63,6 +63,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         con.Query("BEGIN TRANSACTION");
         con.Query("DROP TABLE IF EXISTS layer_features");
         con.Query("DROP TABLE IF EXISTS unified_parcels");
+        con.Query("DROP TABLE IF EXISTS parcel_events");
         con.Query(R"SQL(
             CREATE TABLE layer_features (
                 layer_idx UBIGINT,
@@ -201,6 +202,96 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         con.Query("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)");
         con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)");
         con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)");
+        con.Query(R"SQL(
+            CREATE TABLE parcel_events AS
+            WITH base AS (
+                SELECT
+                    lf.blocklot,
+                    lf.owner,
+                    lf.address,
+                    lf.zipcode,
+                    lf.status AS feature_status,
+                    lf.layer_file,
+                    lf.layer_name,
+                    lf.feature_idx,
+                    lf.category,
+                    lf.value_usd,
+                    lf.properties_json,
+                    coalesce(
+                        try_strptime(json_extract_string(lf.properties_json, '$.event_date'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.event_date'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateNotice'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateNotice'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssue'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssue'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssued'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssued'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date_ISO'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date_ISO'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.SALEDATE'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.SALEDATE'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DATE'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.DATE'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.CREATED_DATE'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.CREATED_DATE'), '%Y-%m-%d'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.RECORD_DATE'), '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(json_extract_string(lf.properties_json, '$.RECORD_DATE'), '%Y-%m-%d')
+                    ) AS parsed_event_ts
+                FROM layer_features lf
+                WHERE lf.scale = 'parcel' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
+            )
+            SELECT
+                row_number() OVER () AS event_id,
+                blocklot,
+                owner,
+                address,
+                zipcode,
+                CASE
+                    WHEN lower(layer_file) = 'vacant_building_notices.geojson' THEN 'vacant_notice'
+                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
+                    WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
+                    WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
+                    WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                    WHEN lower(category) = 'housing' THEN 'housing'
+                    WHEN lower(category) = 'permits' THEN 'permit'
+                    WHEN lower(category) = 'taxes' THEN 'tax'
+                    ELSE 'parcel_event'
+                END AS event_type,
+                coalesce(
+                    nullif(json_extract_string(properties_json, '$.CASE_STATUS'), ''),
+                    nullif(json_extract_string(properties_json, '$.STATUS'), ''),
+                    nullif(json_extract_string(properties_json, '$.STATE'), ''),
+                    feature_status
+                ) AS event_status,
+                cast(parsed_event_ts AS DATE) AS event_date,
+                coalesce(
+                    try_cast(json_extract_string(properties_json, '$.Issue_Year') AS INTEGER),
+                    try_cast(json_extract_string(properties_json, '$.YEAR') AS INTEGER),
+                    try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
+                ) AS event_year,
+                coalesce(
+                    nullif(value_usd, 0),
+                    try_cast(json_extract_string(properties_json, '$.amount_usd') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.AMOUNT') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.Amount') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.COST') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.TOTALCOST') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.SALEPRIC') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.TAXBASE') AS DOUBLE),
+                    try_cast(json_extract_string(properties_json, '$.ARTAXBAS') AS DOUBLE)
+                ) AS amount_usd,
+                layer_file AS source_layer_file,
+                layer_name AS source_layer_name,
+                feature_idx AS source_feature_idx,
+                properties_json
+            FROM base
+        )SQL");
+        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)");
+        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)");
+        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)");
         con.Query(R"SQL(
             CREATE OR REPLACE VIEW parcel_features AS
             SELECT *

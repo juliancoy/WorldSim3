@@ -97,10 +97,14 @@ static void startBasemapDownload(
         const double max_lon = -76.45;
         const double min_lat = 39.18;
         const double max_lat = 39.40;
+        int z_min = 11;
+        int z_max = 18;
+        // OpenTopoMap returns HTTP 400 for z18 in this region; avoid guaranteed failures.
+        if (url_tmpl.find("tile.opentopomap.org") != std::string::npos) z_max = 17;
 
         size_t total = 0;
         size_t missing_total = 0;
-        for (int z = 11; z <= 18; ++z) {
+        for (int z = z_min; z <= z_max; ++z) {
             auto [x0, y_max] = deg2num(min_lat, min_lon, z);
             auto [x1, y_min] = deg2num(max_lat, max_lon, z);
             if (x0 > x1) std::swap(x0, x1);
@@ -118,7 +122,7 @@ static void startBasemapDownload(
         state.missing_total.store(missing_total, std::memory_order_relaxed);
 
         size_t done = 0;
-        for (int z = 11; z <= 18; ++z) {
+        for (int z = z_min; z <= z_max; ++z) {
             if (state.stop_requested.load(std::memory_order_relaxed)) {
                 state.stopped.store(true, std::memory_order_relaxed);
                 break;
@@ -332,3 +336,4 @@ void drawBasemapDownloadQueueSection(
     if (!state.last_queue_event.empty()) ImGui::TextDisabled("Basemap event: %s", state.last_queue_event.c_str());
     if (!m.progress_line.empty()) ImGui::TextWrapped("%s", m.progress_line.c_str());
 }
+

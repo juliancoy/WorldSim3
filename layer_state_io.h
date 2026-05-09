@@ -133,3 +133,19 @@ void saveFilterUiState(
     int crime_year_max,
     const char* owner_search_query,
     const std::unordered_set<std::string>& selected_owners);
+
+void loadMapUiState(
+    const std::filesystem::path& root,
+    double* center_lon = nullptr,
+    double* center_lat = nullptr,
+    int* zoom = nullptr,
+    size_t* selected_parcel_idx = nullptr,
+    std::vector<size_t>* selected_parcel_indices = nullptr);
+
+void saveMapUiState(
+    const std::filesystem::path& root,
+    double center_lon,
+    double center_lat,
+    int zoom,
+    size_t selected_parcel_idx,
+    const std::vector<size_t>& selected_parcel_indices);

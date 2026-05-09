@@ -6,7 +6,11 @@
 - `worldsim_app.h`: Public declaration for the application runner.
 - `worldsim_app.cpp`: Vulkan, swapchain, texture upload, tile-cache, screenshot, and frame present/render implementation.
 - `worldsim_app_internal.h`: Internal declarations shared between the Vulkan implementation and the app run loop.
-- `worldsim_app_run.cpp`: Compiled translation unit for `runWorldSim3App`, containing the full run-loop implementation.
+- `worldsim_app_run.cpp`: Compiled translation unit for `runWorldSim3App`, containing app state setup and including the run-loop fragments.
+- `worldsim_app_run_loop_part1.inc`: Main loop setup, top toolbar/menus, data source/download panels, map/layer controls, and heatmap settings UI.
+- `worldsim_app_run_loop_part2.inc`: Per-frame data refresh, filter/search state updates, and background layer preparation logic.
+- `worldsim_app_run_loop_part3.inc`: Right-side record tab bar and map interaction handling. Still owns several embedded tabs while refactoring continues.
+- `worldsim_app_run_loop_part4.inc`: Map rendering, selected parcel boundary rendering, download queue UI, frame finalization, and shutdown tail.
 - `worldsim_app_run_state.h`: Declaration-only shared run-state struct used for ongoing run-loop modularization.
 - `app_lifecycle.cpp`: Compiled frame finalization and shutdown implementation, including profiling sample capture, settings persistence, worker joins, and renderer cleanup.
 - `app_lifecycle.h`: Typed lifecycle contexts and lifecycle function declarations.
@@ -19,6 +23,12 @@
 - `app_utils.h`: Shared utility declarations and `BootstrapProgress`.
 - `profiling.h`: Profiling sample and layer-profile data structures used by UI and status endpoints.
 - `screenshot_state.h`: Shared screenshot request/result state synchronized between HTTP API and render thread.
+- `selection.cpp`: Parcel multi-selection state mutation helpers.
+- `selection.h`: Parcel selection state and helper declarations.
+- `tiles.cpp`: Lazy persistent basemap tile download queue and tile-cache path helpers.
+- `tiles.h`: Tile queue state and lazy tile helper declarations.
+- `gear_panel.cpp`: ImGui gear/source panel with TODO work tabs, skipped download reporting, and heatmap settings guidance.
+- `gear_panel.h`: Gear panel draw declaration.
 
 ## Data And Layer Runtime
 
@@ -57,8 +67,59 @@
 - `time_cube_panel.h`: Time Cube panel context and draw declaration.
 - `policy_panel.cpp`: ImGui policy hierarchy, people/pay table, treemap, sunburst, and source/pay schedule UI.
 - `policy_panel.h`: Policy panel context, roster row, and visualization node declarations.
-- `model_tabs_panel.cpp`: Lightweight analytical model tabs such as graph model, star schema, spatial index, uncertainty, risk, causal panel, and scenarios.
+- `model_tabs_panel.cpp`: Orchestrates lightweight analytical model tabs such as graph model, star schema, spatial index, uncertainty, risk, causal panel, and scenarios.
 - `model_tabs_panel.h`: Visual model tab draw declaration.
+- `map_viewport.cpp`: ImGui map canvas input, camera zoom/pan math, viewport bounds calculation, and map context menu.
+- `map_viewport.h`: Map viewport context/frame types and canvas setup declaration.
+- `map_render_basemap.cpp`: Basemap render pass for OSM/topographic/satellite tiles, topo vector fallback, lazy tile requests, and basemap warning overlay.
+- `map_render_basemap.h`: Basemap render context/result declarations.
+- `map_render_hud.cpp`: Small map HUD badges such as zoom and aggregate-loading status.
+- `map_render_hud.h`: Map HUD draw declarations.
+- `map_render_selection.cpp`: Selected parcel outline render pass.
+- `map_render_selection.h`: Selected parcel outline render context and declaration.
+- `map_inspection.cpp`: Map click inspection behavior and parcel/zoning hover tooltip rendering.
+- `map_inspection.h`: Map inspection context and handler declaration.
+- `map_overlay_panels.cpp`: Map overlay popup shell for Time Cube, policy hierarchy, and visual model tabs.
+- `map_overlay_panels.h`: Overlay popup draw declaration.
+- `graph_model_tab.cpp`: ImGui Graph Model tab implementation.
+- `graph_model_tab.h`: Graph Model tab draw declaration.
+- `star_schema_tab.cpp`: ImGui Star Schema tab implementation.
+- `star_schema_tab.h`: Star Schema tab draw declaration.
+- `spatial_index_tab.cpp`: ImGui Spatial Index tab implementation.
+- `spatial_index_tab.h`: Spatial Index tab draw declaration.
+- `uncertainty_tab.cpp`: ImGui Uncertainty tab implementation.
+- `uncertainty_tab.h`: Uncertainty tab draw declaration.
+- `risk_scorecards_tab.cpp`: ImGui Risk Scorecards tab implementation.
+- `risk_scorecards_tab.h`: Risk Scorecards tab draw declaration.
+- `causal_panel_tab.cpp`: ImGui Causal Panel tab implementation.
+- `causal_panel_tab.h`: Causal Panel tab draw declaration.
+- `scenarios_tab.cpp`: ImGui Scenarios tab implementation.
+- `scenarios_tab.h`: Scenarios tab draw declaration.
+- `change_log_tab.cpp`: ImGui Change Log tab implementation.
+- `change_log_tab.h`: Change Log tab draw declaration.
+- `sql_tab.cpp`: ImGui SQL tab, DuckDB query editor, query execution controls, and selected-parcel context table.
+- `sql_tab.h`: SQL tab context and draw declaration.
+- `owner_info.cpp`: ImGui Owner Info tab, owner hyperlink rendering, and owner page navigation helpers.
+- `owner_info.h`: Owner Info UI state, context, and draw declarations.
+- `filters_tab.cpp`: ImGui Filters tab, address locate flow, zoning detail display, field filters, and record-year histogram UI.
+- `filters_tab.h`: Filters tab context, address locate result type, and draw declaration.
+- `parcel_info_tab.cpp`: ImGui Parcel Info tab and parcel real-property summary UI.
+- `parcel_info_tab.h`: Parcel Info tab context and draw declaration.
+- `vacancy_parcel_tab.cpp`: ImGui Vacancy-Parcel join quality tab.
+- `vacancy_parcel_tab.h`: Vacancy-Parcel tab context and draw declaration.
+- `gradient_tab.cpp`: ImGui Gradient scaling diagnostics tab.
+- `gradient_tab.h`: Gradient tab context and draw declaration.
+- `owners_tab.cpp`: ImGui Owners ranking/search/classification tab.
+- `owners_tab.h`: Owner aggregate data types, filtered aggregate snapshot, Owners tab context, and draw declaration.
+
+## UI Tab Extraction Status
+
+Most record/analysis tabs now have their own `.cpp`.
+
+- Extracted to dedicated `.cpp/.h`: `Filters`, `Parcel Info`, `SQL`, `Vacancy-Parcel`, `Gradient`, `Owner Info`, `Owners`, `Time Cube`, `Policy Hierarchy`, `Graph Model`, `Star Schema`, `Spatial Index`, `Uncertainty`, `Risk Scorecards`, `Causal Panel`, `Scenarios`, and `Change Log`.
+- Partially extracted: `Map` viewport/input, basemap pass, HUD badges, selected outlines, inspection/tooltips, and overlay popup shell all live in dedicated modules.
+- Still embedded in `worldsim_app_run_loop_part3.inc` and `worldsim_app_run_loop_part4.inc`: the `Map` tab shell plus core layer/heatmap render orchestration. Rendering is now split across `map_render_basemap`, `map_render_projection`, `map_render_hover`, `map_render_layers`, `map_render_overlays`, `map_render_heatmap_pass`, `map_render_selection`, `map_render_hud`, `map_inspection`, `map_overlay_panels`, and `map_render_utils`; the remaining include code composes those passes with frame-local cache, async heatmap texture, and profiling state.
+- Extracted from `worldsim_app_run_loop_part1.inc`: gear/source panel tabs now live in `gear_panel.cpp/.h`.
 
 ## APIs And Networking
 
@@ -93,3 +154,5 @@
 
 - `tools/check_main_size.sh`: Guard that verifies `main.cpp` stays below the configured line limit.
 - `tools/check_file_sizes.sh`: Guard that verifies authored source/header files stay below 2000 lines, excluding build/data/vendor files.
+- `scripts/build_regional_parcels.py`: Normalizes Baltimore City, Baltimore County, Howard County, and future county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`.
+- `data/layers/regional_parcels.geojson`: Generated canonical regional parcel layer used by the app when present; rebuild from official source downloads rather than editing manually.

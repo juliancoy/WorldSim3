@@ -38,6 +38,20 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(imgui)
 
+# The status screenshot API reads back from the main swapchain image. Dear ImGui's
+# Vulkan helper defaults swapchain images to COLOR_ATTACHMENT only, so request
+# TRANSFER_SRC when the surface supports it.
+set(WS3_IMGUI_VULKAN_BACKEND "${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp")
+file(READ "${WS3_IMGUI_VULKAN_BACKEND}" WS3_IMGUI_VULKAN_BACKEND_TEXT)
+if(NOT WS3_IMGUI_VULKAN_BACKEND_TEXT MATCHES "info\\.imageUsage \\|= VK_IMAGE_USAGE_TRANSFER_SRC_BIT")
+  string(REPLACE
+    "info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;"
+    "info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;\n        if (cap.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)\n            info.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;"
+    WS3_IMGUI_VULKAN_BACKEND_TEXT
+    "${WS3_IMGUI_VULKAN_BACKEND_TEXT}")
+  file(WRITE "${WS3_IMGUI_VULKAN_BACKEND}" "${WS3_IMGUI_VULKAN_BACKEND_TEXT}")
+endif()
+
 FetchContent_Declare(
   nlohmann_json
   GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -87,10 +101,16 @@ add_executable(worldsim3
   layer_geometry.cpp
   map_render_heatmap_pass.cpp
   map_render_hover.cpp
+  map_render_basemap.cpp
+  map_render_hud.cpp
+  map_inspection.cpp
+  map_overlay_panels.cpp
   map_render_layers.cpp
   map_render_overlays.cpp
   map_render_projection.cpp
+  map_render_selection.cpp
   map_render_utils.cpp
+  map_viewport.cpp
   parcel_timeline.cpp
   parcel_unified.cpp
   heatmap_render.cpp
@@ -101,11 +121,19 @@ add_executable(worldsim3
   heatmap_strategy_gpu_splat.cpp
   heatmap_strategy_hex.cpp
   heatmap_strategy_multires.cpp
+  gear_panel.cpp
   time_cube_panel.cpp
   policy_panel.cpp
   model_tabs_panel.cpp
   layer_settings.cpp
   download_queue.cpp
+  tiles.cpp
+  owner_info.cpp
+  owners_tab.cpp
+  gradient_tab.cpp
+  vacancy_parcel_tab.cpp
+  parcel_info_tab.cpp
+  filters_tab.cpp
   graph_model_tab.cpp
   star_schema_tab.cpp
   spatial_index_tab.cpp
@@ -114,6 +142,7 @@ add_executable(worldsim3
   risk_scorecards_tab.cpp
   causal_panel_tab.cpp
   scenarios_tab.cpp
+  selection.cpp
   arkavo_realtime_client.cpp
   arkavo_signaling_transport_curl.cpp
   arkavo_rtc_session_manager.cpp
@@ -224,6 +253,14 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   add_dependencies(worldsim3_gpu_aggregate_harness worldsim3_shaders)
   target_compile_definitions(worldsim3_gpu_aggregate_harness PRIVATE WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}")
 endif()
+
+add_executable(worldsim_hud_pit_builder
+  tools/hud_pit_layer_builder.cpp
+)
+target_include_directories(worldsim_hud_pit_builder PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(worldsim_hud_pit_builder PRIVATE nlohmann_json::nlohmann_json)
 
 install(TARGETS worldsim3 RUNTIME DESTINATION bin)
 

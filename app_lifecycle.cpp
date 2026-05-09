@@ -145,6 +145,19 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
             ctx.owner_search_query,
             *ctx.selected_owners);
     }
+    if (ctx.center_lon &&
+        ctx.center_lat &&
+        ctx.zoom &&
+        ctx.selected_parcel_idx &&
+        ctx.selected_parcel_indices) {
+        saveMapUiState(
+            *ctx.root,
+            *ctx.center_lon,
+            *ctx.center_lat,
+            *ctx.zoom,
+            *ctx.selected_parcel_idx,
+            *ctx.selected_parcel_indices);
+    }
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);
     ctx.hydration_stop->store(true, std::memory_order_relaxed);

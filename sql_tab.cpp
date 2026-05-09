@@ -1,5 +1,6 @@
 #include "sql_tab.h"
 
+#include "app_utils.h"
 #include "duckdb_analytics.h"
 #include "imgui.h"
 
@@ -185,4 +186,36 @@ void renderSqlTab(
     if (ImGui::SmallButton("Owner rollups")) {
         copyToQueryBuffer(query_sql, "SELECT * FROM owner_rollups LIMIT 25;");
     }
+}
+
+void drawSqlTab(
+    DuckDbAnalytics& duckdb_analytics,
+    const std::vector<LayerDef>& layers,
+    const std::vector<UnifiedParcelRecord>& unified_parcels,
+    const MapFilterState& map_filter_state,
+    const std::vector<size_t>& selected_parcel_indices,
+    bool show_selected_parcel_details,
+    int parcel_layer_idx,
+    size_t selected_parcel_idx,
+    std::vector<QueryMapLayer>& query_layers) {
+    if (!ImGui::BeginTabItem("SQL")) return;
+
+    std::vector<DuckDbSelectedParcel> sql_selected_parcels;
+    const bool sql_selected_parcel_valid =
+        show_selected_parcel_details && !selected_parcel_indices.empty() && parcel_layer_idx >= 0 &&
+        (size_t)parcel_layer_idx < layers.size() &&
+        selected_parcel_idx < layers[(size_t)parcel_layer_idx].features.size();
+    if (sql_selected_parcel_valid) {
+        for (size_t sel_idx : selected_parcel_indices) {
+            if (sel_idx >= layers[(size_t)parcel_layer_idx].features.size()) continue;
+            const auto& selected = layers[(size_t)parcel_layer_idx].features[sel_idx];
+            sql_selected_parcels.push_back(DuckDbSelectedParcel{
+                (size_t)parcel_layer_idx,
+                sel_idx,
+                featureBlockLotJoinKey(selected)
+            });
+        }
+    }
+    renderSqlTab(duckdb_analytics, layers, unified_parcels, map_filter_state, sql_selected_parcels, query_layers);
+    ImGui::EndTabItem();
 }

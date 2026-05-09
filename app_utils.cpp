@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <numbers>
 #include <sstream>
 #include <unordered_map>
@@ -197,6 +198,39 @@ double parseNumericField(const std::string& s) {
     }
 }
 
+std::string formatUsNumber(double value, int decimals) {
+    decimals = std::max(0, decimals);
+    const bool negative = value < 0.0;
+    const double abs_value = std::abs(value);
+    std::ostringstream raw;
+    raw << std::fixed << std::setprecision(decimals) << abs_value;
+    std::string s = raw.str();
+    const size_t dot = s.find('.');
+    const std::string whole = dot == std::string::npos ? s : s.substr(0, dot);
+    const std::string frac = dot == std::string::npos ? std::string() : s.substr(dot);
+
+    std::string grouped;
+    grouped.reserve(whole.size() + whole.size() / 3 + frac.size() + 1);
+    if (negative) grouped.push_back('-');
+    const size_t first_group = whole.size() % 3;
+    size_t i = 0;
+    if (first_group != 0) {
+        grouped.append(whole, 0, first_group);
+        i = first_group;
+        if (i < whole.size()) grouped.push_back(',');
+    }
+    for (; i < whole.size(); i += 3) {
+        grouped.append(whole, i, 3);
+        if (i + 3 < whole.size()) grouped.push_back(',');
+    }
+    grouped += frac;
+    return grouped;
+}
+
+std::string formatUsd(double value, int decimals) {
+    return "$" + formatUsNumber(value, decimals);
+}
+
 std::string trimDisplayValue(std::string s) {
     auto is_ws = [](unsigned char ch) { return std::isspace(ch) != 0; };
     while (!s.empty() && is_ws((unsigned char)s.front())) s.erase(s.begin());
@@ -221,6 +255,12 @@ std::string blockLotJoinKeyFromParts(const std::string& block, const std::string
 
 std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg) {
     std::string bl = normalizeJoinKey(getPropertyValue(fg, "BLOCKLOT"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(fg, "blocklot"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(fg, "source_parcel_id"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(fg, "account_id"));
     if (!bl.empty()) return bl;
     bl = normalizeJoinKey(getPropertyValue(fg, "PIN"));
     if (!bl.empty()) return bl;

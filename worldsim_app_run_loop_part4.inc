@@ -792,15 +792,7 @@
         prof_heatmap_texture_cache_entries.store(heatmap_texture_cache.size(), std::memory_order_relaxed);
         drawHeatmapPass(heatmap_draw_ctx);
         if (any_active_gpu_splat && heatmap_async_inflight && !can_use_cached_heatmap) {
-            const char* loading_label = "Generating Aggregate";
-            const ImVec2 text_size = ImGui::CalcTextSize(loading_label);
-            const float pad_x = 12.0f;
-            const float pad_y = 7.0f;
-            const ImVec2 box_min(origin.x + 12.0f, origin.y + 12.0f);
-            const ImVec2 box_max(box_min.x + text_size.x + pad_x * 2.0f, box_min.y + text_size.y + pad_y * 2.0f);
-            draw->AddRectFilled(box_min, box_max, IM_COL32(17, 24, 32, 220), 8.0f);
-            draw->AddRect(box_min, box_max, IM_COL32(255, 255, 255, 80), 8.0f);
-            draw->AddText(ImVec2(box_min.x + pad_x, box_min.y + pad_y), IM_COL32(245, 248, 250, 245), loading_label);
+            drawMapStatusBadge(draw, origin, "Generating Aggregate");
         }
 
         const auto overlay_prof_begin = std::chrono::steady_clock::now();
@@ -831,6 +823,17 @@
         const MapOverlayResult overlay_result = renderParcelSourceOverlays(overlay_ctx);
         visible_vacant_parcels_last_frame.store(overlay_result.visible_vacant_parcels, std::memory_order_relaxed);
         prof_overlay_ms_last.store(prof_ms_since(overlay_prof_begin), std::memory_order_relaxed);
+        renderSelectedParcelOutlines(MapSelectionRenderContext{
+            draw,
+            origin,
+            size,
+            &layers,
+            parcel_layer_idx,
+            &selected_parcel_indices,
+            math_zoom,
+            &projection_cache,
+            project_world
+        });
 
         const MapFillStats& fill_stats = projection_cache.fillStats();
         render_fill_attempts_last_frame.store(fill_stats.attempts, std::memory_order_relaxed);
@@ -838,162 +841,71 @@
         render_fill_no_triangles_last_frame.store(fill_stats.no_triangles, std::memory_order_relaxed);
         render_fill_bad_indices_last_frame.store(fill_stats.bad_indices, std::memory_order_relaxed);
 
-        {
-            char zoom_label[32];
-            std::snprintf(zoom_label, sizeof(zoom_label), "Zoom %d", zoom);
-            const ImVec2 text_size = ImGui::CalcTextSize(zoom_label);
-            const float pad_x = 10.0f;
-            const float pad_y = 6.0f;
-            const ImVec2 box_max(origin.x + size.x - 12.0f, origin.y + size.y - 12.0f);
-            const ImVec2 box_min(box_max.x - text_size.x - pad_x * 2.0f, box_max.y - text_size.y - pad_y * 2.0f);
-            draw->AddRectFilled(box_min, box_max, IM_COL32(17, 24, 32, 205), 7.0f);
-            draw->AddRect(box_min, box_max, IM_COL32(255, 255, 255, 70), 7.0f);
-            draw->AddText(ImVec2(box_min.x + pad_x, box_min.y + pad_y), IM_COL32(245, 248, 250, 245), zoom_label);
-        }
+        drawMapZoomBadge(draw, origin, size, zoom);
 
-        if (map_hovered && parcel_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_parcel != nullptr) {
-            show_selected_parcel_details = true;
-            selected_parcel_idx = hovered_parcel_idx;
-            show_selected_zone_details = false;
-            selected_zone_idx = (size_t)-1;
-        } else if (map_hovered && zoning_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_zone != nullptr) {
-            show_selected_zone_details = true;
-            selected_zone_idx = hovered_zone_idx;
-            show_selected_parcel_details = false;
-            selected_parcel_idx = (size_t)-1;
-        }
+        handleMapInspection(MapInspectionContext{
+            map_hovered,
+            parcel_hover_active,
+            parcel_inspect_active,
+            zoning_hover_active,
+            zoning_inspect_active,
+            parcel_layer_idx,
+            zoning_layer_idx,
+            &layers,
+            &layer_spatial,
+            &zoning_metadata,
+            &parcel_selection,
+            [&](size_t idx) { openElementParcelPage(element_info_state, idx); },
+            &show_selected_zone_details,
+            &selected_zone_idx,
+            &hover_state,
+            &parcel_vac_notice_by_feature,
+            &parcel_vac_rehab_by_feature,
+            &parcel_tax_lien_by_feature,
+            &parcel_tax_sale_by_feature,
+            &parcel_tax_lien_amount_by_feature,
+            &parcel_tax_sale_amount_by_feature,
+            real_property_for_parcel
+        });
 
-        if (parcel_hover_active && map_hovered && hovered_parcel) {
-            std::string blocklot_raw = getPropertyValue(*hovered_parcel, "BLOCKLOT");
-            std::string blocklot = normalizeJoinKey(blocklot_raw);
-            int vac_notice = (hovered_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[hovered_parcel_idx] : 0;
-            int vac_rehab = (hovered_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[hovered_parcel_idx] : 0;
-            int tax_lien = (hovered_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[hovered_parcel_idx] : 0;
-            int tax_sale = (hovered_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[hovered_parcel_idx] : 0;
-            double tax_lien_amount = (hovered_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[hovered_parcel_idx] : 0.0;
-            double tax_sale_amount = (hovered_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[hovered_parcel_idx] : 0.0;
-            const LayerDef::FeatureGeom* hovered_zoning = hovered_zone;
-            if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
-                const float qlon = (hovered_parcel->extent.min_lon + hovered_parcel->extent.max_lon) * 0.5f;
-                const float qlat = (hovered_parcel->extent.min_lat + hovered_parcel->extent.max_lat) * 0.5f;
-                std::vector<uint32_t> zoning_candidates;
-                bool have_zoning_candidates = false;
-                if ((size_t)zoning_layer_idx < layer_spatial.size() && layer_spatial[(size_t)zoning_layer_idx].built) {
-                    have_zoning_candidates = queryLayerSpatialIndex(
-                        layer_spatial[(size_t)zoning_layer_idx], qlon, qlat, qlon, qlat, zoning_candidates);
-                }
-                if (have_zoning_candidates) {
-                    const auto& zfeats = layers[(size_t)zoning_layer_idx].features;
-                    for (uint32_t zi : zoning_candidates) {
-                        if (zi >= zfeats.size()) continue;
-                        const auto& zf = zfeats[zi];
-                        if (qlon >= zf.extent.min_lon && qlon <= zf.extent.max_lon &&
-                            qlat >= zf.extent.min_lat && qlat <= zf.extent.max_lat &&
-                            pointInFeature(zf, qlon, qlat)) {
-                            hovered_zoning = &zf;
-                            break;
-                        }
-                    }
-                }
-            }
+        TimeCubePanelContext time_cube_panel_ctx;
+        time_cube_panel_ctx.service = &time_cube_service;
+        time_cube_panel_ctx.layers = &layers;
+        time_cube_panel_ctx.result = &time_cube_ui_result;
+        time_cube_panel_ctx.loaded = &time_cube_ui_loaded;
+        time_cube_panel_ctx.status = &time_cube_ui_status;
+        time_cube_panel_ctx.mutex = &time_cube_ui_mutex;
+        time_cube_panel_ctx.worker = &time_cube_ui_worker;
+        time_cube_panel_ctx.running = &time_cube_ui_running;
+        time_cube_panel_ctx.done = &time_cube_ui_done;
+        time_cube_panel_ctx.selected = &time_cube_selected;
+        time_cube_panel_ctx.year_min = &time_cube_year_min;
+        time_cube_panel_ctx.year_max = &time_cube_year_max;
+        time_cube_panel_ctx.normalize_mode = &time_cube_normalize_mode;
+        time_cube_panel_ctx.show_excluded = &time_cube_show_excluded;
 
-            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(440.0f);
-            ImGui::TextUnformatted("Parcel Details");
-            ImGui::Separator();
-            ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
-            ImGui::Text("Vacant Notices: %d", vac_notice);
-            ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
-            ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
-            if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
-            ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
-            if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
-
-            const LayerDef::FeatureGeom* hovered_rp = real_property_for_parcel(*hovered_parcel);
-            draw_real_property_summary(hovered_rp);
-
-            ImGui::Separator();
-            if (hovered_zoning) {
-                std::string zone_key = zoningClassKey(*hovered_zoning);
-                std::string zone_label = zoningClassLabel(*hovered_zoning);
-                auto meta_it = zoning_metadata.find(zone_key);
-                if (meta_it != zoning_metadata.end()) {
-                    if (!meta_it->second.label.empty()) zone_label = meta_it->second.label;
-                }
-                std::string zone_description = zoningDescription(*hovered_zoning, zoning_metadata);
-                const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
-                ImGui::SetWindowFontScale(1.45f);
-                ImGui::TextWrapped("%s", display_zone);
-                ImGui::SetWindowFontScale(1.0f);
-                if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
-            } else if (zoning_layer_idx >= 0) {
-                ImGui::TextDisabled("Zoning: no intersecting zoning polygon found.");
-            }
-            ImGui::Separator();
-            draw_feature_properties("All Parcel Geometry Fields", *hovered_parcel);
-            if (hovered_rp) {
-                ImGui::Separator();
-                draw_feature_properties("All Real Property Fields", *hovered_rp);
-            }
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
-        }
-        if (zoning_hover_active && map_hovered && !(parcel_hover_active && hovered_parcel) && hovered_zone) {
-            drawZoningHoverTooltip(*hovered_zone, zoning_metadata);
-        }
-
-        // Overlay menu button for non-map analytical panels.
-        ImGui::SetCursorScreenPos(ImVec2(origin.x + size.x - 34.0f, origin.y + 8.0f));
-        if (ImGui::SmallButton("...")) ImGui::OpenPopup("map_overlay_panels_popup");
-        ImGui::SetNextWindowSize(ImVec2(std::min(980.0f, size.x - 24.0f), std::min(720.0f, size.y - 24.0f)), ImGuiCond_Appearing);
-        if (ImGui::BeginPopup("map_overlay_panels_popup")) {
-            if (ImGui::BeginTabBar("map_overlay_panels_tabs")) {
-                TimeCubePanelContext time_cube_panel_ctx;
-                time_cube_panel_ctx.service = &time_cube_service;
-                time_cube_panel_ctx.layers = &layers;
-                time_cube_panel_ctx.result = &time_cube_ui_result;
-                time_cube_panel_ctx.loaded = &time_cube_ui_loaded;
-                time_cube_panel_ctx.status = &time_cube_ui_status;
-                time_cube_panel_ctx.mutex = &time_cube_ui_mutex;
-                time_cube_panel_ctx.worker = &time_cube_ui_worker;
-                time_cube_panel_ctx.running = &time_cube_ui_running;
-                time_cube_panel_ctx.done = &time_cube_ui_done;
-                time_cube_panel_ctx.selected = &time_cube_selected;
-                time_cube_panel_ctx.year_min = &time_cube_year_min;
-                time_cube_panel_ctx.year_max = &time_cube_year_max;
-                time_cube_panel_ctx.normalize_mode = &time_cube_normalize_mode;
-                time_cube_panel_ctx.show_excluded = &time_cube_show_excluded;
-                drawTimeCubeTab(time_cube_panel_ctx);
-
-                PolicyPanelContext policy_panel_ctx;
-                policy_panel_ctx.hierarchy = &policy_hierarchy;
-                policy_panel_ctx.hierarchy_loaded = policy_hierarchy_loaded;
-                policy_panel_ctx.hierarchy_error = &policy_hierarchy_error;
-                policy_panel_ctx.query = policy_hierarchy_query;
-                policy_panel_ctx.query_capacity = sizeof(policy_hierarchy_query);
-                policy_panel_ctx.scope = &policy_hierarchy_scope;
-                policy_panel_ctx.roster = &public_servant_roster;
-                policy_panel_ctx.people_pay_cached_query = &people_pay_cached_query;
-                policy_panel_ctx.people_pay_cached_scope = &people_pay_cached_scope;
-                policy_panel_ctx.people_pay_cache_matched_count = &people_pay_cache_matched_count;
-                policy_panel_ctx.people_pay_visible_rows = &people_pay_visible_rows;
-                policy_panel_ctx.people_pay_cache_rebuilds = &people_pay_cache_rebuilds;
-                policy_panel_ctx.people_pay_rendered_rows_last = &people_pay_rendered_rows_last;
-                policy_panel_ctx.viz_root = &policy_viz_root;
-                policy_panel_ctx.viz_cached_query = &policy_viz_cached_query;
-                policy_panel_ctx.viz_cached_scope = &policy_viz_cached_scope;
-                policy_panel_ctx.viz_cached_metric = &policy_viz_cached_metric;
-                policy_panel_ctx.viz_metric = &policy_viz_metric;
-                policy_panel_ctx.viz_cache_rebuilds = &policy_viz_cache_rebuilds;
-                policy_panel_ctx.viz_node_count = &policy_viz_node_count;
-                drawPolicyHierarchyTab(policy_panel_ctx);
-
-                drawVisualModelTabs(layers.size());
-                ImGui::EndTabBar();
-            }
-            ImGui::EndPopup();
-        }
+        PolicyPanelContext policy_panel_ctx;
+        policy_panel_ctx.hierarchy = &policy_hierarchy;
+        policy_panel_ctx.hierarchy_loaded = policy_hierarchy_loaded;
+        policy_panel_ctx.hierarchy_error = &policy_hierarchy_error;
+        policy_panel_ctx.query = policy_hierarchy_query;
+        policy_panel_ctx.query_capacity = sizeof(policy_hierarchy_query);
+        policy_panel_ctx.scope = &policy_hierarchy_scope;
+        policy_panel_ctx.roster = &public_servant_roster;
+        policy_panel_ctx.people_pay_cached_query = &people_pay_cached_query;
+        policy_panel_ctx.people_pay_cached_scope = &people_pay_cached_scope;
+        policy_panel_ctx.people_pay_cache_matched_count = &people_pay_cache_matched_count;
+        policy_panel_ctx.people_pay_visible_rows = &people_pay_visible_rows;
+        policy_panel_ctx.people_pay_cache_rebuilds = &people_pay_cache_rebuilds;
+        policy_panel_ctx.people_pay_rendered_rows_last = &people_pay_rendered_rows_last;
+        policy_panel_ctx.viz_root = &policy_viz_root;
+        policy_panel_ctx.viz_cached_query = &policy_viz_cached_query;
+        policy_panel_ctx.viz_cached_scope = &policy_viz_cached_scope;
+        policy_panel_ctx.viz_cached_metric = &policy_viz_cached_metric;
+        policy_panel_ctx.viz_metric = &policy_viz_metric;
+        policy_panel_ctx.viz_cache_rebuilds = &policy_viz_cache_rebuilds;
+        policy_panel_ctx.viz_node_count = &policy_viz_node_count;
+        drawMapOverlayPanelsPopup(origin, size, time_cube_panel_ctx, policy_panel_ctx, layers.size());
 
         ImGui::EndTabItem();
         }
@@ -1070,6 +982,7 @@
                             ImGuiWindowFlags_NoResize |
                             ImGuiWindowFlags_NoCollapse)) {
                     drawBasemapDownloadQueueSection(basemap_download, root, data_library_status_msg, resolve_download_label);
+                    drawLazyTileDownloadQueueSection(lazy_tile_download);
                     ImGui::SeparatorText("Layer Data");
                     if (layer_download_inflight && layer_download_active_idx < layers.size()) {
                         ImGui::Text("Active: %s", layers[layer_download_active_idx].name.c_str());

@@ -563,3 +563,72 @@ void saveFilterUiState(
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);
 }
+
+void loadMapUiState(
+    const fs::path& root,
+    double* center_lon,
+    double* center_lat,
+    int* zoom,
+    size_t* selected_parcel_idx,
+    std::vector<size_t>* selected_parcel_indices) {
+    std::ifstream in(root / "data" / "layer_ui_state.json");
+    if (!in) return;
+    json j;
+    try {
+        in >> j;
+    } catch (...) {
+        return;
+    }
+    if (j.contains("map_view") && j["map_view"].is_object()) {
+        const json& v = j["map_view"];
+        if (center_lon && v.contains("center_lon") && v["center_lon"].is_number()) *center_lon = v["center_lon"].get<double>();
+        if (center_lat && v.contains("center_lat") && v["center_lat"].is_number()) *center_lat = v["center_lat"].get<double>();
+        if (zoom && v.contains("zoom") && v["zoom"].is_number_integer()) *zoom = v["zoom"].get<int>();
+    }
+    if (j.contains("parcel_selection") && j["parcel_selection"].is_object()) {
+        const json& s = j["parcel_selection"];
+        if (selected_parcel_idx && s.contains("active_idx") && s["active_idx"].is_number_unsigned()) {
+            *selected_parcel_idx = s["active_idx"].get<size_t>();
+        }
+        if (selected_parcel_indices && s.contains("indices") && s["indices"].is_array()) {
+            selected_parcel_indices->clear();
+            for (const auto& v : s["indices"]) {
+                if (v.is_number_unsigned()) selected_parcel_indices->push_back(v.get<size_t>());
+            }
+        }
+    }
+}
+
+void saveMapUiState(
+    const fs::path& root,
+    double center_lon,
+    double center_lat,
+    int zoom,
+    size_t selected_parcel_idx,
+    const std::vector<size_t>& selected_parcel_indices) {
+    fs::create_directories(root / "data");
+    json j = json::object();
+    {
+        std::ifstream in(root / "data" / "layer_ui_state.json");
+        if (in) {
+            try {
+                in >> j;
+            } catch (...) {
+                j = json::object();
+            }
+        }
+    }
+    j["map_view"] = {
+        {"center_lon", center_lon},
+        {"center_lat", center_lat},
+        {"zoom", zoom}
+    };
+    json selection = json::object();
+    if (selected_parcel_idx == (size_t)-1) selection["active_idx"] = nullptr;
+    else selection["active_idx"] = selected_parcel_idx;
+    selection["indices"] = json::array();
+    for (size_t idx : selected_parcel_indices) selection["indices"].push_back(idx);
+    j["parcel_selection"] = std::move(selection);
+    std::ofstream out(root / "data" / "layer_ui_state.json");
+    if (out) out << j.dump(2);
+}

@@ -200,6 +200,7 @@ static VkDebugUtilsMessengerEXT g_DebugUtilsMessenger = VK_NULL_HANDLE;
 ImGui_ImplVulkanH_Window g_MainWindowData;
 int g_MinImageCount = 2;
 bool g_SwapChainRebuild = false;
+static bool g_MainSwapchainTransferSrcSupported = false;
 
 std::unordered_map<std::string, TileCacheEntry> g_TileCache;
 std::list<std::string> g_TileLRU;
@@ -822,6 +823,11 @@ void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int w
     VkBool32 res;
     vkGetPhysicalDeviceSurfaceSupportKHR(g_PhysicalDevice, g_QueueFamily, wd->Surface, &res);
     if (res != VK_TRUE) std::abort();
+    VkSurfaceCapabilitiesKHR cap{};
+    check_vk_result(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(g_PhysicalDevice, wd->Surface, &cap));
+    if (wd == &g_MainWindowData) {
+        g_MainSwapchainTransferSrcSupported = (cap.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) != 0;
+    }
 
     const VkFormat request_surface_image_format[] = {
         VK_FORMAT_B8G8R8A8_UNORM,
@@ -967,6 +973,10 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     VkImage src_image = fd->Backbuffer;
     if (src_image == VK_NULL_HANDLE || wd->Width == 0 || wd->Height == 0) {
         complete_screenshot(false, "", "invalid backbuffer");
+        return;
+    }
+    if (!g_MainSwapchainTransferSrcSupported) {
+        complete_screenshot(false, "", "surface does not support swapchain transfer-source screenshots");
         return;
     }
 
