@@ -13,86 +13,39 @@
             if (crime_filter_shooting && has("shooting")) ok = true;
             return ok;
         };
+        FeatureFilterContext filter_ctx;
+        filter_ctx.layers = &layers;
+        filter_ctx.real_property_by_blocklot = &real_property_by_blocklot;
+        filter_ctx.selected_owners = &selected_owners;
+        filter_ctx.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+        filter_ctx.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+        filter_ctx.real_property_layer_idx = real_property_layer_idx;
+        filter_ctx.parcel_layer_idx = parcel_layer_idx;
+        filter_ctx.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+        filter_ctx.crime_legacy_layer_idx = crime_legacy_layer_idx;
+        filter_ctx.filter_enabled = filter_enabled;
+        filter_ctx.filter_use_date = filter_use_date;
+        filter_ctx.filter_year_min = filter_year_min;
+        filter_ctx.filter_year_max = filter_year_max;
+        filter_ctx.filter_blocklot = filter_blocklot;
+        filter_ctx.filter_status = filter_status;
+        filter_ctx.filter_address = filter_address;
+        filter_ctx.filter_owner = filter_owner;
+        filter_ctx.filter_zip = filter_zip;
+        filter_ctx.crime_filter_enabled = crime_filter_enabled;
+        filter_ctx.crime_filter_homicide = crime_filter_homicide;
+        filter_ctx.crime_filter_robbery = crime_filter_robbery;
+        filter_ctx.crime_filter_assault = crime_filter_assault;
+        filter_ctx.crime_filter_burglary = crime_filter_burglary;
+        filter_ctx.crime_filter_theft = crime_filter_theft;
+        filter_ctx.crime_filter_auto_theft = crime_filter_auto_theft;
+        filter_ctx.crime_filter_drug = crime_filter_drug;
+        filter_ctx.crime_filter_shooting = crime_filter_shooting;
+        filter_ctx.crime_filter_use_year = crime_filter_use_year;
+        filter_ctx.crime_year_min = crime_year_min;
+        filter_ctx.crime_year_max = crime_year_max;
         auto feature_passes_filters = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) -> bool {
-            if (is_crime_layer(layer_idx)) {
-                if (!filter_enabled && !crime_filter_enabled) return true;
-                return crime_feature_matches(fg);
-            }
-            const bool selected_owner_filter_active =
-                !selected_owners.empty() &&
-                real_property_layer_idx >= 0 &&
-                (size_t)real_property_layer_idx < layers.size();
-            if (!filter_enabled && !selected_owner_filter_active) return true;
-            const LayerDef::FeatureGeom* rp_join = nullptr;
-            if (real_property_layer_idx >= 0 &&
-                (size_t)real_property_layer_idx < layers.size()) {
-                std::string bl = featureBlockLotJoinKey(fg);
-                if (!bl.empty()) {
-                    auto itrp = real_property_by_blocklot.find(bl);
-                    if (itrp != real_property_by_blocklot.end() &&
-                        itrp->second < layers[(size_t)real_property_layer_idx].features.size()) {
-                        rp_join = &layers[(size_t)real_property_layer_idx].features[itrp->second];
-                    }
-                }
-            }
-            if (selected_owner_filter_active) {
-                std::string owner = owner_name_for(rp_join);
-                if (owner.empty()) owner = owner_name_for(&fg);
-                if (owner.empty() || selected_owners.find(owner) == selected_owners.end()) return false;
-            }
-            if (!filter_enabled) return true;
-            if (filter_use_date) {
-                std::string ds = first_prop(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
-                if (ds.empty() && rp_join) ds = first_prop(*rp_join, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
-                if (ds.empty()) return false;
-                int yr = extractYearMaybe(ds);
-                if (yr < 0 || yr < filter_year_min || yr > filter_year_max) return false;
-            }
-            const std::string q_blocklot(filter_blocklot);
-            const std::string q_status(filter_status);
-            const std::string q_address(filter_address);
-            const std::string q_owner(filter_owner);
-            const std::string q_zip(filter_zip);
-            if (!q_blocklot.empty()) {
-                std::string bl = first_prop(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
-                if (!containsCaseInsensitive(bl, q_blocklot)) return false;
-            }
-            if (!q_status.empty()) {
-                std::string st = first_prop(fg, {"STATUS", "STATE", "CASE_STATUS"});
-                if (st.empty() && rp_join) st = first_prop(*rp_join, {"STATUS", "STATE", "CASE_STATUS"});
-                if (st.empty() && parcel_layer_idx >= 0 && (int)layer_idx == parcel_layer_idx) {
-                    const int vn = (feature_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[feature_idx] : 0;
-                    const int vr = (feature_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[feature_idx] : 0;
-                    st = (vn + vr) > 0 ? "vacant" : "occupied";
-                }
-                if (!containsCaseInsensitive(st, q_status)) return false;
-            }
-            if (!q_address.empty()) {
-                std::string ad = first_prop(fg, {
-                    "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
-                    "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
-                    "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
-                });
-                if (ad.empty() && rp_join) {
-                    ad = first_prop(*rp_join, {
-                        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
-                        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
-                        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
-                    });
-                }
-                if (!addressMatchesSearch(ad, q_address)) return false;
-            }
-            if (!q_owner.empty()) {
-                std::string ow = first_prop(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
-                if (ow.empty() && rp_join) ow = first_prop(*rp_join, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
-                if (!containsCaseInsensitive(ow, q_owner)) return false;
-            }
-            if (!q_zip.empty()) {
-                std::string zp = first_prop(fg, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
-                if (zp.empty() && rp_join) zp = first_prop(*rp_join, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
-                if (!containsCaseInsensitive(zp, q_zip)) return false;
-            }
-            return true;
+            return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
         };
         const float global_heat_cell = std::max(2.0f, global_heat_cell_px);
         std::vector<HeatSample> heat_samples;
@@ -377,7 +330,28 @@
             !(tax_sale_layer_idx >= 0 &&
               (layer_uses_heatmap_aggregate((size_t)tax_sale_layer_idx) ||
                layer_uses_lod_geometry((size_t)tax_sale_layer_idx)));
+        std::vector<size_t> draw_layer_order;
+        draw_layer_order.reserve(layers.size());
+        std::vector<size_t> parcel_related_draw_layers;
+        parcel_related_draw_layers.reserve(5);
+        size_t zoning_draw_layer = (size_t)-1;
         for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
+            if ((int)layer_idx == zoning_layer_idx) {
+                zoning_draw_layer = layer_idx;
+                continue;
+            }
+            if (isParcelRelatedLayer(filter_ctx, layer_idx)) {
+                parcel_related_draw_layers.push_back(layer_idx);
+                continue;
+            }
+            draw_layer_order.push_back(layer_idx);
+        }
+        if (zoning_draw_layer != (size_t)-1) draw_layer_order.push_back(zoning_draw_layer);
+        draw_layer_order.insert(
+            draw_layer_order.end(),
+            parcel_related_draw_layers.begin(),
+            parcel_related_draw_layers.end());
+        for (size_t layer_idx : draw_layer_order) {
             auto& l = layers[layer_idx];
             if (!l.enabled) continue;
             const bool layer_uses_heatmap_for_cache = layer_uses_heatmap_aggregate(layer_idx);

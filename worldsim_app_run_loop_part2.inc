@@ -476,6 +476,31 @@
                 &heatmap_multires_enabled,
                 &heatmap_multires_blend,
                 &heatmap_allow_cpu_fallback);
+            saveFilterUiState(
+                root,
+                filter_enabled,
+                filter_use_date,
+                filter_year_min,
+                filter_year_max,
+                filter_blocklot,
+                filter_status,
+                filter_address,
+                filter_owner,
+                filter_zip,
+                crime_filter_enabled,
+                crime_filter_homicide,
+                crime_filter_robbery,
+                crime_filter_assault,
+                crime_filter_burglary,
+                crime_filter_theft,
+                crime_filter_auto_theft,
+                crime_filter_drug,
+                crime_filter_shooting,
+                crime_filter_use_year,
+                crime_year_min,
+                crime_year_max,
+                owner_search_query,
+                selected_owners);
             last_enabled_state.clear();
             last_enabled_state.reserve(layers.size());
             for (const auto& l : layers) last_enabled_state.push_back(l.enabled);

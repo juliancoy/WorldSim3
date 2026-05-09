@@ -42,6 +42,82 @@
             std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
             return toLowerAscii(trimDisplayValue(o));
         };
+        auto owner_class_items = [&]() -> const std::vector<std::pair<std::string, std::string>>& {
+            static const std::vector<std::pair<std::string, std::string>> kItems = {
+                {"all", "All"},
+                {"government", "Government"},
+                {"individual", "Individual"},
+                {"receivership", "Receivership"},
+                {"development_corp", "Development Corp"},
+                {"nonprofit", "Nonprofit"},
+                {"trust_or_estate", "Trust/Estate"},
+                {"financial_institution", "Financial Institution"},
+                {"llc_corporate", "LLC/Corporate"},
+                {"unknown", "Unknown"},
+            };
+            return kItems;
+        };
+        auto owner_class_label = [&](const std::string& key) -> std::string {
+            for (const auto& kv : owner_class_items()) if (kv.first == key) return kv.second;
+            return "Unknown";
+        };
+        auto contains_any = [&](const std::string& s, std::initializer_list<const char*> terms) -> bool {
+            for (const char* t : terms) if (s.find(t) != std::string::npos) return true;
+            return false;
+        };
+        auto classify_owner = [&](const std::string& owner) -> std::string {
+            if (owner.empty()) return "unknown";
+            const std::string& s = owner;
+            if (contains_any(s, {"receiver", "receivership", "trustee", "court appointed", "special receiver"})) return "receivership";
+            if (contains_any(s, {"city of ", "county", "state of ", "housing authority", "dept of", "department of", "u.s.", " us ", "usa"})) return "government";
+            if (contains_any(s, {"development corp", "community development", "cdc ", " cdc", "redevelopment"})) return "development_corp";
+            if (contains_any(s, {"church", "ministries", "foundation", "nonprofit", "charitable", "association"})) return "nonprofit";
+            if (contains_any(s, {"trust", "estate"})) return "trust_or_estate";
+            if (contains_any(s, {"bank", "credit union", "mortgage", "federal national", "fannie mae", "freddie mac", "loan"})) return "financial_institution";
+            if (contains_any(s, {" llc", "llc ", "inc", "corp", "company", " co ", " ltd", "lp", "llp", "properties", "holdings"})) return "llc_corporate";
+            int alpha_tokens = 0;
+            bool has_non_alpha_token = false;
+            std::string token;
+            for (char ch : s) {
+                if (std::isalpha((unsigned char)ch)) token.push_back(ch);
+                else if (!token.empty()) {
+                    alpha_tokens++;
+                    token.clear();
+                } else if (!std::isspace((unsigned char)ch)) {
+                    has_non_alpha_token = true;
+                }
+            }
+            if (!token.empty()) alpha_tokens++;
+            if (!has_non_alpha_token && alpha_tokens >= 2 && alpha_tokens <= 4) return "individual";
+            return "unknown";
+        };
+        if (!owner_class_overrides_loaded) {
+            owner_class_overrides_loaded = true;
+            owner_class_overrides.clear();
+            std::ifstream in(root / "data" / "owner_class_overrides.json");
+            if (in) {
+                try {
+                    json oj;
+                    in >> oj;
+                    if (oj.is_object()) {
+                        for (auto it = oj.begin(); it != oj.end(); ++it) {
+                            if (it.value().is_string()) owner_class_overrides[it.key()] = it.value().get<std::string>();
+                        }
+                    }
+                } catch (...) {
+                }
+            }
+        }
+        if (owner_class_overrides_dirty) {
+            owner_class_overrides_dirty = false;
+            std::filesystem::create_directories(root / "data");
+            std::ofstream out(root / "data" / "owner_class_overrides.json");
+            if (out) {
+                json oj = json::object();
+                for (const auto& kv : owner_class_overrides) oj[kv.first] = kv.second;
+                out << oj.dump(2);
+            }
+        }
         auto owner_value_for = [&](const LayerDef::FeatureGeom* rp) -> double {
             if (!rp) return 0.0;
             auto v = [&](std::initializer_list<const char*> keys) -> double {
@@ -84,6 +160,10 @@
                 if (owner.empty()) continue;
                 auto& row = acc[owner];
                 if (row.owner.empty()) row.owner = owner;
+                if (row.owner_class.empty()) {
+                    auto oit = owner_class_overrides.find(owner);
+                    row.owner_class = oit != owner_class_overrides.end() ? oit->second : classify_owner(owner);
+                }
                 row.property_count += 1;
                 row.area_m2 += parcel_area_sq_m(pf);
                 row.value_usd += owner_value_for(rp);
@@ -160,8 +240,23 @@
         ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
         if (ImGui::BeginTabBar("right_tabs")) {
         if (ImGui::BeginTabItem("Filters")) {
+        auto focus_parcel_by_idx = [&](size_t idx) -> bool {
+            if (parcel_layer_idx < 0 || (size_t)parcel_layer_idx >= layers.size()) return false;
+            const auto& parcel_layer = layers[(size_t)parcel_layer_idx];
+            if (idx >= parcel_layer.features.size()) return false;
+            const auto& parcel = parcel_layer.features[idx];
+            center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
+            center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
+            zoom = std::max(zoom, 18);
+            show_selected_parcel_details = true;
+            selected_parcel_idx = idx;
+            show_selected_zone_details = false;
+            selected_zone_idx = (size_t)-1;
+            return true;
+        };
         auto locate_property_by_address = [&]() {
             const std::string query = trimDisplayValue(filter_address);
+            address_locate_matches.clear();
             if (query.empty()) {
                 address_locate_status = "Enter an address to locate a property.";
                 return;
@@ -192,35 +287,30 @@
                 return address;
             };
 
-            size_t best_idx = (size_t)-1;
-            int best_score = 0;
-            std::string best_address;
+            constexpr size_t kMaxAddressMatches = 24;
             for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
                 const auto& parcel = parcel_layer.features[i];
                 const std::string address = property_address_for(parcel);
                 const int score = addressSearchScore(address, query);
-                if (score > best_score) {
-                    best_score = score;
-                    best_idx = i;
-                    best_address = address;
-                    if (score >= 110) break;
-                }
+                if (score <= 0) continue;
+                address_locate_matches.push_back({i, score, address});
             }
-            if (best_idx == (size_t)-1) {
+            if (address_locate_matches.empty()) {
                 address_locate_status = "No matching property address found.";
                 return;
             }
-            const auto& parcel = parcel_layer.features[best_idx];
-            center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
-            center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
-            zoom = std::max(zoom, 18);
-            show_selected_parcel_details = true;
-            selected_parcel_idx = best_idx;
-            show_selected_zone_details = false;
-            selected_zone_idx = (size_t)-1;
-            address_locate_status = best_address.empty()
-                ? "Located matching parcel."
-                : "Located: " + best_address;
+            std::stable_sort(address_locate_matches.begin(), address_locate_matches.end(), [](const AddressLocateMatch& a, const AddressLocateMatch& b) {
+                if (a.score != b.score) return a.score > b.score;
+                if (a.address.size() != b.address.size()) return a.address.size() < b.address.size();
+                return a.parcel_idx < b.parcel_idx;
+            });
+            if (address_locate_matches.size() > kMaxAddressMatches) address_locate_matches.resize(kMaxAddressMatches);
+            const auto& best = address_locate_matches.front();
+            if (!focus_parcel_by_idx(best.parcel_idx)) {
+                address_locate_status = "Address match found, but parcel geometry is unavailable.";
+                return;
+            }
+            address_locate_status = "Found " + std::to_string(address_locate_matches.size()) + " matches.";
         };
         const bool selected_valid =
             show_selected_parcel_details && parcel_layer_idx >= 0 &&
@@ -230,11 +320,12 @@
             show_selected_zone_details && zoning_layer_idx >= 0 &&
             (size_t)zoning_layer_idx < layers.size() &&
             selected_zone_idx < layers[(size_t)zoning_layer_idx].features.size();
-        if (selected_valid) {
+        auto draw_selected_parcel_info = [&]() {
             const auto& selected = layers[(size_t)parcel_layer_idx].features[selected_parcel_idx];
-            if (ImGui::Button("Back To Filters")) {
+            if (ImGui::Button("Clear Parcel Selection")) {
                 show_selected_parcel_details = false;
                 selected_parcel_idx = (size_t)-1;
+                return;
             }
             ImGui::Separator();
             std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
@@ -266,6 +357,19 @@
                 if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
                 ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
                 if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
+                std::string summary_owner = owner_name_for(selected_rp);
+                if (summary_owner.empty()) summary_owner = owner_name_for(&selected);
+                if (!summary_owner.empty()) {
+                    ImGui::TextUnformatted("Owner:");
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.30f, 0.50f, 0.35f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.30f, 0.50f, 0.55f));
+                    if (ImGui::SmallButton((summary_owner + "##open_owner_info_summary").c_str())) {
+                        owner_info_owner = summary_owner;
+                    }
+                    ImGui::PopStyleColor(3);
+                }
                 draw_real_property_summary(selected_rp);
             }
             if (ImGui::CollapsingHeader("Event Timeline", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -314,7 +418,8 @@
                 ImGui::Text("Events With Amounts: %d", with_amount);
             }
             ImGui::EndChild();
-        } else if (selected_zone_valid) {
+        };
+        if (selected_zone_valid) {
             const auto& selected = layers[(size_t)zoning_layer_idx].features[selected_zone_idx];
             if (ImGui::Button("Back To Filters")) {
                 show_selected_zone_details = false;
@@ -364,6 +469,23 @@
                 locate_property_by_address();
             }
             if (!address_locate_status.empty()) ImGui::TextWrapped("%s", address_locate_status.c_str());
+            if (!address_locate_matches.empty()) {
+                ImGui::TextDisabled("Top matches");
+                ImGui::BeginChild("address_match_list", ImVec2(0, 120), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                for (size_t i = 0; i < address_locate_matches.size(); ++i) {
+                    const auto& m = address_locate_matches[i];
+                    std::string label = m.address.empty()
+                        ? ("Parcel #" + std::to_string(m.parcel_idx))
+                        : m.address;
+                    label += "##addr_match_" + std::to_string(i);
+                    if (ImGui::Selectable(label.c_str(), m.parcel_idx == selected_parcel_idx)) {
+                        if (focus_parcel_by_idx(m.parcel_idx)) {
+                            address_locate_status = "Located: " + (m.address.empty() ? std::string("matching parcel") : m.address);
+                        }
+                    }
+                }
+                ImGui::EndChild();
+            }
             if (!filter_enabled) {
                 ImGui::TextDisabled("Locate works anytime. Enable filters to also narrow visible records by address.");
             } else {
@@ -528,6 +650,51 @@
         }
         ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("Parcel Info")) {
+            const bool parcel_info_valid =
+                show_selected_parcel_details && parcel_layer_idx >= 0 &&
+                (size_t)parcel_layer_idx < layers.size() &&
+                selected_parcel_idx < layers[(size_t)parcel_layer_idx].features.size();
+            if (!parcel_info_valid) {
+                ImGui::TextDisabled("Select a parcel from the map or address results to view parcel details.");
+            } else {
+                const auto& selected = layers[(size_t)parcel_layer_idx].features[selected_parcel_idx];
+                if (ImGui::Button("Clear Parcel Selection")) {
+                    show_selected_parcel_details = false;
+                    selected_parcel_idx = (size_t)-1;
+                } else {
+                    std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
+                    int vac_notice = (selected_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[selected_parcel_idx] : 0;
+                    int vac_rehab = (selected_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[selected_parcel_idx] : 0;
+                    int tax_lien = (selected_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[selected_parcel_idx] : 0;
+                    int tax_sale = (selected_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[selected_parcel_idx] : 0;
+                    double tax_lien_amount = (selected_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[selected_parcel_idx] : 0.0;
+                    double tax_sale_amount = (selected_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[selected_parcel_idx] : 0.0;
+                    const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
+                    ImGui::Separator();
+                    ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
+                    ImGui::Text("Vacant Notices: %d", vac_notice);
+                    ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
+                    ImGui::Text("Tax Lien Certificate Records: %d", tax_lien);
+                    if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
+                    ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
+                    if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
+                    std::string summary_owner = owner_name_for(selected_rp);
+                    if (summary_owner.empty()) summary_owner = owner_name_for(&selected);
+                    if (!summary_owner.empty()) {
+                        ImGui::TextUnformatted("Owner:");
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.30f, 0.50f, 0.35f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.18f, 0.30f, 0.50f, 0.55f));
+                        if (ImGui::SmallButton((summary_owner + "##open_owner_info_parcel_tab").c_str())) owner_info_owner = summary_owner;
+                        ImGui::PopStyleColor(3);
+                    }
+                    draw_real_property_summary(selected_rp);
+                }
+            }
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Vacancy-Parcel")) {
             const size_t notices_total = (size_t)cached_vac_notice_size;
             const size_t rehabs_total = (size_t)cached_vac_rehab_size;
@@ -666,6 +833,60 @@
                 ImGui::TextWrapped("Enable a layer with a heatmap field, such as Property Value (Parcels), to see its current gradient scale.");
             }
             ImGui::EndChild();
+        ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Owner Info")) {
+            if (owner_info_owner.empty()) {
+                ImGui::TextDisabled("Open from Summary by clicking an owner name.");
+            } else if (parcel_layer_idx < 0 || (size_t)parcel_layer_idx >= layers.size()) {
+                ImGui::TextDisabled("Parcel layer is unavailable.");
+            } else {
+                const auto& parcels = layers[(size_t)parcel_layer_idx].features;
+                std::vector<size_t> owner_parcel_indices;
+                owner_parcel_indices.reserve(512);
+                for (size_t i = 0; i < parcels.size(); ++i) {
+                    const LayerDef::FeatureGeom* rp = real_property_for_parcel(parcels[i]);
+                    std::string owner = owner_name_for(rp);
+                    if (owner.empty()) owner = owner_name_for(&parcels[i]);
+                    if (owner == owner_info_owner) owner_parcel_indices.push_back(i);
+                }
+                ImGui::Text("Owner: %s", owner_info_owner.c_str());
+                ImGui::Text("Properties: %zu", owner_parcel_indices.size());
+                ImGui::BeginChild("owner_info_properties", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+                for (size_t i = 0; i < owner_parcel_indices.size(); ++i) {
+                    const size_t pi = owner_parcel_indices[i];
+                    const auto& pf = parcels[pi];
+                    const LayerDef::FeatureGeom* rp = real_property_for_parcel(pf);
+                    std::string blocklot = firstDisplayProperty(pf, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
+                    std::string address = firstDisplayProperty(pf, {
+                        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                    });
+                    if (address.empty() && rp) {
+                        address = firstDisplayProperty(*rp, {
+                            "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+                            "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+                            "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+                        });
+                    }
+                    if (address.empty()) address = "(address unavailable)";
+                    std::string label = address + "##owner_prop_" + std::to_string(pi);
+                    if (ImGui::Selectable(label.c_str(), show_selected_parcel_details && selected_parcel_idx == pi, ImGuiSelectableFlags_SpanAllColumns)) {
+                        const auto& parcel = parcels[pi];
+                        center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
+                        center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
+                        zoom = std::max(zoom, 18);
+                        show_selected_parcel_details = true;
+                        selected_parcel_idx = pi;
+                        show_selected_zone_details = false;
+                        selected_zone_idx = (size_t)-1;
+                    }
+                    ImGui::TextDisabled("BLOCKLOT: %s", blocklot.empty() ? "(none)" : blocklot.c_str());
+                    ImGui::Separator();
+                }
+                ImGui::EndChild();
+            }
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Owners")) {
@@ -695,6 +916,37 @@
                 selected_owners.clear();
                 selected_owner_anchor = -1;
             }
+            ImGui::SetNextItemWidth(-100.0f);
+            ImGui::InputTextWithHint("##owner_search_query", "Owner Search (text)", owner_search_query, sizeof(owner_search_query));
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Search")) owner_search_query[0] = '\0';
+            const std::string owner_query = trimDisplayValue(owner_search_query);
+            if (owner_class_filter_mode < 0 || owner_class_filter_mode >= (int)owner_class_items().size()) owner_class_filter_mode = 0;
+            const std::string owner_class_filter_key = owner_class_items()[(size_t)owner_class_filter_mode].first;
+            std::vector<const char*> owner_class_filter_labels;
+            owner_class_filter_labels.reserve(owner_class_items().size());
+            for (const auto& kv : owner_class_items()) owner_class_filter_labels.push_back(kv.second.c_str());
+            ImGui::Combo("Class Filter", &owner_class_filter_mode, owner_class_filter_labels.data(), (int)owner_class_filter_labels.size());
+            if (owner_class_assign_mode <= 0 || owner_class_assign_mode >= (int)owner_class_items().size()) owner_class_assign_mode = 1;
+            std::vector<const char*> owner_class_assign_labels;
+            owner_class_assign_labels.reserve(owner_class_items().size() - 1);
+            for (size_t i = 1; i < owner_class_items().size(); ++i) owner_class_assign_labels.push_back(owner_class_items()[i].second.c_str());
+            int assign_idx = owner_class_assign_mode - 1;
+            ImGui::Combo("Set Class", &assign_idx, owner_class_assign_labels.data(), (int)owner_class_assign_labels.size());
+            owner_class_assign_mode = assign_idx + 1;
+            ImGui::SameLine();
+            if (ImGui::Button("Apply To Selected") && !selected_owners.empty()) {
+                const std::string class_key = owner_class_items()[(size_t)owner_class_assign_mode].first;
+                for (const auto& owner : selected_owners) owner_class_overrides[owner] = class_key;
+                owner_class_overrides_dirty = true;
+                owner_aggregates_dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Class Override") && !selected_owners.empty()) {
+                for (const auto& owner : selected_owners) owner_class_overrides.erase(owner);
+                owner_class_overrides_dirty = true;
+                owner_aggregates_dirty = true;
+            }
             if (!selected_owners.empty() && filtered_aggregate_snapshot.valid) {
                 ImGui::TextDisabled("Filtered totals | properties: %zu | area: %.0f m^2 | value: $%.0f",
                                     filtered_aggregate_snapshot.owner_property_count,
@@ -709,34 +961,59 @@
                 ImGui::TextDisabled("Waiting for owner data: parcels=%zu real_property=%zu", parcel_count, real_property_count);
             }
             ImGui::BeginChild("owner_rankings", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            const size_t max_rows = std::min<size_t>(500, owner_aggregates.size());
-            for (size_t i = 0; i < max_rows; ++i) {
-                const auto& r = owner_aggregates[i];
-                const bool row_selected = selected_owners.find(r.owner) != selected_owners.end();
-                ImGui::PushID((int)i);
-                if (ImGui::Selectable(r.owner.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    const bool shift = ImGui::GetIO().KeyShift;
-                    const bool ctrl = ImGui::GetIO().KeyCtrl;
-                    if (shift && selected_owner_anchor >= 0 && (size_t)selected_owner_anchor < max_rows) {
-                        if (!ctrl) selected_owners.clear();
-                        const size_t begin = std::min((size_t)selected_owner_anchor, i);
-                        const size_t end = std::max((size_t)selected_owner_anchor, i);
-                        for (size_t j = begin; j <= end; ++j) selected_owners.insert(owner_aggregates[j].owner);
-                    } else if (ctrl) {
-                        if (row_selected) selected_owners.erase(r.owner);
-                        else selected_owners.insert(r.owner);
-                        selected_owner_anchor = (int)i;
-                    } else {
-                        selected_owners.clear();
-                        selected_owners.insert(r.owner);
-                        selected_owner_anchor = (int)i;
+            std::vector<size_t> owner_visible_indices;
+            owner_visible_indices.reserve(owner_aggregates.size());
+            for (size_t i = 0; i < owner_aggregates.size(); ++i) {
+                if (!owner_query.empty() && !containsCaseInsensitive(owner_aggregates[i].owner, owner_query)) continue;
+                if (owner_class_filter_key != "all" && owner_aggregates[i].owner_class != owner_class_filter_key) continue;
+                owner_visible_indices.push_back(i);
+            }
+            const size_t visible_rows = owner_visible_indices.size();
+            ImGuiListClipper clipper;
+            clipper.Begin((int)visible_rows);
+            while (clipper.Step()) {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                    const size_t visible_idx = (size_t)row;
+                    const size_t agg_idx = owner_visible_indices[visible_idx];
+                    const auto& r = owner_aggregates[agg_idx];
+                    const bool row_selected = selected_owners.find(r.owner) != selected_owners.end();
+                    ImGui::PushID((int)agg_idx);
+                    if (ImGui::Selectable(r.owner.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                        const bool shift = ImGui::GetIO().KeyShift;
+                        const bool ctrl = ImGui::GetIO().KeyCtrl;
+                        if (shift && selected_owner_anchor >= 0 && (size_t)selected_owner_anchor < visible_rows) {
+                            if (!ctrl) selected_owners.clear();
+                            const size_t begin = std::min((size_t)selected_owner_anchor, visible_idx);
+                            const size_t end = std::max((size_t)selected_owner_anchor, visible_idx);
+                            for (size_t j = begin; j <= end; ++j) {
+                                selected_owners.insert(owner_aggregates[owner_visible_indices[j]].owner);
+                            }
+                        } else if (ctrl) {
+                            if (row_selected) selected_owners.erase(r.owner);
+                            else selected_owners.insert(r.owner);
+                            selected_owner_anchor = (int)visible_idx;
+                        } else {
+                            selected_owners.clear();
+                            selected_owners.insert(r.owner);
+                            selected_owner_anchor = (int)visible_idx;
+                        }
                     }
+                    ImGui::PopID();
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("[%s]", owner_class_label(r.owner_class).c_str());
+                    ImGui::TextDisabled("properties: %zu | area: %.0f m^2 | value: $%.0f", r.property_count, r.area_m2, r.value_usd);
+                    ImGui::Separator();
                 }
-                ImGui::PopID();
-                ImGui::TextDisabled("properties: %zu | area: %.0f m^2 | value: $%.0f", r.property_count, r.area_m2, r.value_usd);
-                ImGui::Separator();
+            }
+            if (!owner_query.empty() && visible_rows == 0) {
+                ImGui::TextDisabled("No owners match \"%s\".", owner_query.c_str());
             }
             ImGui::EndChild();
+            if (!owner_query.empty()) {
+                ImGui::TextDisabled("Visible rows: %zu / %zu", visible_rows, owner_aggregates.size());
+            } else {
+                ImGui::TextDisabled("Showing all owners: %zu", owner_aggregates.size());
+            }
         ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
@@ -992,12 +1269,7 @@
         const int lod_ring_step = lodRingStepForZoom(math_zoom);
         const bool allow_parcel_scale_fill = math_zoom >= 14;
         auto is_parcel_scale_layer = [&](size_t layer_idx) -> bool {
-            return ((int)layer_idx == parcel_layer_idx ||
-                    (int)layer_idx == real_property_layer_idx ||
-                    (int)layer_idx == vacant_notice_layer_idx ||
-                    (int)layer_idx == vacant_rehab_layer_idx ||
-                    (int)layer_idx == tax_lien_layer_idx ||
-                    (int)layer_idx == tax_sale_layer_idx);
+            return layer_idx < layers.size() && layers[layer_idx].scale == "parcel";
         };
         auto should_fill_layer_polygon = [&](size_t layer_idx) -> bool {
             // Large-area layers still need low-zoom fill; parcel-scale fills are the expensive case.

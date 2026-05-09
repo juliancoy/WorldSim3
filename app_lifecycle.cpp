@@ -96,6 +96,55 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.heatmap_multires_enabled,
         ctx.heatmap_multires_blend,
         ctx.heatmap_allow_cpu_fallback);
+    if (ctx.filter_enabled &&
+        ctx.filter_use_date &&
+        ctx.filter_year_min &&
+        ctx.filter_year_max &&
+        ctx.filter_blocklot &&
+        ctx.filter_status &&
+        ctx.filter_address &&
+        ctx.filter_owner &&
+        ctx.filter_zip &&
+        ctx.crime_filter_enabled &&
+        ctx.crime_filter_homicide &&
+        ctx.crime_filter_robbery &&
+        ctx.crime_filter_assault &&
+        ctx.crime_filter_burglary &&
+        ctx.crime_filter_theft &&
+        ctx.crime_filter_auto_theft &&
+        ctx.crime_filter_drug &&
+        ctx.crime_filter_shooting &&
+        ctx.crime_filter_use_year &&
+        ctx.crime_year_min &&
+        ctx.crime_year_max &&
+        ctx.owner_search_query &&
+        ctx.selected_owners) {
+        saveFilterUiState(
+            *ctx.root,
+            *ctx.filter_enabled,
+            *ctx.filter_use_date,
+            *ctx.filter_year_min,
+            *ctx.filter_year_max,
+            ctx.filter_blocklot,
+            ctx.filter_status,
+            ctx.filter_address,
+            ctx.filter_owner,
+            ctx.filter_zip,
+            *ctx.crime_filter_enabled,
+            *ctx.crime_filter_homicide,
+            *ctx.crime_filter_robbery,
+            *ctx.crime_filter_assault,
+            *ctx.crime_filter_burglary,
+            *ctx.crime_filter_theft,
+            *ctx.crime_filter_auto_theft,
+            *ctx.crime_filter_drug,
+            *ctx.crime_filter_shooting,
+            *ctx.crime_filter_use_year,
+            *ctx.crime_year_min,
+            *ctx.crime_year_max,
+            ctx.owner_search_query,
+            *ctx.selected_owners);
+    }
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);
     ctx.hydration_stop->store(true, std::memory_order_relaxed);

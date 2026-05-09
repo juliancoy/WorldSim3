@@ -5,6 +5,7 @@
 #include "backends/imgui_impl_vulkan.h"
 #include "layer_state_io.h"
 #include "feature_props.h"
+#include "filters.h"
 #include "geo.h"
 #include "cache_io.h"
 #include "arkavo_realtime_client.h"
@@ -498,12 +499,18 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<uint32_t> render_candidates;
     struct OwnerAggregate {
         std::string owner;
+        std::string owner_class;
         size_t property_count = 0;
         double area_m2 = 0.0;
         double value_usd = 0.0;
     };
     std::vector<OwnerAggregate> owner_aggregates;
     std::unordered_set<std::string> selected_owners;
+    std::unordered_map<std::string, std::string> owner_class_overrides;
+    bool owner_class_overrides_loaded = false;
+    bool owner_class_overrides_dirty = false;
+    int owner_class_filter_mode = 0; // 0=all
+    int owner_class_assign_mode = 1; // default government
     int selected_owner_anchor = -1;
     struct FilteredAggregateSnapshot {
         bool valid = false;
@@ -747,7 +754,15 @@ int runWorldSim3App(int argc, char** argv) {
     char filter_status[64] = "";
     char filter_address[160] = "";
     std::string address_locate_status;
+    struct AddressLocateMatch {
+        size_t parcel_idx = (size_t)-1;
+        int score = 0;
+        std::string address;
+    };
+    std::vector<AddressLocateMatch> address_locate_matches;
     char filter_owner[96] = "";
+    char owner_search_query[96] = "";
+    std::string owner_info_owner;
     char filter_zip[24] = "";
     bool crime_filter_enabled = false;
     bool crime_filter_homicide = false;
@@ -761,6 +776,37 @@ int runWorldSim3App(int argc, char** argv) {
     bool crime_filter_use_year = false;
     int crime_year_min = 2022;
     int crime_year_max = 2026;
+    loadFilterUiState(
+        root,
+        &filter_enabled,
+        &filter_use_date,
+        &filter_year_min,
+        &filter_year_max,
+        filter_blocklot,
+        sizeof(filter_blocklot),
+        filter_status,
+        sizeof(filter_status),
+        filter_address,
+        sizeof(filter_address),
+        filter_owner,
+        sizeof(filter_owner),
+        filter_zip,
+        sizeof(filter_zip),
+        &crime_filter_enabled,
+        &crime_filter_homicide,
+        &crime_filter_robbery,
+        &crime_filter_assault,
+        &crime_filter_burglary,
+        &crime_filter_theft,
+        &crime_filter_auto_theft,
+        &crime_filter_drug,
+        &crime_filter_shooting,
+        &crime_filter_use_year,
+        &crime_year_min,
+        &crime_year_max,
+        owner_search_query,
+        sizeof(owner_search_query),
+        &selected_owners);
     std::vector<std::pair<std::string, int>> crime_breakdown;
     std::vector<int> record_year_hist(201, 0); // 1900..2100
     std::vector<float> record_year_hist_plot(201, 0.0f);
@@ -937,6 +983,29 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_ctx.heatmap_multires_enabled = &heatmap_multires_enabled;
     shutdown_ctx.heatmap_multires_blend = &heatmap_multires_blend;
     shutdown_ctx.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
+    shutdown_ctx.filter_enabled = &filter_enabled;
+    shutdown_ctx.filter_use_date = &filter_use_date;
+    shutdown_ctx.filter_year_min = &filter_year_min;
+    shutdown_ctx.filter_year_max = &filter_year_max;
+    shutdown_ctx.filter_blocklot = filter_blocklot;
+    shutdown_ctx.filter_status = filter_status;
+    shutdown_ctx.filter_address = filter_address;
+    shutdown_ctx.filter_owner = filter_owner;
+    shutdown_ctx.filter_zip = filter_zip;
+    shutdown_ctx.crime_filter_enabled = &crime_filter_enabled;
+    shutdown_ctx.crime_filter_homicide = &crime_filter_homicide;
+    shutdown_ctx.crime_filter_robbery = &crime_filter_robbery;
+    shutdown_ctx.crime_filter_assault = &crime_filter_assault;
+    shutdown_ctx.crime_filter_burglary = &crime_filter_burglary;
+    shutdown_ctx.crime_filter_theft = &crime_filter_theft;
+    shutdown_ctx.crime_filter_auto_theft = &crime_filter_auto_theft;
+    shutdown_ctx.crime_filter_drug = &crime_filter_drug;
+    shutdown_ctx.crime_filter_shooting = &crime_filter_shooting;
+    shutdown_ctx.crime_filter_use_year = &crime_filter_use_year;
+    shutdown_ctx.crime_year_min = &crime_year_min;
+    shutdown_ctx.crime_year_max = &crime_year_max;
+    shutdown_ctx.owner_search_query = owner_search_query;
+    shutdown_ctx.selected_owners = &selected_owners;
     shutdown_ctx.hydration_stop = &hydration_stop;
     shutdown_ctx.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_ctx.hydrate_req_cv = &hydrate_req_cv;

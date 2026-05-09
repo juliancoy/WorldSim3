@@ -110,6 +110,7 @@ add_executable(worldsim3
   arkavo_rtc_session_manager.cpp
   time_cube.cpp
   layer_state_io.cpp
+  filters.cpp
   feature_props.cpp
   geo.cpp
   cache_io.cpp

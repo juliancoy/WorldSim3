@@ -20,6 +20,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct FrameFinalizationContext {
@@ -87,6 +88,29 @@ struct AppShutdownContext {
     bool* heatmap_multires_enabled = nullptr;
     float* heatmap_multires_blend = nullptr;
     bool* heatmap_allow_cpu_fallback = nullptr;
+    bool* filter_enabled = nullptr;
+    bool* filter_use_date = nullptr;
+    int* filter_year_min = nullptr;
+    int* filter_year_max = nullptr;
+    char* filter_blocklot = nullptr;
+    char* filter_status = nullptr;
+    char* filter_address = nullptr;
+    char* filter_owner = nullptr;
+    char* filter_zip = nullptr;
+    bool* crime_filter_enabled = nullptr;
+    bool* crime_filter_homicide = nullptr;
+    bool* crime_filter_robbery = nullptr;
+    bool* crime_filter_assault = nullptr;
+    bool* crime_filter_burglary = nullptr;
+    bool* crime_filter_theft = nullptr;
+    bool* crime_filter_auto_theft = nullptr;
+    bool* crime_filter_drug = nullptr;
+    bool* crime_filter_shooting = nullptr;
+    bool* crime_filter_use_year = nullptr;
+    int* crime_year_min = nullptr;
+    int* crime_year_max = nullptr;
+    char* owner_search_query = nullptr;
+    std::unordered_set<std::string>* selected_owners = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;
     std::thread* time_cube_ui_worker = nullptr;
     std::condition_variable* hydrate_req_cv = nullptr;

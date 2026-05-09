@@ -3,7 +3,9 @@
 #include "types.h"
 
 #include <filesystem>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 std::vector<LayerDef> loadManifest(const std::filesystem::path& root);
@@ -73,3 +75,61 @@ void saveLayerUiState(
     const bool* heatmap_multires_enabled = nullptr,
     const float* heatmap_multires_blend = nullptr,
     const bool* heatmap_allow_cpu_fallback = nullptr);
+
+void loadFilterUiState(
+    const std::filesystem::path& root,
+    bool* filter_enabled = nullptr,
+    bool* filter_use_date = nullptr,
+    int* filter_year_min = nullptr,
+    int* filter_year_max = nullptr,
+    char* filter_blocklot = nullptr,
+    size_t filter_blocklot_size = 0,
+    char* filter_status = nullptr,
+    size_t filter_status_size = 0,
+    char* filter_address = nullptr,
+    size_t filter_address_size = 0,
+    char* filter_owner = nullptr,
+    size_t filter_owner_size = 0,
+    char* filter_zip = nullptr,
+    size_t filter_zip_size = 0,
+    bool* crime_filter_enabled = nullptr,
+    bool* crime_filter_homicide = nullptr,
+    bool* crime_filter_robbery = nullptr,
+    bool* crime_filter_assault = nullptr,
+    bool* crime_filter_burglary = nullptr,
+    bool* crime_filter_theft = nullptr,
+    bool* crime_filter_auto_theft = nullptr,
+    bool* crime_filter_drug = nullptr,
+    bool* crime_filter_shooting = nullptr,
+    bool* crime_filter_use_year = nullptr,
+    int* crime_year_min = nullptr,
+    int* crime_year_max = nullptr,
+    char* owner_search_query = nullptr,
+    size_t owner_search_query_size = 0,
+    std::unordered_set<std::string>* selected_owners = nullptr);
+
+void saveFilterUiState(
+    const std::filesystem::path& root,
+    bool filter_enabled,
+    bool filter_use_date,
+    int filter_year_min,
+    int filter_year_max,
+    const char* filter_blocklot,
+    const char* filter_status,
+    const char* filter_address,
+    const char* filter_owner,
+    const char* filter_zip,
+    bool crime_filter_enabled,
+    bool crime_filter_homicide,
+    bool crime_filter_robbery,
+    bool crime_filter_assault,
+    bool crime_filter_burglary,
+    bool crime_filter_theft,
+    bool crime_filter_auto_theft,
+    bool crime_filter_drug,
+    bool crime_filter_shooting,
+    bool crime_filter_use_year,
+    int crime_year_min,
+    int crime_year_max,
+    const char* owner_search_query,
+    const std::unordered_set<std::string>& selected_owners);

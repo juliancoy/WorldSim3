@@ -4,12 +4,19 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <fstream>
 
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+static void copyToBuffer(const std::string& src, char* dst, size_t dst_size) {
+    if (!dst || dst_size == 0) return;
+    std::strncpy(dst, src.c_str(), dst_size - 1);
+    dst[dst_size - 1] = '\0';
+}
 
 static LayerDef::Category inferCategory(const std::string& layer_name) {
     std::string s = layer_name;
@@ -412,6 +419,147 @@ void saveLayerUiState(
         if (heatmap_allow_cpu_fallback) hs["allow_cpu_fallback"] = *heatmap_allow_cpu_fallback;
         j["heatmap_settings"] = std::move(hs);
     }
+    std::ofstream out(root / "data" / "layer_ui_state.json");
+    if (out) out << j.dump(2);
+}
+
+void loadFilterUiState(
+    const fs::path& root,
+    bool* filter_enabled,
+    bool* filter_use_date,
+    int* filter_year_min,
+    int* filter_year_max,
+    char* filter_blocklot,
+    size_t filter_blocklot_size,
+    char* filter_status,
+    size_t filter_status_size,
+    char* filter_address,
+    size_t filter_address_size,
+    char* filter_owner,
+    size_t filter_owner_size,
+    char* filter_zip,
+    size_t filter_zip_size,
+    bool* crime_filter_enabled,
+    bool* crime_filter_homicide,
+    bool* crime_filter_robbery,
+    bool* crime_filter_assault,
+    bool* crime_filter_burglary,
+    bool* crime_filter_theft,
+    bool* crime_filter_auto_theft,
+    bool* crime_filter_drug,
+    bool* crime_filter_shooting,
+    bool* crime_filter_use_year,
+    int* crime_year_min,
+    int* crime_year_max,
+    char* owner_search_query,
+    size_t owner_search_query_size,
+    std::unordered_set<std::string>* selected_owners) {
+    std::ifstream in(root / "data" / "layer_ui_state.json");
+    if (!in) return;
+    json j;
+    try {
+        in >> j;
+    } catch (...) {
+        return;
+    }
+    if (!j.contains("filters") || !j["filters"].is_object()) return;
+    const json& f = j["filters"];
+    if (filter_enabled && f.contains("enabled") && f["enabled"].is_boolean()) *filter_enabled = f["enabled"].get<bool>();
+    if (filter_use_date && f.contains("use_date") && f["use_date"].is_boolean()) *filter_use_date = f["use_date"].get<bool>();
+    if (filter_year_min && f.contains("year_min") && f["year_min"].is_number_integer()) *filter_year_min = f["year_min"].get<int>();
+    if (filter_year_max && f.contains("year_max") && f["year_max"].is_number_integer()) *filter_year_max = f["year_max"].get<int>();
+    if (f.contains("blocklot") && f["blocklot"].is_string()) copyToBuffer(f["blocklot"].get<std::string>(), filter_blocklot, filter_blocklot_size);
+    if (f.contains("status") && f["status"].is_string()) copyToBuffer(f["status"].get<std::string>(), filter_status, filter_status_size);
+    if (f.contains("address") && f["address"].is_string()) copyToBuffer(f["address"].get<std::string>(), filter_address, filter_address_size);
+    if (f.contains("owner") && f["owner"].is_string()) copyToBuffer(f["owner"].get<std::string>(), filter_owner, filter_owner_size);
+    if (f.contains("zip") && f["zip"].is_string()) copyToBuffer(f["zip"].get<std::string>(), filter_zip, filter_zip_size);
+    if (f.contains("owner_search_query") && f["owner_search_query"].is_string()) {
+        copyToBuffer(f["owner_search_query"].get<std::string>(), owner_search_query, owner_search_query_size);
+    }
+    if (crime_filter_enabled && f.contains("crime_enabled") && f["crime_enabled"].is_boolean()) *crime_filter_enabled = f["crime_enabled"].get<bool>();
+    if (crime_filter_homicide && f.contains("crime_homicide") && f["crime_homicide"].is_boolean()) *crime_filter_homicide = f["crime_homicide"].get<bool>();
+    if (crime_filter_robbery && f.contains("crime_robbery") && f["crime_robbery"].is_boolean()) *crime_filter_robbery = f["crime_robbery"].get<bool>();
+    if (crime_filter_assault && f.contains("crime_assault") && f["crime_assault"].is_boolean()) *crime_filter_assault = f["crime_assault"].get<bool>();
+    if (crime_filter_burglary && f.contains("crime_burglary") && f["crime_burglary"].is_boolean()) *crime_filter_burglary = f["crime_burglary"].get<bool>();
+    if (crime_filter_theft && f.contains("crime_theft") && f["crime_theft"].is_boolean()) *crime_filter_theft = f["crime_theft"].get<bool>();
+    if (crime_filter_auto_theft && f.contains("crime_auto_theft") && f["crime_auto_theft"].is_boolean()) *crime_filter_auto_theft = f["crime_auto_theft"].get<bool>();
+    if (crime_filter_drug && f.contains("crime_drug") && f["crime_drug"].is_boolean()) *crime_filter_drug = f["crime_drug"].get<bool>();
+    if (crime_filter_shooting && f.contains("crime_shooting") && f["crime_shooting"].is_boolean()) *crime_filter_shooting = f["crime_shooting"].get<bool>();
+    if (crime_filter_use_year && f.contains("crime_use_year") && f["crime_use_year"].is_boolean()) *crime_filter_use_year = f["crime_use_year"].get<bool>();
+    if (crime_year_min && f.contains("crime_year_min") && f["crime_year_min"].is_number_integer()) *crime_year_min = f["crime_year_min"].get<int>();
+    if (crime_year_max && f.contains("crime_year_max") && f["crime_year_max"].is_number_integer()) *crime_year_max = f["crime_year_max"].get<int>();
+    if (selected_owners && f.contains("selected_owners") && f["selected_owners"].is_array()) {
+        selected_owners->clear();
+        for (const auto& v : f["selected_owners"]) {
+            if (v.is_string()) selected_owners->insert(v.get<std::string>());
+        }
+    }
+}
+
+void saveFilterUiState(
+    const fs::path& root,
+    bool filter_enabled,
+    bool filter_use_date,
+    int filter_year_min,
+    int filter_year_max,
+    const char* filter_blocklot,
+    const char* filter_status,
+    const char* filter_address,
+    const char* filter_owner,
+    const char* filter_zip,
+    bool crime_filter_enabled,
+    bool crime_filter_homicide,
+    bool crime_filter_robbery,
+    bool crime_filter_assault,
+    bool crime_filter_burglary,
+    bool crime_filter_theft,
+    bool crime_filter_auto_theft,
+    bool crime_filter_drug,
+    bool crime_filter_shooting,
+    bool crime_filter_use_year,
+    int crime_year_min,
+    int crime_year_max,
+    const char* owner_search_query,
+    const std::unordered_set<std::string>& selected_owners) {
+    fs::create_directories(root / "data");
+    json j = json::object();
+    {
+        std::ifstream in(root / "data" / "layer_ui_state.json");
+        if (in) {
+            try {
+                in >> j;
+            } catch (...) {
+                j = json::object();
+            }
+        }
+    }
+    json f = json::object();
+    f["enabled"] = filter_enabled;
+    f["use_date"] = filter_use_date;
+    f["year_min"] = filter_year_min;
+    f["year_max"] = filter_year_max;
+    f["blocklot"] = filter_blocklot ? filter_blocklot : "";
+    f["status"] = filter_status ? filter_status : "";
+    f["address"] = filter_address ? filter_address : "";
+    f["owner"] = filter_owner ? filter_owner : "";
+    f["zip"] = filter_zip ? filter_zip : "";
+    f["crime_enabled"] = crime_filter_enabled;
+    f["crime_homicide"] = crime_filter_homicide;
+    f["crime_robbery"] = crime_filter_robbery;
+    f["crime_assault"] = crime_filter_assault;
+    f["crime_burglary"] = crime_filter_burglary;
+    f["crime_theft"] = crime_filter_theft;
+    f["crime_auto_theft"] = crime_filter_auto_theft;
+    f["crime_drug"] = crime_filter_drug;
+    f["crime_shooting"] = crime_filter_shooting;
+    f["crime_use_year"] = crime_filter_use_year;
+    f["crime_year_min"] = crime_year_min;
+    f["crime_year_max"] = crime_year_max;
+    f["owner_search_query"] = owner_search_query ? owner_search_query : "";
+    json owners = json::array();
+    for (const auto& owner : selected_owners) owners.push_back(owner);
+    f["selected_owners"] = std::move(owners);
+    j["filters"] = std::move(f);
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);
 }
