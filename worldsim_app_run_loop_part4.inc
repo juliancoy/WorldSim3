@@ -15,37 +15,23 @@
         };
         FeatureFilterContext filter_ctx;
         filter_ctx.layers = &layers;
+        filter_ctx.map_filters = &map_filter_state;
         filter_ctx.real_property_by_blocklot = &real_property_by_blocklot;
-        filter_ctx.selected_owners = &selected_owners;
         filter_ctx.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
         filter_ctx.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
         filter_ctx.real_property_layer_idx = real_property_layer_idx;
         filter_ctx.parcel_layer_idx = parcel_layer_idx;
         filter_ctx.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
         filter_ctx.crime_legacy_layer_idx = crime_legacy_layer_idx;
-        filter_ctx.filter_enabled = filter_enabled;
-        filter_ctx.filter_use_date = filter_use_date;
-        filter_ctx.filter_year_min = filter_year_min;
-        filter_ctx.filter_year_max = filter_year_max;
-        filter_ctx.filter_blocklot = filter_blocklot;
-        filter_ctx.filter_status = filter_status;
-        filter_ctx.filter_address = filter_address;
-        filter_ctx.filter_owner = filter_owner;
-        filter_ctx.filter_zip = filter_zip;
-        filter_ctx.crime_filter_enabled = crime_filter_enabled;
-        filter_ctx.crime_filter_homicide = crime_filter_homicide;
-        filter_ctx.crime_filter_robbery = crime_filter_robbery;
-        filter_ctx.crime_filter_assault = crime_filter_assault;
-        filter_ctx.crime_filter_burglary = crime_filter_burglary;
-        filter_ctx.crime_filter_theft = crime_filter_theft;
-        filter_ctx.crime_filter_auto_theft = crime_filter_auto_theft;
-        filter_ctx.crime_filter_drug = crime_filter_drug;
-        filter_ctx.crime_filter_shooting = crime_filter_shooting;
-        filter_ctx.crime_filter_use_year = crime_filter_use_year;
-        filter_ctx.crime_year_min = crime_year_min;
-        filter_ctx.crime_year_max = crime_year_max;
+        filter_ctx.query_layers = &query_layers;
         auto feature_passes_filters = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) -> bool {
             return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
+        };
+        auto query_map_color = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg, ImU32& out_color) -> bool {
+            float query_color[4] = {0, 0, 0, 0};
+            if (!queryMapColorForFeature(filter_ctx, layer_idx, feature_idx, fg, query_color)) return false;
+            out_color = ImGui::ColorConvertFloat4ToU32(ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+            return true;
         };
         const float global_heat_cell = std::max(2.0f, global_heat_cell_px);
         std::vector<HeatSample> heat_samples;
@@ -173,6 +159,15 @@
             hashCombineU64(key, crime_filter_auto_theft ? 1ULL : 0ULL);
             hashCombineU64(key, crime_filter_drug ? 1ULL : 0ULL);
             hashCombineU64(key, crime_filter_shooting ? 1ULL : 0ULL);
+            hashCombineU64(key, (uint64_t)query_layers.size());
+            for (const QueryMapLayer& query_layer : query_layers) {
+                hashCombineU64(key, query_layer.enabled ? 1ULL : 0ULL);
+                for (float channel : query_layer.color) hashCombineFloat(key, channel);
+                hashCombineU64(key, (uint64_t)query_layer.result_set.features.size());
+                hashCombineU64(key, (uint64_t)query_layer.result_set.blocklots.size());
+                hashCombineU64(key, (uint64_t)query_layer.result_set.owners.size());
+                for (unsigned char ch : query_layer.name) hashCombineU64(key, (uint64_t)ch);
+            }
             for (size_t i = 0; i < layers.size(); ++i) {
                 const bool layer_contributes_heatmap = layer_uses_heatmap_aggregate(i);
                 hashCombineU64(key, layer_contributes_heatmap ? 1ULL : 0ULL);
@@ -536,6 +531,7 @@
                         auto it_col = zoning_zone_color.find(zkey);
                         if (it_col != zoning_zone_color.end()) feature_c = ImGui::ColorConvertFloat4ToU32(it_col->second);
                     }
+                    query_map_color(layer_idx, (size_t)fidx, fg, feature_c);
                     const auto& ex = fg.extent;
                     const auto& pww = get_world_extent(layer_idx, fidx, fg);
                     ImVec2 p0w = pww.first;
@@ -613,6 +609,7 @@
                     auto it_col = zoning_zone_color.find(zkey);
                     if (it_col != zoning_zone_color.end()) feature_c = ImGui::ColorConvertFloat4ToU32(it_col->second);
                 }
+                query_map_color(layer_idx, fi, fg, feature_c);
                 const auto& ex = fg.extent;
                 const auto& pww = get_world_extent(layer_idx, (uint32_t)fi, fg);
                 ImVec2 p0w = pww.first;

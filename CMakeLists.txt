@@ -45,6 +45,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
+set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXTENSIONS "" CACHE STRING "" FORCE)
+set(DISABLE_BUILTIN_EXTENSIONS TRUE CACHE BOOL "" FORCE)
+add_subdirectory(third_party/duckdb EXCLUDE_FROM_ALL)
+
 set(NO_TESTS ON CACHE BOOL "" FORCE)
 set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
 set(NO_MEDIA ON CACHE BOOL "" FORCE)
@@ -71,6 +77,8 @@ add_executable(worldsim3
   parcel_matched_layers.cpp
   vacancy_overlay.cpp
   dataset_library.cpp
+  duckdb_analytics.cpp
+  sql_tab.cpp
   net_http_utils.cpp
   status_api.cpp
   dataset_lan_api.cpp
@@ -84,6 +92,7 @@ add_executable(worldsim3
   map_render_projection.cpp
   map_render_utils.cpp
   parcel_timeline.cpp
+  parcel_unified.cpp
   heatmap_render.cpp
   heatmap_gpu_aggregate.cpp
   heatmap_strategy_common.cpp
@@ -147,6 +156,12 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
 endif()
 
 target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl datachannel)
+
+if(TARGET duckdb_static)
+  target_link_libraries(worldsim3 PRIVATE duckdb_static)
+elseif(TARGET duckdb)
+  target_link_libraries(worldsim3 PRIVATE duckdb)
+endif()
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(worldsim3 PRIVATE dl pthread)

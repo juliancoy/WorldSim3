@@ -25,6 +25,48 @@
     "description": "Research guide describing digitized Baltimore property tax records and access requirements."
   },
   {
+    "name": "Maryland SDAT Real Property Data Search",
+    "file": "sdat_real_property_search.html",
+    "url": "https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx",
+    "download": false,
+    "reason": "Official lookup/search application, not a bulk app layer. Use as a current assessment, ownership, and recent-sale verification source until a compliant bulk workflow exists.",
+    "category": "archival-research",
+    "source": "Maryland State Department of Assessments and Taxation",
+    "quality_tier": "official-api",
+    "temporal_coverage": "Current real property assessment records with sale/transfer context exposed through the SDAT search workflow",
+    "description": "Official Maryland real-property search for ownership, assessed values, property characteristics, and sales information.",
+    "join_strategy": "Account/PIN where available; fallback to normalized BLOCKLOT/address against Baltimore parcel geometry.",
+    "future_work": "Review access terms and build a compliant resolver for parcel-level assessment and sale history fields."
+  },
+  {
+    "name": "Maryland SDAT Real Property Sales History File",
+    "file": "sdat_real_property_sales_history_file.html",
+    "url": "https://dat.maryland.gov/pages/services.aspx",
+    "download": false,
+    "reason": "Official service listing for sales-history data; requires file discovery, year/product selection, and schema review before ingestion.",
+    "category": "archival-research",
+    "source": "Maryland State Department of Assessments and Taxation",
+    "quality_tier": "official-api",
+    "temporal_coverage": "Recent and historical Maryland real-property sales records, subject to SDAT product availability",
+    "description": "Candidate source for parcel-level sale transaction history that can extend beyond the single SALEDATE/SALEPRIC fields in current Real Property Information.",
+    "join_strategy": "SDAT account/PIN; fallback to normalized deed/account fields and Baltimore BLOCKLOT/address joins.",
+    "future_work": "Locate downloadable sales-history files, normalize sale date/amount/instrument fields, and emit parcel value events with confidence scores."
+  },
+  {
+    "name": "Maryland Planning Parcel Data and Mapping / MD Property View",
+    "file": "md_planning_parcel_data_mapping.html",
+    "url": "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+    "download": false,
+    "reason": "Official statewide parcel/property product catalog; requires product/version selection and Baltimore City extract workflow before becoming an app layer.",
+    "category": "archival-research",
+    "source": "Maryland Department of Planning",
+    "quality_tier": "official-api",
+    "temporal_coverage": "Statewide parcel accounts, real-property characteristics, and sales products by available release year",
+    "description": "Candidate bulk source for standardized parcel accounts, property characteristics, sales, and assessment-related fields.",
+    "join_strategy": "Maryland parcel/account identifiers; fallback to Baltimore BLOCKLOT normalization and spatial joins.",
+    "future_work": "Select release years, document schema, and generate normalized parcel assessment/sale history tables."
+  },
+  {
     "name": "Baltimore City Archives Geography Sources",
     "file": "bca_geography_sources_page.html",
     "url": "https://msa.maryland.gov/bca/research-at-the-baltimore-city-archives/the-geography-of-baltimore-city-sources/",

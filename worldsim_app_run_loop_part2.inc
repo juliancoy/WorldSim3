@@ -783,6 +783,32 @@
                 parcel_tax_generation_applied = tax_maps_generation;
                 owner_aggregates_dirty = true;
             }
+            const size_t real_property_size_for_unified =
+                real_property_layer_idx >= 0 && (size_t)real_property_layer_idx < layers.size()
+                    ? layers[(size_t)real_property_layer_idx].features.size()
+                    : 0;
+            if (unified_parcel_cached_size != pfeats.size() ||
+                unified_real_property_cached_size != real_property_size_for_unified ||
+                unified_vacancy_generation_applied != parcel_vacancy_generation_applied ||
+                unified_tax_generation_applied != parcel_tax_generation_applied) {
+                unified_parcels = buildUnifiedParcels(UnifiedParcelBuildRequest{
+                    &layers,
+                    parcel_layer_idx,
+                    real_property_layer_idx,
+                    &real_property_by_blocklot,
+                    &parcel_vac_notice_by_feature,
+                    &parcel_vac_rehab_by_feature,
+                    &parcel_tax_lien_by_feature,
+                    &parcel_tax_sale_by_feature,
+                    &parcel_tax_lien_amount_by_feature,
+                    &parcel_tax_sale_amount_by_feature
+                });
+                unified_parcel_cached_size = pfeats.size();
+                unified_real_property_cached_size = real_property_size_for_unified;
+                unified_vacancy_generation_applied = parcel_vacancy_generation_applied;
+                unified_tax_generation_applied = parcel_tax_generation_applied;
+                owner_aggregates_dirty = true;
+            }
             size_t matched_total = 0;
             size_t with_geometry_total = 0;
             size_t triangulated_renderable_total = 0;

@@ -28,12 +28,15 @@
 #include "map_render_projection.h"
 #include "map_render_utils.h"
 #include "parcel_timeline.h"
+#include "parcel_unified.h"
 #include "heatmap_render.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
 #include "layer_settings.h"
 #include "download_queue.h"
+#include "duckdb_analytics.h"
+#include "sql_tab.h"
 #include "app_lifecycle.h"
 #include "worldsim_app.h"
 #include "app_utils.h"
@@ -304,10 +307,15 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<int> parcel_tax_sale_by_feature;
     std::vector<double> parcel_tax_lien_amount_by_feature;
     std::vector<double> parcel_tax_sale_amount_by_feature;
+    std::vector<UnifiedParcelRecord> unified_parcels;
     int vacancy_maps_generation = 0;
     int parcel_vacancy_generation_applied = -1;
     int tax_maps_generation = 0;
     int parcel_tax_generation_applied = -1;
+    size_t unified_parcel_cached_size = (size_t)-1;
+    size_t unified_real_property_cached_size = (size_t)-1;
+    int unified_vacancy_generation_applied = -1;
+    int unified_tax_generation_applied = -1;
     size_t cached_real_property_size = 0;
     size_t cached_vac_notice_size = 0;
     size_t cached_vac_rehab_size = 0;
@@ -493,6 +501,7 @@ int runWorldSim3App(int argc, char** argv) {
         }
     }
     TimeCubeService time_cube_service(root);
+    DuckDbAnalytics duckdb_analytics(root);
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
@@ -505,7 +514,9 @@ int runWorldSim3App(int argc, char** argv) {
         double value_usd = 0.0;
     };
     std::vector<OwnerAggregate> owner_aggregates;
-    std::unordered_set<std::string> selected_owners;
+    MapFilterState map_filter_state;
+    auto& selected_owners = map_filter_state.selected_owners;
+    std::vector<QueryMapLayer> query_layers;
     std::unordered_map<std::string, std::string> owner_class_overrides;
     bool owner_class_overrides_loaded = false;
     bool owner_class_overrides_dirty = false;
@@ -746,13 +757,13 @@ int runWorldSim3App(int argc, char** argv) {
     std::string layer_download_active_file;
     std::string layer_download_last_event;
     bool layer_download_queue_loaded = false;
-    bool filter_enabled = false;
-    bool filter_use_date = false;
-    int filter_year_min = 2000;
-    int filter_year_max = 2026;
-    char filter_blocklot[64] = "";
-    char filter_status[64] = "";
-    char filter_address[160] = "";
+    auto& filter_enabled = map_filter_state.enabled;
+    auto& filter_use_date = map_filter_state.use_date;
+    auto& filter_year_min = map_filter_state.year_min;
+    auto& filter_year_max = map_filter_state.year_max;
+    auto& filter_blocklot = map_filter_state.blocklot;
+    auto& filter_status = map_filter_state.status;
+    auto& filter_address = map_filter_state.address;
     std::string address_locate_status;
     struct AddressLocateMatch {
         size_t parcel_idx = (size_t)-1;
@@ -760,22 +771,22 @@ int runWorldSim3App(int argc, char** argv) {
         std::string address;
     };
     std::vector<AddressLocateMatch> address_locate_matches;
-    char filter_owner[96] = "";
+    auto& filter_owner = map_filter_state.owner;
     char owner_search_query[96] = "";
     std::string owner_info_owner;
-    char filter_zip[24] = "";
-    bool crime_filter_enabled = false;
-    bool crime_filter_homicide = false;
-    bool crime_filter_robbery = false;
-    bool crime_filter_assault = false;
-    bool crime_filter_burglary = false;
-    bool crime_filter_theft = false;
-    bool crime_filter_auto_theft = false;
-    bool crime_filter_drug = false;
-    bool crime_filter_shooting = false;
-    bool crime_filter_use_year = false;
-    int crime_year_min = 2022;
-    int crime_year_max = 2026;
+    auto& filter_zip = map_filter_state.zip;
+    auto& crime_filter_enabled = map_filter_state.crime.enabled;
+    auto& crime_filter_homicide = map_filter_state.crime.homicide;
+    auto& crime_filter_robbery = map_filter_state.crime.robbery;
+    auto& crime_filter_assault = map_filter_state.crime.assault;
+    auto& crime_filter_burglary = map_filter_state.crime.burglary;
+    auto& crime_filter_theft = map_filter_state.crime.theft;
+    auto& crime_filter_auto_theft = map_filter_state.crime.auto_theft;
+    auto& crime_filter_drug = map_filter_state.crime.drug;
+    auto& crime_filter_shooting = map_filter_state.crime.shooting;
+    auto& crime_filter_use_year = map_filter_state.crime.use_year;
+    auto& crime_year_min = map_filter_state.crime.year_min;
+    auto& crime_year_max = map_filter_state.crime.year_max;
     loadFilterUiState(
         root,
         &filter_enabled,

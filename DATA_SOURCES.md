@@ -31,6 +31,9 @@
 `archival-research`
 : Metadata-only register for pre-2010 human-readable sources such as property tax guides, Sanborn/map indexes, permit history request workflows, and scanned historic-property inventory files. Entries are intentionally marked `download: false`.
 
+`historic-value candidates`
+: Parcel-value history sources now tracked in `layers_manifest.archival_research.json`. These include SDAT Real Property Data Search, SDAT Real Property Sales History File, Maryland Planning Parcel Data and Mapping / MD Property View, and Baltimore City archival tax-record guides. They are source records, not trusted parcel-history layers yet.
+
 `capital-flows`
 : Nonprofit, lending, federal award, LIHTC, CRA, and related capital flow sources. Some entries are intentionally metadata/API placeholders until a dedicated fetcher exists.
 
@@ -56,3 +59,21 @@ Historical records should be normalized into parcel-event style fields before an
 - `confidence`
 
 Records without a direct parcel key should be joined spatially or geocoded and marked with a confidence score instead of being treated as exact.
+
+## Historic Home Value Source Status
+
+Already machine-readable:
+
+- `median_price_homes_sold_csa.geojson`: CSA-level median sale-price history, not parcel-level value history.
+- `real_property_information.geojson`: current/point-in-time parcel ownership, assessment, and last-sale fields.
+
+Tracked as candidate sources:
+
+- Maryland SDAT Real Property Data Search: current official property lookup and sale/assessment verification.
+- Maryland SDAT Real Property Sales History File: candidate source for parcel-level sale events.
+- Maryland Planning Parcel Data and Mapping / MD Property View: candidate source for bulk parcel/account/property-view releases.
+- Baltimore City / Maryland State Archives property-tax records: long-run historical tax/assessment records requiring OCR/manual extraction.
+
+Target normalized table:
+
+- `parcel_value_events(blocklot, event_date, event_year, value_type, amount_usd, source_name, source_url, confidence)`

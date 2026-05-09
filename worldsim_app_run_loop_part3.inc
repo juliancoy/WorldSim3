@@ -153,10 +153,10 @@
             if (!parcel_data_ready) {
                 owner_sorted_mode = -1;
             } else {
-            for (const auto& pf : parcels) {
-                const LayerDef::FeatureGeom* rp = real_property_for_parcel(pf);
-                std::string owner = owner_name_for(rp);
-                if (owner.empty()) owner = owner_name_for(&pf);
+            for (const auto& parcel_record : unified_parcels) {
+                const LayerDef::FeatureGeom* pf = parcel_record.parcel_geom;
+                if (!pf) continue;
+                std::string owner = parcel_record.owner;
                 if (owner.empty()) continue;
                 auto& row = acc[owner];
                 if (row.owner.empty()) row.owner = owner;
@@ -165,8 +165,8 @@
                     row.owner_class = oit != owner_class_overrides.end() ? oit->second : classify_owner(owner);
                 }
                 row.property_count += 1;
-                row.area_m2 += parcel_area_sq_m(pf);
-                row.value_usd += owner_value_for(rp);
+                row.area_m2 += parcel_area_sq_m(*pf);
+                row.value_usd += parcel_record.current_value;
             }
             owner_aggregates.clear();
             owner_aggregates.reserve(acc.size());
@@ -217,17 +217,14 @@
                     filtered_aggregate_snapshot.owner_value_usd += row.value_usd;
                 }
                 if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size()) {
-                    const auto& pfeats = layers[(size_t)parcel_layer_idx].features;
-                    for (size_t i = 0; i < pfeats.size(); ++i) {
-                        const LayerDef::FeatureGeom* rp = real_property_for_parcel(pfeats[i]);
-                        std::string owner = owner_name_for(rp);
-                        if (owner.empty()) owner = owner_name_for(&pfeats[i]);
+                    for (const auto& parcel_record : unified_parcels) {
+                        std::string owner = parcel_record.owner;
                         if (owner.empty() || selected_owners.find(owner) == selected_owners.end()) continue;
-                        const int vac_notice = (i < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[i] : 0;
-                        const int vac_rehab = (i < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[i] : 0;
+                        const int vac_notice = parcel_record.vacant_notice_count;
+                        const int vac_rehab = parcel_record.vacant_rehab_count;
                         if ((vac_notice + vac_rehab) <= 0) continue;
                         filtered_aggregate_snapshot.vacancy_parcels_matched++;
-                        if (!pfeats[i].rings.empty()) filtered_aggregate_snapshot.vacancy_parcels_with_geometry++;
+                        if (parcel_record.parcel_geom && !parcel_record.parcel_geom->rings.empty()) filtered_aggregate_snapshot.vacancy_parcels_with_geometry++;
                     }
                 }
             }
@@ -330,15 +327,16 @@
             ImGui::Separator();
             std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
             std::string blocklot = normalizeJoinKey(blocklot_raw);
-            int vac_notice = (selected_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[selected_parcel_idx] : 0;
-            int vac_rehab = (selected_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[selected_parcel_idx] : 0;
-            int tax_lien = (selected_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[selected_parcel_idx] : 0;
-            int tax_sale = (selected_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[selected_parcel_idx] : 0;
-            double tax_lien_amount = (selected_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[selected_parcel_idx] : 0.0;
-            double tax_sale_amount = (selected_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[selected_parcel_idx] : 0.0;
+            const UnifiedParcelRecord* selected_unified = unifiedParcelAt(unified_parcels, selected_parcel_idx);
+            int vac_notice = selected_unified ? selected_unified->vacant_notice_count : 0;
+            int vac_rehab = selected_unified ? selected_unified->vacant_rehab_count : 0;
+            int tax_lien = selected_unified ? selected_unified->tax_lien_count : 0;
+            int tax_sale = selected_unified ? selected_unified->tax_sale_count : 0;
+            double tax_lien_amount = selected_unified ? selected_unified->tax_lien_amount : 0.0;
+            double tax_sale_amount = selected_unified ? selected_unified->tax_sale_amount : 0.0;
             ImGui::TextUnformatted("Parcel Details");
             ImGui::Separator();
-            const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
+            const LayerDef::FeatureGeom* selected_rp = selected_unified ? selected_unified->real_property : real_property_for_parcel(selected);
             const std::vector<ParcelTimelineEvent> parcel_events = buildParcelTimeline(ParcelTimelineRequest{
                 &layers,
                 &selected,
@@ -357,7 +355,8 @@
                 if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
                 ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
                 if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
-                std::string summary_owner = owner_name_for(selected_rp);
+                if (selected_unified && selected_unified->current_value > 0.0) ImGui::Text("Current Parcel Value: $%.2f", selected_unified->current_value);
+                std::string summary_owner = selected_unified ? selected_unified->owner : owner_name_for(selected_rp);
                 if (summary_owner.empty()) summary_owner = owner_name_for(&selected);
                 if (!summary_owner.empty()) {
                     ImGui::TextUnformatted("Owner:");
@@ -663,14 +662,15 @@
                     show_selected_parcel_details = false;
                     selected_parcel_idx = (size_t)-1;
                 } else {
+                    const UnifiedParcelRecord* selected_unified = unifiedParcelAt(unified_parcels, selected_parcel_idx);
                     std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
-                    int vac_notice = (selected_parcel_idx < parcel_vac_notice_by_feature.size()) ? parcel_vac_notice_by_feature[selected_parcel_idx] : 0;
-                    int vac_rehab = (selected_parcel_idx < parcel_vac_rehab_by_feature.size()) ? parcel_vac_rehab_by_feature[selected_parcel_idx] : 0;
-                    int tax_lien = (selected_parcel_idx < parcel_tax_lien_by_feature.size()) ? parcel_tax_lien_by_feature[selected_parcel_idx] : 0;
-                    int tax_sale = (selected_parcel_idx < parcel_tax_sale_by_feature.size()) ? parcel_tax_sale_by_feature[selected_parcel_idx] : 0;
-                    double tax_lien_amount = (selected_parcel_idx < parcel_tax_lien_amount_by_feature.size()) ? parcel_tax_lien_amount_by_feature[selected_parcel_idx] : 0.0;
-                    double tax_sale_amount = (selected_parcel_idx < parcel_tax_sale_amount_by_feature.size()) ? parcel_tax_sale_amount_by_feature[selected_parcel_idx] : 0.0;
-                    const LayerDef::FeatureGeom* selected_rp = real_property_for_parcel(selected);
+                    int vac_notice = selected_unified ? selected_unified->vacant_notice_count : 0;
+                    int vac_rehab = selected_unified ? selected_unified->vacant_rehab_count : 0;
+                    int tax_lien = selected_unified ? selected_unified->tax_lien_count : 0;
+                    int tax_sale = selected_unified ? selected_unified->tax_sale_count : 0;
+                    double tax_lien_amount = selected_unified ? selected_unified->tax_lien_amount : 0.0;
+                    double tax_sale_amount = selected_unified ? selected_unified->tax_sale_amount : 0.0;
+                    const LayerDef::FeatureGeom* selected_rp = selected_unified ? selected_unified->real_property : real_property_for_parcel(selected);
                     ImGui::Separator();
                     ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
                     ImGui::Text("Vacant Notices: %d", vac_notice);
@@ -679,7 +679,8 @@
                     if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: $%.2f", tax_lien_amount);
                     ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
                     if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: $%.2f", tax_sale_amount);
-                    std::string summary_owner = owner_name_for(selected_rp);
+                    if (selected_unified && selected_unified->current_value > 0.0) ImGui::Text("Current Parcel Value: $%.2f", selected_unified->current_value);
+                    std::string summary_owner = selected_unified ? selected_unified->owner : owner_name_for(selected_rp);
                     if (summary_owner.empty()) summary_owner = owner_name_for(&selected);
                     if (!summary_owner.empty()) {
                         ImGui::TextUnformatted("Owner:");
@@ -693,6 +694,23 @@
                     draw_real_property_summary(selected_rp);
                 }
             }
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("SQL")) {
+            std::vector<DuckDbSelectedParcel> sql_selected_parcels;
+            const bool sql_selected_parcel_valid =
+                show_selected_parcel_details && parcel_layer_idx >= 0 &&
+                (size_t)parcel_layer_idx < layers.size() &&
+                selected_parcel_idx < layers[(size_t)parcel_layer_idx].features.size();
+            if (sql_selected_parcel_valid) {
+                const auto& selected = layers[(size_t)parcel_layer_idx].features[selected_parcel_idx];
+                sql_selected_parcels.push_back(DuckDbSelectedParcel{
+                    (size_t)parcel_layer_idx,
+                    selected_parcel_idx,
+                    featureBlockLotJoinKey(selected)
+                });
+            }
+            renderSqlTab(duckdb_analytics, layers, unified_parcels, map_filter_state, sql_selected_parcels, query_layers);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Vacancy-Parcel")) {
@@ -841,41 +859,26 @@
             } else if (parcel_layer_idx < 0 || (size_t)parcel_layer_idx >= layers.size()) {
                 ImGui::TextDisabled("Parcel layer is unavailable.");
             } else {
-                const auto& parcels = layers[(size_t)parcel_layer_idx].features;
                 std::vector<size_t> owner_parcel_indices;
                 owner_parcel_indices.reserve(512);
-                for (size_t i = 0; i < parcels.size(); ++i) {
-                    const LayerDef::FeatureGeom* rp = real_property_for_parcel(parcels[i]);
-                    std::string owner = owner_name_for(rp);
-                    if (owner.empty()) owner = owner_name_for(&parcels[i]);
-                    if (owner == owner_info_owner) owner_parcel_indices.push_back(i);
+                for (const auto& parcel_record : unified_parcels) {
+                    if (parcel_record.owner == owner_info_owner) owner_parcel_indices.push_back(parcel_record.parcel_feature_idx);
                 }
                 ImGui::Text("Owner: %s", owner_info_owner.c_str());
                 ImGui::Text("Properties: %zu", owner_parcel_indices.size());
                 ImGui::BeginChild("owner_info_properties", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
                 for (size_t i = 0; i < owner_parcel_indices.size(); ++i) {
                     const size_t pi = owner_parcel_indices[i];
-                    const auto& pf = parcels[pi];
-                    const LayerDef::FeatureGeom* rp = real_property_for_parcel(pf);
-                    std::string blocklot = firstDisplayProperty(pf, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
-                    std::string address = firstDisplayProperty(pf, {
-                        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
-                        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
-                        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
-                    });
-                    if (address.empty() && rp) {
-                        address = firstDisplayProperty(*rp, {
-                            "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
-                            "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
-                            "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
-                        });
-                    }
+                    const UnifiedParcelRecord* parcel_record = unifiedParcelAt(unified_parcels, pi);
+                    if (!parcel_record || !parcel_record->parcel_geom) continue;
+                    const auto& pf = *parcel_record->parcel_geom;
+                    std::string blocklot = parcel_record->blocklot;
+                    std::string address = parcel_record->address;
                     if (address.empty()) address = "(address unavailable)";
                     std::string label = address + "##owner_prop_" + std::to_string(pi);
                     if (ImGui::Selectable(label.c_str(), show_selected_parcel_details && selected_parcel_idx == pi, ImGuiSelectableFlags_SpanAllColumns)) {
-                        const auto& parcel = parcels[pi];
-                        center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
-                        center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
+                        center_lon = ((double)pf.extent.min_lon + (double)pf.extent.max_lon) * 0.5;
+                        center_lat = std::clamp(((double)pf.extent.min_lat + (double)pf.extent.max_lat) * 0.5, -85.0, 85.0);
                         zoom = std::max(zoom, 18);
                         show_selected_parcel_details = true;
                         selected_parcel_idx = pi;
@@ -883,6 +886,7 @@
                         selected_zone_idx = (size_t)-1;
                     }
                     ImGui::TextDisabled("BLOCKLOT: %s", blocklot.empty() ? "(none)" : blocklot.c_str());
+                    if (parcel_record->current_value > 0.0) ImGui::TextDisabled("Current value: $%.0f", parcel_record->current_value);
                     ImGui::Separator();
                 }
                 ImGui::EndChild();
