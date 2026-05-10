@@ -15,6 +15,15 @@ Data Library workflow:
 - `Check` (per dataset) performs non-mutating freshness checks.
 - `Check All Updates` checks all downloaded datasets with source URLs.
 - `Update` button appears only for rows flagged `Update available`.
+- Layers with an `import` block in the manifest are downloaded and converted in C++.
+  For example, Howard County Parcels downloads the county `property.zip`,
+  extracts `Property.shp`/`Property.dbf`, reprojects EPSG:2248 Maryland
+  StatePlane feet to WGS84, and writes `data/layers/howard_county_parcels.geojson`.
+- Howard County real-property assessments use the official Maryland Open Data
+  Socrata CSV endpoint filtered to Howard County and are converted in C++ to
+  `data/layers/howard_county_real_property_assessments.geojson`. This source
+  provides account id, address, value, sales, year-built, SDAT, and FINDER
+  links; public owner names are intentionally not included in that dataset.
 
 Optional preload mode:
 
@@ -182,7 +191,7 @@ Build the canonical regional parcel layer after converting county parcel downloa
 Start with the current Baltimore City data:
 
 ```bash
-python3 scripts/build_regional_parcels.py \
+./build/worldsim_regional_parcel_builder \
   --input BaltimoreCity:data/layers/parcel.geojson \
   --property-input BaltimoreCity:data/layers/real_property_information.geojson \
   --output data/layers/regional_parcels.geojson
@@ -194,7 +203,7 @@ Add Baltimore County and Howard County after downloading official parcel/propert
 ogr2ogr -f GeoJSON data/inbox/baltimore_county/parcels.geojson /path/to/baltimore_county_source.gdb Parcels
 ogr2ogr -f GeoJSON data/inbox/howard_county/parcels.geojson /path/to/howard_county_source.shp
 
-python3 scripts/build_regional_parcels.py \
+./build/worldsim_regional_parcel_builder \
   --input BaltimoreCity:data/layers/parcel.geojson \
   --property-input BaltimoreCity:data/layers/real_property_information.geojson \
   --input BaltimoreCounty:data/inbox/baltimore_county/parcels.geojson \
@@ -202,10 +211,23 @@ python3 scripts/build_regional_parcels.py \
   --output data/layers/regional_parcels.geojson
 ```
 
+For the current native Howard County path:
+
+```bash
+./build/worldsim3 --download-layers all
+
+./build/worldsim_regional_parcel_builder \
+  --input BaltimoreCity:data/layers/parcel.geojson \
+  --property-input BaltimoreCity:data/layers/real_property_information.geojson \
+  --input HowardCounty:data/layers/howard_county_parcels.geojson \
+  --property-input HowardCounty:data/layers/howard_county_real_property_assessments.geojson \
+  --output data/layers/regional_parcels.geojson
+```
+
 If a county publishes assessment/owner records separately from parcel geometry, pass it with matching jurisdiction:
 
 ```bash
-python3 scripts/build_regional_parcels.py \
+./build/worldsim_regional_parcel_builder \
   --input BaltimoreCounty:data/inbox/baltimore_county/parcels.geojson \
   --property-input BaltimoreCounty:data/inbox/baltimore_county/property_records.geojson \
   --input HowardCounty:data/inbox/howard_county/parcels.geojson \
@@ -215,7 +237,7 @@ python3 scripts/build_regional_parcels.py \
 Official starting points:
 - Baltimore County GIS Data Download: https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download
 - Howard County Data Download and Viewer: https://data.howardcountymd.gov/
+- Maryland Real Property Assessments: https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm
 - Maryland Planning parcel products: https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx
 
 Do not scrape SDAT Real Property Search pages; use official bulk GIS/property downloads.
-

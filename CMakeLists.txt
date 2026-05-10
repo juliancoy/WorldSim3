@@ -10,6 +10,7 @@ include(FetchContent)
 
 find_package(Vulkan REQUIRED)
 find_package(CURL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -148,6 +149,7 @@ add_executable(worldsim3
   arkavo_rtc_session_manager.cpp
   time_cube.cpp
   layer_state_io.cpp
+  layer_import.cpp
   filters.cpp
   feature_props.cpp
   geo.cpp
@@ -184,7 +186,7 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   target_compile_definitions(worldsim3 PRIVATE WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}")
 endif()
 
-target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl datachannel)
+target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl ZLIB::ZLIB datachannel)
 
 if(TARGET duckdb_static)
   target_link_libraries(worldsim3 PRIVATE duckdb_static)
@@ -261,6 +263,14 @@ target_include_directories(worldsim_hud_pit_builder PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(worldsim_hud_pit_builder PRIVATE nlohmann_json::nlohmann_json)
+
+add_executable(worldsim_regional_parcel_builder
+  tools/regional_parcel_builder.cpp
+)
+target_include_directories(worldsim_regional_parcel_builder PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(worldsim_regional_parcel_builder PRIVATE nlohmann_json::nlohmann_json)
 
 install(TARGETS worldsim3 RUNTIME DESTINATION bin)
 

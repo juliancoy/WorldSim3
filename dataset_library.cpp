@@ -1,4 +1,5 @@
 #include "dataset_library.h"
+#include "layer_import.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -530,7 +531,8 @@ LayerDownloadSummary downloadLayerManifestPhase(
             if (on_progress) on_progress(i + 1, items.size(), msg);
         };
 
-        if (item.value("download", true) == false) {
+        const bool has_import = item.contains("import") && item["import"].is_object();
+        if (item.value("download", true) == false && !has_import) {
             summary.skipped++;
             report("skipped " + name + ": " + item.value("reason", std::string("metadata/API/manual source")));
             continue;
@@ -540,22 +542,33 @@ LayerDownloadSummary downloadLayerManifestPhase(
             report("skipped " + name + ": large source; rerun with --include-large");
             continue;
         }
-        if (!item.contains("url") || !item["url"].is_string() || !item.contains("file") || !item["file"].is_string()) {
+        const bool has_url = item.contains("url") && item["url"].is_string();
+        if ((!has_url && !has_import) || !item.contains("file") || !item["file"].is_string()) {
             summary.failed++;
-            report("failed " + name + ": missing url or file");
+            report("failed " + name + ": missing url/import or file");
             continue;
         }
 
         const std::string file = item["file"].get<std::string>();
         const fs::path out_path = layerOutputDirForManifestItem(root, item) / file;
-        report("downloading " + name + " -> " + out_path.string());
-        VersionedDownloadResult res = downloadUrlVersioned(
-            item["url"].get<std::string>(),
-            out_path,
-            root / "data" / "versions");
+        report(std::string(has_url ? "downloading " : "importing ") + name + " -> " + out_path.string());
+        VersionedDownloadResult res;
+        if (has_url) {
+            res = downloadUrlVersioned(item["url"].get<std::string>(), out_path, root / "data" / "versions");
+        } else {
+            LayerDef layer;
+            layer.name = name;
+            layer.file = file;
+            const auto& import = item["import"];
+            layer.import_type = import.value("type", std::string());
+            layer.import_url = import.value("url", std::string());
+            layer.import_source_crs = import.value("source_crs", std::string());
+            layer.import_shapefile = import.value("shapefile", std::string());
+            res = downloadOrImportLayer(layer, out_path, root);
+        }
         if (res.ok) {
             summary.downloaded++;
-            report((res.not_modified ? "checked " : "downloaded ") + file + ": " + res.message);
+            report((res.not_modified ? "checked " : (has_url ? "downloaded " : "imported ")) + file + ": " + res.message);
         } else {
             summary.failed++;
             report("failed " + name + ": " + res.message);

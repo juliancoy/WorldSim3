@@ -33,17 +33,29 @@ struct DuckDbSelectedParcel {
     std::string blocklot;
 };
 
+struct DuckDbSearchHit {
+    size_t layer_idx = 0;
+    size_t feature_idx = 0;
+    std::string blocklot;
+    std::string owner;
+    std::string address;
+    double current_value = 0.0;
+    int score = 0;
+};
+
 class DuckDbAnalytics {
 public:
     explicit DuckDbAnalytics(std::filesystem::path root);
 
     const DuckDbAnalyticsStatus& status() const { return status_; }
+    bool needsRebuild(const std::vector<LayerDef>& layers) const;
     bool rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     DuckDbQueryResult executeMapQuery(
         const std::string& sql,
         const std::unordered_set<std::string>& selected_owners,
         const std::vector<DuckDbSelectedParcel>& selected_parcels,
         size_t max_rows = 1000) const;
+    std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
 
 private:
     std::filesystem::path root_;

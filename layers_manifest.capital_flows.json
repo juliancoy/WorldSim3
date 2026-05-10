@@ -89,7 +89,7 @@
   {
     "name": "CDFI Fund Awards Database",
     "file": "cdfi_fund_awards_database.json",
-    "url": "https://www.cdfifund.gov/awards/state-awards-placeholder",
+    "url": "https://www.cdfifund.gov/awards/state-awards",
     "category": "capital-flows",
     "source": "CDFI Fund",
     "download": false,

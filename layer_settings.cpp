@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "dataset_library.h"
+#include "layer_import.h"
 #include "memory_utils.h"
 #include "worldsim_app_internal.h"
 
@@ -41,13 +42,10 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     if (!meta_last_modified.empty()) ImGui::TextDisabled("Source last-modified: %s", meta_last_modified.c_str());
     if (!meta_etag.empty()) ImGui::TextDisabled("Source etag: %s", meta_etag.c_str());
 
-    const bool can_track_update = !l.source_url.empty();
+    const bool can_track_update = !l.source_url.empty() || layerHasImportSource(l);
     ImGui::BeginDisabled(!can_track_update);
     if (ImGui::Button(ctx.local_layer_exists ? "Update (versioned)" : "Download (versioned)")) {
-        VersionedDownloadResult vd = downloadUrlVersioned(
-            l.source_url,
-            ctx.local_layer_path,
-            ctx.root / "data" / "versions");
+        VersionedDownloadResult vd = downloadOrImportLayer(l, ctx.local_layer_path, ctx.root);
         if (vd.ok) {
             *ctx.data_library_status_msg = (vd.not_modified ? "Checked " : "Downloaded/updated ") + l.file + " (" + vd.message + ")";
             (*ctx.data_freshness_state)[ctx.idx] = FreshnessState::UpToDate;
@@ -62,8 +60,9 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Check Update")) {
+        const std::string freshness_url = l.source_url.empty() ? l.import_url : l.source_url;
         FreshnessCheckResult cr = checkUrlFreshnessVersioned(
-            l.source_url,
+            freshness_url,
             ctx.local_layer_path,
             ctx.root / "data" / "versions");
         (*ctx.data_freshness_state)[ctx.idx] = cr.state;
@@ -71,7 +70,11 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         *ctx.data_library_status_msg = "Checked " + l.file + ": " + cr.message;
     }
     ImGui::EndDisabled();
-    if (!can_track_update) ImGui::TextDisabled("No source URL available for update checks.");
+    if (!can_track_update) {
+        ImGui::TextDisabled("No direct downloadable layer URL or import source available for update checks.");
+        if (!l.reference_url.empty()) ImGui::TextWrapped("Reference: %s", l.reference_url.c_str());
+        for (const auto& url : l.source_urls) ImGui::TextWrapped("Source: %s", url.c_str());
+    }
     ImGui::Separator();
 
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.16f, 1.0f));
@@ -95,10 +98,10 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
             }
             ctx.mark_local_layer_exists(ctx.idx, false);
             if (ctx.idx < ctx.data_freshness_state->size()) {
-                (*ctx.data_freshness_state)[ctx.idx] = l.source_url.empty() ? FreshnessState::NotTrackable : FreshnessState::Unknown;
+                (*ctx.data_freshness_state)[ctx.idx] = can_track_update ? FreshnessState::Unknown : FreshnessState::NotTrackable;
             }
             if (ctx.idx < ctx.data_freshness_msg->size()) {
-                (*ctx.data_freshness_msg)[ctx.idx] = l.source_url.empty() ? "no source URL" : "not downloaded";
+                (*ctx.data_freshness_msg)[ctx.idx] = can_track_update ? "not downloaded" : "no source URL/import source";
             }
             *ctx.data_library_status_msg = "Deleted local layer file: " + l.file;
         } else {

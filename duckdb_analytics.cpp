@@ -13,6 +13,7 @@
 #include <unordered_map>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace {
 std::string sqlQuote(const std::string& s) {
@@ -52,6 +53,24 @@ DuckDbAnalytics::DuckDbAnalytics(std::filesystem::path root)
     status_.db_path = (root_ / "data" / "worldsim.duckdb").string();
     status_.available = true;
     status_.message = "DuckDB analytics cache not built yet.";
+}
+
+bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {
+    std::error_code ec;
+    const fs::path db_path = status_.db_path;
+    if (!fs::exists(db_path, ec) || ec) return true;
+    const fs::file_time_type db_time = fs::last_write_time(db_path, ec);
+    if (ec) return true;
+
+    for (const auto& layer : layers) {
+        if (layer.file.empty()) continue;
+        const fs::path layer_path = root_ / "data" / "layers" / layer.file;
+        ec.clear();
+        if (!fs::exists(layer_path, ec) || ec) continue;
+        const fs::file_time_type layer_time = fs::last_write_time(layer_path, ec);
+        if (!ec && layer_time > db_time) return true;
+    }
+    return false;
 }
 
 bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels) {
@@ -431,4 +450,52 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
         out.message = std::string("DuckDB query failed: ") + e.what();
         return out;
     }
+}
+
+std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& query, size_t max_rows) const {
+    std::vector<DuckDbSearchHit> out;
+    const std::string q = trimDisplayValue(query);
+    if (q.empty()) return out;
+    try {
+        duckdb::DuckDB db(status_.db_path);
+        duckdb::Connection con(db);
+        const std::string needle = "%" + sqlQuote(toLowerAscii(q)) + "%";
+        const std::string compact = "%" + sqlQuote(normalizeJoinKey(q)) + "%";
+        std::ostringstream sql;
+        sql << R"SQL(
+            SELECT parcel_layer_idx, parcel_feature_idx, blocklot, owner, address, current_value
+            FROM unified_parcels
+            WHERE lower(coalesce(owner, '')) LIKE ')SQL" << needle << R"SQL('
+               OR lower(coalesce(owner_display, '')) LIKE ')SQL" << needle << R"SQL('
+               OR lower(coalesce(address, '')) LIKE ')SQL" << needle << R"SQL('
+               OR regexp_replace(upper(coalesce(blocklot, '')), '[^A-Z0-9]', '', 'g') LIKE ')SQL" << compact << R"SQL('
+            LIMIT )SQL" << std::max<size_t>(max_rows * 8, 200) << ";";
+        auto result = con.Query(sql.str());
+        if (!result || result->HasError()) return out;
+        while (auto chunk = result->Fetch()) {
+            for (idx_t row = 0; row < chunk->size(); ++row) {
+                DuckDbSearchHit hit;
+                hit.layer_idx = (size_t)chunk->GetValue(0, row).GetValue<uint64_t>();
+                hit.feature_idx = (size_t)chunk->GetValue(1, row).GetValue<uint64_t>();
+                hit.blocklot = chunk->GetValue(2, row).ToString();
+                hit.owner = chunk->GetValue(3, row).ToString();
+                hit.address = chunk->GetValue(4, row).ToString();
+                hit.current_value = chunk->GetValue(5, row).GetValue<double>();
+                hit.score = std::max({
+                    fuzzyTextScore(hit.owner, q),
+                    fuzzyTextScore(hit.address, q),
+                    fuzzyTextScore(hit.blocklot, q)
+                });
+                if (hit.score > 0) out.push_back(std::move(hit));
+            }
+        }
+        std::stable_sort(out.begin(), out.end(), [](const DuckDbSearchHit& a, const DuckDbSearchHit& b) {
+            if (a.score != b.score) return a.score > b.score;
+            if (std::abs(a.current_value - b.current_value) > 0.5) return a.current_value > b.current_value;
+            return a.blocklot < b.blocklot;
+        });
+        if (out.size() > max_rows) out.resize(max_rows);
+    } catch (...) {
+    }
+    return out;
 }

@@ -35,6 +35,8 @@
 - `types.h`: Core layer, feature, category, and geometry data types.
 - `dataset_library.cpp`: Layer manifest loading and geographic hierarchy assembly for datasets.
 - `dataset_library.h`: Dataset library and hierarchy declarations.
+- `layer_import.cpp`: C++ source importer for non-GeoJSON layer sources, including zipped shapefile extraction, CRS conversion for county parcel imports, and Socrata CSV property-record conversion.
+- `layer_import.h`: Layer import source detection and download/import entry points.
 - `layer_runtime.cpp`: Layer pipeline status formatting and runtime state helpers.
 - `layer_runtime.h`: Layer pipeline status/state declarations.
 - `layer_workers.cpp`: Background hydration and triangulation worker implementations.
@@ -154,5 +156,5 @@ Most record/analysis tabs now have their own `.cpp`.
 
 - `tools/check_main_size.sh`: Guard that verifies `main.cpp` stays below the configured line limit.
 - `tools/check_file_sizes.sh`: Guard that verifies authored source/header files stay below 2000 lines, excluding build/data/vendor files.
-- `scripts/build_regional_parcels.py`: Normalizes Baltimore City, Baltimore County, Howard County, and future county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`.
+- `worldsim_regional_parcel_builder`: Normalizes Baltimore City, Baltimore County, Howard County, and future county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`.
 - `data/layers/regional_parcels.geojson`: Generated canonical regional parcel layer used by the app when present; rebuild from official source downloads rather than editing manually.

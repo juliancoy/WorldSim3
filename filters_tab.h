@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb_analytics.h"
 #include "filters.h"
 #include "types.h"
 #include "zoning.h"
@@ -32,6 +33,7 @@ struct FiltersTabContext {
     int* zoom = nullptr;
     std::string* address_locate_status = nullptr;
     std::vector<AddressLocateMatch>* address_locate_matches = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
     std::vector<int>* record_year_hist = nullptr;
     std::vector<float>* record_year_hist_plot = nullptr;
     std::vector<size_t>* hist_feature_counts = nullptr;

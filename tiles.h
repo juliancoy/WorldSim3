@@ -8,6 +8,22 @@
 #include <string>
 #include <unordered_set>
 
+std::filesystem::path basemapTilePath(
+    const std::filesystem::path& root,
+    const std::string& target_dir,
+    int z,
+    int x,
+    int y);
+bool basemapTileExistsCached(
+    const std::filesystem::path& root,
+    const std::string& target_dir,
+    int z,
+    int x,
+    int y);
+void markBasemapTilePresent(const std::string& target_dir, int z, int x, int y);
+void markBasemapTileMissing(const std::string& target_dir, int z, int x, int y);
+void clearBasemapTileDiskCache();
+
 struct LazyTileDownloadRequest {
     std::string target_dir;
     std::string url_tmpl;

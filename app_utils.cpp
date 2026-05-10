@@ -99,6 +99,75 @@ bool containsCaseInsensitive(const std::string& haystack, const std::string& nee
     return h.find(n) != std::string::npos;
 }
 
+std::string normalizeFuzzySearchText(const std::string& s) {
+    std::string cleaned;
+    cleaned.reserve(s.size());
+    for (unsigned char ch : s) {
+        if (std::isalnum(ch)) cleaned.push_back((char)std::tolower(ch));
+        else cleaned.push_back(' ');
+    }
+    std::istringstream in(cleaned);
+    std::ostringstream out;
+    std::string token;
+    bool first = true;
+    while (in >> token) {
+        if (!first) out << ' ';
+        out << token;
+        first = false;
+    }
+    return out.str();
+}
+
+int fuzzyTextScore(const std::string& text, const std::string& query) {
+    const std::string q = trimDisplayValue(query);
+    if (q.empty()) return 1;
+    const std::string text_norm = normalizeFuzzySearchText(text);
+    const std::string query_norm = normalizeFuzzySearchText(q);
+    if (text_norm.empty() || query_norm.empty()) return 0;
+    if (text_norm == query_norm) return 120;
+    if (text_norm.rfind(query_norm, 0) == 0) return 105;
+    if (text_norm.find(query_norm) != std::string::npos) return 90;
+
+    std::istringstream tokens(query_norm);
+    std::string token;
+    int token_count = 0;
+    int matched_tokens = 0;
+    int score = 0;
+    while (tokens >> token) {
+        token_count++;
+        const size_t pos = text_norm.find(token);
+        if (pos != std::string::npos) {
+            matched_tokens++;
+            score += pos == 0 ? 28 : 20;
+            continue;
+        }
+        if (token.size() >= 4) {
+            bool approximate = false;
+            std::istringstream hay_tokens(text_norm);
+            std::string ht;
+            while (hay_tokens >> ht) {
+                if (ht.size() < 4) continue;
+                const size_t prefix = std::min<size_t>(4, std::min(ht.size(), token.size()));
+                if (ht.compare(0, prefix, token, 0, prefix) == 0) {
+                    approximate = true;
+                    break;
+                }
+            }
+            if (approximate) {
+                matched_tokens++;
+                score += 12;
+            }
+        }
+    }
+    if (token_count == 0 || matched_tokens == 0) return 0;
+    if (matched_tokens == token_count) return 35 + score;
+    return matched_tokens >= 2 ? 15 + score : 0;
+}
+
+bool fuzzyTextMatches(const std::string& text, const std::string& query, int min_score) {
+    return fuzzyTextScore(text, query) >= min_score;
+}
+
 std::string normalizeAddressSearchText(const std::string& s) {
     static const std::unordered_map<std::string, std::string> kCanonical{
         {"avenue", "ave"}, {"av", "ave"},

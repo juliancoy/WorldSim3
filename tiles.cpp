@@ -5,6 +5,8 @@
 #include "imgui.h"
 
 #include <fstream>
+#include <mutex>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
@@ -15,12 +17,52 @@ static fs::path lazyTileQueueFilePath(const fs::path& root) {
     return root / "data" / "lazy_tile_queue.json";
 }
 
-static fs::path tilePath(const fs::path& root, const std::string& target_dir, int z, int x, int y) {
+static std::string tileRequestKey(const std::string& target_dir, int z, int x, int y) {
+    return target_dir + ":" + std::to_string(z) + "/" + std::to_string(x) + "/" + std::to_string(y);
+}
+
+enum class TileDiskState : unsigned char {
+    Present,
+    Missing
+};
+
+static std::mutex g_TileDiskCacheMutex;
+static std::unordered_map<std::string, TileDiskState> g_TileDiskCache;
+
+fs::path basemapTilePath(const fs::path& root, const std::string& target_dir, int z, int x, int y) {
     return root / "data" / target_dir / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
 }
 
-static std::string tileRequestKey(const std::string& target_dir, int z, int x, int y) {
-    return target_dir + ":" + std::to_string(z) + "/" + std::to_string(x) + "/" + std::to_string(y);
+bool basemapTileExistsCached(const fs::path& root, const std::string& target_dir, int z, int x, int y) {
+    const std::string key = tileRequestKey(target_dir, z, x, y);
+    {
+        std::lock_guard<std::mutex> lock(g_TileDiskCacheMutex);
+        const auto it = g_TileDiskCache.find(key);
+        if (it != g_TileDiskCache.end()) return it->second == TileDiskState::Present;
+    }
+
+    std::error_code ec;
+    const bool exists = fs::exists(basemapTilePath(root, target_dir, z, x, y), ec) && !ec;
+    {
+        std::lock_guard<std::mutex> lock(g_TileDiskCacheMutex);
+        g_TileDiskCache.emplace(key, exists ? TileDiskState::Present : TileDiskState::Missing);
+    }
+    return exists;
+}
+
+void markBasemapTilePresent(const std::string& target_dir, int z, int x, int y) {
+    std::lock_guard<std::mutex> lock(g_TileDiskCacheMutex);
+    g_TileDiskCache[tileRequestKey(target_dir, z, x, y)] = TileDiskState::Present;
+}
+
+void markBasemapTileMissing(const std::string& target_dir, int z, int x, int y) {
+    std::lock_guard<std::mutex> lock(g_TileDiskCacheMutex);
+    g_TileDiskCache[tileRequestKey(target_dir, z, x, y)] = TileDiskState::Missing;
+}
+
+void clearBasemapTileDiskCache() {
+    std::lock_guard<std::mutex> lock(g_TileDiskCacheMutex);
+    g_TileDiskCache.clear();
 }
 
 static std::string tileUrlFromTemplate(std::string url, int z, int x, int y) {
@@ -77,8 +119,7 @@ void loadLazyTileDownloadQueue(LazyTileDownloadState& state, const fs::path& roo
         req.x = row.value("x", 0);
         req.y = row.value("y", 0);
         if (req.target_dir.empty() || req.url_tmpl.empty()) continue;
-        std::error_code ec;
-        if (fs::exists(tilePath(root, req.target_dir, req.z, req.x, req.y), ec) && !ec) continue;
+        if (basemapTileExistsCached(root, req.target_dir, req.z, req.x, req.y)) continue;
         const std::string key = tileRequestKey(req.target_dir, req.z, req.x, req.y);
         if (state.queued_keys.insert(key).second) state.queue.push_back(req);
     }
@@ -96,8 +137,7 @@ void requestLazyBasemapTile(
     int x,
     int y) {
     if (target_dir.empty() || url_tmpl.empty() || z < 0 || x < 0 || y < 0) return;
-    std::error_code ec;
-    if (fs::exists(tilePath(root, target_dir, z, x, y), ec) && !ec) return;
+    if (basemapTileExistsCached(root, target_dir, z, x, y)) return;
     const std::string key = tileRequestKey(target_dir, z, x, y);
     if (state.queued_keys.find(key) != state.queued_keys.end()) return;
     if (state.failed_keys.find(key) != state.failed_keys.end()) return;
@@ -119,9 +159,10 @@ static void startLazyTileDownload(LazyTileDownloadState& state, const fs::path& 
     state.worker_future = std::async(std::launch::async, [root, req]() {
         LazyTileDownloadResult result;
         result.request = req;
-        const fs::path out = tilePath(root, req.target_dir, req.z, req.x, req.y);
+        const fs::path out = basemapTilePath(root, req.target_dir, req.z, req.x, req.y);
         std::error_code ec;
         if (fs::exists(out, ec) && !ec) {
+            markBasemapTilePresent(req.target_dir, req.z, req.x, req.y);
             result.ok = true;
             result.skipped = true;
             return result;
@@ -131,9 +172,12 @@ static void startLazyTileDownload(LazyTileDownloadState& state, const fs::path& 
         result.ok = downloadUrlToFile(url, out, err);
         result.error = err;
         if (result.ok) {
+            markBasemapTilePresent(req.target_dir, req.z, req.x, req.y);
             std::error_code sec;
             const auto sz = fs::file_size(out, sec);
             if (!sec) result.bytes = (size_t)sz;
+        } else {
+            markBasemapTileMissing(req.target_dir, req.z, req.x, req.y);
         }
         return result;
     });

@@ -5,7 +5,21 @@
     "color": "#ffd92f",
     "description": "Canonical generated parcel layer for Baltimore City, Baltimore County, Howard County, and future regional jurisdictions. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
     "download": false,
-    "reason": "Generated locally from county parcel/property downloads by scripts/build_regional_parcels.py",
+    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder; county sources may require reprojection and normalization before use.",
+    "source_urls": [
+      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
+      "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+      "https://data.howardcountymd.gov/",
+      "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
+      "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AProperty_Public_NoName&outputFormat=application/json",
+      "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
+      "https://opendata.maryland.gov/resource/ed4q-f8tm.csv",
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download"
+    ],
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
@@ -15,25 +29,68 @@
     "name": "Baltimore County Parcels",
     "file": "baltimore_county_parcels.geojson",
     "color": "#a6cee3",
-    "description": "Normalized Baltimore County parcel geometry staging layer. Obtain source data from Baltimore County GIS Data Download, convert to GeoJSON, then include it in regional_parcels.geojson.",
+    "description": "Normalized Baltimore County parcel geometry staging layer. Source is Baltimore County ArcGIS REST Tax parcel (MapServer/1), which supports geoJSON queries and includes owner/value/year-built fields. Convert and normalize before inclusion in regional_parcels.geojson.",
     "download": false,
-    "reason": "County source is distributed through the Baltimore County GIS Data Download portal/FTP and may require format conversion from shapefile/geodatabase.",
+    "reason": "Baltimore County publishes a machine-readable ArcGIS REST tax parcel layer; keep this staging layer generated/normalized before inclusion in regional_parcels.geojson.",
+    "reference_url": "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
+      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download",
+      "https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx"
+    ]
   },
   {
     "name": "Howard County Parcels",
     "file": "howard_county_parcels.geojson",
     "color": "#b2df8a",
-    "description": "Normalized Howard County parcel geometry staging layer. Obtain source data from Howard County Data Download and Viewer, convert to GeoJSON, then include it in regional_parcels.geojson.",
+    "description": "Normalized Howard County parcel geometry staging layer. Source is Howard County Property Boundaries/Cadastral data from the county data download site. Reproject and normalize before inclusion in regional_parcels.geojson.",
     "download": false,
-    "reason": "County source is distributed through Howard County GIS download services and may require format conversion from shapefile/geodatabase.",
+    "reason": "Howard County publishes a direct property shapefile ZIP and WFS/GeoJSON service; WFS coordinates are EPSG:2248, so normalize/reproject before inclusion in regional_parcels.geojson.",
+    "reference_url": "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
+      "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AProperty_Public_NoName&outputFormat=application/json",
+      "https://data.howardcountymd.gov/",
+      "https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
+      "shapefile": "Property.shp",
+      "source_crs": "EPSG:2248"
+    }
+  },
+  {
+    "name": "Howard County Real Property Assessments",
+    "file": "howard_county_real_property_assessments.geojson",
+    "color": "#33a02c",
+    "description": "Official Maryland Open Data real-property assessment records filtered to Howard County. Provides account id, property address, assessed values, sale segment fields, year built, and SDAT/FINDER links. Public owner names are intentionally not included in this source.",
+    "download": false,
+    "reason": "Use the official Maryland Open Data Socrata CSV endpoint instead of scraping SDAT Real Property Search pages; join to Howard County parcels by account_id/ACCTID before inclusion in regional_parcels.geojson.",
+    "reference_url": "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
+      "https://opendata.maryland.gov/resource/ed4q-f8tm.csv",
+      "https://opendata.maryland.gov/api/views/ed4q-f8tm/files/5064508a-f244-4741-a548-b5ec5c5f3019?download=true&filename=Real_Property_Records_Documentation.pdf"
+    ],
+    "import": {
+      "type": "socrata_csv_properties",
+      "url": "https://opendata.maryland.gov/resource/ed4q-f8tm.csv?%24limit=500000&%24select=county_name_mdp_field_cntyname%2Caccount_id_mdp_field_acctid%2Crecord_key_account_number_sdat_field_3%2Cmdp_street_address_mdp_field_address%2Cmdp_street_address_city_mdp_field_city%2Cmdp_street_address_zip_code_mdp_field_zipcode%2Ccurrent_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164%2Ccurrent_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165%2Ccurrent_assessment_year_total_assessment_sdat_field_172%2Cc_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235%2Csales_segment_1_consideration_mdp_field_considr1_sdat_field_90%2Csales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89%2Creal_property_search_link%2Cfinder_online_link&%24where=county_name_mdp_field_cntyname%3D%22Howard%20County%22"
+    }
   },
   {
     "name": "Real Property Information",
@@ -66,7 +123,11 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+      "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
+    ]
   },
   {
     "name": "Year Built (Parcels)",
@@ -79,7 +140,11 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+      "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
+    ]
   },
   {
     "name": "Parcel Intelligence (Derived)",
@@ -90,7 +155,15 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+      "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
+      "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
+      "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0"
+    ]
   },
   {
     "name": "Vacant Building Notices",
@@ -111,7 +184,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
+    ]
   },
   {
     "name": "Open Notices - Vacant Code Parcels",
@@ -121,7 +197,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "Open Notices - Exterior Code",
@@ -131,7 +211,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
+    ]
   },
   {
     "name": "Open Notices - Exterior Code Parcels",
@@ -141,7 +224,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "Open Notices - Interior Code",
@@ -151,7 +238,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
+    ]
   },
   {
     "name": "Open Notices - Interior Code Parcels",
@@ -161,7 +251,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "Open Notices - Interior/Exterior Code",
@@ -171,7 +265,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
+    ]
   },
   {
     "name": "Open Notices - Interior/Exterior Code Parcels",
@@ -181,7 +278,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "Open Notices - Other Code",
@@ -191,7 +292,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
+    ]
   },
   {
     "name": "Open Notices - Other Code Parcels",
@@ -201,7 +305,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "Vacant Building Rehabs",
@@ -222,7 +330,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38"
+    ]
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Building Parcels",
@@ -232,7 +343,11 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38",
+      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
+    ]
   },
   {
     "name": "CodeMap Recently Rehabbed VBN Parcels",
@@ -242,7 +357,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/27"
+    ]
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
@@ -310,7 +428,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "point",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_MultifamilySites/FeatureServer/0"
+    ]
   },
   {
     "name": "MD DHCD Targeted Areas",
@@ -322,7 +443,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/0"
+    ]
   },
   {
     "name": "MD DHCD Qualified Census Tracts",
@@ -334,7 +458,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/1"
+    ]
   },
   {
     "name": "MD DHCD Communities of Opportunity",
@@ -346,7 +473,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/2"
+    ]
   },
   {
     "name": "MD DHCD Small Difficult Development Areas",
@@ -358,7 +488,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/3"
+    ]
   },
   {
     "name": "MD DHCD Rural Areas",
@@ -370,7 +503,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/5"
+    ]
   },
   {
     "name": "MD DHCD BRHP Opportunity Designations",
@@ -382,7 +518,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/6"
+    ]
   },
   {
     "name": "MD DHCD Baltimore County Opportunity Areas",
@@ -394,7 +533,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/7"
+    ]
   },
   {
     "name": "MD DHCD Just Communities",
@@ -406,7 +548,10 @@
     "category": "housing",
     "subcategory": "State DHCD",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/9"
+    ]
   },
   {
     "name": "Zoning",
@@ -675,7 +820,13 @@
     "category": "public_health",
     "subcategory": "Housing Finance",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024",
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=1",
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=3",
+      "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson"
+    ]
   },
   {
     "name": "HUD Continuum of Care Boundaries (Maryland)",
@@ -710,7 +861,11 @@
     "category": "public_health",
     "subcategory": "Homelessness",
     "scale": "region",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://www.huduser.gov/portal/datasets/ahar.html",
+      "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/CoC_Geo_Type/FeatureServer/0/query?where=ST_1%3D%27MD%27&outFields=ST_1,STATE_NAME,COCNUM,COCNAME,HudNum,Geo_Type&returnGeometry=true&f=geojson"
+    ]
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",

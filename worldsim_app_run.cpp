@@ -4,6 +4,7 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
 #include "layer_state_io.h"
+#include "layer_import.h"
 #include "feature_props.h"
 #include "filters.h"
 #include "geo.h"
@@ -517,6 +518,7 @@ int runWorldSim3App(int argc, char** argv) {
     }
     TimeCubeService time_cube_service(root);
     DuckDbAnalytics duckdb_analytics(root);
+    bool duckdb_auto_rebuild_checked = false;
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());

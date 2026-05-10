@@ -57,6 +57,23 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
             *ctx.address_locate_status = "Parcel layer is still loading or missing.";
             return;
         }
+        if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) {
+            const std::vector<DuckDbSearchHit> hits = ctx.duckdb_analytics->searchParcels(query, 24);
+            for (const auto& hit : hits) {
+                if (hit.layer_idx != (size_t)ctx.parcel_layer_idx) continue;
+                if (hit.feature_idx >= parcel_layer.features.size()) continue;
+                ctx.address_locate_matches->push_back({hit.feature_idx, hit.score, hit.address.empty() ? hit.blocklot : hit.address});
+            }
+            if (!ctx.address_locate_matches->empty()) {
+                const auto& best = ctx.address_locate_matches->front();
+                if (!focus_parcel_by_idx(best.parcel_idx)) {
+                    *ctx.address_locate_status = "DuckDB fuzzy match found, but parcel geometry is unavailable.";
+                    return;
+                }
+                *ctx.address_locate_status = "Found " + std::to_string(ctx.address_locate_matches->size()) + " DuckDB fuzzy matches.";
+                return;
+            }
+        }
         auto property_address_for = [&](const LayerDef::FeatureGeom& parcel) {
             std::string address = firstDisplayProperty(parcel, {
                 "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
@@ -80,7 +97,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
             const auto& parcel = parcel_layer.features[i];
             const std::string address = property_address_for(parcel);
-            const int score = addressSearchScore(address, query);
+            const int score = std::max(addressSearchScore(address, query), fuzzyTextScore(address, query));
             if (score <= 0) continue;
             ctx.address_locate_matches->push_back({i, score, address});
         }

@@ -69,6 +69,19 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
         ld.name = arr[i]["name"].get<std::string>();
         ld.file = arr[i]["file"].get<std::string>();
         ld.source_url = arr[i].contains("url") ? arr[i]["url"].get<std::string>() : "";
+        ld.reference_url = arr[i].contains("reference_url") ? arr[i]["reference_url"].get<std::string>() : "";
+        if (arr[i].contains("source_urls") && arr[i]["source_urls"].is_array()) {
+            for (const auto& v : arr[i]["source_urls"]) {
+                if (v.is_string()) ld.source_urls.push_back(v.get<std::string>());
+            }
+        }
+        if (arr[i].contains("import") && arr[i]["import"].is_object()) {
+            const auto& import = arr[i]["import"];
+            ld.import_type = import.value("type", std::string());
+            ld.import_url = import.value("url", std::string());
+            ld.import_source_crs = import.value("source_crs", std::string());
+            ld.import_shapefile = import.value("shapefile", std::string());
+        }
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
         ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
         ld.subcategory = arr[i].contains("subcategory") ? arr[i]["subcategory"].get<std::string>() : "";

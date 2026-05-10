@@ -233,6 +233,12 @@
     "category": "public_health",
     "subcategory": "Housing Finance",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "source_urls": [
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024",
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=1",
+      "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=3",
+      "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson"
+    ]
   }
 ]

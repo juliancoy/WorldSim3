@@ -857,9 +857,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 } else {
                                     file = layers[matched].file;
                                     const auto& layer = layers[matched];
-                                    if (layer.source_url.empty()) {
+                                    const bool has_download_source = !layer.source_url.empty() || !layer.import_url.empty();
+                                    if (!has_download_source) {
                                         out["ok"] = false;
-                                        out["error"] = "layer has no source URL";
+                                        out["error"] = "layer has no source URL/import source";
                                     } else {
                                         std::lock_guard<std::mutex> lk(api_layer_mutex);
                                         api_layer_download_cmds.push_back(file);
@@ -870,7 +871,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                         {"index", matched},
                                         {"name", layer.name},
                                         {"has_source_url", !layer.source_url.empty()},
-                                        {"enqueued", !layer.source_url.empty()}
+                                        {"has_import_source", !layer.import_url.empty()},
+                                        {"reference_url", layer.reference_url},
+                                        {"source_urls", layer.source_urls},
+                                        {"enqueued", has_download_source}
                                     };
                                 }
                             }
@@ -906,7 +910,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"label", l.name},
                             {"kind", "layer"},
                             {"index", i},
-                            {"downloadable", !l.source_url.empty()}
+                            {"downloadable", !l.source_url.empty() || !l.import_url.empty()}
                         });
                         layer_ui.push_back({
                             {"index", i},

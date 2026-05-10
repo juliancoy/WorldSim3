@@ -252,6 +252,26 @@
         } else {
             clear_parcel_selection();
         }
+        if (!duckdb_auto_rebuild_checked && !unified_parcels.empty()) {
+            bool hydration_idle = false;
+            {
+                std::lock_guard<std::mutex> lk(hydrate_req_mutex);
+                hydration_idle = hydrate_requests.empty() &&
+                    std::none_of(hydration_requested.begin(), hydration_requested.end(), [](bool requested) {
+                        return requested;
+                    });
+            }
+            if (hydration_idle) {
+                std::lock_guard<std::mutex> lk(hydrated_mutex);
+                hydration_idle = hydrated_queue.empty();
+            }
+            if (hydration_idle) {
+                duckdb_auto_rebuild_checked = true;
+                if (duckdb_analytics.needsRebuild(layers)) {
+                    duckdb_analytics.rebuild(layers, unified_parcels);
+                }
+            }
+        }
         if (ImGui::BeginTabBar("right_tabs")) {
         drawFiltersTab(FiltersTabContext{
             &map_filter_state,
@@ -268,6 +288,7 @@
             &zoom,
             &address_locate_status,
             &address_locate_matches,
+            &duckdb_analytics,
             &record_year_hist,
             &record_year_hist_plot,
             &hist_feature_counts,

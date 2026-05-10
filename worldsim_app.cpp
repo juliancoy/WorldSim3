@@ -28,6 +28,7 @@
 #include "dataset_lan_api.h"
 #include "screenshot_state.h"
 #include "worldsim_app_internal.h"
+#include "tiles.h"
 
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
@@ -591,9 +592,12 @@ static TileTexture* getTileTexture(const fs::path& root, const std::string& tile
         return &it->second.tex;
     }
 
-    const fs::path tile_path = root / "data" / tile_root_dir / std::to_string(z) / std::to_string(x) / (std::to_string(y) + ".png");
-    if (!fs::exists(tile_path)) return nullptr;
-    if (!loadTileTexture(tile_path, key)) return nullptr;
+    if (!basemapTileExistsCached(root, tile_root_dir, z, x, y)) return nullptr;
+    const fs::path tile_path = basemapTilePath(root, tile_root_dir, z, x, y);
+    if (!loadTileTexture(tile_path, key)) {
+        markBasemapTileMissing(tile_root_dir, z, x, y);
+        return nullptr;
+    }
 
     auto loaded = g_TileCache.find(key);
     return loaded == g_TileCache.end() ? nullptr : &loaded->second.tex;
@@ -857,6 +861,7 @@ static void CleanupTileCache() {
     for (auto& kv : g_TileCache) destroyTileTextureNow(kv.second.tex);
     g_TileCache.clear();
     g_TileLRU.clear();
+    clearBasemapTileDiskCache();
     drainRetiredTextures(true);
 }
 

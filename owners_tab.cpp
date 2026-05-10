@@ -122,10 +122,28 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
     ImGui::BeginChild("owner_rankings", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
     std::vector<size_t> owner_visible_indices;
     owner_visible_indices.reserve(owner_aggregates.size());
+    std::vector<std::pair<size_t, int>> fuzzy_owner_matches;
+    fuzzy_owner_matches.reserve(owner_aggregates.size());
     for (size_t i = 0; i < owner_aggregates.size(); ++i) {
-        if (!owner_query.empty() && !containsCaseInsensitive(owner_aggregates[i].owner, owner_query)) continue;
         if (owner_class_filter_key != "all" && owner_aggregates[i].owner_class != owner_class_filter_key) continue;
-        owner_visible_indices.push_back(i);
+        if (!owner_query.empty()) {
+            const int score = fuzzyTextScore(owner_aggregates[i].owner, owner_query);
+            if (score < 25) continue;
+            fuzzy_owner_matches.push_back({i, score});
+        } else {
+            owner_visible_indices.push_back(i);
+        }
+    }
+    if (!owner_query.empty()) {
+        std::stable_sort(fuzzy_owner_matches.begin(), fuzzy_owner_matches.end(), [&](const auto& a, const auto& b) {
+            if (a.second != b.second) return a.second > b.second;
+            const auto& ao = owner_aggregates[a.first];
+            const auto& bo = owner_aggregates[b.first];
+            if (ao.property_count != bo.property_count) return ao.property_count > bo.property_count;
+            return ao.owner < bo.owner;
+        });
+        owner_visible_indices.reserve(fuzzy_owner_matches.size());
+        for (const auto& match : fuzzy_owner_matches) owner_visible_indices.push_back(match.first);
     }
 
     const size_t visible_rows = owner_visible_indices.size();
@@ -179,7 +197,7 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
     }
     ImGui::EndChild();
     if (!owner_query.empty()) {
-        ImGui::TextDisabled("Visible rows: %zu / %zu", visible_rows, owner_aggregates.size());
+        ImGui::TextDisabled("Fuzzy matches: %zu / %zu", visible_rows, owner_aggregates.size());
     } else {
         ImGui::TextDisabled("Showing all owners: %zu", owner_aggregates.size());
     }

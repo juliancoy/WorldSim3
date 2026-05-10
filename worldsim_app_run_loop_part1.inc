@@ -175,7 +175,7 @@
                 const std::string file = row.value("file", std::string());
                 if (file.empty()) continue;
                 for (size_t idx = 0; idx < layers.size(); ++idx) {
-                    if (layers[idx].file != file || layers[idx].source_url.empty() || layer_download_pending(idx)) continue;
+                if (layers[idx].file != file || (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) || layer_download_pending(idx)) continue;
                     layer_download_queue.push_back(idx);
                     loaded++;
                     break;
@@ -188,8 +188,8 @@
         };
         auto enqueue_layer_download_request = [&](size_t idx) {
             if (idx >= layers.size()) return false;
-            if (layers[idx].source_url.empty()) {
-                layer_download_last_event = "No source URL for " + layers[idx].name;
+            if (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) {
+                layer_download_last_event = "No source URL/import source for " + layers[idx].name;
                 data_library_status_msg = layer_download_last_event;
                 return false;
             }
@@ -296,7 +296,7 @@
             layer_download_inflight = true;
             layer_download_active_idx = idx;
             layer_download_active_file = layers[idx].file;
-            const std::string source_url = layers[idx].source_url;
+            const LayerDef layer_for_download = layers[idx];
             const fs::path local_layer_path = root / "data" / "layers" / layers[idx].file;
             const auto now = std::chrono::steady_clock::now();
             constexpr auto kLanAutoScanInterval = std::chrono::seconds(30);
@@ -312,7 +312,7 @@
                 std::string label = peer.ip + ":" + std::to_string(peer.dataset_port);
                 peer_download_targets.push_back({std::move(label), std::move(url)});
             }
-            layer_download_future = std::async(std::launch::async, [root, source_url, local_layer_path, peer_download_targets]() {
+            layer_download_future = std::async(std::launch::async, [root, layer_for_download, local_layer_path, peer_download_targets]() {
                 std::vector<std::string> peer_failures;
                 for (const auto& candidate : peer_download_targets) {
                     VersionedDownloadResult peer_res = downloadUrlVersioned(candidate.second, local_layer_path, root / "data" / "versions");
@@ -322,7 +322,7 @@
                     }
                     peer_failures.push_back(candidate.first + ": " + peer_res.message);
                 }
-                VersionedDownloadResult src_res = downloadUrlVersioned(source_url, local_layer_path, root / "data" / "versions");
+                VersionedDownloadResult src_res = downloadOrImportLayer(layer_for_download, local_layer_path, root);
                 if (!peer_failures.empty()) {
                     if (src_res.ok) {
                         src_res.message = "source fallback after LAN peer failures | " + src_res.message;
@@ -348,7 +348,7 @@
                     already_present++;
                     continue;
                 }
-                if (layers[idx].source_url.empty()) {
+                if (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) {
                     missing_without_source++;
                     continue;
                 }
@@ -405,8 +405,8 @@
                     for (size_t idx = 0; idx < layers.size(); ++idx) {
                         if (layers[idx].file != file) continue;
                         matched = true;
-                        if (layers[idx].source_url.empty()) {
-                            data_library_status_msg = "No source URL for " + layers[idx].file;
+                        if (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) {
+                            data_library_status_msg = "No source URL/import source for " + layers[idx].file;
                         } else {
                             enqueue_layer_download_request(idx);
                         }
@@ -528,7 +528,7 @@
         size_t queueable_missing_layer_count = 0;
         for (size_t i = 0; i < local_layer_exists_cache.size(); ++i) {
             if (local_layer_exists_cache[i]) local_layer_count++;
-            else if (i < layers.size() && !layers[i].source_url.empty()) {
+            else if (i < layers.size() && (!layers[i].source_url.empty() || layerHasImportSource(layers[i]))) {
                 downloadable_missing_layer_count++;
                 if (!layer_download_pending(i)) queueable_missing_layer_count++;
             }
@@ -758,19 +758,25 @@
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
-                    bool can_download = !l.source_url.empty();
+                    bool can_download = !l.source_url.empty() || layerHasImportSource(l);
+                    const bool has_source_metadata = can_download || !l.reference_url.empty() || !l.source_urls.empty();
                     if (ImGui::SmallButton("D")) {
                         if (can_download) {
                             enqueue_layer_download_request(idx);
                         } else {
-                            data_library_status_msg = "No source URL for " + l.file;
+                            data_library_status_msg = has_source_metadata
+                                ? "No direct downloadable GeoJSON URL for " + l.file + "; see layer tooltip for source URLs."
+                                : "No source URL for " + l.file;
                         }
                     }
                     ImGui::PopStyleColor(3);
                     if (ImGui::IsItemHovered()) {
                         ImGui::BeginTooltip();
                         ImGui::TextUnformatted("Download missing dataset");
-                        ImGui::TextDisabled("%s", can_download ? "Source available" : "No source URL in manifest");
+                        ImGui::TextDisabled(
+                            "%s",
+                            can_download ? (l.source_url.empty() ? "Import source available" : "Direct download URL available") :
+                            (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
                         ImGui::EndTooltip();
                     }
                     ImGui::SameLine();
@@ -886,7 +892,12 @@
                     if (!l.scale.empty()) ImGui::Text("Scale: %s", l.scale.c_str());
                     if (!l.heatmap_field.empty()) ImGui::Text("Heatmap Field: %s", l.heatmap_field.c_str());
                     if (!l.description.empty()) ImGui::TextWrapped("Description: %s", l.description.c_str());
-                    if (!l.source_url.empty()) ImGui::TextWrapped("Source: %s", l.source_url.c_str());
+                    if (!l.source_url.empty()) ImGui::TextWrapped("Download URL: %s", l.source_url.c_str());
+                    if (!l.reference_url.empty()) ImGui::TextWrapped("Reference: %s", l.reference_url.c_str());
+                    if (!l.source_urls.empty()) {
+                        ImGui::SeparatorText("Source URLs");
+                        for (const auto& url : l.source_urls) ImGui::TextWrapped("%s", url.c_str());
+                    }
                     if (!st.error.empty()) {
                         ImGui::Separator();
                         ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Error: %s", st.error.c_str());
@@ -1121,12 +1132,14 @@
                 };
                 auto draw_library_tooltip = [](const LayerDef& l) {
                     if (!ImGui::IsItemHovered()) return;
-                    if (l.description.empty() && l.source_url.empty()) return;
+                    if (l.description.empty() && l.source_url.empty() && l.reference_url.empty() && l.source_urls.empty()) return;
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 90.0f);
                     if (!l.description.empty()) ImGui::TextUnformatted(l.description.c_str());
-                    if (!l.description.empty() && !l.source_url.empty()) ImGui::Separator();
-                    if (!l.source_url.empty()) ImGui::TextUnformatted(l.source_url.c_str());
+                    if (!l.description.empty() && (!l.source_url.empty() || !l.reference_url.empty() || !l.source_urls.empty())) ImGui::Separator();
+                    if (!l.source_url.empty()) ImGui::Text("Download URL: %s", l.source_url.c_str());
+                    if (!l.reference_url.empty()) ImGui::Text("Reference: %s", l.reference_url.c_str());
+                    for (const auto& url : l.source_urls) ImGui::Text("Source: %s", url.c_str());
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
                 };
@@ -1182,12 +1195,13 @@
                         const auto& l = layers[i];
                         const bool local_exists = i < local_layer_exists_cache.size() ? local_layer_exists_cache[i] : false;
                         const fs::path local_path = root / "data" / "layers" / l.file;
-                        if (!local_exists || l.source_url.empty()) {
-                            data_freshness_state[i] = l.source_url.empty() ? FreshnessState::NotTrackable : FreshnessState::Unknown;
-                            data_freshness_msg[i] = l.source_url.empty() ? "no source URL" : "not downloaded";
+                        const std::string freshness_url = l.source_url.empty() ? l.import_url : l.source_url;
+                        if (!local_exists || freshness_url.empty()) {
+                            data_freshness_state[i] = freshness_url.empty() ? FreshnessState::NotTrackable : FreshnessState::Unknown;
+                            data_freshness_msg[i] = freshness_url.empty() ? "no source URL/import source" : "not downloaded";
                             continue;
                         }
-                        FreshnessCheckResult cr = checkUrlFreshnessVersioned(l.source_url, local_path, root / "data" / "versions");
+                        FreshnessCheckResult cr = checkUrlFreshnessVersioned(freshness_url, local_path, root / "data" / "versions");
                         data_freshness_state[i] = cr.state;
                         data_freshness_msg[i] = cr.message;
                         checked++;
