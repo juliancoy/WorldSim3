@@ -32,7 +32,17 @@ struct GpuCtx {
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkDescriptorPool desc_pool = VK_NULL_HANDLE;
+    VkDescriptorSet desc_set = VK_NULL_HANDLE;
     VkCommandPool cmd_pool = VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    VkBuffer sample_buf = VK_NULL_HANDLE;
+    VkDeviceMemory sample_mem = VK_NULL_HANDLE;
+    void* sample_mapped = nullptr;
+    VkDeviceSize sample_capacity = 0;
+    VkBuffer accum_buf = VK_NULL_HANDLE;
+    VkDeviceMemory accum_mem = VK_NULL_HANDLE;
+    void* accum_mapped = nullptr;
+    VkDeviceSize accum_capacity = 0;
 };
 
 GpuCtx g_ctx;
@@ -86,12 +96,98 @@ std::vector<uint32_t> loadSpirv(const char* path) {
 }
 
 void shutdownCtx() {
+    if (g_Device != VK_NULL_HANDLE) {
+        if (g_ctx.sample_mapped && g_ctx.sample_mem) vkUnmapMemory(g_Device, g_ctx.sample_mem);
+        if (g_ctx.accum_mapped && g_ctx.accum_mem) vkUnmapMemory(g_Device, g_ctx.accum_mem);
+        if (g_ctx.sample_buf) vkDestroyBuffer(g_Device, g_ctx.sample_buf, g_Allocator);
+        if (g_ctx.sample_mem) vkFreeMemory(g_Device, g_ctx.sample_mem, g_Allocator);
+        if (g_ctx.accum_buf) vkDestroyBuffer(g_Device, g_ctx.accum_buf, g_Allocator);
+        if (g_ctx.accum_mem) vkFreeMemory(g_Device, g_ctx.accum_mem, g_Allocator);
+    }
     if (g_ctx.pipeline) vkDestroyPipeline(g_Device, g_ctx.pipeline, g_Allocator);
     if (g_ctx.pipeline_layout) vkDestroyPipelineLayout(g_Device, g_ctx.pipeline_layout, g_Allocator);
-    if (g_ctx.desc_layout) vkDestroyDescriptorSetLayout(g_Device, g_ctx.desc_layout, g_Allocator);
     if (g_ctx.desc_pool) vkDestroyDescriptorPool(g_Device, g_ctx.desc_pool, g_Allocator);
+    if (g_ctx.desc_layout) vkDestroyDescriptorSetLayout(g_Device, g_ctx.desc_layout, g_Allocator);
     if (g_ctx.cmd_pool) vkDestroyCommandPool(g_Device, g_ctx.cmd_pool, g_Allocator);
     g_ctx = {};
+}
+
+bool ensurePersistentBuffer(
+    VkDeviceSize required,
+    VkBufferUsageFlags usage,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory,
+    void*& mapped,
+    VkDeviceSize& capacity,
+    const char* label,
+    std::string* error) {
+    if (required == 0) required = 1;
+    if (buffer != VK_NULL_HANDLE && capacity >= required && mapped) return true;
+
+    if (mapped && memory) {
+        vkUnmapMemory(g_Device, memory);
+        mapped = nullptr;
+    }
+    if (buffer) {
+        vkDestroyBuffer(g_Device, buffer, g_Allocator);
+        buffer = VK_NULL_HANDLE;
+    }
+    if (memory) {
+        vkFreeMemory(g_Device, memory, g_Allocator);
+        memory = VK_NULL_HANDLE;
+    }
+    capacity = 0;
+
+    VkDeviceSize new_capacity = std::max(required, required + required / 2);
+    new_capacity = std::max<VkDeviceSize>(new_capacity, 1024 * 1024);
+    if (!createBuffer(
+            new_capacity,
+            usage,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            buffer,
+            memory)) {
+        if (error) *error = std::string("failed to create persistent ") + label + " buffer";
+        return false;
+    }
+    if (vkMapMemory(g_Device, memory, 0, new_capacity, 0, &mapped) != VK_SUCCESS) {
+        if (error) *error = std::string("failed to map persistent ") + label + " buffer";
+        vkDestroyBuffer(g_Device, buffer, g_Allocator);
+        vkFreeMemory(g_Device, memory, g_Allocator);
+        buffer = VK_NULL_HANDLE;
+        memory = VK_NULL_HANDLE;
+        mapped = nullptr;
+        return false;
+    }
+    capacity = new_capacity;
+    return true;
+}
+
+bool ensurePersistentDescriptors(std::string* error) {
+    if (g_ctx.desc_set != VK_NULL_HANDLE) return true;
+    VkDescriptorSetAllocateInfo dsai{};
+    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    dsai.descriptorPool = g_ctx.desc_pool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &g_ctx.desc_layout;
+    if (vkAllocateDescriptorSets(g_Device, &dsai, &g_ctx.desc_set) != VK_SUCCESS) {
+        if (error) *error = "failed to allocate persistent descriptor set";
+        return false;
+    }
+    return true;
+}
+
+bool ensurePersistentCommandBuffer(std::string* error) {
+    if (g_ctx.cmd != VK_NULL_HANDLE) return true;
+    VkCommandBufferAllocateInfo cbai{};
+    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cbai.commandPool = g_ctx.cmd_pool;
+    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbai.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(g_Device, &cbai, &g_ctx.cmd) != VK_SUCCESS) {
+        if (error) *error = "failed to allocate persistent command buffer";
+        return false;
+    }
+    return true;
 }
 
 bool initCtx(std::string* error) {
@@ -255,83 +351,46 @@ bool buildGpuSplatAggregate(
     const VkDeviceSize accum_uints = (VkDeviceSize)pixel_count * 7;
     const VkDeviceSize accum_bytes = accum_uints * sizeof(uint32_t);
 
-    VkBuffer sample_buf = VK_NULL_HANDLE;
-    VkDeviceMemory sample_mem = VK_NULL_HANDLE;
-    VkBuffer accum_buf = VK_NULL_HANDLE;
-    VkDeviceMemory accum_mem = VK_NULL_HANDLE;
-
-    auto cleanup = [&]() {
-        if (sample_buf) vkDestroyBuffer(g_Device, sample_buf, g_Allocator);
-        if (sample_mem) vkFreeMemory(g_Device, sample_mem, g_Allocator);
-        if (accum_buf) vkDestroyBuffer(g_Device, accum_buf, g_Allocator);
-        if (accum_mem) vkFreeMemory(g_Device, accum_mem, g_Allocator);
-    };
-
-    if (!createBuffer(sample_bytes,
-                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      sample_buf,
-                      sample_mem)) {
-        if (error) *error = "failed to create sample buffer";
-        cleanup();
+    if (!ensurePersistentBuffer(
+            sample_bytes,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            g_ctx.sample_buf,
+            g_ctx.sample_mem,
+            g_ctx.sample_mapped,
+            g_ctx.sample_capacity,
+            "sample",
+            error)) {
         return false;
     }
-    if (!createBuffer(accum_bytes,
-                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      accum_buf,
-                      accum_mem)) {
-        if (error) *error = "failed to create accum buffer";
-        cleanup();
+    if (!ensurePersistentBuffer(
+            accum_bytes,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            g_ctx.accum_buf,
+            g_ctx.accum_mem,
+            g_ctx.accum_mapped,
+            g_ctx.accum_capacity,
+            "accum",
+            error)) {
         return false;
     }
+    if (!ensurePersistentDescriptors(error) || !ensurePersistentCommandBuffer(error)) return false;
 
-    void* sample_ptr = nullptr;
-    if (vkMapMemory(g_Device, sample_mem, 0, sample_bytes, 0, &sample_ptr) != VK_SUCCESS) {
-        if (error) *error = "failed to map sample buffer";
-        cleanup();
-        return false;
-    }
-    std::memcpy(sample_ptr, packed.data(), (size_t)sample_bytes);
-    vkUnmapMemory(g_Device, sample_mem);
-
-    void* accum_ptr = nullptr;
-    if (vkMapMemory(g_Device, accum_mem, 0, accum_bytes, 0, &accum_ptr) != VK_SUCCESS) {
-        if (error) *error = "failed to map accum buffer";
-        cleanup();
-        return false;
-    }
-    std::memset(accum_ptr, 0, (size_t)accum_bytes);
-    vkUnmapMemory(g_Device, accum_mem);
-
-    VkDescriptorSetAllocateInfo dsai{};
-    dsai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    dsai.descriptorPool = g_ctx.desc_pool;
-    dsai.descriptorSetCount = 1;
-    dsai.pSetLayouts = &g_ctx.desc_layout;
-    VkDescriptorSet desc = VK_NULL_HANDLE;
-    if (vkAllocateDescriptorSets(g_Device, &dsai, &desc) != VK_SUCCESS) {
-        vkResetDescriptorPool(g_Device, g_ctx.desc_pool, 0);
-        if (vkAllocateDescriptorSets(g_Device, &dsai, &desc) != VK_SUCCESS) {
-            if (error) *error = "failed to allocate descriptor set";
-            cleanup();
-            return false;
-        }
-    }
+    std::memcpy(g_ctx.sample_mapped, packed.data(), (size_t)sample_bytes);
+    std::memset(g_ctx.accum_mapped, 0, (size_t)accum_bytes);
 
     VkDescriptorBufferInfo sbi{};
-    sbi.buffer = sample_buf;
+    sbi.buffer = g_ctx.sample_buf;
     sbi.offset = 0;
     sbi.range = sample_bytes;
 
     VkDescriptorBufferInfo abi{};
-    abi.buffer = accum_buf;
+    abi.buffer = g_ctx.accum_buf;
     abi.offset = 0;
     abi.range = accum_bytes;
 
     VkWriteDescriptorSet w0{};
     w0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    w0.dstSet = desc;
+    w0.dstSet = g_ctx.desc_set;
     w0.dstBinding = 0;
     w0.descriptorCount = 1;
     w0.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
@@ -344,30 +403,20 @@ bool buildGpuSplatAggregate(
     std::array<VkWriteDescriptorSet, 2> writes{w0, w1};
     vkUpdateDescriptorSets(g_Device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
 
-    VkCommandBufferAllocateInfo cbai{};
-    cbai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cbai.commandPool = g_ctx.cmd_pool;
-    cbai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cbai.commandBufferCount = 1;
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    if (vkAllocateCommandBuffers(g_Device, &cbai, &cmd) != VK_SUCCESS) {
-        if (error) *error = "failed to allocate command buffer";
-        cleanup();
+    if (vkResetCommandBuffer(g_ctx.cmd, 0) != VK_SUCCESS) {
+        if (error) *error = "vkResetCommandBuffer failed";
         return false;
     }
-
     VkCommandBufferBeginInfo cbi{};
     cbi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if (vkBeginCommandBuffer(cmd, &cbi) != VK_SUCCESS) {
+    if (vkBeginCommandBuffer(g_ctx.cmd, &cbi) != VK_SUCCESS) {
         if (error) *error = "vkBeginCommandBuffer failed";
-        vkFreeCommandBuffers(g_Device, g_ctx.cmd_pool, 1, &cmd);
-        cleanup();
         return false;
     }
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_ctx.pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_ctx.pipeline_layout, 0, 1, &desc, 0, nullptr);
+    vkCmdBindPipeline(g_ctx.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_ctx.pipeline);
+    vkCmdBindDescriptorSets(g_ctx.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_ctx.pipeline_layout, 0, 1, &g_ctx.desc_set, 0, nullptr);
 
     struct PushRaw {
         uint32_t sample_count;
@@ -393,11 +442,11 @@ bool buildGpuSplatAggregate(
     push.max_lat = raster_max_lat;
     push.sigma_r = std::max(1.0f, sigma_r);
 
-    vkCmdPushConstants(cmd, g_ctx.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushRaw), &push);
+    vkCmdPushConstants(g_ctx.cmd, g_ctx.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PushRaw), &push);
 
     const uint32_t wg = 64;
     const uint32_t groups = (push.sample_count + wg - 1) / wg;
-    vkCmdDispatch(cmd, std::max(1u, groups), 1, 1);
+    vkCmdDispatch(g_ctx.cmd, std::max(1u, groups), 1, 1);
 
     VkBufferMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
@@ -405,11 +454,11 @@ bool buildGpuSplatAggregate(
     barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.buffer = accum_buf;
+    barrier.buffer = g_ctx.accum_buf;
     barrier.offset = 0;
     barrier.size = accum_bytes;
     vkCmdPipelineBarrier(
-        cmd,
+        g_ctx.cmd,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_HOST_BIT,
         0,
@@ -420,17 +469,15 @@ bool buildGpuSplatAggregate(
         0,
         nullptr);
 
-    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+    if (vkEndCommandBuffer(g_ctx.cmd) != VK_SUCCESS) {
         if (error) *error = "vkEndCommandBuffer failed";
-        vkFreeCommandBuffers(g_Device, g_ctx.cmd_pool, 1, &cmd);
-        cleanup();
         return false;
     }
 
     VkSubmitInfo si{};
     si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &cmd;
+    si.pCommandBuffers = &g_ctx.cmd;
     VkResult submit_res = VK_SUCCESS;
     {
         std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
@@ -438,9 +485,7 @@ bool buildGpuSplatAggregate(
     }
     if (submit_res != VK_SUCCESS) {
         if (error) *error = "vkQueueSubmit failed";
-        vkFreeCommandBuffers(g_Device, g_ctx.cmd_pool, 1, &cmd);
         g_ctx.available = false;
-        cleanup();
         return false;
     }
     VkResult idle_res = VK_SUCCESS;
@@ -450,20 +495,11 @@ bool buildGpuSplatAggregate(
     }
     if (idle_res != VK_SUCCESS) {
         if (error) *error = "vkQueueWaitIdle failed";
-        vkFreeCommandBuffers(g_Device, g_ctx.cmd_pool, 1, &cmd);
         g_ctx.available = false;
-        cleanup();
-        return false;
-    }
-    vkFreeCommandBuffers(g_Device, g_ctx.cmd_pool, 1, &cmd);
-
-    if (vkMapMemory(g_Device, accum_mem, 0, accum_bytes, 0, &accum_ptr) != VK_SUCCESS) {
-        if (error) *error = "failed to map accum readback";
-        cleanup();
         return false;
     }
 
-    const uint32_t* raw = reinterpret_cast<const uint32_t*>(accum_ptr);
+    const uint32_t* raw = reinterpret_cast<const uint32_t*>(g_ctx.accum_mapped);
     out_density.assign(pixel_count, 0.0f);
     out_cr.assign(pixel_count, 0.0f);
     out_cg.assign(pixel_count, 0.0f);
@@ -488,7 +524,14 @@ bool buildGpuSplatAggregate(
         out_sv[i] = (float)raw[base + 6];
     }
 
-    vkUnmapMemory(g_Device, accum_mem);
-    cleanup();
     return true;
+}
+
+void shutdownGpuSplatAggregate() {
+    std::lock_guard<std::mutex> lk(g_gpu_mutex);
+    if (!g_ctx.initialized) return;
+    if (g_Device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(g_Device);
+    }
+    shutdownCtx();
 }

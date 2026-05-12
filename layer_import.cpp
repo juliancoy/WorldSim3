@@ -1,6 +1,8 @@
 #include "layer_import.h"
 
 #include <zlib.h>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <array>
@@ -17,6 +19,7 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 namespace {
 struct ZipEntry {
@@ -34,6 +37,11 @@ struct DbfField {
 };
 
 struct PointD { double x = 0.0, y = 0.0; };
+
+struct HttpResponse {
+    long code = 0;
+    std::string body;
+};
 
 uint16_t le16(const std::vector<uint8_t>& b, size_t off) {
     if (off + 2 > b.size()) throw std::runtime_error("unexpected EOF");
@@ -83,6 +91,53 @@ std::vector<uint8_t> readFileBytes(const fs::path& p) {
     std::vector<uint8_t> out((size_t)n);
     if (!out.empty()) in.read((char*)out.data(), (std::streamsize)out.size());
     return out;
+}
+
+size_t curlWriteToString(void* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* out = static_cast<std::string*>(userdata);
+    const size_t n = size * nmemb;
+    out->append(static_cast<const char*>(ptr), n);
+    return n;
+}
+
+std::string urlEncode(CURL* curl, const std::string& s) {
+    char* enc = curl_easy_escape(curl, s.c_str(), (int)s.size());
+    if (!enc) return {};
+    std::string out(enc);
+    curl_free(enc);
+    return out;
+}
+
+HttpResponse httpPostForm(const std::string& url, const std::vector<std::pair<std::string, std::string>>& params) {
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("curl init failed");
+    std::string body;
+    for (size_t i = 0; i < params.size(); ++i) {
+        if (i > 0) body.push_back('&');
+        body += urlEncode(curl, params[i].first);
+        body.push_back('=');
+        body += urlEncode(curl, params[i].second);
+    }
+    HttpResponse res;
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 180L);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body.size());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToString);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res.body);
+    CURLcode rc = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.code);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    if (rc != CURLE_OK) throw std::runtime_error(std::string("http failed: ") + curl_easy_strerror(rc));
+    if (res.code < 200 || res.code >= 300) throw std::runtime_error("http code " + std::to_string(res.code));
+    return res;
 }
 
 std::vector<std::vector<std::string>> parseCsv(const std::vector<uint8_t>& bytes) {
@@ -435,9 +490,122 @@ void writeSocrataHowardPropertyGeoJson(const fs::path& csv_path, const fs::path&
     fs::rename(tmp, out_path, ec);
     if (ec) throw std::runtime_error("rename failed: " + ec.message());
 }
+
+std::string jsonText(const json& props, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        auto it = props.find(key);
+        if (it == props.end() || it->is_null()) continue;
+        if (it->is_string()) {
+            std::string s = trim(it->get<std::string>());
+            if (!s.empty()) return s;
+        } else if (it->is_number_integer()) {
+            return std::to_string(it->get<long long>());
+        } else if (it->is_number_unsigned()) {
+            return std::to_string(it->get<unsigned long long>());
+        } else if (it->is_number_float()) {
+            std::ostringstream os;
+            os << it->get<double>();
+            return os.str();
+        }
+    }
+    return {};
+}
+
+void normalizeBaltimoreCountyArcgisFeature(json& feature) {
+    if (!feature.contains("properties") || !feature["properties"].is_object()) return;
+    json& props = feature["properties"];
+    const std::string taxpin = jsonText(props, {"TAXPIN"});
+    std::string owner = jsonText(props, {"FULL_OWNER_NAME", "OWNER_NA1", "OWNER"});
+    const std::string owner2 = jsonText(props, {"OWNER_NA2"});
+    if (!owner.empty() && !owner2.empty() && lower(owner).find(lower(owner2)) == std::string::npos) {
+        owner += " " + owner2;
+    }
+    std::string address = jsonText(props, {"PREMISE_ADDRESS"});
+    if (address.empty()) {
+        const std::vector<std::string> parts = {
+            jsonText(props, {"ST_NUM"}),
+            jsonText(props, {"ST_DIR"}),
+            jsonText(props, {"STREETNAME"}),
+            jsonText(props, {"STREETTYPE"})
+        };
+        for (const std::string& p : parts) {
+            if (p.empty()) continue;
+            if (!address.empty()) address.push_back(' ');
+            address += p;
+        }
+    }
+    props["jurisdiction"] = "Baltimore County";
+    props["source_file"] = "Baltimore County Tax parcel ArcGIS service";
+    props["source_parcel_id"] = !taxpin.empty() ? taxpin : jsonText(props, {"PIN", "PARCEL_ASSET_ID", "OBJECTID"});
+    props["account_id"] = taxpin;
+    props["blocklot"] = taxpin;
+    props["address"] = address;
+    props["owner"] = owner;
+    props["land_value"] = jsonText(props, {"LAND_VALUE"});
+    props["improvement_value"] = jsonText(props, {"IMPROVEMENT_VALUE"});
+    props["current_value"] = jsonText(props, {"TOTAL_VALUE"});
+    props["sale_price"] = jsonText(props, {"SALE_PRICE"});
+    props["sale_date"] = jsonText(props, {"SALE_DATE"});
+    props["year_built"] = jsonText(props, {"YEAR_BUILT"});
+    props["sdat_link"] = jsonText(props, {"URL"});
+}
+
+void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path) {
+    if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
+    json ids = json::parse(httpPostForm(service_url + "/query", {
+        {"where", "1=1"},
+        {"returnIdsOnly", "true"},
+        {"f", "json"}
+    }).body);
+    if (ids.contains("error")) throw std::runtime_error("ArcGIS object ID query failed: " + ids["error"].dump());
+    std::vector<int64_t> object_ids;
+    for (const auto& id : ids.value("objectIds", json::array())) object_ids.push_back(id.get<int64_t>());
+    std::sort(object_ids.begin(), object_ids.end());
+    if (object_ids.empty()) throw std::runtime_error("ArcGIS service returned no object IDs");
+
+    fs::create_directories(out_path.parent_path());
+    fs::path tmp = out_path;
+    tmp += ".part";
+    std::ofstream out(tmp);
+    if (!out) throw std::runtime_error("failed to open output " + tmp.string());
+    out << "{\"type\":\"FeatureCollection\",\"name\":\"" << jsonEscape(out_path.stem().string()) << "\",\"features\":[";
+    bool first_feature = true;
+    size_t written = 0;
+    constexpr size_t page_size = 2000;
+    for (size_t off = 0; off < object_ids.size(); off += page_size) {
+        std::ostringstream id_list;
+        const size_t end = std::min(object_ids.size(), off + page_size);
+        for (size_t i = off; i < end; ++i) {
+            if (i > off) id_list << ',';
+            id_list << object_ids[i];
+        }
+        json page = json::parse(httpPostForm(service_url + "/query", {
+            {"objectIds", id_list.str()},
+            {"outFields", "*"},
+            {"returnGeometry", "true"},
+            {"outSR", "4326"},
+            {"f", "geojson"}
+        }).body);
+        if (page.contains("error")) throw std::runtime_error("ArcGIS feature query failed: " + page["error"].dump());
+        for (auto& feature : page.value("features", json::array())) {
+            normalizeBaltimoreCountyArcgisFeature(feature);
+            if (!first_feature) out << ',';
+            first_feature = false;
+            out << feature.dump();
+            written++;
+        }
+    }
+    out << "]}\n";
+    out.close();
+    if (written == 0) throw std::runtime_error("ArcGIS service returned no features");
+    std::error_code ec;
+    fs::rename(tmp, out_path, ec);
+    if (ec) throw std::runtime_error("rename failed: " + ec.message());
+}
 }
 
 bool layerHasImportSource(const LayerDef& layer) {
+    if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
     return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties") &&
         !layer.import_url.empty();
 }
@@ -461,6 +629,19 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
             res.changed = true;
             res.not_modified = false;
             res.message = "imported Socrata CSV properties via " + dl.message;
+        } catch (const std::exception& e) {
+            res.ok = false;
+            res.message = std::string("import failed: ") + e.what();
+        }
+        return res;
+    }
+    if (layer.import_type == "arcgis_feature_layer") {
+        try {
+            writeArcgisFeatureLayerGeoJson(layer.import_service_url, out_path);
+            res.ok = true;
+            res.changed = true;
+            res.not_modified = false;
+            res.message = "imported ArcGIS feature layer";
         } catch (const std::exception& e) {
             res.ok = false;
             res.message = std::string("import failed: ") + e.what();

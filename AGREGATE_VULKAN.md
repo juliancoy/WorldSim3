@@ -10,6 +10,40 @@ Move expensive aggregate generation, especially parcel/value choropleth aggregat
 - Smooth methods can already produce a raster/texture handoff through `HeatmapRenderData::raster` and `uploadRgbaTexture`.
 - Existing Vulkan helpers are focused on texture upload and ImGui presentation, not compute resource management.
 
+## Howard County Splat Benchmark
+Use the GPU aggregate harness to profile the full Howard County parcel extent without the UI/render loop:
+
+```bash
+./build/worldsim3_gpu_aggregate_harness \
+  --howard \
+  --input data/layers/howard_county_parcels.geojson \
+  --jurisdiction "Howard County" \
+  --raster 512 \
+  --repeats 3
+```
+
+The harness loads all matching features, computes the full input extent, emits one heat sample per parcel centroid, runs the real `buildGpuSplatAggregate` compute path, and separately times the CPU separable blur pass currently used after GPU binning. Useful switches:
+
+```bash
+--raster 1024       # square raster dimensions
+--repeats 10        # repeat aggregate timing
+--sigma 6           # blur sigma in raster pixels
+--no-cpu-blur       # isolate GPU binning/readback cost
+--input PATH        # use regional_parcels.geojson or a staging layer
+--jurisdiction NAME # e.g. HowardCounty for regional_parcels.geojson
+```
+
+Baseline on the current machine with `data/layers/howard_county_parcels.geojson` after persistent GPU buffers/descriptor/command-buffer reuse:
+
+| Raster | Samples | GPU bin/readback avg | CPU blur avg | Total avg |
+| --- | ---: | ---: | ---: | ---: |
+| 512x512 | 110,598 | ~205 ms | ~132 ms | ~337 ms |
+| 512x512 no blur | 110,598 | ~202 ms | 0 ms | ~202 ms |
+| 1024x1024 | 110,598 | ~749 ms | ~649 ms | ~1398 ms |
+| 1024x1024 no blur | 110,598 | ~766 ms | 0 ms | ~766 ms |
+
+Persistent buffers removed the per-call allocation churn but only modestly improved timings. The current path is now dominated by queue wait/readback and CPU blur. Improving the splat algorithm should focus on GPU-side blur/output image generation, avoiding full readback when the UI only needs a texture, and keeping the aggregate result resident across frames.
+
 ## Proposed Files
 - `aggregate_vulkan.h`
 - `aggregate_vulkan.cpp`

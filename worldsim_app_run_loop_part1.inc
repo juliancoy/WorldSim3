@@ -337,35 +337,19 @@
             persist_layer_download_queue();
         };
         auto queue_all_missing_layer_downloads = [&]() {
-            refresh_local_layer_exists_cache();
-            size_t queued = 0;
-            size_t missing_without_source = 0;
-            size_t already_present = 0;
-            size_t already_pending = 0;
-            for (size_t idx = 0; idx < layers.size(); ++idx) {
-                const bool local_exists = idx < local_layer_exists_cache.size() ? local_layer_exists_cache[idx] : false;
-                if (local_exists) {
-                    already_present++;
-                    continue;
-                }
-                if (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) {
-                    missing_without_source++;
-                    continue;
-                }
-                if (layer_download_pending(idx)) {
-                    already_pending++;
-                    continue;
-                }
-                if (enqueue_layer_download_request(idx)) queued++;
-            }
-            data_library_status_msg =
-                "Download All queued " + std::to_string(queued) +
-                " missing layer(s); " + std::to_string(already_present) +
-                " already present, " + std::to_string(already_pending) +
-                " already queued/active, " + std::to_string(missing_without_source) +
-                " missing without source URL";
-            layer_download_last_event = data_library_status_msg;
-            return queued;
+            DataLibraryCoordinatorContext data_library_ctx;
+            data_library_ctx.root = root;
+            data_library_ctx.layers = &layers;
+            data_library_ctx.layer_registry = &layer_registry;
+            data_library_ctx.local_layer_exists_cache = &local_layer_exists_cache;
+            data_library_ctx.data_freshness_state = &data_freshness_state;
+            data_library_ctx.data_freshness_msg = &data_freshness_msg;
+            data_library_ctx.data_library_status_msg = &data_library_status_msg;
+            data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
+            data_library_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueue_layer_download_request(idx); };
+            data_library_ctx.layer_download_pending = [&](size_t idx) { return layer_download_pending(idx); };
+            data_library_ctx.layer_download_last_event = &layer_download_last_event;
+            return queueAllMissingLayerDownloads(data_library_ctx);
         };
         // Apply REST control commands on main thread.
         {
@@ -375,49 +359,20 @@
             double latc = api_lat_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
             if (!std::isnan(lonc)) center_lon = lonc;
             if (!std::isnan(latc)) center_lat = std::clamp(latc, -85.0, 85.0);
-            std::lock_guard<std::mutex> lk(api_layer_mutex);
-            for (const auto& kv : api_layer_enable_cmds) {
-                for (size_t i = 0; i < layers.size(); ++i) {
-                    if (layers[i].file == kv.first) {
-                        layers[i].enabled = kv.second;
-                        if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
-                    }
-                }
-            }
-            api_layer_enable_cmds.clear();
-            if (!api_layer_fill_cmds.empty()) {
-                std::lock_guard<std::mutex> lk_fill(layer_fill_mutex);
-                for (const auto& kv : api_layer_fill_cmds) {
-                    for (size_t i = 0; i < layers.size(); ++i) {
-                        if (layers[i].file == kv.first && i < layer_fill_enabled.size()) {
-                            if (layer_fill_enabled[i] != kv.second) {
-                                layer_fill_enabled[i] = kv.second;
-                                layer_fill_state_changed = true;
-                            }
-                        }
-                    }
-                }
-                api_layer_fill_cmds.clear();
-            }
-            if (!api_layer_download_cmds.empty()) {
-                for (const auto& file : api_layer_download_cmds) {
-                    bool matched = false;
-                    for (size_t idx = 0; idx < layers.size(); ++idx) {
-                        if (layers[idx].file != file) continue;
-                        matched = true;
-                        if (layers[idx].source_url.empty() && !layerHasImportSource(layers[idx])) {
-                            data_library_status_msg = "No source URL/import source for " + layers[idx].file;
-                        } else {
-                            enqueue_layer_download_request(idx);
-                        }
-                        break;
-                    }
-                    if (!matched) {
-                        data_library_status_msg = "Download request ignored (unknown layer file): " + file;
-                    }
-                }
-                api_layer_download_cmds.clear();
-            }
+            LayerApiCommandCoordinatorContext layer_api_ctx;
+            layer_api_ctx.layers = &layers;
+            layer_api_ctx.layer_registry = &layer_registry;
+            layer_api_ctx.api_layer_mutex = &api_layer_mutex;
+            layer_api_ctx.api_layer_enable_cmds = &api_layer_enable_cmds;
+            layer_api_ctx.api_layer_fill_cmds = &api_layer_fill_cmds;
+            layer_api_ctx.api_layer_download_cmds = &api_layer_download_cmds;
+            layer_api_ctx.layer_profile_dirty = &layer_profile_dirty;
+            layer_api_ctx.layer_fill_mutex = &layer_fill_mutex;
+            layer_api_ctx.layer_fill_enabled = &layer_fill_enabled;
+            layer_api_ctx.layer_fill_state_changed = &layer_fill_state_changed;
+            layer_api_ctx.data_library_status_msg = &data_library_status_msg;
+            layer_api_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueue_layer_download_request(idx); };
+            applyLayerApiCommands(layer_api_ctx);
             const uint64_t ui_seq = api_ui_cmd_seq.load(std::memory_order_relaxed);
             ImGuiIO& io = ImGui::GetIO();
             if (api_ui_mouse_release_pending) {
@@ -457,7 +412,7 @@
             const double max_lat = 39.40;
             size_t missing = 0;
             size_t total = 0;
-            for (int z = 11; z <= 18; ++z) {
+            for (int z = kMinZoom; z <= kMaxNativeTileZoom; ++z) {
                 auto [x0, y_max] = deg2num(min_lat, min_lon, z);
                 auto [x1, y_min] = deg2num(max_lat, max_lon, z);
                 if (x0 > x1) std::swap(x0, x1);
@@ -709,10 +664,20 @@
                 ImGui::TextDisabled("No basemap source enabled.");
             }
             if (osm_total > 0) {
-                ImGui::TextDisabled("OSM coverage: %zu/%zu tiles present (z11-z18)", (size_t)(osm_total - osm_missing), osm_total);
+                ImGui::TextDisabled(
+                    "OSM coverage: %zu/%zu tiles present (z%d-z%d)",
+                    (size_t)(osm_total - osm_missing),
+                    osm_total,
+                    kMinZoom,
+                    kMaxNativeTileZoom);
             }
             if (topo_total > 0) {
-                ImGui::TextDisabled("Topo coverage: %zu/%zu tiles present (z11-z18)", (size_t)(topo_total - topo_missing), topo_total);
+                ImGui::TextDisabled(
+                    "Topo coverage: %zu/%zu tiles present (z%d-z%d)",
+                    (size_t)(topo_total - topo_missing),
+                    topo_total,
+                    kMinZoom,
+                    kMaxNativeTileZoom);
             }
             if (basemap_download.inflight) {
                 ImGui::Separator();
@@ -724,270 +689,73 @@
                 lazy_tile_download.queue.size());
         }
         auto resolve_download_label = [&](const std::string& key) -> std::string {
-            if (key == "tiles") return "OpenStreetMap";
-            if (key == "tiles_topo" || key == "tiles_topographic") return "Topographic";
-            if (key == "tiles_satellite") return "Satellite";
-            for (const auto& layer : layers) {
-                if (layer.file == key || layer.name == key) return layer.name;
-            }
-            return key;
+            return resolveDataLibraryDownloadLabel(layer_registry, layers, key);
         };
-        auto draw_category = [&](LayerDef::Category cat, const char* label) {
-            if (!ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) return;
-            std::string show_id = std::string("Show ") + label;
-            std::string hide_id = std::string("Hide ") + label;
-            if (ImGui::Button(show_id.c_str())) {
-                for (auto& l : layers) if (l.category == cat) l.enabled = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button(hide_id.c_str())) {
-                for (auto& l : layers) if (l.category == cat) l.enabled = false;
-            }
-            std::string current_subcategory;
-            for (auto& l : layers) {
-                size_t idx = (size_t)(&l - &layers[0]);
-                if (l.category != cat) continue;
-                if (l.subcategory != current_subcategory) {
-                    current_subcategory = l.subcategory;
-                    if (!current_subcategory.empty()) ImGui::SeparatorText(current_subcategory.c_str());
-                }
-                ImGui::PushID((int)idx);
-                const fs::path local_layer_path = root / "data" / "layers" / l.file;
-                const bool local_layer_exists = idx < local_layer_exists_cache.size() ? local_layer_exists_cache[idx] : false;
-                if (!local_layer_exists) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.22f, 0.12f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.30f, 0.14f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.46f, 0.18f, 0.08f, 1.0f));
-                    bool can_download = !l.source_url.empty() || layerHasImportSource(l);
-                    const bool has_source_metadata = can_download || !l.reference_url.empty() || !l.source_urls.empty();
-                    if (ImGui::SmallButton("D")) {
-                        if (can_download) {
-                            enqueue_layer_download_request(idx);
-                        } else {
-                            data_library_status_msg = has_source_metadata
-                                ? "No direct downloadable GeoJSON URL for " + l.file + "; see layer tooltip for source URLs."
-                                : "No source URL for " + l.file;
-                        }
-                    }
-                    ImGui::PopStyleColor(3);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("Download missing dataset");
-                        ImGui::TextDisabled(
-                            "%s",
-                            can_download ? (l.source_url.empty() ? "Import source available" : "Direct download URL available") :
-                            (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
-                        ImGui::EndTooltip();
-                    }
-                    ImGui::SameLine();
-                }
-                auto icon_toggle = [&](const char* id, const char* icon, bool& value, const char* tip) -> bool {
-                    ImGui::PushID(id);
-                    if (value) {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.78f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.55f, 0.92f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.34f, 0.62f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                    } else {
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.16f, 0.16f, 0.22f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.32f, 0.32f, 0.32f, 0.55f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.42f, 0.42f, 0.42f, 0.75f));
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.55f, 0.55f, 1.0f));
-                    }
-                    bool changed = false;
-                    if (ImGui::SmallButton(icon)) {
-                        value = !value;
-                        changed = true;
-                    }
-                    ImGui::PopStyleColor(4);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted(tip);
-                        ImGui::TextDisabled("%s", value ? "Enabled" : "Disabled");
-                        ImGui::EndTooltip();
-                    }
-                    ImGui::PopID();
-                    ImGui::SameLine();
-                    return changed;
-                };
-
-                icon_toggle("show", "V", l.enabled, "Show layer");
-                if (ImGui::SmallButton("⚙")) ImGui::OpenPopup("layer_display_settings");
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Layer display settings");
-                    ImGui::EndTooltip();
-                }
-                LayerSettingsPopupContext layer_settings_ctx;
-                layer_settings_ctx.root = root;
-                layer_settings_ctx.local_layer_path = local_layer_path;
-                layer_settings_ctx.idx = idx;
-                layer_settings_ctx.layer = &l;
-                layer_settings_ctx.local_layer_exists = local_layer_exists;
-                layer_settings_ctx.zoom = zoom;
-                layer_settings_ctx.data_library_status_msg = &data_library_status_msg;
-                layer_settings_ctx.data_freshness_state = &data_freshness_state;
-                layer_settings_ctx.data_freshness_msg = &data_freshness_msg;
-                layer_settings_ctx.mark_local_layer_exists = [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); };
-                layer_settings_ctx.enqueue_hydration = [&](size_t i, bool required) { enqueue_hydration(i, required); };
-                layer_settings_ctx.layer_spatial = &layer_spatial;
-                layer_settings_ctx.layer_states = &layer_states;
-                layer_settings_ctx.status_mutex = &status_mutex;
-                layer_settings_ctx.layer_fill_enabled = &layer_fill_enabled;
-                layer_settings_ctx.layer_hover_enabled = &layer_hover_enabled;
-                layer_settings_ctx.layer_inspect_enabled = &layer_inspect_enabled;
-                layer_settings_ctx.layer_heatmap_enabled = &layer_heatmap_enabled;
-                layer_settings_ctx.layer_heatmap_algo = &layer_heatmap_algo;
-                layer_settings_ctx.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
-                layer_settings_ctx.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
-                layer_settings_ctx.layer_normalize_mode = &layer_normalize_mode;
-                layer_settings_ctx.layer_heatmap_cell_px = &layer_heatmap_cell_px;
-                layer_settings_ctx.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
-                layer_settings_ctx.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
-                layer_settings_ctx.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
-                layer_settings_ctx.layer_heatmap_multires_blend = &layer_heatmap_multires_blend;
-                layer_settings_ctx.layer_heatmap_zoom_adaptive_bandwidth = &layer_heatmap_zoom_adaptive_bandwidth;
-                layer_settings_ctx.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
-                layer_settings_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
-                layer_settings_ctx.heatmap_algo = heatmap_algo;
-                layer_settings_ctx.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
-                layer_settings_ctx.layer_fill_mutex = &layer_fill_mutex;
-                layer_settings_ctx.layer_fill_state_changed = &layer_fill_state_changed;
-                layer_settings_ctx.layer_hover_state_changed = &layer_hover_state_changed;
-                layer_settings_ctx.layer_inspect_state_changed = &layer_inspect_state_changed;
-                layer_settings_ctx.layer_heatmap_state_changed = &layer_heatmap_state_changed;
-                layer_settings_ctx.heatmap_controls_active = &heatmap_controls_active;
-                layer_settings_ctx.heatmap_input_float_enter =
-                    [&](const char* label, float& value, float min_value, float max_value, const char* format) {
-                        return heatmap_input_float_enter(label, value, min_value, max_value, format);
-                    };
-                drawLayerDisplaySettingsPopup(layer_settings_ctx);
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Text, l.color);
-                ImGui::TextUnformatted(l.name.c_str());
-                ImGui::PopStyleColor();
-                const bool row_hovered = ImGui::IsItemHovered();
-                ImGui::SameLine();
-                LayerRuntimeState st;
-                {
-                    std::lock_guard<std::mutex> lk(status_mutex);
-                    if (idx < layer_states.size()) st = layer_states[idx];
-                }
-                if (st.status == LayerPipelineStatus::Failed) {
-                    ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", statusToString(st.status));
-                } else {
-                    ImGui::TextDisabled("[%s | %zu]", statusToString(st.status), st.feature_count);
-                }
-                const bool status_hovered = ImGui::IsItemHovered();
-                if (row_hovered || status_hovered) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted(l.name.c_str());
-                    ImGui::Separator();
-                    ImGui::Text("Category: %s", categoryToString(l.category));
-                    ImGui::Text("Status: %s", statusToString(st.status));
-                    ImGui::Text("Features: %zu", st.feature_count);
-                    ImGui::Text("File: %s", l.file.c_str());
-                    ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
-                    if (!l.subcategory.empty()) ImGui::Text("Subcategory: %s", l.subcategory.c_str());
-                    if (!l.scale.empty()) ImGui::Text("Scale: %s", l.scale.c_str());
-                    if (!l.heatmap_field.empty()) ImGui::Text("Heatmap Field: %s", l.heatmap_field.c_str());
-                    if (!l.description.empty()) ImGui::TextWrapped("Description: %s", l.description.c_str());
-                    if (!l.source_url.empty()) ImGui::TextWrapped("Download URL: %s", l.source_url.c_str());
-                    if (!l.reference_url.empty()) ImGui::TextWrapped("Reference: %s", l.reference_url.c_str());
-                    if (!l.source_urls.empty()) {
-                        ImGui::SeparatorText("Source URLs");
-                        for (const auto& url : l.source_urls) ImGui::TextWrapped("%s", url.c_str());
-                    }
-                    if (!st.error.empty()) {
-                        ImGui::Separator();
-                        ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Error: %s", st.error.c_str());
-                    }
-                    ImGui::EndTooltip();
-                }
-                ImGui::PopID();
-            }
-            if (cat == LayerDef::Category::Safety) {
-                ImGui::SeparatorText("Crime Filters");
-                ImGui::Checkbox("Enable Crime Filter", &crime_filter_enabled);
-                ImGui::Checkbox("Filter Crime Year", &crime_filter_use_year);
-                ImGui::BeginDisabled(!crime_filter_use_year);
-                ImGui::SliderInt("Crime Year Min", &crime_year_min, 1900, 2100);
-                ImGui::SliderInt("Crime Year Max", &crime_year_max, 1900, 2100);
-                if (crime_year_min > crime_year_max) std::swap(crime_year_min, crime_year_max);
-                ImGui::EndDisabled();
-                ImGui::Checkbox("Homicide", &crime_filter_homicide); ImGui::SameLine();
-                ImGui::Checkbox("Robbery", &crime_filter_robbery);
-                ImGui::Checkbox("Assault", &crime_filter_assault); ImGui::SameLine();
-                ImGui::Checkbox("Burglary", &crime_filter_burglary);
-                ImGui::Checkbox("Theft/Larceny", &crime_filter_theft); ImGui::SameLine();
-                ImGui::Checkbox("Auto Theft", &crime_filter_auto_theft);
-                ImGui::Checkbox("Drug/Narcotic", &crime_filter_drug); ImGui::SameLine();
-                ImGui::Checkbox("Shooting", &crime_filter_shooting);
-                if (ImGui::Button("Clear Crime Filters")) {
-                    crime_filter_homicide = false;
-                    crime_filter_robbery = false;
-                    crime_filter_assault = false;
-                    crime_filter_burglary = false;
-                    crime_filter_theft = false;
-                    crime_filter_auto_theft = false;
-                    crime_filter_drug = false;
-                    crime_filter_shooting = false;
-                    crime_filter_use_year = false;
-                    crime_filter_enabled = false;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Refresh Crime Breakdown")) {
-                    std::unordered_map<std::string, int> counts;
-                    auto add_layer_counts = [&](int idx) {
-                        if (idx < 0 || (size_t)idx >= layers.size()) return;
-                        for (const auto& fg : layers[(size_t)idx].features) {
-                            const std::string desc = toLowerAscii(getPropertyValue(fg, "Description"));
-                            const std::string code = toLowerAscii(getPropertyValue(fg, "CrimeCode"));
-                            const std::string dt = getPropertyValue(fg, "CrimeDateTime");
-                            if (crime_filter_enabled) {
-                                if (crime_filter_use_year) {
-                                    int yr = extractYearMaybe(dt);
-                                    if (yr < 0 || yr < crime_year_min || yr > crime_year_max) continue;
-                                }
-                            const bool any_type =
-                                crime_filter_homicide || crime_filter_robbery || crime_filter_assault ||
-                                crime_filter_burglary || crime_filter_theft || crime_filter_auto_theft || crime_filter_drug || crime_filter_shooting;
-                                if (any_type) {
-                                    auto has = [&](const char* s) { return desc.find(s) != std::string::npos || code.find(s) != std::string::npos; };
-                                    bool ok = false;
-                                    if (crime_filter_homicide && (has("homicide") || has("murder"))) ok = true;
-                                    if (crime_filter_robbery && has("robbery")) ok = true;
-                                    if (crime_filter_assault && (has("assault") || has("aggravated assault"))) ok = true;
-                                    if (crime_filter_burglary && has("burglary")) ok = true;
-                                    if (crime_filter_theft && (has("larceny") || has("theft"))) ok = true;
-                                    if (crime_filter_auto_theft && (has("motor vehicle theft") || has("auto theft") || has("vehicle theft"))) ok = true;
-                                    if (crime_filter_drug && (has("drug") || has("narcotic"))) ok = true;
-                                    if (crime_filter_shooting && has("shooting")) ok = true;
-                                    if (!ok) continue;
-                                }
-                            }
-                            std::string label = trimDisplayValue(getPropertyValue(fg, "Description"));
-                            if (label.empty()) label = trimDisplayValue(getPropertyValue(fg, "CrimeCode"));
-                            if (label.empty()) label = "(unknown)";
-                            counts[label] += 1;
-                        }
-                    };
-                    add_layer_counts(crime_nibrs_layer_idx);
-                    add_layer_counts(crime_legacy_layer_idx);
-                    crime_breakdown.clear();
-                    crime_breakdown.reserve(counts.size());
-                    for (auto& kv : counts) crime_breakdown.push_back(kv);
-                    std::sort(crime_breakdown.begin(), crime_breakdown.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
-                }
-                ImGui::Text("Breakdown Rows: %zu", crime_breakdown.size());
-            }
+        LayerUiContextFactoryInput layer_ui_input;
+        layer_ui_input.root = root;
+        layer_ui_input.layers = &layers;
+        layer_ui_input.layer_registry = &layer_registry;
+        layer_ui_input.local_layer_exists_cache = &local_layer_exists_cache;
+        layer_ui_input.data_freshness_state = &data_freshness_state;
+        layer_ui_input.data_freshness_msg = &data_freshness_msg;
+        layer_ui_input.data_library_status_msg = &data_library_status_msg;
+        layer_ui_input.parcel_parameter_mode = &parcel_parameter_mode;
+        layer_ui_input.enqueue_layer_download_request = [&](size_t i) { return enqueue_layer_download_request(i); };
+        layer_ui_input.mark_local_layer_exists = [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); };
+        layer_ui_input.enqueue_hydration = [&](size_t i, bool required) { enqueue_hydration(i, required); };
+        layer_ui_input.heatmap_input_float_enter = [&](const char* label, float& value, float min_value, float max_value, const char* format) {
+            return heatmap_input_float_enter(label, value, min_value, max_value, format);
         };
+        layer_ui_input.layer_spatial = &layer_spatial;
+        layer_ui_input.layer_states = &layer_states;
+        layer_ui_input.status_mutex = &status_mutex;
+        layer_ui_input.layer_fill_enabled = &layer_fill_enabled;
+        layer_ui_input.layer_hover_enabled = &layer_hover_enabled;
+        layer_ui_input.layer_inspect_enabled = &layer_inspect_enabled;
+        layer_ui_input.layer_heatmap_enabled = &layer_heatmap_enabled;
+        layer_ui_input.layer_heatmap_algo = &layer_heatmap_algo;
+        layer_ui_input.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
+        layer_ui_input.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
+        layer_ui_input.layer_normalize_mode = &layer_normalize_mode;
+        layer_ui_input.layer_heatmap_cell_px = &layer_heatmap_cell_px;
+        layer_ui_input.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
+        layer_ui_input.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
+        layer_ui_input.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
+        layer_ui_input.layer_heatmap_multires_blend = &layer_heatmap_multires_blend;
+        layer_ui_input.layer_heatmap_zoom_adaptive_bandwidth = &layer_heatmap_zoom_adaptive_bandwidth;
+        layer_ui_input.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
+        layer_ui_input.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+        layer_ui_input.heatmap_algo = heatmap_algo;
+        layer_ui_input.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
+        layer_ui_input.layer_fill_mutex = &layer_fill_mutex;
+        layer_ui_input.layer_fill_state_changed = &layer_fill_state_changed;
+        layer_ui_input.layer_hover_state_changed = &layer_hover_state_changed;
+        layer_ui_input.layer_inspect_state_changed = &layer_inspect_state_changed;
+        layer_ui_input.layer_heatmap_state_changed = &layer_heatmap_state_changed;
+        layer_ui_input.heatmap_controls_active = &heatmap_controls_active;
+        LayerUiSharedContext layer_ui_shared = makeLayerUiSharedContext(layer_ui_input);
 
-        draw_category(LayerDef::Category::Housing, "Housing");
-        draw_category(LayerDef::Category::PublicHealth, "Public Health");
-        draw_category(LayerDef::Category::Safety, "Safety");
-        draw_category(LayerDef::Category::Infrastructure, "Infrastructure");
-        draw_category(LayerDef::Category::Zoning, "Zoning");
+        LayersPanelContextFactoryInput layers_panel_input;
+        layers_panel_input.shared = &layer_ui_shared;
+        layers_panel_input.parcel_layer_idx = parcel_layer_idx;
+        layers_panel_input.zoom = zoom;
+        layers_panel_input.crime_filter_enabled = &crime_filter_enabled;
+        layers_panel_input.crime_filter_use_year = &crime_filter_use_year;
+        layers_panel_input.crime_year_min = &crime_year_min;
+        layers_panel_input.crime_year_max = &crime_year_max;
+        layers_panel_input.crime_filter_homicide = &crime_filter_homicide;
+        layers_panel_input.crime_filter_robbery = &crime_filter_robbery;
+        layers_panel_input.crime_filter_assault = &crime_filter_assault;
+        layers_panel_input.crime_filter_burglary = &crime_filter_burglary;
+        layers_panel_input.crime_filter_theft = &crime_filter_theft;
+        layers_panel_input.crime_filter_auto_theft = &crime_filter_auto_theft;
+        layers_panel_input.crime_filter_drug = &crime_filter_drug;
+        layers_panel_input.crime_filter_shooting = &crime_filter_shooting;
+        layers_panel_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+        layers_panel_input.crime_legacy_layer_idx = crime_legacy_layer_idx;
+        layers_panel_input.crime_breakdown = &crime_breakdown;
+        LayersPanelUiContext layers_panel_ctx = makeLayersPanelUiContext(layers_panel_input);
+        drawLayerCategoriesPanel(layers_panel_ctx);
         bool zoning_filters_changed = false;
         if (zoning_layer_idx >= 0 && ImGui::CollapsingHeader("Zoning Filters", ImGuiTreeNodeFlags_DefaultOpen)) {
             if (ImGui::Checkbox("Use SimCity zoning colors##zoning_simcity_colors", &app_settings.zoning_use_simcity_colors)) {
@@ -1162,52 +930,27 @@
                     }
                 };
                 const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows"};
-                if (data_library_bulk_inflight && data_library_bulk_future.valid() &&
-                    data_library_bulk_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                    LayerDownloadSummary summary = data_library_bulk_future.get();
-                    data_library_bulk_inflight = false;
-                    refresh_local_layer_exists_cache();
-                    data_library_status_msg = "Downloaded phase: " + std::to_string(summary.downloaded) +
-                        " fetched/checked, " + std::to_string(summary.skipped) +
-                        " skipped, " + std::to_string(summary.failed) + " failed";
-                    {
-                        std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
-                        data_library_bulk_progress.clear();
-                    }
-                    for (size_t i = 0; i < layers.size(); ++i) {
-                        if (i < local_layer_exists_cache.size() && local_layer_exists_cache[i]) {
-                            data_freshness_state[i] = FreshnessState::UpToDate;
-                            if (data_freshness_msg[i].empty() || data_freshness_msg[i] == "not downloaded") {
-                                data_freshness_msg[i] = "downloaded";
-                            }
-                            enqueue_hydration(i, true);
-                        }
-                    }
-                }
+                DataLibraryCoordinatorContext data_library_ctx;
+                data_library_ctx.root = root;
+                data_library_ctx.layers = &layers;
+                data_library_ctx.layer_registry = &layer_registry;
+                data_library_ctx.local_layer_exists_cache = &local_layer_exists_cache;
+                data_library_ctx.data_freshness_state = &data_freshness_state;
+                data_library_ctx.data_freshness_msg = &data_freshness_msg;
+                data_library_ctx.data_library_status_msg = &data_library_status_msg;
+                data_library_ctx.data_library_bulk_inflight = &data_library_bulk_inflight;
+                data_library_ctx.data_library_bulk_mutex = &data_library_bulk_mutex;
+                data_library_ctx.data_library_bulk_progress = &data_library_bulk_progress;
+                data_library_ctx.data_library_bulk_future = &data_library_bulk_future;
+                data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
+                data_library_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
+                finalizeDataLibraryBulkDownloadIfReady(data_library_ctx);
                 ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", data_library_query, sizeof(data_library_query));
                 ImGui::SameLine();
                 if (ImGui::Button("Clear")) data_library_query[0] = '\0';
                 ImGui::SameLine();
                 if (ImGui::Button("Check All Updates")) {
-                    size_t checked = 0;
-                    size_t updates = 0;
-                    for (size_t i = 0; i < layers.size(); ++i) {
-                        const auto& l = layers[i];
-                        const bool local_exists = i < local_layer_exists_cache.size() ? local_layer_exists_cache[i] : false;
-                        const fs::path local_path = root / "data" / "layers" / l.file;
-                        const std::string freshness_url = l.source_url.empty() ? l.import_url : l.source_url;
-                        if (!local_exists || freshness_url.empty()) {
-                            data_freshness_state[i] = freshness_url.empty() ? FreshnessState::NotTrackable : FreshnessState::Unknown;
-                            data_freshness_msg[i] = freshness_url.empty() ? "no source URL/import source" : "not downloaded";
-                            continue;
-                        }
-                        FreshnessCheckResult cr = checkUrlFreshnessVersioned(freshness_url, local_path, root / "data" / "versions");
-                        data_freshness_state[i] = cr.state;
-                        data_freshness_msg[i] = cr.message;
-                        checked++;
-                        if (cr.state == FreshnessState::UpdateAvailable) updates++;
-                    }
-                    data_library_status_msg = "Checked " + std::to_string(checked) + " datasets; updates available: " + std::to_string(updates);
+                    checkAllDataLibraryUpdates(data_library_ctx);
                 }
                 ImGui::Separator();
                 ImGui::SetNextItemWidth(150.0f);
@@ -1216,8 +959,7 @@
                 ImGui::Checkbox("Include large", &data_library_include_large);
                 ImGui::SameLine();
                 if (ImGui::Button("Rescan Local Files")) {
-                    refresh_local_layer_exists_cache();
-                    data_library_status_msg = "Rescanned local layer files";
+                    rescanDataLibraryLocalFiles(data_library_ctx);
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(queueable_missing_layer_count == 0);
@@ -1235,25 +977,10 @@
                 ImGui::SameLine();
                 ImGui::BeginDisabled(data_library_bulk_inflight);
                 if (ImGui::Button("Download Phase")) {
-                    const std::string phase = download_phases[data_library_download_phase];
-                    const bool include_large = data_library_include_large;
-                    {
-                        std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
-                        data_library_bulk_progress = "Starting " + phase + " download";
-                    }
-                    data_library_status_msg = "Downloading " + phase + " in background";
-                    data_library_bulk_inflight = true;
-                    data_library_bulk_future = std::async(std::launch::async, [root, phase, include_large, &data_library_bulk_mutex, &data_library_bulk_progress]() {
-                        setCurrentThreadName("ws3-data-fetch");
-                        return downloadLayerManifestPhase(
-                            root,
-                            phase,
-                            include_large,
-                            [&data_library_bulk_mutex, &data_library_bulk_progress](size_t i, size_t total, const std::string& msg) {
-                                std::lock_guard<std::mutex> lk(data_library_bulk_mutex);
-                                data_library_bulk_progress = "[" + std::to_string(i) + "/" + std::to_string(total) + "] " + msg;
-                            });
-                    });
+                    startDataLibraryPhaseDownload(
+                        data_library_ctx,
+                        download_phases[data_library_download_phase],
+                        data_library_include_large);
                 }
                 ImGui::EndDisabled();
                 if (data_library_bulk_inflight) {

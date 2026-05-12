@@ -23,7 +23,7 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": false
   },
   {
     "name": "Baltimore County Parcels",
@@ -42,7 +42,11 @@
       "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
       "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download",
       "https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx"
-    ]
+    ],
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1"
+    }
   },
   {
     "name": "Howard County Parcels",

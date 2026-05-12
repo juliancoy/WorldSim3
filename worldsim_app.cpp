@@ -17,6 +17,7 @@
 #include "layer_geometry.h"
 #include "layer_workers.h"
 #include "heatmap_render.h"
+#include "heatmap_gpu_aggregate.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
@@ -604,42 +605,25 @@ static TileTexture* getTileTexture(const fs::path& root, const std::string& tile
 }
 
 TileSample getTileSample(const fs::path& root, const std::string& tile_root_dir, int z, int x, int y) {
-    if (z <= kMaxNativeTileZoom) {
-        TileTexture* direct = getTileTexture(root, tile_root_dir, z, x, y);
-        if (direct) return TileSample{direct, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f)};
+    const int max_fetch_zoom = std::min(z, kMaxNativeTileZoom);
+    for (int pz = max_fetch_zoom; pz >= kMinZoom; --pz) {
+        const int dz = z - pz;
+        if (dz < 0) continue;
+        if (dz > 30) continue;
+        const int scale = 1 << dz;
+        const int parent_x = x / scale;
+        const int parent_y = y / scale;
+        const int ox = x % scale;
+        const int oy = y % scale;
+        TileTexture* parent = getTileTexture(root, tile_root_dir, pz, parent_x, parent_y);
+        if (!parent) continue;
 
-        // Missing native-zoom tile: walk up parent levels and sample a sub-rect.
-        for (int pz = z - 1; pz >= kMinZoom; --pz) {
-            const int dz = z - pz;
-            const int scale = 1 << dz;
-            const int parent_x = x / scale;
-            const int parent_y = y / scale;
-            const int ox = x % scale;
-            const int oy = y % scale;
-            TileTexture* parent = getTileTexture(root, tile_root_dir, pz, parent_x, parent_y);
-            if (!parent) continue;
-            const float step = 1.0f / (float)scale;
-            ImVec2 uv0((float)ox * step, (float)oy * step);
-            ImVec2 uv1(uv0.x + step, uv0.y + step);
-            return TileSample{parent, uv0, uv1};
-        }
-        return {};
+        const float step = 1.0f / (float)scale;
+        ImVec2 uv0((float)ox * step, (float)oy * step);
+        ImVec2 uv1(uv0.x + step, uv0.y + step);
+        return TileSample{parent, uv0, uv1};
     }
-
-    const int dz = z - kMaxNativeTileZoom;
-    const int scale = 1 << dz;
-    const int parent_x = x / scale;
-    const int parent_y = y / scale;
-    const int ox = x % scale;
-    const int oy = y % scale;
-
-    TileTexture* parent = getTileTexture(root, tile_root_dir, kMaxNativeTileZoom, parent_x, parent_y);
-    if (!parent) return {};
-
-    const float step = 1.0f / (float)scale;
-    ImVec2 uv0((float)ox * step, (float)oy * step);
-    ImVec2 uv1(uv0.x + step, uv0.y + step);
-    return TileSample{parent, uv0, uv1};
+    return {};
 }
 
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const fs::path& root) {
@@ -867,6 +851,7 @@ static void CleanupTileCache() {
 
 void CleanupVulkan() {
     CleanupTileCache();
+    shutdownGpuSplatAggregate();
     if (g_UploadCommandPool) vkDestroyCommandPool(g_Device, g_UploadCommandPool, g_Allocator);
     if (g_TileSampler) vkDestroySampler(g_Device, g_TileSampler, g_Allocator);
     vkDestroyDescriptorPool(g_Device, g_DescriptorPool, g_Allocator);

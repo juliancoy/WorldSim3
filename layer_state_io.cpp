@@ -6,11 +6,65 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <type_traits>
 
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+template <typename T>
+struct LayerSettingDescriptor {
+    const char* key;
+    std::vector<T>* dst = nullptr;
+    T fallback{};
+};
+
+template <typename T>
+struct ConstLayerSettingDescriptor {
+    const char* key;
+    const std::vector<T>* src = nullptr;
+    T fallback{};
+};
+
+template <typename T>
+void loadLayerSettingsFromObject(
+    const json& root_json,
+    const std::vector<LayerDef>& layers,
+    const std::initializer_list<LayerSettingDescriptor<T>>& settings) {
+    for (const auto& setting : settings) {
+        if (!setting.dst || !root_json.contains(setting.key) || !root_json[setting.key].is_object()) continue;
+        const auto& obj = root_json[setting.key];
+        if (setting.dst->size() < layers.size()) setting.dst->resize(layers.size(), setting.fallback);
+        for (size_t i = 0; i < layers.size(); ++i) {
+            const auto& file = layers[i].file;
+            if constexpr (std::is_same_v<T, bool>) {
+                if (obj.contains(file) && obj[file].is_boolean()) (*setting.dst)[i] = obj[file].template get<bool>();
+            } else if constexpr (std::is_integral_v<T>) {
+                if (obj.contains(file) && obj[file].is_number_integer()) (*setting.dst)[i] = obj[file].template get<T>();
+            } else {
+                if (obj.contains(file) && obj[file].is_number()) (*setting.dst)[i] = obj[file].template get<T>();
+            }
+        }
+    }
+}
+
+template <typename T>
+void saveLayerSettingsToObject(
+    json& root_json,
+    const std::vector<LayerDef>& layers,
+    const std::initializer_list<ConstLayerSettingDescriptor<T>>& settings) {
+    for (const auto& setting : settings) {
+        if (!setting.src) continue;
+        json obj = json::object();
+        for (size_t i = 0; i < layers.size(); ++i) {
+            obj[layers[i].file] = i < setting.src->size() ? (*setting.src)[i] : setting.fallback;
+        }
+        root_json[setting.key] = std::move(obj);
+    }
+}
+}
 
 static void copyToBuffer(const std::string& src, char* dst, size_t dst_size) {
     if (!dst || dst_size == 0) return;
@@ -81,6 +135,7 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
             ld.import_url = import.value("url", std::string());
             ld.import_source_crs = import.value("source_crs", std::string());
             ld.import_shapefile = import.value("shapefile", std::string());
+            ld.import_service_url = import.value("service_url", std::string());
         }
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
         ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
@@ -89,7 +144,7 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
         std::string c = arr[i]["color"].get<std::string>();
         auto hex = [&](int s) { return std::stoi(c.substr(s, 2), nullptr, 16) / 255.0f; };
         ld.color = ImVec4(hex(1), hex(3), hex(5), 1.0f);
-        ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : (i < 4);
+        ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : false;
         ld.category = parseCategory(arr[i], ld.name);
         layers.push_back(std::move(ld));
     }
@@ -164,114 +219,31 @@ void loadLayerUiState(
             if (it.value().is_boolean()) (*zoning_zone_enabled)[it.key()] = it.value().get<bool>();
         }
     }
-    if (layer_fill_enabled && j.contains("layer_fills") && j["layer_fills"].is_object()) {
-        const auto& obj = j["layer_fills"];
-        if (layer_fill_enabled->size() < layers.size()) layer_fill_enabled->resize(layers.size(), true);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*layer_fill_enabled)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
+    loadLayerSettingsFromObject<bool>(j, layers, {
+        {"layer_fills", layer_fill_enabled, true},
+        {"layer_hovers", layer_hover_enabled, true},
+        {"layer_inspects", layer_inspect_enabled, true},
+        {"layer_heatmaps", layer_heatmap_enabled, true},
+        {"layer_heatmap_use_gradient", layer_heatmap_use_gradient, true},
+        {"layer_heatmap_zoom_adaptive_bandwidth", layer_heatmap_zoom_adaptive_bandwidth, true},
+        {"layer_heatmap_multires_enabled", layer_heatmap_multires_enabled, true},
+    });
+    loadLayerSettingsFromObject<int>(j, layers, {
+        {"layer_heatmap_max_zoom", layer_heatmap_max_zoom, 13},
+        {"layer_parcel_detail_min_zoom", layer_parcel_detail_min_zoom, 14},
+        {"layer_heatmap_algo", layer_heatmap_algo, -1},
+        {"layer_normalize_mode", layer_normalize_mode, 0},
+    });
+    if (layer_normalize_mode) {
+        for (int& mode : *layer_normalize_mode) mode = std::clamp(mode, 0, 2);
     }
-    if (layer_hover_enabled && j.contains("layer_hovers") && j["layer_hovers"].is_object()) {
-        const auto& obj = j["layer_hovers"];
-        if (layer_hover_enabled->size() < layers.size()) layer_hover_enabled->resize(layers.size(), true);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*layer_hover_enabled)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
-    }
-    if (layer_inspect_enabled && j.contains("layer_inspects") && j["layer_inspects"].is_object()) {
-        const auto& obj = j["layer_inspects"];
-        if (layer_inspect_enabled->size() < layers.size()) layer_inspect_enabled->resize(layers.size(), true);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*layer_inspect_enabled)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
-    }
-    if (layer_heatmap_enabled && j.contains("layer_heatmaps") && j["layer_heatmaps"].is_object()) {
-        const auto& obj = j["layer_heatmaps"];
-        if (layer_heatmap_enabled->size() < layers.size()) layer_heatmap_enabled->resize(layers.size(), true);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*layer_heatmap_enabled)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
-    }
-    if (layer_heatmap_max_zoom && j.contains("layer_heatmap_max_zoom") && j["layer_heatmap_max_zoom"].is_object()) {
-        const auto& obj = j["layer_heatmap_max_zoom"];
-        if (layer_heatmap_max_zoom->size() < layers.size()) layer_heatmap_max_zoom->resize(layers.size(), 13);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
-                (*layer_heatmap_max_zoom)[i] = obj[layers[i].file].get<int>();
-            }
-        }
-    }
-    if (layer_parcel_detail_min_zoom && j.contains("layer_parcel_detail_min_zoom") && j["layer_parcel_detail_min_zoom"].is_object()) {
-        const auto& obj = j["layer_parcel_detail_min_zoom"];
-        if (layer_parcel_detail_min_zoom->size() < layers.size()) layer_parcel_detail_min_zoom->resize(layers.size(), 14);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
-                (*layer_parcel_detail_min_zoom)[i] = obj[layers[i].file].get<int>();
-            }
-        }
-    }
-    if (layer_heatmap_use_gradient && j.contains("layer_heatmap_use_gradient") && j["layer_heatmap_use_gradient"].is_object()) {
-        const auto& obj = j["layer_heatmap_use_gradient"];
-        if (layer_heatmap_use_gradient->size() < layers.size()) layer_heatmap_use_gradient->resize(layers.size(), true);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*layer_heatmap_use_gradient)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
-    }
-    if (layer_heatmap_algo && j.contains("layer_heatmap_algo") && j["layer_heatmap_algo"].is_object()) {
-        const auto& obj = j["layer_heatmap_algo"];
-        if (layer_heatmap_algo->size() < layers.size()) layer_heatmap_algo->resize(layers.size(), -1);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
-                (*layer_heatmap_algo)[i] = obj[layers[i].file].get<int>();
-            }
-        }
-    }
-    if (layer_normalize_mode && j.contains("layer_normalize_mode") && j["layer_normalize_mode"].is_object()) {
-        const auto& obj = j["layer_normalize_mode"];
-        if (layer_normalize_mode->size() < layers.size()) layer_normalize_mode->resize(layers.size(), 0);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number_integer()) {
-                (*layer_normalize_mode)[i] = std::clamp(obj[layers[i].file].get<int>(), 0, 2);
-            }
-        }
-    }
-    auto load_float_layer_setting = [&](std::vector<float>* dst, const char* key, float fallback) {
-        if (!dst || !j.contains(key) || !j[key].is_object()) return;
-        const auto& obj = j[key];
-        if (dst->size() < layers.size()) dst->resize(layers.size(), fallback);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_number()) {
-                (*dst)[i] = obj[layers[i].file].get<float>();
-            }
-        }
-    };
-    auto load_bool_layer_setting = [&](std::vector<bool>* dst, const char* key, bool fallback) {
-        if (!dst || !j.contains(key) || !j[key].is_object()) return;
-        const auto& obj = j[key];
-        if (dst->size() < layers.size()) dst->resize(layers.size(), fallback);
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (obj.contains(layers[i].file) && obj[layers[i].file].is_boolean()) {
-                (*dst)[i] = obj[layers[i].file].get<bool>();
-            }
-        }
-    };
-    load_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
-    load_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
-    load_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);
-    load_float_layer_setting(layer_heatmap_percentile_clip, "layer_heatmap_percentile_clip", 95.0f);
-    load_bool_layer_setting(layer_heatmap_zoom_adaptive_bandwidth, "layer_heatmap_zoom_adaptive_bandwidth", true);
-    load_bool_layer_setting(layer_heatmap_multires_enabled, "layer_heatmap_multires_enabled", true);
-    load_float_layer_setting(layer_heatmap_multires_blend, "layer_heatmap_multires_blend", 0.5f);
+    loadLayerSettingsFromObject<float>(j, layers, {
+        {"layer_heatmap_cell_px", layer_heatmap_cell_px, 24.0f},
+        {"layer_heatmap_bandwidth_px", layer_heatmap_bandwidth_px, 18.0f},
+        {"layer_heatmap_blur_sigma_px", layer_heatmap_blur_sigma_px, 6.0f},
+        {"layer_heatmap_percentile_clip", layer_heatmap_percentile_clip, 95.0f},
+        {"layer_heatmap_multires_blend", layer_heatmap_multires_blend, 0.5f},
+    });
     if (j.contains("heatmap_settings") && j["heatmap_settings"].is_object()) {
         const auto& hs = j["heatmap_settings"];
         if (heatmap_algo && hs.contains("algo") && hs["algo"].is_number_integer()) *heatmap_algo = hs["algo"].get<int>();
@@ -331,92 +303,28 @@ void saveLayerUiState(
         for (const auto& kv : *zoning_zone_enabled) zf[kv.first] = kv.second;
         j["zoning_zones"] = std::move(zf);
     }
-    if (layer_fill_enabled) {
-        json fills = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            fills[layers[i].file] = i < layer_fill_enabled->size() ? (*layer_fill_enabled)[i] : true;
-        }
-        j["layer_fills"] = std::move(fills);
-    }
-    if (layer_hover_enabled) {
-        json hovers = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            hovers[layers[i].file] = i < layer_hover_enabled->size() ? (*layer_hover_enabled)[i] : true;
-        }
-        j["layer_hovers"] = std::move(hovers);
-    }
-    if (layer_inspect_enabled) {
-        json inspects = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            inspects[layers[i].file] = i < layer_inspect_enabled->size() ? (*layer_inspect_enabled)[i] : true;
-        }
-        j["layer_inspects"] = std::move(inspects);
-    }
-    if (layer_heatmap_enabled) {
-        json h = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            h[layers[i].file] = i < layer_heatmap_enabled->size() ? (*layer_heatmap_enabled)[i] : true;
-        }
-        j["layer_heatmaps"] = std::move(h);
-    }
-    if (layer_heatmap_max_zoom) {
-        json hz = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            hz[layers[i].file] = i < layer_heatmap_max_zoom->size() ? (*layer_heatmap_max_zoom)[i] : 13;
-        }
-        j["layer_heatmap_max_zoom"] = std::move(hz);
-    }
-    if (layer_parcel_detail_min_zoom) {
-        json pz = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            pz[layers[i].file] = i < layer_parcel_detail_min_zoom->size() ? (*layer_parcel_detail_min_zoom)[i] : kParcelChoroplethMinZoom;
-        }
-        j["layer_parcel_detail_min_zoom"] = std::move(pz);
-    }
-    if (layer_heatmap_use_gradient) {
-        json hg = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            hg[layers[i].file] = i < layer_heatmap_use_gradient->size() ? (*layer_heatmap_use_gradient)[i] : true;
-        }
-        j["layer_heatmap_use_gradient"] = std::move(hg);
-    }
-    if (layer_heatmap_algo) {
-        json ha = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            ha[layers[i].file] = i < layer_heatmap_algo->size() ? (*layer_heatmap_algo)[i] : -1;
-        }
-        j["layer_heatmap_algo"] = std::move(ha);
-    }
-    if (layer_normalize_mode) {
-        json nm = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            nm[layers[i].file] = i < layer_normalize_mode->size() ? (*layer_normalize_mode)[i] : 0;
-        }
-        j["layer_normalize_mode"] = std::move(nm);
-    }
-    auto save_float_layer_setting = [&](const std::vector<float>* src, const char* key, float fallback) {
-        if (!src) return;
-        json obj = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            obj[layers[i].file] = i < src->size() ? (*src)[i] : fallback;
-        }
-        j[key] = std::move(obj);
-    };
-    auto save_bool_layer_setting = [&](const std::vector<bool>* src, const char* key, bool fallback) {
-        if (!src) return;
-        json obj = json::object();
-        for (size_t i = 0; i < layers.size(); ++i) {
-            obj[layers[i].file] = i < src->size() ? (*src)[i] : fallback;
-        }
-        j[key] = std::move(obj);
-    };
-    save_float_layer_setting(layer_heatmap_cell_px, "layer_heatmap_cell_px", 24.0f);
-    save_float_layer_setting(layer_heatmap_bandwidth_px, "layer_heatmap_bandwidth_px", 18.0f);
-    save_float_layer_setting(layer_heatmap_blur_sigma_px, "layer_heatmap_blur_sigma_px", 6.0f);
-    save_float_layer_setting(layer_heatmap_percentile_clip, "layer_heatmap_percentile_clip", 95.0f);
-    save_bool_layer_setting(layer_heatmap_zoom_adaptive_bandwidth, "layer_heatmap_zoom_adaptive_bandwidth", true);
-    save_bool_layer_setting(layer_heatmap_multires_enabled, "layer_heatmap_multires_enabled", true);
-    save_float_layer_setting(layer_heatmap_multires_blend, "layer_heatmap_multires_blend", 0.5f);
+    saveLayerSettingsToObject<bool>(j, layers, {
+        {"layer_fills", layer_fill_enabled, true},
+        {"layer_hovers", layer_hover_enabled, true},
+        {"layer_inspects", layer_inspect_enabled, true},
+        {"layer_heatmaps", layer_heatmap_enabled, true},
+        {"layer_heatmap_use_gradient", layer_heatmap_use_gradient, true},
+        {"layer_heatmap_zoom_adaptive_bandwidth", layer_heatmap_zoom_adaptive_bandwidth, true},
+        {"layer_heatmap_multires_enabled", layer_heatmap_multires_enabled, true},
+    });
+    saveLayerSettingsToObject<int>(j, layers, {
+        {"layer_heatmap_max_zoom", layer_heatmap_max_zoom, 13},
+        {"layer_parcel_detail_min_zoom", layer_parcel_detail_min_zoom, kParcelChoroplethMinZoom},
+        {"layer_heatmap_algo", layer_heatmap_algo, -1},
+        {"layer_normalize_mode", layer_normalize_mode, 0},
+    });
+    saveLayerSettingsToObject<float>(j, layers, {
+        {"layer_heatmap_cell_px", layer_heatmap_cell_px, 24.0f},
+        {"layer_heatmap_bandwidth_px", layer_heatmap_bandwidth_px, 18.0f},
+        {"layer_heatmap_blur_sigma_px", layer_heatmap_blur_sigma_px, 6.0f},
+        {"layer_heatmap_percentile_clip", layer_heatmap_percentile_clip, 95.0f},
+        {"layer_heatmap_multires_blend", layer_heatmap_multires_blend, 0.5f},
+    });
     if (heatmap_algo || heatmap_quality_preset || heatmap_cell_px || heatmap_bandwidth_px || heatmap_blur_sigma_px ||
         heatmap_percentile_clip || heatmap_zoom_adaptive_bandwidth || heatmap_multires_enabled || heatmap_multires_blend) {
         json hs = json::object();

@@ -24,6 +24,7 @@ struct LayerDef {
     std::string import_url;
     std::string import_source_crs;
     std::string import_shapefile;
+    std::string import_service_url;
     std::string description;
     std::string heatmap_field;
     std::string subcategory;

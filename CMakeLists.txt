@@ -126,6 +126,23 @@ add_executable(worldsim3
   time_cube_panel.cpp
   policy_panel.cpp
   model_tabs_panel.cpp
+  layers_panel_ui.cpp
+  ui_primitives.cpp
+  layer_registry.cpp
+  layer_ui_actions.cpp
+  layer_ui_context_builders.cpp
+  layer_runtime_coordinator.cpp
+  data_library_coordinator.cpp
+  filter_context_builder.cpp
+  heat_normalization.cpp
+  heatmap_key_builder.cpp
+  heatmap_runtime.cpp
+  render_layer_pass.cpp
+  render_tail_pass.cpp
+  render_policy.cpp
+  render_plan_builder.cpp
+  status_api_context_builder.cpp
+  app_shutdown_context_builder.cpp
   layer_settings.cpp
   download_queue.cpp
   tiles.cpp
@@ -240,7 +257,7 @@ target_include_directories(worldsim3_gpu_aggregate_harness PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(worldsim3_gpu_aggregate_harness PRIVATE Vulkan::Vulkan glfw)
+target_link_libraries(worldsim3_gpu_aggregate_harness PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw)
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(worldsim3_gpu_aggregate_harness PRIVATE dl pthread)

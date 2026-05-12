@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <system_error>
 
 namespace fs = std::filesystem;
@@ -56,6 +57,12 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 const fs::path layer_path = root / "data" / "layers" / layers[i].file;
                 const fs::path cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".msgpack");
                 const std::string sig = fileSignature(layer_path);
+                std::error_code layer_size_ec;
+                const uintmax_t layer_size_bytes = fs::file_size(layer_path, layer_size_ec);
+                const bool cache_large_layers =
+                    std::getenv("WORLD_SIM3_CACHE_LARGE_LAYERS") != nullptr;
+                const bool build_hydration_cache =
+                    layer_size_ec || layer_size_bytes <= 300ull * 1024ull * 1024ull || cache_large_layers;
                 std::vector<LayerDef::FeatureGeom> cached_features;
                 if (loadHydrationCache(cache_path, sig, cached_features)) {
                     const bool suspicious_cache =
@@ -87,13 +94,27 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     }
                 }
 
+                std::vector<LayerDef::FeatureGeom> cache_features;
+                bool hydrate_failed = false;
+                bool hydrate_done = false;
                 hydrateLayerBatches(
                     layer_path, kHydrationBatchSize, hydration_stop,
                     [&]() { return i < layers.size() && (layers[i].enabled || required); },
                     [&](std::vector<LayerDef::FeatureGeom>&& chunk, bool done, bool failed, const std::string& error) {
+                        if (build_hydration_cache && !chunk.empty()) {
+                            cache_features.insert(cache_features.end(), chunk.begin(), chunk.end());
+                        }
+                        hydrate_failed = hydrate_failed || failed;
+                        hydrate_done = hydrate_done || done;
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
                         hydrated_queue.push_back(HydratedLayer{i, std::move(chunk), done, failed, error});
                     });
+                if (hydrate_done && !hydrate_failed && !cache_features.empty() &&
+                    !hydration_stop.load(std::memory_order_relaxed)) {
+                    saveHydrationCache(cache_path, sig, cache_features);
+                    releaseContainerStorage(cache_features);
+                    trimProcessHeap();
+                }
             }
         });
     }

@@ -7,6 +7,7 @@
 #include "layer_import.h"
 #include "feature_props.h"
 #include "filters.h"
+#include "filter_context_builder.h"
 #include "geo.h"
 #include "cache_io.h"
 #include "arkavo_realtime_client.h"
@@ -29,6 +30,9 @@
 #include "map_inspection.h"
 #include "map_overlay_panels.h"
 #include "map_render_layers.h"
+#include "render_plan_builder.h"
+#include "render_layer_pass.h"
+#include "render_tail_pass.h"
 #include "map_render_overlays.h"
 #include "map_render_projection.h"
 #include "map_render_selection.h"
@@ -37,12 +41,20 @@
 #include "parcel_timeline.h"
 #include "parcel_unified.h"
 #include "heatmap_render.h"
+#include "heatmap_runtime.h"
+#include "heat_normalization.h"
+#include "heatmap_key_builder.h"
+#include "render_policy.h"
 #include "gear_panel.h"
 #include "time_cube_panel.h"
 #include "policy_panel.h"
 #include "model_tabs_panel.h"
+#include "layers_panel_ui.h"
 #include "layer_settings.h"
+#include "layer_runtime_coordinator.h"
+#include "layer_ui_context_builders.h"
 #include "download_queue.h"
+#include "data_library_coordinator.h"
 #include "tiles.h"
 #include "owner_info.h"
 #include "owners_tab.h"
@@ -63,7 +75,11 @@
 #include "worldsim_cli.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_bootstrap.h"
+#include "worldsim_app_run_state.h"
 #include "parcel_matched_layers.h"
+#include "app_shutdown_context_builder.h"
+#include "layer_registry.h"
+#include "status_api_context_builder.h"
 #include "cpu_affinity.h"
 #include "thread_utils.h"
 
@@ -114,11 +130,15 @@ static void clearTileDiskPresenceCache() {
 int runWorldSim3App(int argc, char** argv) {
 
     fs::path root = resolveAppRoot(fs::current_path(), argc > 0 ? argv[0] : nullptr);
+    WorldSimRunState runtime;
+    runtime.argc = argc;
+    runtime.argv = argv;
+    runtime.root = root;
     const WorldsimCliOptions cli_options = parseWorldsimCliOptions(argc, argv);
     const int cli_result = runWorldsimCliImmediate(root, cli_options);
     if (cli_result >= 0) return cli_result;
 
-    AppSettings app_settings;
+    auto& app_settings = runtime.app_settings;
     app_settings.vulkan_validation_enabled = g_EnableValidationLayers;
     app_settings = loadAppSettings(root, app_settings);
 
@@ -290,8 +310,11 @@ int runWorldSim3App(int argc, char** argv) {
     bootstrap.phase.store(3, std::memory_order_relaxed);
     setBootstrapStatus(bootstrap, "Startup download disabled. Use Data Library to fetch missing datasets.");
 
-    auto layers = loadManifest(root);
-    const WorldsimLayerIndices layer_indices = findWorldsimLayerIndices(layers);
+    runtime.layers = loadManifest(root);
+    auto& layers = runtime.layers;
+    runtime.layer_registry.refresh(root, layers);
+    auto& layer_registry = runtime.layer_registry;
+    const WorldsimLayerIndices layer_indices = layer_registry.indices();
     const int parcel_layer_idx = layer_indices.parcel_layer_idx;
     const int real_property_layer_idx = layer_indices.real_property_layer_idx;
     const int vacant_notice_layer_idx = layer_indices.vacant_notice_layer_idx;
@@ -323,6 +346,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<int> parcel_tax_sale_by_feature;
     std::vector<double> parcel_tax_lien_amount_by_feature;
     std::vector<double> parcel_tax_sale_amount_by_feature;
+    int parcel_parameter_mode = 0;
     std::vector<UnifiedParcelRecord> unified_parcels;
     int vacancy_maps_generation = 0;
     int parcel_vacancy_generation_applied = -1;
@@ -425,46 +449,17 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<bool> layer_heatmap_zoom_adaptive_bandwidth(layers.size(), true);
     std::vector<bool> layer_heatmap_multires_enabled(layers.size(), true);
     std::vector<float> layer_heatmap_multires_blend(layers.size(), 0.5f);
-    // Heatmap runtime settings (loaded/saved via layer_ui_state.json)
-    float global_heat_cell_px = 24.0f;
-    int heatmap_algo = kAggregateGpuSplatBlur;
-    int heatmap_quality_preset = 1; // 0=fast,1=balanced,2=high
-    float heatmap_bandwidth_px = 18.0f;
-    float heatmap_blur_sigma_px = 6.0f;
-    float heatmap_percentile_clip = 95.0f;
-    bool heatmap_zoom_adaptive_bandwidth = true;
-    bool heatmap_multires_enabled = true;
-    float heatmap_multires_blend = 0.5f;
-    bool heatmap_allow_cpu_fallback = false;
-    std::vector<CachedHeatCell> heatmap_cached_cells;
-    TileTexture heatmap_raster_texture;
-    bool heatmap_raster_texture_valid = false;
-    HeatmapRaster heatmap_cached_raster_meta;
-    uint64_t heatmap_raster_cache_key = 0;
-    uint64_t heatmap_cache_key = 0;
-    bool heatmap_cache_valid = false;
-    std::future<std::pair<uint64_t, HeatmapRenderData>> heatmap_async_future;
-    bool heatmap_async_inflight = false;
-    uint64_t heatmap_pending_key = 0;
-    struct CachedAggregateTexture {
-        std::vector<CachedHeatCell> cells;
-        HeatmapRaster raster;
-        TileTexture texture;
-        uint64_t last_used_frame = 0;
-    };
-    std::unordered_map<uint64_t, CachedAggregateTexture> heatmap_texture_cache;
-    uint64_t heatmap_texture_cache_frame = 0;
-    constexpr size_t kMaxHeatmapTextureCacheEntries = 8;
-    auto prune_heatmap_texture_cache = [&]() {
-        while (heatmap_texture_cache.size() > kMaxHeatmapTextureCacheEntries) {
-            auto evict_it = heatmap_texture_cache.begin();
-            for (auto it = heatmap_texture_cache.begin(); it != heatmap_texture_cache.end(); ++it) {
-                if (it->second.last_used_frame < evict_it->second.last_used_frame) evict_it = it;
-            }
-            destroyTileTexture(evict_it->second.texture);
-            heatmap_texture_cache.erase(evict_it);
-        }
-    };
+    auto& heatmap_runtime = runtime.heatmap;
+    auto& global_heat_cell_px = heatmap_runtime.global_heat_cell_px;
+    auto& heatmap_algo = heatmap_runtime.heatmap_algo;
+    auto& heatmap_quality_preset = heatmap_runtime.heatmap_quality_preset;
+    auto& heatmap_bandwidth_px = heatmap_runtime.heatmap_bandwidth_px;
+    auto& heatmap_blur_sigma_px = heatmap_runtime.heatmap_blur_sigma_px;
+    auto& heatmap_percentile_clip = heatmap_runtime.heatmap_percentile_clip;
+    auto& heatmap_zoom_adaptive_bandwidth = heatmap_runtime.heatmap_zoom_adaptive_bandwidth;
+    auto& heatmap_multires_enabled = heatmap_runtime.heatmap_multires_enabled;
+    auto& heatmap_multires_blend = heatmap_runtime.heatmap_multires_blend;
+    auto& heatmap_allow_cpu_fallback = heatmap_runtime.heatmap_allow_cpu_fallback;
     int hover_inspector_mode = 3; // 0=None, 1=Parcels, 2=Zoning, 3=Both
     bool hover_inspector_enabled = true;
     loadLayerUiState(
@@ -516,13 +511,17 @@ int runWorldSim3App(int argc, char** argv) {
             layer_heatmap_algo[i] = kAggregateHexBinning;
         }
     }
+    if (parcel_layer_idx >= 0) {
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if ((int)i != parcel_layer_idx && layers[i].scale == "parcel") layers[i].enabled = false;
+        }
+    }
     TimeCubeService time_cube_service(root);
     DuckDbAnalytics duckdb_analytics(root);
     bool duckdb_auto_rebuild_checked = false;
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
-    std::vector<uint32_t> render_candidates;
     std::vector<OwnerAggregate> owner_aggregates;
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
@@ -547,11 +546,34 @@ int runWorldSim3App(int argc, char** argv) {
 
     std::vector<bool> hydration_requested(layers.size(), false);
     std::vector<bool> hydration_required(layers.size(), false);
+    std::vector<size_t> initial_hydration_order;
+    initial_hydration_order.reserve(layers.size());
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].enabled) {
-            hydrate_requests.push_back(i);
-            hydration_requested[i] = true;
-        }
+        if (layers[i].enabled) initial_hydration_order.push_back(i);
+    }
+    auto layer_file_size = [&](size_t idx) -> uintmax_t {
+        std::error_code ec;
+        const fs::path p = root / "data" / "layers" / layers[idx].file;
+        const uintmax_t sz = fs::file_size(p, ec);
+        return ec ? std::numeric_limits<uintmax_t>::max() : sz;
+    };
+    auto startup_hydration_rank = [&](size_t idx) {
+        if (parcel_layer_idx >= 0 && (int)idx == parcel_layer_idx) return 0;
+        if (zoning_layer_idx >= 0 && (int)idx == zoning_layer_idx) return 1;
+        const uintmax_t sz = layer_file_size(idx);
+        if (layers[idx].file == "regional_parcels.geojson" || sz > 250ull * 1024ull * 1024ull) return 4;
+        if (layers[idx].scale == "parcel") return 3;
+        return 2;
+    };
+    std::stable_sort(initial_hydration_order.begin(), initial_hydration_order.end(), [&](size_t a, size_t b) {
+        const int ar = startup_hydration_rank(a);
+        const int br = startup_hydration_rank(b);
+        if (ar != br) return ar < br;
+        return layer_file_size(a) < layer_file_size(b);
+    });
+    for (size_t i : initial_hydration_order) {
+        hydrate_requests.push_back(i);
+        hydration_requested[i] = true;
     }
     auto is_parcel_priority_index = [&](size_t idx) -> bool {
         if (parcel_layer_idx < 0) return false;
@@ -613,81 +635,81 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<std::thread> hydration_workers = startHydrationWorkers(layer_workers_ctx, hydration_worker_count);
     std::thread triangulation_worker = startTriangulationWorker(layer_workers_ctx);
 
-    std::thread status_api_worker = startStatusApiWorker(StatusApiContext{
-        kAppVersion,
-        kProtocolVersion,
-        kMaxTileCache,
-        &hydration_stop,
-        &layers,
-        &time_cube_service,
-        &g_ScreenshotState,
-        &status_mutex,
-        &layer_states,
-        &layer_fill_mutex,
-        &layer_fill_enabled,
-        &layer_hover_enabled,
-        &layer_inspect_enabled,
-        &layer_heatmap_enabled,
-        &hydration_started_at,
-        &hydrated_count,
-        &triangulated_count,
-        &prof_tile_cache_size,
-        &current_zoom_state,
-        &current_lon_state,
-        &current_lat_state,
-        &visible_vacant_parcels_last_frame,
-        &vacant_parcels_matched_total,
-        &vacant_parcels_with_geometry_total,
-        &vacant_parcels_triangulated_renderable_total,
-        &perf_frame_ms_avg,
-        &perf_frame_ms_last,
-        &perf_fps_avg,
-        &ui_left_panel_frac,
-        &ui_right_panel_frac,
-        &render_fill_attempts_last_frame,
-        &render_fill_success_last_frame,
-        &render_fill_no_triangles_last_frame,
-        &render_fill_bad_indices_last_frame,
-        &api_layer_mutex,
-        &api_layer_enable_cmds,
-        &api_layer_fill_cmds,
-        &api_layer_download_cmds,
-        &api_zoom_cmd,
-        &api_lon_cmd,
-        &api_lat_cmd,
-        &api_ui_cmd_seq,
-        &api_ui_cmd_kind,
-        &api_ui_cmd_x,
-        &api_ui_cmd_y,
-        &api_ui_cmd_button,
-        &api_ui_cmd_scroll_y,
-        &layer_profile_mutex,
-        &layer_profile_snapshot,
-        &profile_mutex,
-        &profile_samples,
-        &profile_sample_pos,
-        &profile_sample_count,
-        &profile_reset_generation,
-        &prof_ui_ms_last,
-        &prof_owner_ms_last,
-        &prof_tile_ms_last,
-        &prof_layer_ms_last,
-        &prof_heatmap_ms_last,
-        &prof_overlay_ms_last,
-        &prof_present_ms_last,
-        &prof_tiles_drawn_last,
-        &prof_features_considered_last,
-        &prof_features_drawn_last,
-        &prof_heat_samples_last,
-        &prof_retired_textures,
-        &prof_heatmap_gpu_splat_active,
-        &prof_heatmap_high_quality,
-        &prof_heatmap_cache_valid,
-        &prof_heatmap_texture_resident,
-        &prof_heatmap_async_inflight,
-        &prof_heatmap_cache_key,
-        &prof_heatmap_texture_cache_entries
-    });
+    StatusApiContextFactoryInput status_api_input;
+    status_api_input.app_version = kAppVersion;
+    status_api_input.protocol_version = kProtocolVersion;
+    status_api_input.tile_cache_max = kMaxTileCache;
+    status_api_input.stop = &hydration_stop;
+    status_api_input.layers = &layers;
+    status_api_input.time_cube_service = &time_cube_service;
+    status_api_input.screenshot = &g_ScreenshotState;
+    status_api_input.status_mutex = &status_mutex;
+    status_api_input.layer_states = &layer_states;
+    status_api_input.layer_fill_mutex = &layer_fill_mutex;
+    status_api_input.layer_fill_enabled = &layer_fill_enabled;
+    status_api_input.layer_hover_enabled = &layer_hover_enabled;
+    status_api_input.layer_inspect_enabled = &layer_inspect_enabled;
+    status_api_input.layer_heatmap_enabled = &layer_heatmap_enabled;
+    status_api_input.hydration_started_at = &hydration_started_at;
+    status_api_input.hydrated_count = &hydrated_count;
+    status_api_input.triangulated_count = &triangulated_count;
+    status_api_input.prof_tile_cache_size = &prof_tile_cache_size;
+    status_api_input.current_zoom_state = &current_zoom_state;
+    status_api_input.current_lon_state = &current_lon_state;
+    status_api_input.current_lat_state = &current_lat_state;
+    status_api_input.visible_vacant_parcels_last_frame = &visible_vacant_parcels_last_frame;
+    status_api_input.vacant_parcels_matched_total = &vacant_parcels_matched_total;
+    status_api_input.vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total;
+    status_api_input.vacant_parcels_triangulated_renderable_total = &vacant_parcels_triangulated_renderable_total;
+    status_api_input.perf_frame_ms_avg = &perf_frame_ms_avg;
+    status_api_input.perf_frame_ms_last = &perf_frame_ms_last;
+    status_api_input.perf_fps_avg = &perf_fps_avg;
+    status_api_input.ui_left_panel_frac = &ui_left_panel_frac;
+    status_api_input.ui_right_panel_frac = &ui_right_panel_frac;
+    status_api_input.render_fill_attempts_last_frame = &render_fill_attempts_last_frame;
+    status_api_input.render_fill_success_last_frame = &render_fill_success_last_frame;
+    status_api_input.render_fill_no_triangles_last_frame = &render_fill_no_triangles_last_frame;
+    status_api_input.render_fill_bad_indices_last_frame = &render_fill_bad_indices_last_frame;
+    status_api_input.api_layer_mutex = &api_layer_mutex;
+    status_api_input.api_layer_enable_cmds = &api_layer_enable_cmds;
+    status_api_input.api_layer_fill_cmds = &api_layer_fill_cmds;
+    status_api_input.api_layer_download_cmds = &api_layer_download_cmds;
+    status_api_input.api_zoom_cmd = &api_zoom_cmd;
+    status_api_input.api_lon_cmd = &api_lon_cmd;
+    status_api_input.api_lat_cmd = &api_lat_cmd;
+    status_api_input.api_ui_cmd_seq = &api_ui_cmd_seq;
+    status_api_input.api_ui_cmd_kind = &api_ui_cmd_kind;
+    status_api_input.api_ui_cmd_x = &api_ui_cmd_x;
+    status_api_input.api_ui_cmd_y = &api_ui_cmd_y;
+    status_api_input.api_ui_cmd_button = &api_ui_cmd_button;
+    status_api_input.api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y;
+    status_api_input.layer_profile_mutex = &layer_profile_mutex;
+    status_api_input.layer_profile_snapshot = &layer_profile_snapshot;
+    status_api_input.profile_mutex = &profile_mutex;
+    status_api_input.profile_samples = &profile_samples;
+    status_api_input.profile_sample_pos = &profile_sample_pos;
+    status_api_input.profile_sample_count = &profile_sample_count;
+    status_api_input.profile_reset_generation = &profile_reset_generation;
+    status_api_input.prof_ui_ms_last = &prof_ui_ms_last;
+    status_api_input.prof_owner_ms_last = &prof_owner_ms_last;
+    status_api_input.prof_tile_ms_last = &prof_tile_ms_last;
+    status_api_input.prof_layer_ms_last = &prof_layer_ms_last;
+    status_api_input.prof_heatmap_ms_last = &prof_heatmap_ms_last;
+    status_api_input.prof_overlay_ms_last = &prof_overlay_ms_last;
+    status_api_input.prof_present_ms_last = &prof_present_ms_last;
+    status_api_input.prof_tiles_drawn_last = &prof_tiles_drawn_last;
+    status_api_input.prof_features_considered_last = &prof_features_considered_last;
+    status_api_input.prof_features_drawn_last = &prof_features_drawn_last;
+    status_api_input.prof_heat_samples_last = &prof_heat_samples_last;
+    status_api_input.prof_retired_textures = &prof_retired_textures;
+    status_api_input.prof_heatmap_gpu_splat_active = &prof_heatmap_gpu_splat_active;
+    status_api_input.prof_heatmap_high_quality = &prof_heatmap_high_quality;
+    status_api_input.prof_heatmap_cache_valid = &prof_heatmap_cache_valid;
+    status_api_input.prof_heatmap_texture_resident = &prof_heatmap_texture_resident;
+    status_api_input.prof_heatmap_async_inflight = &prof_heatmap_async_inflight;
+    status_api_input.prof_heatmap_cache_key = &prof_heatmap_cache_key;
+    status_api_input.prof_heatmap_texture_cache_entries = &prof_heatmap_texture_cache_entries;
+    std::thread status_api_worker = startStatusApiWorker(makeStatusApiContext(status_api_input));
 
     std::mutex p2p_mutex;
     std::unordered_map<std::string, std::vector<json>> p2p_mailbox;
@@ -724,15 +746,19 @@ int runWorldSim3App(int argc, char** argv) {
     bool show_sources_panel = false;
     bool show_data_library = false;
     char data_library_query[128] = "";
-    std::string data_library_status_msg;
-    std::string data_library_cached_query;
-    size_t data_library_cached_layer_count = 0;
-    std::vector<size_t> data_library_visible_rows;
-    size_t data_library_cache_rebuilds = 0;
-    size_t data_library_rendered_rows_last = 0;
-    std::vector<FreshnessState> data_freshness_state(layers.size(), FreshnessState::Unknown);
-    std::vector<std::string> data_freshness_msg(layers.size(), "");
-    std::vector<bool> local_layer_exists_cache(layers.size(), false);
+    auto& data_library_state = runtime.data_library;
+    auto& data_library_status_msg = data_library_state.status_msg;
+    auto& data_library_cached_query = data_library_state.cached_query;
+    auto& data_library_cached_layer_count = data_library_state.cached_layer_count;
+    auto& data_library_visible_rows = data_library_state.visible_rows;
+    auto& data_library_cache_rebuilds = data_library_state.cache_rebuilds;
+    auto& data_library_rendered_rows_last = data_library_state.rendered_rows_last;
+    auto& data_freshness_state = data_library_state.freshness_state;
+    auto& data_freshness_msg = data_library_state.freshness_msg;
+    auto& local_layer_exists_cache = data_library_state.local_layer_exists_cache;
+    data_freshness_state.assign(layers.size(), FreshnessState::Unknown);
+    data_freshness_msg.assign(layers.size(), "");
+    local_layer_exists_cache.assign(layers.size(), false);
     auto refresh_local_layer_exists_cache = [&]() {
         for (size_t i = 0; i < layers.size(); ++i) {
             std::error_code ec;
@@ -743,12 +769,12 @@ int runWorldSim3App(int argc, char** argv) {
         if (idx < local_layer_exists_cache.size()) local_layer_exists_cache[idx] = exists;
     };
     refresh_local_layer_exists_cache();
-    int data_library_download_phase = 0;
-    bool data_library_include_large = false;
-    bool data_library_bulk_inflight = false;
-    std::mutex data_library_bulk_mutex;
-    std::string data_library_bulk_progress;
-    std::future<LayerDownloadSummary> data_library_bulk_future;
+    auto& data_library_download_phase = data_library_state.download_phase;
+    auto& data_library_include_large = data_library_state.include_large;
+    auto& data_library_bulk_inflight = data_library_state.bulk_inflight;
+    auto& data_library_bulk_mutex = data_library_state.bulk_mutex;
+    auto& data_library_bulk_progress = data_library_state.bulk_progress;
+    auto& data_library_bulk_future = data_library_state.bulk_future;
     DownloadQueueState basemap_download;
     LazyTileDownloadState lazy_tile_download;
     std::deque<size_t> layer_download_queue;
@@ -863,6 +889,62 @@ int runWorldSim3App(int argc, char** argv) {
     double ema_frame_ms = 0.0;
     constexpr double kPerfAlpha = 0.12;
     std::string last_cache_clear_msg;
+    bool clear_cache_all = true;
+    bool clear_cache_hydration = true;
+    bool clear_cache_triangulation = true;
+    bool clear_cache_derived = true;
+    bool clear_cache_heatmap_memory = true;
+    bool clear_cache_heatmap_disk = true;
+    bool clear_cache_tile_memory = true;
+    bool clear_cache_tile_disk_presence = true;
+    const fs::path cache_root_dir = root / "data" / "cache";
+    const fs::path cache_hydration_dir = cache_root_dir / "hydration";
+    const fs::path cache_triangulation_dir = cache_root_dir / "triangulation";
+    const fs::path cache_derived_dir = cache_root_dir / "derived";
+    const fs::path cache_aggregate_dir = cache_root_dir / "aggregate";
+    auto clear_cache_tree = [&](const fs::path& p) {
+        std::error_code ec;
+        if (!fs::exists(p, ec)) return (size_t)0;
+        return fs::remove_all(p, ec);
+    };
+    auto reset_derived_cache_state = [&]() {
+        cached_real_property_size = 0;
+        cached_vac_notice_size = 0;
+        cached_vac_rehab_size = 0;
+        cached_tax_lien_size = 0;
+        cached_tax_sale_size = 0;
+        vacancy_maps_generation = 0;
+        parcel_vacancy_generation_applied = -1;
+        tax_maps_generation = 0;
+        parcel_tax_generation_applied = -1;
+        owner_aggregates_dirty = true;
+        releaseContainerStorage(parcel_vac_notice_by_feature);
+        releaseContainerStorage(parcel_vac_rehab_by_feature);
+        releaseContainerStorage(parcel_tax_lien_by_feature);
+        releaseContainerStorage(parcel_tax_sale_by_feature);
+        releaseContainerStorage(parcel_tax_lien_amount_by_feature);
+        releaseContainerStorage(parcel_tax_sale_amount_by_feature);
+        releaseContainerStorage(vacant_notice_count_by_blocklot);
+        releaseContainerStorage(vacant_rehab_count_by_blocklot);
+        releaseContainerStorage(tax_lien_count_by_blocklot);
+        releaseContainerStorage(tax_lien_amount_by_blocklot);
+        releaseContainerStorage(tax_sale_count_by_blocklot);
+        releaseContainerStorage(tax_sale_amount_by_blocklot);
+        releaseContainerStorage(real_property_by_blocklot);
+        releaseContainerStorage(zoning_zone_label);
+        releaseContainerStorage(zoning_zone_counts);
+        releaseContainerStorage(zoning_zone_order);
+        releaseContainerStorage(zoning_group_zones);
+        releaseContainerStorage(zoning_group_order);
+        zoning_zone_discovered_feature_count = 0;
+        visible_vacant_parcels_last_frame.store(0, std::memory_order_relaxed);
+        vacant_parcels_matched_total.store(0, std::memory_order_relaxed);
+        vacant_parcels_with_geometry_total.store(0, std::memory_order_relaxed);
+        vacant_parcels_triangulated_renderable_total.store(0, std::memory_order_relaxed);
+    };
+    auto clear_heatmap_runtime_cache = [&]() {
+        clearHeatmapRuntimeCache(heatmap_runtime);
+    };
     TimeCubeResult time_cube_ui_result;
     bool time_cube_ui_loaded = false;
     std::string time_cube_ui_status = "Not indexed in this session";
@@ -970,80 +1052,80 @@ int runWorldSim3App(int argc, char** argv) {
         download_queue_window = nullptr;
     }
     ImGui::SetCurrentContext(main_imgui_context);
-    for (auto& kv : heatmap_texture_cache) destroyTileTextureNow(kv.second.texture);
-    heatmap_texture_cache.clear();
-    AppShutdownContext shutdown_ctx;
-    shutdown_ctx.root = &root;
-    shutdown_ctx.app_settings = &app_settings;
-    shutdown_ctx.window = window;
-    shutdown_ctx.layers = &layers;
-    shutdown_ctx.hover_inspector_enabled = hover_inspector_enabled;
-    shutdown_ctx.hover_inspector_mode = &hover_inspector_mode;
-    shutdown_ctx.zoning_zone_enabled = &zoning_zone_enabled;
-    shutdown_ctx.layer_fill_enabled = &layer_fill_enabled;
-    shutdown_ctx.layer_hover_enabled = &layer_hover_enabled;
-    shutdown_ctx.layer_inspect_enabled = &layer_inspect_enabled;
-    shutdown_ctx.layer_heatmap_enabled = &layer_heatmap_enabled;
-    shutdown_ctx.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
-    shutdown_ctx.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
-    shutdown_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
-    shutdown_ctx.layer_heatmap_algo = &layer_heatmap_algo;
-    shutdown_ctx.layer_normalize_mode = &layer_normalize_mode;
-    shutdown_ctx.layer_heatmap_cell_px = &layer_heatmap_cell_px;
-    shutdown_ctx.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
-    shutdown_ctx.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
-    shutdown_ctx.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
-    shutdown_ctx.layer_heatmap_zoom_adaptive_bandwidth = &layer_heatmap_zoom_adaptive_bandwidth;
-    shutdown_ctx.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
-    shutdown_ctx.layer_heatmap_multires_blend = &layer_heatmap_multires_blend;
-    shutdown_ctx.heatmap_algo = &heatmap_algo;
-    shutdown_ctx.heatmap_quality_preset = &heatmap_quality_preset;
-    shutdown_ctx.global_heat_cell_px = &global_heat_cell_px;
-    shutdown_ctx.heatmap_bandwidth_px = &heatmap_bandwidth_px;
-    shutdown_ctx.heatmap_blur_sigma_px = &heatmap_blur_sigma_px;
-    shutdown_ctx.heatmap_percentile_clip = &heatmap_percentile_clip;
-    shutdown_ctx.heatmap_zoom_adaptive_bandwidth = &heatmap_zoom_adaptive_bandwidth;
-    shutdown_ctx.heatmap_multires_enabled = &heatmap_multires_enabled;
-    shutdown_ctx.heatmap_multires_blend = &heatmap_multires_blend;
-    shutdown_ctx.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
-    shutdown_ctx.filter_enabled = &filter_enabled;
-    shutdown_ctx.filter_use_date = &filter_use_date;
-    shutdown_ctx.filter_year_min = &filter_year_min;
-    shutdown_ctx.filter_year_max = &filter_year_max;
-    shutdown_ctx.filter_blocklot = filter_blocklot;
-    shutdown_ctx.filter_status = filter_status;
-    shutdown_ctx.filter_address = filter_address;
-    shutdown_ctx.filter_owner = filter_owner;
-    shutdown_ctx.filter_zip = filter_zip;
-    shutdown_ctx.crime_filter_enabled = &crime_filter_enabled;
-    shutdown_ctx.crime_filter_homicide = &crime_filter_homicide;
-    shutdown_ctx.crime_filter_robbery = &crime_filter_robbery;
-    shutdown_ctx.crime_filter_assault = &crime_filter_assault;
-    shutdown_ctx.crime_filter_burglary = &crime_filter_burglary;
-    shutdown_ctx.crime_filter_theft = &crime_filter_theft;
-    shutdown_ctx.crime_filter_auto_theft = &crime_filter_auto_theft;
-    shutdown_ctx.crime_filter_drug = &crime_filter_drug;
-    shutdown_ctx.crime_filter_shooting = &crime_filter_shooting;
-    shutdown_ctx.crime_filter_use_year = &crime_filter_use_year;
-    shutdown_ctx.crime_year_min = &crime_year_min;
-    shutdown_ctx.crime_year_max = &crime_year_max;
-    shutdown_ctx.owner_search_query = owner_search_query;
-    shutdown_ctx.selected_owners = &selected_owners;
-    shutdown_ctx.center_lon = &center_lon;
-    shutdown_ctx.center_lat = &center_lat;
-    shutdown_ctx.zoom = &zoom;
-    shutdown_ctx.selected_parcel_idx = &selected_parcel_idx;
-    shutdown_ctx.selected_parcel_indices = &selected_parcel_indices;
-    shutdown_ctx.hydration_stop = &hydration_stop;
-    shutdown_ctx.time_cube_ui_worker = &time_cube_ui_worker;
-    shutdown_ctx.hydrate_req_cv = &hydrate_req_cv;
-    shutdown_ctx.tri_cv = &tri_cv;
-    shutdown_ctx.hydration_workers = &hydration_workers;
-    shutdown_ctx.triangulation_worker = &triangulation_worker;
-    shutdown_ctx.status_api_worker = &status_api_worker;
-    shutdown_ctx.dataset_api_worker = &dataset_api_worker;
-    shutdown_ctx.lan_discovery_worker = &lan_discovery_worker;
-    shutdown_ctx.heatmap_raster_texture = &heatmap_raster_texture;
+    destroyHeatmapRuntimeTexturesNow(heatmap_runtime);
+    AppShutdownContextFactoryInput shutdown_input;
+    shutdown_input.root = &root;
+    shutdown_input.app_settings = &app_settings;
+    shutdown_input.window = window;
+    shutdown_input.layers = &layers;
+    shutdown_input.hover_inspector_enabled = hover_inspector_enabled;
+    shutdown_input.hover_inspector_mode = &hover_inspector_mode;
+    shutdown_input.zoning_zone_enabled = &zoning_zone_enabled;
+    shutdown_input.layer_fill_enabled = &layer_fill_enabled;
+    shutdown_input.layer_hover_enabled = &layer_hover_enabled;
+    shutdown_input.layer_inspect_enabled = &layer_inspect_enabled;
+    shutdown_input.layer_heatmap_enabled = &layer_heatmap_enabled;
+    shutdown_input.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
+    shutdown_input.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
+    shutdown_input.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+    shutdown_input.layer_heatmap_algo = &layer_heatmap_algo;
+    shutdown_input.layer_normalize_mode = &layer_normalize_mode;
+    shutdown_input.layer_heatmap_cell_px = &layer_heatmap_cell_px;
+    shutdown_input.layer_heatmap_bandwidth_px = &layer_heatmap_bandwidth_px;
+    shutdown_input.layer_heatmap_blur_sigma_px = &layer_heatmap_blur_sigma_px;
+    shutdown_input.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
+    shutdown_input.layer_heatmap_zoom_adaptive_bandwidth = &layer_heatmap_zoom_adaptive_bandwidth;
+    shutdown_input.layer_heatmap_multires_enabled = &layer_heatmap_multires_enabled;
+    shutdown_input.layer_heatmap_multires_blend = &layer_heatmap_multires_blend;
+    shutdown_input.heatmap_algo = &heatmap_algo;
+    shutdown_input.heatmap_quality_preset = &heatmap_quality_preset;
+    shutdown_input.global_heat_cell_px = &global_heat_cell_px;
+    shutdown_input.heatmap_bandwidth_px = &heatmap_bandwidth_px;
+    shutdown_input.heatmap_blur_sigma_px = &heatmap_blur_sigma_px;
+    shutdown_input.heatmap_percentile_clip = &heatmap_percentile_clip;
+    shutdown_input.heatmap_zoom_adaptive_bandwidth = &heatmap_zoom_adaptive_bandwidth;
+    shutdown_input.heatmap_multires_enabled = &heatmap_multires_enabled;
+    shutdown_input.heatmap_multires_blend = &heatmap_multires_blend;
+    shutdown_input.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
+    shutdown_input.filter_enabled = &filter_enabled;
+    shutdown_input.filter_use_date = &filter_use_date;
+    shutdown_input.filter_year_min = &filter_year_min;
+    shutdown_input.filter_year_max = &filter_year_max;
+    shutdown_input.filter_blocklot = filter_blocklot;
+    shutdown_input.filter_status = filter_status;
+    shutdown_input.filter_address = filter_address;
+    shutdown_input.filter_owner = filter_owner;
+    shutdown_input.filter_zip = filter_zip;
+    shutdown_input.crime_filter_enabled = &crime_filter_enabled;
+    shutdown_input.crime_filter_homicide = &crime_filter_homicide;
+    shutdown_input.crime_filter_robbery = &crime_filter_robbery;
+    shutdown_input.crime_filter_assault = &crime_filter_assault;
+    shutdown_input.crime_filter_burglary = &crime_filter_burglary;
+    shutdown_input.crime_filter_theft = &crime_filter_theft;
+    shutdown_input.crime_filter_auto_theft = &crime_filter_auto_theft;
+    shutdown_input.crime_filter_drug = &crime_filter_drug;
+    shutdown_input.crime_filter_shooting = &crime_filter_shooting;
+    shutdown_input.crime_filter_use_year = &crime_filter_use_year;
+    shutdown_input.crime_year_min = &crime_year_min;
+    shutdown_input.crime_year_max = &crime_year_max;
+    shutdown_input.owner_search_query = owner_search_query;
+    shutdown_input.selected_owners = &selected_owners;
+    shutdown_input.center_lon = &center_lon;
+    shutdown_input.center_lat = &center_lat;
+    shutdown_input.zoom = &zoom;
+    shutdown_input.selected_parcel_idx = &selected_parcel_idx;
+    shutdown_input.selected_parcel_indices = &selected_parcel_indices;
+    shutdown_input.hydration_stop = &hydration_stop;
+    shutdown_input.time_cube_ui_worker = &time_cube_ui_worker;
+    shutdown_input.hydrate_req_cv = &hydrate_req_cv;
+    shutdown_input.tri_cv = &tri_cv;
+    shutdown_input.hydration_workers = &hydration_workers;
+    shutdown_input.triangulation_worker = &triangulation_worker;
+    shutdown_input.status_api_worker = &status_api_worker;
+    shutdown_input.dataset_api_worker = &dataset_api_worker;
+    shutdown_input.lan_discovery_worker = &lan_discovery_worker;
+    shutdown_input.heatmap_raster_texture = &heatmap_runtime.raster_texture;
+    AppShutdownContext shutdown_ctx = makeAppShutdownContext(shutdown_input);
     shutdownWorldSimApp(shutdown_ctx);
     return 0;
 }

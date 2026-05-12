@@ -197,21 +197,22 @@ Start with the current Baltimore City data:
   --output data/layers/regional_parcels.geojson
 ```
 
-Add Baltimore County and Howard County after downloading official parcel/property GIS data and converting it to GeoJSON, for example with `ogr2ogr`:
+Add Baltimore County and Howard County after downloading official parcel/property GIS data and converting it to GeoJSON. Baltimore County is imported natively from the official county ArcGIS tax parcel service with normalized owner fields:
 
 ```bash
-ogr2ogr -f GeoJSON data/inbox/baltimore_county/parcels.geojson /path/to/baltimore_county_source.gdb Parcels
+./build/worldsim3 --download-layers all
+
 ogr2ogr -f GeoJSON data/inbox/howard_county/parcels.geojson /path/to/howard_county_source.shp
 
 ./build/worldsim_regional_parcel_builder \
   --input BaltimoreCity:data/layers/parcel.geojson \
   --property-input BaltimoreCity:data/layers/real_property_information.geojson \
-  --input BaltimoreCounty:data/inbox/baltimore_county/parcels.geojson \
+  --input BaltimoreCounty:data/layers/baltimore_county_parcels.geojson \
   --input HowardCounty:data/inbox/howard_county/parcels.geojson \
   --output data/layers/regional_parcels.geojson
 ```
 
-For the current native Howard County path:
+For the current native Baltimore County plus Howard County path:
 
 ```bash
 ./build/worldsim3 --download-layers all
@@ -219,10 +220,13 @@ For the current native Howard County path:
 ./build/worldsim_regional_parcel_builder \
   --input BaltimoreCity:data/layers/parcel.geojson \
   --property-input BaltimoreCity:data/layers/real_property_information.geojson \
+  --input BaltimoreCounty:data/layers/baltimore_county_parcels.geojson \
   --input HowardCounty:data/layers/howard_county_parcels.geojson \
   --property-input HowardCounty:data/layers/howard_county_real_property_assessments.geojson \
   --output data/layers/regional_parcels.geojson
 ```
+
+Howard County's official bulk parcel and Maryland Open Data assessment sources used by the native importer do not include public owner names. The app preserves account IDs, addresses, values, year built, sales fields, and SDAT/FINDER links so a future native owner enrichment source can join by `account_id`.
 
 If a county publishes assessment/owner records separately from parcel geometry, pass it with matching jurisdiction:
 

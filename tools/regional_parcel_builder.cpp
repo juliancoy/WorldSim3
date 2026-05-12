@@ -20,14 +20,14 @@ struct SourceSpec {
 };
 
 const std::vector<std::pair<std::string, std::vector<std::string>>> kFieldAliases = {
-    {"source_parcel_id", {"source_parcel_id", "ACCOUNTID", "ACCOUNT_ID", "ACCTID", "ACCT_ID", "ACCOUNT", "ACCOUNTNO", "PARCELID", "PARCEL_ID", "PARCELNO", "PIN", "MAP_PARCEL", "MAPLOT", "OBJECTID", "OBJECTID_1"}},
-    {"account_id", {"account_id", "ACCOUNTID", "ACCOUNT_ID", "ACCTID", "ACCT_ID", "ACCOUNT", "ACCOUNTNO", "SDAT_ACCOUNT"}},
+    {"source_parcel_id", {"source_parcel_id", "ACCOUNTID", "ACCOUNT_ID", "ACCTID", "ACCT_ID", "ACCOUNT", "ACCOUNTNO", "TAXPIN", "PARCELID", "PARCEL_ID", "PARCELNO", "PIN", "PARCEL_ASSET_ID", "MAP_PARCEL", "MAPLOT", "OBJECTID", "OBJECTID_1"}},
+    {"account_id", {"account_id", "ACCOUNTID", "ACCOUNT_ID", "ACCTID", "ACCT_ID", "ACCOUNT", "ACCOUNTNO", "TAXPIN", "SDAT_ACCOUNT"}},
     {"blocklot", {"blocklot", "BLOCKLOT", "BLOCK_LOT", "BlockLot", "PIN", "PARCELID", "PARCEL_ID", "MAPLOT"}},
     {"address", {"address", "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD", "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1", "SITE_ADDR", "SITUSADDR", "LOCATION", "Location", "SITUS_ADDRESS"}},
-    {"owner", {"owner", "owner_name", "OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR", "OWNNAME"}},
+    {"owner", {"owner", "owner_name", "FULL_OWNER_NAME", "OWNER_NA1", "OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR", "OWNNAME", "OWNNAME1"}},
     {"land_value", {"land_value", "CURRLAND", "LAND_VALUE", "LANDVAL", "LAND_VAL"}},
     {"improvement_value", {"improvement_value", "CURRIMPR", "IMPR_VALUE", "IMPROVEMENT_VALUE", "IMPROVEVAL", "BLDG_VALUE"}},
-    {"current_value", {"current_value", "TAXBASE", "ARTAXBAS", "TOTAL_VALUE", "TOTALVAL", "ASSD_VALUE", "ASSESSMENT", "MARKET_VALUE"}},
+    {"current_value", {"current_value", "TAXBASE", "ARTAXBAS", "TOTAL_VALUE", "TOTALVAL", "NFMTTLVL", "ASSD_VALUE", "ASSESSMENT", "MARKET_VALUE"}},
     {"sale_price", {"sale_price", "SALEPRIC", "SALE_PRICE", "SALEAMT", "SALE_AMOUNT"}},
     {"sale_date", {"sale_date", "SALEDATE", "SALE_DATE", "LAST_SALE_DATE"}},
     {"year_built", {"year_built", "YEAR_BUILD", "YEARBUILT", "YR_BUILT", "BUILT", "BLDG_YEAR"}},

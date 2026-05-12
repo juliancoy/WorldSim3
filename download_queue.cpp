@@ -97,7 +97,7 @@ static void startBasemapDownload(
         const double max_lon = -76.45;
         const double min_lat = 39.18;
         const double max_lat = 39.40;
-        int z_min = 11;
+        int z_min = 8;
         int z_max = 18;
         // OpenTopoMap returns HTTP 400 for z18 in this region; avoid guaranteed failures.
         if (url_tmpl.find("tile.opentopomap.org") != std::string::npos) z_max = 17;
@@ -336,4 +336,3 @@ void drawBasemapDownloadQueueSection(
     if (!state.last_queue_event.empty()) ImGui::TextDisabled("Basemap event: %s", state.last_queue_event.c_str());
     if (!m.progress_line.empty()) ImGui::TextWrapped("%s", m.progress_line.c_str());
 }
-

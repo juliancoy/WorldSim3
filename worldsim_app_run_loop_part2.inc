@@ -98,9 +98,7 @@
                             ImGui::TableSetColumnIndex(2);
                             ImGui::Checkbox("##enable", &l.enabled);
                             ImGui::TableSetColumnIndex(3);
-                            ImGui::PushStyleColor(ImGuiCol_Text, l.color);
-                            draw_library_cell(l.name, 72);
-                            ImGui::PopStyleColor();
+                            drawLayerNameBadge(l.name, l.color, 72);
                             draw_library_tooltip(l);
                             ImGui::TableSetColumnIndex(4);
                             draw_library_cell(l.file, 72);
@@ -250,92 +248,190 @@
         }
         ImGui::Separator();
         ImGui::TextDisabled("Tile cache: %zu / %zu", g_TileCache.size(), kMaxTileCache);
-        if (ImGui::Button("Clear Cache")) {
-            size_t removed_files = 0;
-            std::error_code ec;
-            auto clear_tree = [&](const fs::path& p) {
-                if (fs::exists(p, ec)) removed_files += fs::remove_all(p, ec);
-            };
-            clear_tree(root / "data" / "cache" / "hydration");
-            clear_tree(root / "data" / "cache" / "triangulation");
-            clear_tree(root / "data" / "cache" / "derived");
-            fs::create_directories(root / "data" / "cache" / "hydration", ec);
-            fs::create_directories(root / "data" / "cache" / "triangulation", ec);
-            fs::create_directories(root / "data" / "cache" / "derived", ec);
-
-            for (auto& kv : g_TileCache) destroyTileTexture(kv.second.tex);
-            g_TileCache.clear();
-            g_TileLRU.clear();
-            clearTileDiskPresenceCache();
-
-            {
-                std::lock_guard<std::mutex> lk(hydrated_mutex);
-                hydrated_queue.clear();
+        if (ImGui::TreeNode("Cache Clear")) {
+            if (ImGui::Checkbox("All cache categories", &clear_cache_all)) {
+                clear_cache_hydration = clear_cache_all;
+                clear_cache_triangulation = clear_cache_all;
+                clear_cache_derived = clear_cache_all;
+                clear_cache_heatmap_memory = clear_cache_all;
+                clear_cache_heatmap_disk = clear_cache_all;
+                clear_cache_tile_memory = clear_cache_all;
+                clear_cache_tile_disk_presence = clear_cache_all;
             }
-            {
-                std::lock_guard<std::mutex> lk(tri_mutex);
-                tri_jobs.clear();
-                tri_results.clear();
+            if (ImGui::BeginChild("cache_clear_children", ImVec2(0, 190), false, ImGuiWindowFlags_HorizontalScrollbar)) {
+                if (ImGui::TreeNode("Data cache")) {
+                    ImGui::Checkbox("Hydration cache (on-disk)", &clear_cache_hydration);
+                    ImGui::Checkbox("Triangulation cache (on-disk)", &clear_cache_triangulation);
+                    ImGui::Checkbox("Derived cache (on-disk)", &clear_cache_derived);
+                    ImGui::Checkbox("Heatmap aggregate cache (on-disk)", &clear_cache_heatmap_disk);
+                    ImGui::TreePop();
+                }
+                if (ImGui::TreeNode("Runtime cache")) {
+                    ImGui::Checkbox("Heatmap aggregate cache (textures + raster meta)", &clear_cache_heatmap_memory);
+                    ImGui::Checkbox("Tile cache (GPU textures + queue + lru)", &clear_cache_tile_memory);
+                    ImGui::Checkbox("Tile existence memoization", &clear_cache_tile_disk_presence);
+                    ImGui::TreePop();
+                }
+                ImGui::EndChild();
             }
-            {
-                std::lock_guard<std::mutex> lk(hydrate_req_mutex);
-                hydrate_requests.clear();
-                std::fill(hydration_requested.begin(), hydration_requested.end(), false);
-                std::fill(hydration_required.begin(), hydration_required.end(), false);
-            }
+            const bool has_any_selected =
+                clear_cache_hydration ||
+                clear_cache_triangulation ||
+                clear_cache_derived ||
+                clear_cache_heatmap_memory ||
+                clear_cache_heatmap_disk ||
+                clear_cache_tile_memory ||
+                clear_cache_tile_disk_presence;
+            const bool all_children_selected =
+                clear_cache_hydration &&
+                clear_cache_triangulation &&
+                clear_cache_derived &&
+                clear_cache_heatmap_memory &&
+                clear_cache_heatmap_disk &&
+                clear_cache_tile_memory &&
+                clear_cache_tile_disk_presence;
+            clear_cache_all = has_any_selected && all_children_selected;
+            ImGui::SeparatorText("Selected scopes");
+            if (ImGui::Button("Clear Cache")) {
+                if (!has_any_selected) {
+                    last_cache_clear_msg = "No cache scope selected for clear.";
+                } else {
+                    size_t removed_files = 0;
+                    std::error_code ec;
+                    std::vector<std::string> cleared_scopes;
+                    if (clear_cache_hydration) {
+                        removed_files += clear_cache_tree(cache_hydration_dir);
+                        cleared_scopes.push_back("hydration");
+                    }
+                    if (clear_cache_triangulation) {
+                        removed_files += clear_cache_tree(cache_triangulation_dir);
+                        cleared_scopes.push_back("triangulation");
+                    }
+                    if (clear_cache_derived) {
+                        removed_files += clear_cache_tree(cache_derived_dir);
+                        cleared_scopes.push_back("derived");
+                    }
+                    if (clear_cache_heatmap_disk) {
+                        removed_files += clear_cache_tree(cache_aggregate_dir);
+                        cleared_scopes.push_back("heatmap-aggregate disk");
+                    }
+                    if (clear_cache_heatmap_memory) {
+                        clear_heatmap_runtime_cache();
+                        cleared_scopes.push_back("heatmap-aggregate runtime");
+                    }
+                    if (clear_cache_tile_memory) {
+                        for (auto& kv : g_TileCache) destroyTileTexture(kv.second.tex);
+                        g_TileCache.clear();
+                        g_TileLRU.clear();
+                        cleared_scopes.push_back("tile");
+                    }
+                    if (clear_cache_tile_disk_presence) {
+                        clearTileDiskPresenceCache();
+                        cleared_scopes.push_back("tile disk presence");
+                    }
 
-            hydrated_count.store(0, std::memory_order_relaxed);
-            triangulated_count.store(0, std::memory_order_relaxed);
-            cached_real_property_size = 0;
-            cached_vac_notice_size = 0;
-            cached_vac_rehab_size = 0;
-            cached_tax_lien_size = 0;
-            cached_tax_sale_size = 0;
-            vacancy_maps_generation = 0;
-            parcel_vacancy_generation_applied = -1;
-            tax_maps_generation = 0;
-            parcel_tax_generation_applied = -1;
-            releaseContainerStorage(parcel_vac_notice_by_feature);
-            releaseContainerStorage(parcel_vac_rehab_by_feature);
-            releaseContainerStorage(parcel_tax_lien_by_feature);
-            releaseContainerStorage(parcel_tax_sale_by_feature);
-            releaseContainerStorage(parcel_tax_lien_amount_by_feature);
-            releaseContainerStorage(parcel_tax_sale_amount_by_feature);
-            releaseContainerStorage(vacant_notice_count_by_blocklot);
-            releaseContainerStorage(vacant_rehab_count_by_blocklot);
-            releaseContainerStorage(tax_lien_count_by_blocklot);
-            releaseContainerStorage(tax_lien_amount_by_blocklot);
-            releaseContainerStorage(tax_sale_count_by_blocklot);
-            releaseContainerStorage(tax_sale_amount_by_blocklot);
-            releaseContainerStorage(real_property_by_blocklot);
-            releaseContainerStorage(zoning_zone_label);
-            releaseContainerStorage(zoning_zone_counts);
-            releaseContainerStorage(zoning_zone_order);
-            releaseContainerStorage(zoning_group_zones);
-            releaseContainerStorage(zoning_group_order);
-            zoning_zone_discovered_feature_count = 0;
-            visible_vacant_parcels_last_frame.store(0, std::memory_order_relaxed);
-            vacant_parcels_matched_total.store(0, std::memory_order_relaxed);
-            vacant_parcels_with_geometry_total.store(0, std::memory_order_relaxed);
-            vacant_parcels_triangulated_renderable_total.store(0, std::memory_order_relaxed);
+                    if (clear_cache_hydration) {
+                        fs::create_directories(cache_hydration_dir, ec);
+                    }
+                    if (clear_cache_triangulation) {
+                        fs::create_directories(cache_triangulation_dir, ec);
+                    }
+                    if (clear_cache_derived) {
+                        fs::create_directories(cache_derived_dir, ec);
+                    }
+                    if (clear_cache_heatmap_disk) {
+                        fs::create_directories(cache_aggregate_dir, ec);
+                    }
 
-            for (size_t i = 0; i < layers.size(); ++i) {
-                releaseContainerStorage(layers[i].features);
-                layer_spatial[i] = LayerSpatialIndex{};
-                if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
-                std::lock_guard<std::mutex> lk(status_mutex);
-                if (i < layer_states.size()) {
-                    layer_states[i].status = LayerPipelineStatus::Queued;
-                    layer_states[i].feature_count = 0;
-                    layer_states[i].error.clear();
+                    const bool clear_hydration_data = clear_cache_hydration;
+                    const bool clear_tri_data = clear_cache_triangulation;
+                    const bool clear_derived_data = clear_cache_derived || clear_cache_hydration;
+                    if (clear_hydration_data) {
+                        {
+                            std::lock_guard<std::mutex> lk(hydrated_mutex);
+                            hydrated_queue.clear();
+                        }
+                        {
+                            std::lock_guard<std::mutex> lk(tri_mutex);
+                            tri_jobs.clear();
+                            tri_results.clear();
+                        }
+                        {
+                            std::lock_guard<std::mutex> lk(hydrate_req_mutex);
+                            hydrate_requests.clear();
+                            std::fill(hydration_requested.begin(), hydration_requested.end(), false);
+                            std::fill(hydration_required.begin(), hydration_required.end(), false);
+                        }
+                        for (size_t i = 0; i < layers.size(); ++i) {
+                            releaseContainerStorage(layers[i].features);
+                            layer_spatial[i] = LayerSpatialIndex{};
+                            if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
+                        }
+                        {
+                            std::lock_guard<std::mutex> lk(status_mutex);
+                            for (size_t i = 0; i < layers.size(); ++i) {
+                                if (i < layer_states.size()) {
+                                    layer_states[i].status = LayerPipelineStatus::Queued;
+                                    layer_states[i].feature_count = 0;
+                                    layer_states[i].error.clear();
+                                }
+                            }
+                        }
+                        for (size_t i = 0; i < layers.size(); ++i) {
+                            if (layers[i].enabled) enqueue_hydration(i);
+                        }
+                        trimProcessHeap();
+                        hydrated_count.store(0, std::memory_order_relaxed);
+                        triangulated_count.store(0, std::memory_order_relaxed);
+                    }
+                        if (clear_tri_data && !clear_hydration_data) {
+                        {
+                            std::lock_guard<std::mutex> lk(tri_mutex);
+                            tri_jobs.clear();
+                            tri_results.clear();
+                        }
+                        const bool vac_layer_active_now =
+                            (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size() && layers[(size_t)vacant_notice_layer_idx].enabled) ||
+                            (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() && layers[(size_t)vacant_rehab_layer_idx].enabled);
+                        for (size_t i = 0; i < layers.size(); ++i) {
+                            if (layers[i].features.empty()) continue;
+                            const bool parcel_dep_priority = vac_layer_active_now && parcel_layer_idx >= 0 && (int)i == parcel_layer_idx;
+                            if (!layers[i].enabled && !parcel_dep_priority) continue;
+                            TriJob tj;
+                            tj.index = i;
+                            tj.file = layers[i].file;
+                            tj.rings_per_feature.reserve(layers[i].features.size());
+                            for (const auto& fg : layers[i].features) tj.rings_per_feature.push_back(fg.rings);
+                            {
+                                std::lock_guard<std::mutex> lk2(tri_mutex);
+                                if (parcel_dep_priority) tri_jobs.push_front(std::move(tj));
+                                else tri_jobs.push_back(std::move(tj));
+                            }
+                            tri_cv.notify_one();
+                            {
+                                std::lock_guard<std::mutex> lk3(status_mutex);
+                                if (i < layer_states.size()) layer_states[i].status = LayerPipelineStatus::TriQueued;
+                            }
+                        }
+                        tri_cv.notify_all();
+                    }
+
+                    if (clear_derived_data) {
+                        reset_derived_cache_state();
+                    }
+
+                    std::ostringstream clear_msg;
+                    clear_msg << "Cleared cache scopes: ";
+                    for (size_t i = 0; i < cleared_scopes.size(); ++i) {
+                        if (i > 0) clear_msg << ", ";
+                        clear_msg << cleared_scopes[i];
+                    }
+                    clear_msg << " | removed " << removed_files << " files.";
+                    if (clear_hydration_data) clear_msg << " Rehydrating enabled layers.";
+                    last_cache_clear_msg = clear_msg.str();
                 }
             }
-
-            for (size_t i = 0; i < layers.size(); ++i) {
-                if (layers[i].enabled) enqueue_hydration(i);
-            }
-            trimProcessHeap();
-            last_cache_clear_msg = "Cache cleared; rehydrating enabled layers.";
+            ImGui::TreePop();
         }
         if (!last_cache_clear_msg.empty()) ImGui::TextDisabled("%s", last_cache_clear_msg.c_str());
         ImGui::End();
@@ -367,82 +463,26 @@
                 if (!layer_data_available(i)) enqueue_hydration(i);
             }
         }
-        // Vacant overlays depend on parcel geometry even when parcel visibility is off.
         const bool vacant_layer_active =
             (vacant_notice_layer_idx >= 0 && layers[(size_t)vacant_notice_layer_idx].enabled) ||
             (vacant_rehab_layer_idx >= 0 && layers[(size_t)vacant_rehab_layer_idx].enabled);
-        if (vacant_layer_active && parcel_layer_idx >= 0) {
-            bool parcel_ready = false;
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                if ((size_t)parcel_layer_idx < layer_states.size()) {
-                    LayerPipelineStatus st = layer_states[(size_t)parcel_layer_idx].status;
-                    parcel_ready = (st == LayerPipelineStatus::Hydrated ||
-                                    st == LayerPipelineStatus::TriQueued ||
-                                    st == LayerPipelineStatus::Triangulating ||
-                                    st == LayerPipelineStatus::Ready);
-                }
-            }
-            if (!parcel_ready) {
-                enqueue_hydration((size_t)parcel_layer_idx, true);
-            }
-        }
-        if (real_property_layer_idx >= 0 && (size_t)real_property_layer_idx < layers.size()) {
-            bool real_property_ready = false;
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                if ((size_t)real_property_layer_idx < layer_states.size()) {
-                    LayerPipelineStatus st = layer_states[(size_t)real_property_layer_idx].status;
-                    real_property_ready = (st == LayerPipelineStatus::Hydrated ||
-                                           st == LayerPipelineStatus::TriQueued ||
-                                           st == LayerPipelineStatus::Triangulating ||
-                                           st == LayerPipelineStatus::Ready);
-                }
-            }
-            const bool filter_join_needed =
-                filter_enabled ||
-                (parcel_layer_idx >= 0 && layers[(size_t)parcel_layer_idx].enabled) ||
-                vacant_layer_active ||
-                filter_owner[0] != '\0' ||
-                filter_address[0] != '\0' ||
-                filter_zip[0] != '\0';
-            if (filter_join_needed && !real_property_ready) {
-                enqueue_hydration((size_t)real_property_layer_idx, true);
-            }
-        }
-        const bool tax_layer_active =
-            (tax_lien_layer_idx >= 0 && layers[(size_t)tax_lien_layer_idx].enabled) ||
-            (tax_sale_layer_idx >= 0 && layers[(size_t)tax_sale_layer_idx].enabled);
-        if (tax_layer_active && parcel_layer_idx >= 0) {
-            bool parcel_ready = false;
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                if ((size_t)parcel_layer_idx < layer_states.size()) {
-                    LayerPipelineStatus st = layer_states[(size_t)parcel_layer_idx].status;
-                    parcel_ready = (st == LayerPipelineStatus::Hydrated ||
-                                    st == LayerPipelineStatus::TriQueued ||
-                                    st == LayerPipelineStatus::Triangulating ||
-                                    st == LayerPipelineStatus::Ready);
-                }
-            }
-            if (!parcel_ready) enqueue_hydration((size_t)parcel_layer_idx, true);
-        }
-        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
-            bool zoning_ready = false;
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                if ((size_t)zoning_layer_idx < layer_states.size()) {
-                    LayerPipelineStatus st = layer_states[(size_t)zoning_layer_idx].status;
-                    zoning_ready = (st == LayerPipelineStatus::Hydrated ||
-                                    st == LayerPipelineStatus::TriQueued ||
-                                    st == LayerPipelineStatus::Triangulating ||
-                                    st == LayerPipelineStatus::Ready);
-                }
-            }
-            if (layers[(size_t)zoning_layer_idx].enabled && !zoning_ready) {
-                enqueue_hydration((size_t)zoning_layer_idx);
-            }
-        }
+        LayerDependencyCoordinatorContext dependency_ctx;
+        dependency_ctx.layers = &layers;
+        dependency_ctx.layer_states = &layer_states;
+        dependency_ctx.status_mutex = &status_mutex;
+        dependency_ctx.parcel_layer_idx = parcel_layer_idx;
+        dependency_ctx.real_property_layer_idx = real_property_layer_idx;
+        dependency_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
+        dependency_ctx.vacant_rehab_layer_idx = vacant_rehab_layer_idx;
+        dependency_ctx.tax_lien_layer_idx = tax_lien_layer_idx;
+        dependency_ctx.tax_sale_layer_idx = tax_sale_layer_idx;
+        dependency_ctx.zoning_layer_idx = zoning_layer_idx;
+        dependency_ctx.filter_enabled = filter_enabled;
+        dependency_ctx.filter_owner = filter_owner;
+        dependency_ctx.filter_address = filter_address;
+        dependency_ctx.filter_zip = filter_zip;
+        dependency_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
+        coordinateLayerHydrationDependencies(dependency_ctx);
         if (ui_state_changed) {
             saveLayerUiState(
                 root,
@@ -507,10 +547,18 @@
             last_hover_inspector_mode = hover_inspector_mode;
         }
         {
-            std::lock_guard<std::mutex> lk(hydrated_mutex);
-            while (!hydrated_queue.empty()) {
-                HydratedLayer ready = std::move(hydrated_queue.front());
-                hydrated_queue.pop_front();
+            constexpr size_t kMaxHydrationChunksPerFrame = 24;
+            constexpr double kMaxHydrationDrainMs = 4.0;
+            const auto hydration_drain_start = std::chrono::steady_clock::now();
+            size_t hydration_chunks_drained = 0;
+            while (true) {
+                HydratedLayer ready;
+                {
+                    std::lock_guard<std::mutex> lk(hydrated_mutex);
+                    if (hydrated_queue.empty()) break;
+                    ready = std::move(hydrated_queue.front());
+                    hydrated_queue.pop_front();
+                }
                 if (ready.index < layers.size()) {
                     if (!ready.features.empty()) {
                         auto& dst = layers[ready.index].features;
@@ -544,11 +592,6 @@
                     }
                     hydrated_count.fetch_add(1, std::memory_order_relaxed);
                     {
-                        fs::path layer_path = root / "data" / "layers" / layers[ready.index].file;
-                        fs::path cache_path = root / "data" / "cache" / "hydration" / (layers[ready.index].file + ".msgpack");
-                        saveHydrationCache(cache_path, fileSignature(layer_path), layers[ready.index].features);
-                    }
-                    {
                         std::lock_guard<std::mutex> lk3(status_mutex);
                         if (ready.index < layer_states.size()) {
                             layer_states[ready.index].status = LayerPipelineStatus::Hydrated;
@@ -575,6 +618,12 @@
                     }
                     tri_cv.notify_one();
                     trimProcessHeap();
+                }
+                hydration_chunks_drained++;
+                const double drain_ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - hydration_drain_start).count();
+                if (hydration_chunks_drained >= kMaxHydrationChunksPerFrame || drain_ms >= kMaxHydrationDrainMs) {
+                    break;
                 }
             }
         }

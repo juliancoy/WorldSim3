@@ -3,6 +3,9 @@
 #include "map_render_utils.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numbers>
 
 namespace {
 bool layerFillEnabled(const MapRenderContext& ctx, int layer_idx) {
@@ -24,6 +27,42 @@ bool featureOnScreen(const MapRenderContext& ctx, size_t layer_idx, uint32_t fea
 
 int valueAt(const std::vector<int>* values, size_t idx) {
     return values && idx < values->size() ? (*values)[idx] : 0;
+}
+
+double parcelAreaSqM(const LayerDef::FeatureGeom& fg) {
+    if (fg.rings.empty()) return 0.0;
+    constexpr double kDegToMetersLat = 111320.0;
+    double total = 0.0;
+    for (const auto& ring : fg.rings) {
+        if (ring.size() < 3) continue;
+        double lat_sum = 0.0;
+        for (const auto& p : ring) lat_sum += (double)p.y;
+        const double lat0 = lat_sum / (double)ring.size();
+        const double sx = kDegToMetersLat * std::cos(lat0 * std::numbers::pi / 180.0);
+        double a = 0.0;
+        for (size_t i = 0, n = ring.size(); i < n; ++i) {
+            const auto& p = ring[i];
+            const auto& q = ring[(i + 1) % n];
+            a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                 ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+        }
+        total += std::abs(a) * 0.5;
+    }
+    return total;
+}
+
+double parcelParameterValue(const MapRenderContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
+    switch (ctx.parcel_parameter_mode) {
+        case 1:
+            return parcelAreaSqM(fg);
+        case 2: {
+            if (!ctx.unified_parcels) return 0.0;
+            const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
+            return rec ? rec->current_value : 0.0;
+        }
+        default:
+            return 0.0;
+    }
 }
 
 void drawParcelOverlayRings(
@@ -50,6 +89,33 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
     }
 
     auto& parcel_layer = (*ctx.layers)[ctx.parcel_layer_idx];
+
+    if (ctx.parcel_parameter_mode > 0 && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
+        double min_v = std::numeric_limits<double>::infinity();
+        double max_v = -std::numeric_limits<double>::infinity();
+        for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+            const auto& fg = parcel_layer.features[i];
+            if (fg.rings.empty()) continue;
+            const double v = parcelParameterValue(ctx, i, fg);
+            if (v <= 0.0 || !std::isfinite(v)) continue;
+            min_v = std::min(min_v, v);
+            max_v = std::max(max_v, v);
+        }
+        const bool range_valid = std::isfinite(min_v) && std::isfinite(max_v) && max_v > min_v;
+        if (range_valid) {
+            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+                auto& fg = parcel_layer.features[i];
+                if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
+                if (!featureOnScreen(ctx, ctx.parcel_layer_idx, (uint32_t)i, fg)) continue;
+                if (fg.rings.empty()) continue;
+                const double v = parcelParameterValue(ctx, i, fg);
+                if (v <= 0.0 || !std::isfinite(v)) continue;
+                const float t = std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f);
+                const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
+                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, colorWithAlpha(heatColor(t), 150));
+            }
+        }
+    }
 
     if (ctx.vacant_notice_enabled || ctx.vacant_rehab_enabled) {
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {

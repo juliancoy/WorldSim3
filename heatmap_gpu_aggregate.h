@@ -25,3 +25,5 @@ bool buildGpuSplatAggregate(
     std::vector<float>& out_gv,
     std::vector<float>& out_sv,
     std::string* error);
+
+void shutdownGpuSplatAggregate();

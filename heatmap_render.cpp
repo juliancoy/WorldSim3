@@ -333,25 +333,32 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             &gpu_err);
                     }
 
-                    auto blur_field = [&](std::vector<float>& src, bool horizontal) {
-                        if (sigma_r <= 0.05f) return;
-                        const int radius = std::max(1, (int)std::ceil(3.0f * sigma_r));
+                    auto build_blur_kernel = [&](float sigma) {
+                        if (sigma <= 0.05f) return std::vector<float>{1.0f};
+                        const int radius = std::max(1, (int)std::ceil(3.0f * sigma));
                         std::vector<float> kernel((size_t)radius * 2 + 1, 0.0f);
                         float ksum = 0.0f;
                         for (int k = -radius; k <= radius; ++k) {
-                            const float v = std::exp(-(float)(k * k) / (2.0f * sigma_r * sigma_r));
+                            const float v = std::exp(-(float)(k * k) / (2.0f * sigma * sigma));
                             kernel[(size_t)(k + radius)] = v;
                             ksum += v;
                         }
                         if (ksum > 0.0f) for (float& v : kernel) v /= ksum;
+                        return kernel;
+                    };
+                    const std::vector<float> blur_kernel = build_blur_kernel(sigma_r);
+                    const int blur_radius = sigma_r > 0.05f ? std::max(1, (int)std::ceil(3.0f * sigma_r)) : 0;
+
+                    auto blur_field = [&](std::vector<float>& src, bool horizontal) {
+                        if (sigma_r <= 0.05f) return;
                         std::vector<float> dst(src.size(), 0.0f);
                         for (int y = 0; y < rh; ++y) {
                             for (int x = 0; x < rw; ++x) {
                                 float acc = 0.0f;
-                                for (int k = -radius; k <= radius; ++k) {
+                                for (int k = -blur_radius; k <= blur_radius; ++k) {
                                     const int sx2 = horizontal ? std::clamp(x + k, 0, rw - 1) : x;
                                     const int sy2 = horizontal ? y : std::clamp(y + k, 0, rh - 1);
-                                    acc += src[idx(sx2, sy2)] * kernel[(size_t)(k + radius)];
+                                    acc += src[idx(sx2, sy2)] * blur_kernel[(size_t)(k + blur_radius)];
                                 }
                                 dst[idx(x, y)] = acc;
                             }
@@ -377,7 +384,8 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             if (s.prefer_gradient) gv[i] += 1.0f; else sv[i] += 1.0f;
                         }
                     }
-                    if (!gpu_ok || settings.algo == kAggregateGpuSplatBlur) {
+                    const bool skip_cpu_blur_for_gpu_splat = settings.algo == kAggregateGpuSplatBlur && gpu_ok && !settings.allow_cpu_fallback;
+                    if (!skip_cpu_blur_for_gpu_splat) {
                         for (auto* field : {&density, &cr, &cg, &cb, &cw, &gv, &sv}) {
                             blur_field(*field, true);
                             blur_field(*field, false);
