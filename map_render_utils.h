@@ -8,6 +8,7 @@
 
 bool tryGetFeaturePropertyFloat(const LayerDef::FeatureGeom& fg, const std::string& key, float& out);
 ImVec4 heatColor(float t);
+float applyPowerGamma(float t, float gamma);
 ImU32 colorWithAlpha(const ImVec4& c, int alpha);
 ImVec4 darkenColor(const ImVec4& c, float mul);
 ImVec4 blendVacancyColor(const ImVec4& notice_color, const ImVec4& rehab_color, int notice_count, int rehab_count);

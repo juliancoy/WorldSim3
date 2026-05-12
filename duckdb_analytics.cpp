@@ -73,6 +73,62 @@ bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {
     return false;
 }
 
+bool DuckDbAnalytics::validateExistingCache() {
+    try {
+        std::error_code ec;
+        const fs::path db_path = status_.db_path;
+        if (!fs::exists(db_path, ec) || ec) {
+            status_.last_rebuild_ok = false;
+            status_.message = "DuckDB analytics cache not built yet.";
+            return false;
+        }
+
+        duckdb::DuckDB db(status_.db_path);
+        duckdb::Connection con(db);
+
+        auto table_check = con.Query(R"SQL(
+            SELECT count(*)::BIGINT
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name IN ('layer_features', 'unified_parcels', 'parcel_events')
+        )SQL");
+        if (!table_check || table_check->HasError() || table_check->RowCount() == 0) {
+            status_.last_rebuild_ok = false;
+            status_.message = "DuckDB analytics cache validation failed.";
+            return false;
+        }
+        const int64_t table_count = table_check->GetValue<int64_t>(0, 0);
+        if (table_count < 3) {
+            status_.last_rebuild_ok = false;
+            status_.message = "DuckDB analytics cache is incomplete.";
+            return false;
+        }
+
+        auto feature_count_res = con.Query("SELECT count(*)::BIGINT FROM layer_features");
+        auto layer_count_res = con.Query("SELECT count(DISTINCT layer_idx)::BIGINT FROM layer_features");
+        if (!feature_count_res || feature_count_res->HasError() ||
+            !layer_count_res || layer_count_res->HasError() ||
+            feature_count_res->RowCount() == 0 || layer_count_res->RowCount() == 0) {
+            status_.last_rebuild_ok = false;
+            status_.message = "DuckDB analytics cache validation failed.";
+            return false;
+        }
+
+        status_.last_rebuild_ok = true;
+        status_.feature_count = (size_t)feature_count_res->GetValue<int64_t>(0, 0);
+        status_.layer_count = (size_t)layer_count_res->GetValue<int64_t>(0, 0);
+        std::ostringstream msg;
+        msg << "DuckDB analytics cache ready: " << status_.feature_count
+            << " features across " << status_.layer_count << " hydrated layers.";
+        status_.message = msg.str();
+        return true;
+    } catch (const std::exception& e) {
+        status_.last_rebuild_ok = false;
+        status_.message = std::string("DuckDB cache validation failed: ") + e.what();
+        return false;
+    }
+}
+
 bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels) {
     try {
         std::filesystem::create_directories(root_ / "data");
@@ -450,6 +506,57 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
         out.message = std::string("DuckDB query failed: ") + e.what();
         return out;
     }
+}
+
+DuckDbQueryResult DuckDbAnalytics::queryParcelJurisdictions(
+    size_t parcel_layer_idx,
+    const std::unordered_set<std::string>& jurisdictions,
+    size_t max_rows) const {
+    if (jurisdictions.empty()) {
+        DuckDbQueryResult out;
+        out.ok = true;
+        out.result_set.active = true;
+        out.message = "No parcel jurisdictions selected. Map identities: 0 features.";
+        return out;
+    }
+
+    std::vector<std::string> sorted_jurisdictions;
+    sorted_jurisdictions.reserve(jurisdictions.size());
+    for (const auto& jurisdiction : jurisdictions) {
+        const std::string normalized = normalizeJoinKey(jurisdiction);
+        if (!normalized.empty()) sorted_jurisdictions.push_back(normalized);
+    }
+    std::sort(sorted_jurisdictions.begin(), sorted_jurisdictions.end());
+    sorted_jurisdictions.erase(std::unique(sorted_jurisdictions.begin(), sorted_jurisdictions.end()), sorted_jurisdictions.end());
+    if (sorted_jurisdictions.empty()) {
+        DuckDbQueryResult out;
+        out.ok = true;
+        out.result_set.active = true;
+        out.message = "No valid parcel jurisdictions selected. Map identities: 0 features.";
+        return out;
+    }
+    std::ostringstream in_clause;
+    for (size_t i = 0; i < sorted_jurisdictions.size(); ++i) {
+        if (i > 0) in_clause << ", ";
+        in_clause << "'" << sqlQuote(sorted_jurisdictions[i]) << "'";
+    }
+
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT layer_idx, feature_idx, blocklot
+        FROM parcel_features
+        WHERE layer_idx = )SQL" << (uint64_t)parcel_layer_idx << R"SQL(
+          AND regexp_replace(upper(coalesce(
+                nullif(json_extract_string(properties_json, '$.jurisdiction'), ''),
+                CASE
+                    WHEN layer_file = 'parcel.geojson' THEN 'Baltimore City'
+                    WHEN layer_file = 'baltimore_county_parcels.geojson' THEN 'Baltimore County'
+                    WHEN layer_file = 'howard_county_parcels.geojson' THEN 'Howard County'
+                    ELSE ''
+                END
+              )), '[^A-Z0-9]', '', 'g') IN ()SQL" << in_clause.str() << R"SQL()
+    )SQL";
+    return executeMapQuery(sql.str(), {}, {}, max_rows);
 }
 
 std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& query, size_t max_rows) const {

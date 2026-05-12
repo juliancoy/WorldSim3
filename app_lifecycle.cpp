@@ -77,6 +77,7 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.layer_heatmap_max_zoom,
         ctx.layer_parcel_detail_min_zoom,
         ctx.layer_heatmap_use_gradient,
+        ctx.layer_choropleth_gamma,
         ctx.layer_heatmap_algo,
         ctx.layer_normalize_mode,
         ctx.layer_heatmap_cell_px,

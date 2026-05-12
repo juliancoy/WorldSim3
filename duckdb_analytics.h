@@ -49,11 +49,16 @@ public:
 
     const DuckDbAnalyticsStatus& status() const { return status_; }
     bool needsRebuild(const std::vector<LayerDef>& layers) const;
+    bool validateExistingCache();
     bool rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     DuckDbQueryResult executeMapQuery(
         const std::string& sql,
         const std::unordered_set<std::string>& selected_owners,
         const std::vector<DuckDbSelectedParcel>& selected_parcels,
+        size_t max_rows = 1000) const;
+    DuckDbQueryResult queryParcelJurisdictions(
+        size_t parcel_layer_idx,
+        const std::unordered_set<std::string>& jurisdictions,
         size_t max_rows = 1000) const;
     std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
 

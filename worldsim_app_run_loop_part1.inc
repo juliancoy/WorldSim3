@@ -516,12 +516,29 @@
         }
         ImGui::Separator();
 
-        if (ImGui::Button("Show All")) {
+        auto select_all_layers_and_filters = [&]() {
             for (auto& l : layers) l.enabled = true;
+            parcel_jurisdiction_filter.clear();
+            for (const char* jurisdiction : parcel_jurisdiction_options) {
+                parcel_jurisdiction_filter.insert(jurisdiction);
+            }
+            parcel_jurisdiction_filter_dirty = true;
+        };
+        auto deselect_all_layers_and_filters = [&]() {
+            for (auto& l : layers) l.enabled = false;
+            parcel_jurisdiction_filter.clear();
+            parcel_jurisdiction_filter_dirty = true;
+        };
+        if (ImGui::Button("Show All")) {
+            select_all_layers_and_filters();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Deselect All")) {
+            deselect_all_layers_and_filters();
         }
         ImGui::SameLine();
         if (ImGui::Button("Hide All")) {
-            for (auto& l : layers) l.enabled = false;
+            deselect_all_layers_and_filters();
         }
         ImGui::SameLine();
         ImGui::BeginDisabled(queueable_missing_layer_count == 0);
@@ -754,6 +771,9 @@
         layers_panel_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
         layers_panel_input.crime_legacy_layer_idx = crime_legacy_layer_idx;
         layers_panel_input.crime_breakdown = &crime_breakdown;
+        layers_panel_input.parcel_jurisdiction_filter = &parcel_jurisdiction_filter;
+        layers_panel_input.parcel_jurisdiction_filter_dirty = &parcel_jurisdiction_filter_dirty;
+        layers_panel_input.parcel_jurisdiction_filter_status = &parcel_jurisdiction_filter_status;
         LayersPanelUiContext layers_panel_ctx = makeLayersPanelUiContext(layers_panel_input);
         drawLayerCategoriesPanel(layers_panel_ctx);
         bool zoning_filters_changed = false;

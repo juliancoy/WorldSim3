@@ -1,12 +1,15 @@
 [
   {
-    "name": "Regional Parcels",
+    "name": "Maryland Parcels",
     "file": "regional_parcels.geojson",
     "color": "#ffd92f",
-    "description": "Canonical generated parcel layer for Baltimore City, Baltimore County, Howard County, and future regional jurisdictions. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
+    "description": "Canonical generated parcel layer for Maryland jurisdictions. Preferred source is Maryland Planning MdProperty View parcel polygons, with county-native parcel feeds used only when they are materially better than the statewide Maryland Planning product. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
     "download": false,
-    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder; county sources may require reprojection and normalization before use.",
+    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder. Prefer Maryland Planning MdProperty View parcel polygons and Maryland statewide real-property assessments for broad county coverage; use county-native feeds only when they provide meaningfully better geometry or attributes.",
     "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx",
       "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
       "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
@@ -17,13 +20,25 @@
       "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AProperty_Public_NoName&outputFormat=application/json",
       "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
       "https://opendata.maryland.gov/resource/ed4q-f8tm.csv",
-      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download"
     ],
     "category": "housing",
     "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false
+  },
+  {
+    "name": "Baltimore City Parcels",
+    "file": "parcel.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
+    "color": "#377eb8",
+    "description": "Official Baltimore City parcel boundaries used as base land-unit geometry.",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": true
   },
   {
     "name": "Baltimore County Parcels",
@@ -35,6 +50,7 @@
     "reference_url": "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
@@ -58,6 +74,7 @@
     "reference_url": "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
@@ -73,6 +90,411 @@
       "shapefile": "Property.shp",
       "source_crs": "EPSG:2248"
     }
+  },
+  {
+    "name": "Allegany County Parcels",
+    "file": "allegany_county_parcels.geojson",
+    "color": "#cab2d6",
+    "description": "Preferred Allegany County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons. Import the official county parcel ZIP before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Use the official Maryland Planning parcel polygon ZIP for Allegany County from the Maryland parcel download catalog.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/0vq8xyexfe2juqcoeclqn/ALLEparcels0226.zip?dl=1&rlkey=6dfrsl38xrpujh6ouczpwnikp",
+      "shapefile": "ALLEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
+  },
+  {
+    "name": "Anne Arundel County Parcels",
+    "file": "anne_arundel_county_parcels.geojson",
+    "color": "#fb9a99",
+    "description": "Preferred Anne Arundel County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Anne Arundel County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Calvert County Parcels",
+    "file": "calvert_county_parcels.geojson",
+    "color": "#fdbf6f",
+    "description": "Preferred Calvert County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Calvert County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Caroline County Parcels",
+    "file": "caroline_county_parcels.geojson",
+    "color": "#b3de69",
+    "description": "Preferred Caroline County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Caroline County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Carroll County Parcels",
+    "file": "carroll_county_parcels.geojson",
+    "color": "#fccde5",
+    "description": "Preferred Carroll County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Carroll County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Cecil County Parcels",
+    "file": "cecil_county_parcels.geojson",
+    "color": "#80b1d3",
+    "description": "Preferred Cecil County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Cecil County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Charles County Parcels",
+    "file": "charles_county_parcels.geojson",
+    "color": "#8dd3c7",
+    "description": "Preferred Charles County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Charles County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Dorchester County Parcels",
+    "file": "dorchester_county_parcels.geojson",
+    "color": "#ffffb3",
+    "description": "Preferred Dorchester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Dorchester County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Frederick County Parcels",
+    "file": "frederick_county_parcels.geojson",
+    "color": "#bc80bd",
+    "description": "Preferred Frederick County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Frederick County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Garrett County Parcels",
+    "file": "garrett_county_parcels.geojson",
+    "color": "#ccebc5",
+    "description": "Preferred Garrett County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Garrett County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Harford County Parcels",
+    "file": "harford_county_parcels.geojson",
+    "color": "#ffed6f",
+    "description": "Preferred Harford County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Harford County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Kent County Parcels",
+    "file": "kent_county_parcels.geojson",
+    "color": "#bebada",
+    "description": "Preferred Kent County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Kent County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Montgomery County Parcels",
+    "file": "montgomery_county_parcels.geojson",
+    "color": "#f4cae4",
+    "description": "Preferred Montgomery County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Montgomery County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Prince George's County Parcels",
+    "file": "prince_georges_county_parcels.geojson",
+    "color": "#b3cde3",
+    "description": "Preferred Prince George's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Prince George's County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Queen Anne's County Parcels",
+    "file": "queen_annes_county_parcels.geojson",
+    "color": "#decbe4",
+    "description": "Preferred Queen Anne's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Queen Anne's County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "St. Mary's County Parcels",
+    "file": "st_marys_county_parcels.geojson",
+    "color": "#fed9a6",
+    "description": "Preferred St. Mary's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for St. Mary's County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Somerset County Parcels",
+    "file": "somerset_county_parcels.geojson",
+    "color": "#e5d8bd",
+    "description": "Preferred Somerset County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Somerset County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Talbot County Parcels",
+    "file": "talbot_county_parcels.geojson",
+    "color": "#fddaec",
+    "description": "Preferred Talbot County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Talbot County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Washington County Parcels",
+    "file": "washington_county_parcels.geojson",
+    "color": "#cbd5e8",
+    "description": "Preferred Washington County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Washington County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Wicomico County Parcels",
+    "file": "wicomico_county_parcels.geojson",
+    "color": "#b3e2cd",
+    "description": "Preferred Wicomico County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Wicomico County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
+  },
+  {
+    "name": "Worcester County Parcels",
+    "file": "worcester_county_parcels.geojson",
+    "color": "#fdcdac",
+    "description": "Preferred Worcester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "download": false,
+    "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Worcester County unless a county-native feed proves materially better.",
+    "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+    "category": "housing",
+    "subcategory": "Parcels & Ownership",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "source_urls": [
+      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
+      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+    ]
   },
   {
     "name": "Howard County Real Property Assessments",
@@ -106,17 +528,6 @@
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
     "default_enabled": false
-  },
-  {
-    "name": "Parcel",
-    "file": "parcel.geojson",
-    "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
-    "color": "#377eb8",
-    "description": "Official parcel boundaries used as base land-unit geometry.",
-    "category": "housing",
-    "subcategory": "Parcels & Ownership",
-    "scale": "parcel",
-    "default_enabled": true
   },
   {
     "name": "Property Value (Parcels)",

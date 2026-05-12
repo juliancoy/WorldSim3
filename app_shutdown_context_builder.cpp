@@ -16,6 +16,7 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.layer_heatmap_max_zoom = input.layer_heatmap_max_zoom;
     ctx.layer_parcel_detail_min_zoom = input.layer_parcel_detail_min_zoom;
     ctx.layer_heatmap_use_gradient = input.layer_heatmap_use_gradient;
+    ctx.layer_choropleth_gamma = input.layer_choropleth_gamma;
     ctx.layer_heatmap_algo = input.layer_heatmap_algo;
     ctx.layer_normalize_mode = input.layer_normalize_mode;
     ctx.layer_heatmap_cell_px = input.layer_heatmap_cell_px;

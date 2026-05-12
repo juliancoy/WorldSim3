@@ -28,6 +28,7 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.parcel_tax_sale_by_feature = ctx.parcel_tax_sale_by_feature;
     overlay_ctx.unified_parcels = ctx.unified_parcels;
     overlay_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
+    overlay_ctx.parcel_choropleth_gamma = ctx.parcel_choropleth_gamma;
     overlay_ctx.feature_passes_filters = ctx.feature_passes_filters;
     overlay_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
     overlay_ctx.projection = ctx.projection;

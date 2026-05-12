@@ -28,6 +28,7 @@ struct LayerDef {
     std::string description;
     std::string heatmap_field;
     std::string subcategory;
+    std::string region;
     std::string scale;
     ImVec4 color;
     bool enabled = false;

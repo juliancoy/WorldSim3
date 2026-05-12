@@ -95,6 +95,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
         double max_v = -std::numeric_limits<double>::infinity();
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
             const auto& fg = parcel_layer.features[i];
+            if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
             if (fg.rings.empty()) continue;
             const double v = parcelParameterValue(ctx, i, fg);
             if (v <= 0.0 || !std::isfinite(v)) continue;
@@ -110,7 +111,9 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
                 if (fg.rings.empty()) continue;
                 const double v = parcelParameterValue(ctx, i, fg);
                 if (v <= 0.0 || !std::isfinite(v)) continue;
-                const float t = std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f);
+                const float t = applyPowerGamma(
+                    std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f),
+                    ctx.parcel_choropleth_gamma);
                 const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
                 ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, colorWithAlpha(heatColor(t), 150));
             }

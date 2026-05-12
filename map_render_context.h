@@ -37,6 +37,7 @@ struct MapRenderContext {
     const std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     int parcel_parameter_mode = 0;
+    float parcel_choropleth_gamma = 1.0f;
 
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;

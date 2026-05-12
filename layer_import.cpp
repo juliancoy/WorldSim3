@@ -291,7 +291,7 @@ std::vector<std::map<std::string, std::string>> parseDbf(const std::vector<uint8
     return records;
 }
 
-PointD maryland2248ToLonLat(double x_ft, double y_ft) {
+PointD marylandStatePlaneToLonLat(double x_src, double y_src, bool us_feet) {
     constexpr double pi = 3.14159265358979323846;
     constexpr double a = 6378137.0;
     constexpr double inv_f = 298.257222101;
@@ -312,8 +312,8 @@ PointD maryland2248ToLonLat(double x_ft, double y_ft) {
     const double n = (std::log(m(phi1)) - std::log(m(phi2))) / (std::log(t(phi1)) - std::log(t(phi2)));
     const double F = m(phi1) / (n * std::pow(t(phi1), n));
     const double rho0 = a * F * std::pow(t(phi0), n);
-    const double x = x_ft * ft;
-    const double y = y_ft * ft;
+    const double x = us_feet ? (x_src * ft) : x_src;
+    const double y = us_feet ? (y_src * ft) : y_src;
     const double dx = x - fe;
     const double dy = rho0 - (y - fn);
     const double rho = std::copysign(std::sqrt(dx * dx + dy * dy), n);
@@ -326,6 +326,14 @@ PointD maryland2248ToLonLat(double x_ft, double y_ft) {
     }
     const double lam = lam0 + theta / n;
     return {lam * 180.0 / pi, phi * 180.0 / pi};
+}
+
+PointD maryland2248ToLonLat(double x_ft, double y_ft) {
+    return marylandStatePlaneToLonLat(x_ft, y_ft, true);
+}
+
+PointD maryland26985ToLonLat(double x_m, double y_m) {
+    return marylandStatePlaneToLonLat(x_m, y_m, false);
 }
 
 std::string jsonEscape(const std::string& s) {
@@ -347,7 +355,11 @@ std::string jsonEscape(const std::string& s) {
     return os.str();
 }
 
-void writeProperties(std::ostream& out, const std::map<std::string, std::string>& props) {
+void writeParcelProperties(
+    std::ostream& out,
+    const std::map<std::string, std::string>& props,
+    const std::string& jurisdiction,
+    const std::string& source_file) {
     bool first = true;
     auto put = [&](const std::string& k, const std::string& v) {
         if (!first) out << ',';
@@ -355,8 +367,8 @@ void writeProperties(std::ostream& out, const std::map<std::string, std::string>
         out << '"' << jsonEscape(k) << "\":\"" << jsonEscape(v) << '"';
     };
     out << '{';
-    put("jurisdiction", "Howard County");
-    put("source_file", "Property.shp");
+    put("jurisdiction", jurisdiction);
+    put("source_file", source_file);
     for (const auto& kv : props) put(kv.first, kv.second);
     auto get = [&](std::initializer_list<const char*> keys) -> std::string {
         for (const char* k : keys) {
@@ -376,7 +388,14 @@ void writeProperties(std::ostream& out, const std::map<std::string, std::string>
     out << '}';
 }
 
-void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vector<std::map<std::string, std::string>>& dbf, const fs::path& out_path) {
+void writeStateplaneParcelShapefileGeoJson(
+    const std::vector<uint8_t>& shp,
+    const std::vector<std::map<std::string, std::string>>& dbf,
+    const fs::path& out_path,
+    const std::string& collection_name,
+    const std::string& jurisdiction,
+    const std::string& source_file,
+    bool us_feet) {
     if (shp.size() < 100 || be32s(shp, 0) != 9994) throw std::runtime_error("invalid shapefile header");
     fs::create_directories(out_path.parent_path());
     fs::path tmp = out_path;
@@ -384,7 +403,7 @@ void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vec
     std::ofstream out(tmp);
     if (!out) throw std::runtime_error("failed to open output " + tmp.string());
     out << std::setprecision(10);
-    out << "{\"type\":\"FeatureCollection\",\"name\":\"howard_county_parcels\",\"features\":[";
+    out << "{\"type\":\"FeatureCollection\",\"name\":\"" << jsonEscape(collection_name) << "\",\"features\":[";
     bool first_feature = true;
     size_t record_index = 0;
     for (size_t off = 100; off + 8 <= shp.size();) {
@@ -406,8 +425,8 @@ void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vec
         if (!first_feature) out << ',';
         first_feature = false;
         out << "{\"type\":\"Feature\",\"properties\":";
-        if (record_index < dbf.size()) writeProperties(out, dbf[record_index]);
-        else out << "{\"jurisdiction\":\"Howard County\",\"source_file\":\"Property.shp\"}";
+        if (record_index < dbf.size()) writeParcelProperties(out, dbf[record_index], jurisdiction, source_file);
+        else out << "{\"jurisdiction\":\"" << jsonEscape(jurisdiction) << "\",\"source_file\":\"" << jsonEscape(source_file) << "\"}";
         out << ",\"geometry\":{\"type\":\"MultiPolygon\",\"coordinates\":[";
         for (int32_t part = 0; part < num_parts; ++part) {
             if (part > 0) out << ',';
@@ -418,7 +437,7 @@ void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vec
                 if (pi > start) out << ',';
                 const double x = leDouble(shp, points_off + (size_t)pi * 16);
                 const double y = leDouble(shp, points_off + (size_t)pi * 16 + 8);
-                const PointD ll = maryland2248ToLonLat(x, y);
+                const PointD ll = us_feet ? maryland2248ToLonLat(x, y) : maryland26985ToLonLat(x, y);
                 out << '[' << ll.x << ',' << ll.y << ']';
             }
             out << "]]";
@@ -431,6 +450,17 @@ void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vec
     std::error_code ec;
     fs::rename(tmp, out_path, ec);
     if (ec) throw std::runtime_error("rename failed: " + ec.message());
+}
+
+void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vector<std::map<std::string, std::string>>& dbf, const fs::path& out_path) {
+    writeStateplaneParcelShapefileGeoJson(
+        shp,
+        dbf,
+        out_path,
+        "howard_county_parcels",
+        "Howard County",
+        "Property.shp",
+        true);
 }
 
 void writeSocrataHowardPropertyGeoJson(const fs::path& csv_path, const fs::path& out_path) {
@@ -648,7 +678,8 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
         }
         return res;
     }
-    if (layer.import_type != "zipped_shapefile" || layer.import_source_crs != "EPSG:2248") {
+    if (layer.import_type != "zipped_shapefile" ||
+        (layer.import_source_crs != "EPSG:2248" && layer.import_source_crs != "EPSG:26985")) {
         res.message = "unsupported import type/source CRS";
         return res;
     }
@@ -658,7 +689,20 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
     try {
         const auto members = extractShapefileMembers(archive_path, layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile);
         const auto dbf = parseDbf(members.at(".dbf"));
-        writeHowardShapefileGeoJson(members.at(".shp"), dbf, out_path);
+        const std::string collection_name = lower(out_path.stem().string());
+        const std::string source_file = layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile;
+        const std::string jurisdiction =
+            layer.name.size() > 8 && layer.name.ends_with(" Parcels")
+                ? layer.name.substr(0, layer.name.size() - 8)
+                : layer.name;
+        writeStateplaneParcelShapefileGeoJson(
+            members.at(".shp"),
+            dbf,
+            out_path,
+            collection_name,
+            jurisdiction,
+            source_file,
+            layer.import_source_crs == "EPSG:2248");
         res.ok = true;
         res.changed = true;
         res.not_modified = false;

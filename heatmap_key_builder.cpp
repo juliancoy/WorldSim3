@@ -74,6 +74,7 @@ uint64_t buildHeatmapKey(const HeatmapKeyBuilderContext& ctx, bool include_view_
             hashCombineU64(key, (ctx.layer_heatmap_use_gradient && i < ctx.layer_heatmap_use_gradient->size() && (*ctx.layer_heatmap_use_gradient)[i]) ? 1ULL : 0ULL);
             hashCombineU64(key, (uint64_t)((ctx.layer_heatmap_algo && i < ctx.layer_heatmap_algo->size()) ? ((*ctx.layer_heatmap_algo)[i] + 1) : 0));
             hashCombineU64(key, (uint64_t)((ctx.layer_normalize_mode && i < ctx.layer_normalize_mode->size()) ? (*ctx.layer_normalize_mode)[i] : 0));
+            hashCombineFloat(key, ctx.layer_choropleth_gamma && i < ctx.layer_choropleth_gamma->size() ? (*ctx.layer_choropleth_gamma)[i] : 1.0f);
             hashCombineFloat(key, ctx.layer_heatmap_cell_px && i < ctx.layer_heatmap_cell_px->size() ? (*ctx.layer_heatmap_cell_px)[i] : ctx.global_heat_cell_px);
             hashCombineFloat(key, ctx.layer_heatmap_bandwidth_px && i < ctx.layer_heatmap_bandwidth_px->size() ? (*ctx.layer_heatmap_bandwidth_px)[i] : ctx.heatmap_bandwidth_px);
             hashCombineFloat(key, ctx.layer_heatmap_blur_sigma_px && i < ctx.layer_heatmap_blur_sigma_px->size() ? (*ctx.layer_heatmap_blur_sigma_px)[i] : ctx.heatmap_blur_sigma_px);

@@ -35,6 +35,12 @@ ImVec4 heatColor(float t) {
     return lerp(mid, hot, (t - 0.5f) * 2.0f);
 }
 
+float applyPowerGamma(float t, float gamma) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    gamma = std::clamp(gamma, 0.10f, 5.0f);
+    return std::pow(t, gamma);
+}
+
 ImU32 colorWithAlpha(const ImVec4& c, int alpha) {
     const int r = std::clamp((int)std::lround(c.x * 255.0f), 0, 255);
     const int g = std::clamp((int)std::lround(c.y * 255.0f), 0, 255);

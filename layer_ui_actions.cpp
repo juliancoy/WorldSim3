@@ -47,7 +47,8 @@ bool hiddenParcelParameterLayer(const LayerUiSharedContext& ctx, int parcel_laye
            parcel_layer_idx >= 0 &&
            idx < ctx.layers->size() &&
            (int)idx != parcel_layer_idx &&
-           (*ctx.layers)[idx].scale == "parcel";
+           (*ctx.layers)[idx].scale == "parcel" &&
+           (*ctx.layers)[idx].region.empty();
 }
 
 void setParcelParameterMode(LayerUiSharedContext& ctx, int mode) {
@@ -73,6 +74,7 @@ void setCategoryVisible(LayerUiSharedContext& ctx, int parcel_layer_idx, LayerDe
     if (!ctx.layers) return;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         LayerDef& layer = (*ctx.layers)[i];
+        if (layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
         if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) layer.enabled = enabled;
     }
 }

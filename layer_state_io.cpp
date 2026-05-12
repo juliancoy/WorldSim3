@@ -140,6 +140,7 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
         ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
         ld.subcategory = arr[i].contains("subcategory") ? arr[i]["subcategory"].get<std::string>() : "";
+        ld.region = arr[i].contains("region") ? arr[i]["region"].get<std::string>() : "";
         ld.scale = arr[i].contains("scale") ? arr[i]["scale"].get<std::string>() : "";
         std::string c = arr[i]["color"].get<std::string>();
         auto hex = [&](int s) { return std::stoi(c.substr(s, 2), nullptr, 16) / 255.0f; };
@@ -164,6 +165,7 @@ void loadLayerUiState(
     std::vector<int>* layer_heatmap_max_zoom,
     std::vector<int>* layer_parcel_detail_min_zoom,
     std::vector<bool>* layer_heatmap_use_gradient,
+    std::vector<float>* layer_choropleth_gamma,
     std::vector<int>* layer_heatmap_algo,
     std::vector<int>* layer_normalize_mode,
     std::vector<float>* layer_heatmap_cell_px,
@@ -242,8 +244,12 @@ void loadLayerUiState(
         {"layer_heatmap_bandwidth_px", layer_heatmap_bandwidth_px, 18.0f},
         {"layer_heatmap_blur_sigma_px", layer_heatmap_blur_sigma_px, 6.0f},
         {"layer_heatmap_percentile_clip", layer_heatmap_percentile_clip, 95.0f},
+        {"layer_choropleth_gamma", layer_choropleth_gamma, 1.0f},
         {"layer_heatmap_multires_blend", layer_heatmap_multires_blend, 0.5f},
     });
+    if (layer_choropleth_gamma) {
+        for (float& gamma : *layer_choropleth_gamma) gamma = std::clamp(gamma, 0.10f, 5.0f);
+    }
     if (j.contains("heatmap_settings") && j["heatmap_settings"].is_object()) {
         const auto& hs = j["heatmap_settings"];
         if (heatmap_algo && hs.contains("algo") && hs["algo"].is_number_integer()) *heatmap_algo = hs["algo"].get<int>();
@@ -272,6 +278,7 @@ void saveLayerUiState(
     const std::vector<int>* layer_heatmap_max_zoom,
     const std::vector<int>* layer_parcel_detail_min_zoom,
     const std::vector<bool>* layer_heatmap_use_gradient,
+    const std::vector<float>* layer_choropleth_gamma,
     const std::vector<int>* layer_heatmap_algo,
     const std::vector<int>* layer_normalize_mode,
     const std::vector<float>* layer_heatmap_cell_px,
@@ -323,6 +330,7 @@ void saveLayerUiState(
         {"layer_heatmap_bandwidth_px", layer_heatmap_bandwidth_px, 18.0f},
         {"layer_heatmap_blur_sigma_px", layer_heatmap_blur_sigma_px, 6.0f},
         {"layer_heatmap_percentile_clip", layer_heatmap_percentile_clip, 95.0f},
+        {"layer_choropleth_gamma", layer_choropleth_gamma, 1.0f},
         {"layer_heatmap_multires_blend", layer_heatmap_multires_blend, 0.5f},
     });
     if (heatmap_algo || heatmap_quality_preset || heatmap_cell_px || heatmap_bandwidth_px || heatmap_blur_sigma_px ||

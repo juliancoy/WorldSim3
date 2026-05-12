@@ -188,6 +188,8 @@ Note: signaling enables peers to exchange WebRTC ICE/SDP offers; NAT traversal i
 
 Build the canonical regional parcel layer after converting county parcel downloads to GeoJSON. The app prefers `data/layers/regional_parcels.geojson` when it exists and falls back to Baltimore City `parcel.geojson` otherwise.
 
+Preferred statewide source for broad county coverage: Maryland Planning `MdProperty View` parcel points/polygons and the `August 2024 Statewide Geodatabase` from `DownloadFiles.aspx`. Prefer county-native parcel feeds only when they clearly improve geometry freshness, attribute coverage, or machine-readable access over the statewide Maryland Planning product.
+
 Start with the current Baltimore City data:
 
 ```bash

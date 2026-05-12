@@ -1,21 +1,30 @@
-                crime_filter_homicide || crime_filter_robbery || crime_filter_assault ||
-                crime_filter_burglary || crime_filter_theft || crime_filter_auto_theft || crime_filter_drug || crime_filter_shooting;
-            if (!any_type) return true;
-            auto has = [&](const char* s) { return desc.find(s) != std::string::npos || code.find(s) != std::string::npos; };
-            bool ok = false;
-            if (crime_filter_homicide && (has("homicide") || has("murder"))) ok = true;
-            if (crime_filter_robbery && has("robbery")) ok = true;
-            if (crime_filter_assault && (has("assault") || has("aggravated assault"))) ok = true;
-            if (crime_filter_burglary && has("burglary")) ok = true;
-            if (crime_filter_theft && (has("larceny") || has("theft"))) ok = true;
-            if (crime_filter_auto_theft && (has("motor vehicle theft") || has("auto theft") || has("vehicle theft"))) ok = true;
-            if (crime_filter_drug && (has("drug") || has("narcotic"))) ok = true;
-            if (crime_filter_shooting && has("shooting")) ok = true;
-            return ok;
-        };
+        if (parcel_jurisdiction_filter_dirty) {
+            if (parcel_jurisdiction_filter.size() == parcel_jurisdiction_options.size()) {
+                parcel_jurisdiction_filter_dirty = false;
+                parcel_jurisdiction_result_set = FilterResultSet{};
+                parcel_jurisdiction_filter_status = "All Maryland parcels";
+            } else if (parcel_layer_idx < 0) {
+                parcel_jurisdiction_filter_dirty = false;
+                parcel_jurisdiction_result_set = FilterResultSet{};
+                parcel_jurisdiction_filter_status = "No active parcel layer";
+            } else if (!duckdb_analytics.status().last_rebuild_ok) {
+                parcel_jurisdiction_filter_status = "DuckDB parcel cache is not ready";
+            } else {
+                parcel_jurisdiction_filter_dirty = false;
+                DuckDbQueryResult jurisdiction_query =
+                    duckdb_analytics.queryParcelJurisdictions((size_t)parcel_layer_idx, parcel_jurisdiction_filter, 32);
+                if (jurisdiction_query.ok) {
+                    parcel_jurisdiction_result_set = std::move(jurisdiction_query.result_set);
+                    parcel_jurisdiction_filter_status = jurisdiction_query.message;
+                } else {
+                    parcel_jurisdiction_filter_status = jurisdiction_query.message;
+                }
+            }
+        }
         FeatureFilterContextFactoryInput filter_input;
         filter_input.layers = &layers;
         filter_input.map_filters = &map_filter_state;
+        filter_input.result_set = parcel_jurisdiction_result_set.active ? &parcel_jurisdiction_result_set : nullptr;
         filter_input.real_property_by_blocklot = &real_property_by_blocklot;
         filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
         filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
@@ -92,6 +101,7 @@
         heatmap_key_ctx.query_layers = &query_layers;
         heatmap_key_ctx.selected_owners = &selected_owners;
         heatmap_key_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+        heatmap_key_ctx.layer_choropleth_gamma = &layer_choropleth_gamma;
         heatmap_key_ctx.layer_heatmap_algo = &layer_heatmap_algo;
         heatmap_key_ctx.layer_normalize_mode = &layer_normalize_mode;
         heatmap_key_ctx.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
@@ -210,6 +220,7 @@
         layer_pass_ctx.layer_spatial = &layer_spatial;
         layer_pass_ctx.layer_fill_enabled = &layer_fill_enabled;
         layer_pass_ctx.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+        layer_pass_ctx.layer_choropleth_gamma = &layer_choropleth_gamma;
         layer_pass_ctx.layer_normalize_mode = &layer_normalize_mode;
         layer_pass_ctx.layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip;
         layer_pass_ctx.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
@@ -280,6 +291,10 @@
         render_tail_ctx.math_zoom = math_zoom;
         render_tail_ctx.parcel_layer_idx = parcel_layer_idx;
         render_tail_ctx.parcel_parameter_mode = parcel_parameter_mode;
+        render_tail_ctx.parcel_choropleth_gamma =
+            parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
+                ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
+                : 1.0f;
         render_tail_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
         render_tail_ctx.vacant_rehab_layer_idx = vacant_rehab_layer_idx;
         render_tail_ctx.tax_lien_layer_idx = tax_lien_layer_idx;

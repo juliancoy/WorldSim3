@@ -23,6 +23,119 @@ const char* geographicScopeLabel(const LayerDef& layer) {
     return "Area / boundary";
 }
 
+const char* parcelJurisdictionForLayer(const LayerDef& layer) {
+    static thread_local std::string jurisdiction;
+    jurisdiction.clear();
+    if (layer.name.size() > 16 && layer.name.ends_with(" County Parcels")) {
+        jurisdiction = layer.name.substr(0, layer.name.size() - 8);
+        return jurisdiction.c_str();
+    }
+    if (layer.name == "Baltimore City Parcels") {
+        jurisdiction = layer.name.substr(0, layer.name.size() - 8);
+        return jurisdiction.c_str();
+    }
+    return "";
+}
+
+LayerSettingsPopupContext makeLayerSettingsPopupContext(
+    LayersPanelUiContext& ctx,
+    size_t idx,
+    LayerDef& layer,
+    const std::filesystem::path& local_layer_path,
+    bool local_layer_exists);
+
+void setParcelJurisdictionSelected(LayersPanelUiContext& ctx, const char* jurisdiction, bool selected) {
+    if (!ctx.parcel_jurisdiction_filter || !jurisdiction || jurisdiction[0] == '\0') return;
+    if (selected) ctx.parcel_jurisdiction_filter->insert(jurisdiction);
+    else ctx.parcel_jurisdiction_filter->erase(jurisdiction);
+    if (ctx.parcel_jurisdiction_filter_dirty) *ctx.parcel_jurisdiction_filter_dirty = true;
+}
+
+bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer) {
+    if (!ctx.parcel_jurisdiction_filter || layer.region != "Maryland" || layer.scale != "parcel" || (int)idx == ctx.parcel_layer_idx) {
+        return false;
+    }
+    const char* jurisdiction = parcelJurisdictionForLayer(layer);
+    if (jurisdiction[0] == '\0') return false;
+
+    ImGui::PushID((int)idx);
+    const std::filesystem::path local_layer_path = ctx.shared->root / "data" / "layers" / layer.file;
+    const bool local_layer_exists =
+        ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
+            ? (*ctx.shared->local_layer_exists_cache)[idx]
+            : false;
+    const bool active_parcel_layer_exists =
+        ctx.shared->local_layer_exists_cache &&
+        ctx.parcel_layer_idx >= 0 &&
+        (size_t)ctx.parcel_layer_idx < ctx.shared->local_layer_exists_cache->size()
+            ? (*ctx.shared->local_layer_exists_cache)[(size_t)ctx.parcel_layer_idx]
+            : false;
+    const bool show_download_button = !local_layer_exists && !active_parcel_layer_exists;
+    if (show_download_button) {
+        pushButtonPalette(ButtonPalette::Download);
+        const bool can_download = ctx.shared->layer_registry
+            ? ctx.shared->layer_registry->canDownload(idx)
+            : (!layer.source_url.empty() || !layer.import_type.empty());
+        const bool has_source_metadata = ctx.shared->layer_registry
+            ? ctx.shared->layer_registry->hasSourceMetadata(idx)
+            : (can_download || !layer.reference_url.empty() || !layer.source_urls.empty());
+        if (ImGui::SmallButton("D")) {
+            if (can_download && ctx.shared->enqueue_layer_download_request) {
+                ctx.shared->enqueue_layer_download_request(idx);
+            } else if (ctx.shared->data_library_status_msg) {
+                *ctx.shared->data_library_status_msg = has_source_metadata
+                    ? "No direct downloadable GeoJSON URL for " + layer.file + "; see layer tooltip for source URLs."
+                    : "No source URL for " + layer.file;
+            }
+        }
+        ImGui::PopStyleColor(buttonPaletteColorCount(ButtonPalette::Download));
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Download missing dataset");
+            ImGui::TextDisabled(
+                "%s",
+                can_download ? (layer.source_url.empty() ? "Import source available" : "Direct download URL available") :
+                (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    bool selected = ctx.parcel_jurisdiction_filter->find(jurisdiction) != ctx.parcel_jurisdiction_filter->end();
+    if (drawIconToggleButton("show_jurisdiction", "V", selected, "Show jurisdiction in active parcel filter")) {
+        setParcelJurisdictionSelected(ctx, jurisdiction, selected);
+    }
+    if (ImGui::SmallButton("?")) ImGui::OpenPopup("layer_display_settings");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("Layer display settings");
+        ImGui::EndTooltip();
+    }
+
+    LayerSettingsPopupContext settings_ctx =
+        makeLayerSettingsPopupContext(ctx, idx, layer, local_layer_path, local_layer_exists);
+    drawLayerDisplaySettingsPopup(settings_ctx);
+
+    ImGui::SameLine();
+    drawLayerNameBadge(layer.name, layer.color);
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(layer.name.c_str());
+        ImGui::Separator();
+        ImGui::TextWrapped("Filters the active Maryland parcel layer through DuckDB before Vulkan rendering.");
+        ImGui::Text("Jurisdiction: %s", jurisdiction);
+        ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
+        if (active_parcel_layer_exists) {
+            ImGui::TextDisabled("Download hidden because the Maryland parcel layer is already available locally.");
+        }
+        if (ctx.parcel_jurisdiction_filter_status && !ctx.parcel_jurisdiction_filter_status->empty()) {
+            ImGui::TextDisabled("%s", ctx.parcel_jurisdiction_filter_status->c_str());
+        }
+        ImGui::EndTooltip();
+    }
+    ImGui::PopID();
+    return true;
+}
+
 void drawBooleanParameterToggle(LayersPanelUiContext& ctx, const char* label, const char* file) {
     if (!ctx.shared || !ctx.shared->layers) return;
     const int li = findLayerFile(*ctx.shared, file);
@@ -186,14 +299,36 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
 
     std::string current_subcategory;
     std::string current_scope;
+    std::string current_region;
+    bool current_region_open = false;
     for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
         LayerDef& layer = (*ctx.shared->layers)[idx];
         if (layer.category != cat) continue;
         if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
         if (layer.subcategory != current_subcategory) {
+            if (!current_region.empty() && current_region_open) ImGui::TreePop();
             current_subcategory = layer.subcategory;
             if (!current_subcategory.empty()) ImGui::SeparatorText(current_subcategory.c_str());
             current_scope.clear();
+            current_region.clear();
+            current_region_open = false;
+        }
+        if (layer.region != current_region) {
+            if (!current_region.empty() && current_region_open) ImGui::TreePop();
+            current_region = layer.region;
+            current_region_open = false;
+            if (!current_region.empty()) {
+                current_region_open = ImGui::TreeNodeEx(
+                    current_region.c_str(),
+                    ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+                current_scope.clear();
+            }
+        }
+        if (!current_region.empty() && !current_region_open) {
+            continue;
+        }
+        if (drawParcelJurisdictionFilterRow(ctx, idx, layer)) {
+            continue;
         }
         const char* scope_label = geographicScopeLabel(layer);
         if (scope_label != current_scope) {
@@ -301,6 +436,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
         }
         ImGui::PopID();
     }
+    if (!current_region.empty() && current_region_open) ImGui::TreePop();
 
     if (cat == LayerDef::Category::Safety) drawCrimeFilters(ctx);
 }

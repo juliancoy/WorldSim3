@@ -15,6 +15,7 @@ struct HeatmapKeyBuilderContext {
     const std::vector<QueryMapLayer>* query_layers = nullptr;
     const std::unordered_set<std::string>* selected_owners = nullptr;
     const std::vector<bool>* layer_heatmap_use_gradient = nullptr;
+    const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_heatmap_algo = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
     const std::vector<int>* layer_heatmap_max_zoom = nullptr;

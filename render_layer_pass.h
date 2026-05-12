@@ -41,6 +41,7 @@ struct RenderLayerPassContext {
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<bool>* layer_heatmap_use_gradient = nullptr;
+    const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
     const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;

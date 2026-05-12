@@ -497,6 +497,7 @@
                 &layer_heatmap_max_zoom,
                 &layer_parcel_detail_min_zoom,
                 &layer_heatmap_use_gradient,
+                &layer_choropleth_gamma,
                 &layer_heatmap_algo,
                 &layer_normalize_mode,
                 &layer_heatmap_cell_px,

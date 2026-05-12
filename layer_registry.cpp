@@ -69,5 +69,6 @@ bool LayerRegistry::isHiddenParcelGeometryLayer(size_t idx) const {
     return hasLayer(idx) &&
            indices_.parcel_layer_idx >= 0 &&
            (int)idx != indices_.parcel_layer_idx &&
-           (*layers_)[idx].scale == "parcel";
+           (*layers_)[idx].scale == "parcel" &&
+           (*layers_)[idx].region.empty();
 }

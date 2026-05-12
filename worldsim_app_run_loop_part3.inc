@@ -269,6 +269,8 @@
                 duckdb_auto_rebuild_checked = true;
                 if (duckdb_analytics.needsRebuild(layers)) {
                     duckdb_analytics.rebuild(layers, unified_parcels);
+                } else if (!duckdb_analytics.validateExistingCache()) {
+                    duckdb_analytics.rebuild(layers, unified_parcels);
                 }
             }
         }
@@ -326,6 +328,22 @@
             !selected_owners.empty(),
             &filtered_aggregate_snapshot
         });
+        FeatureFilterContextFactoryInput gradient_filter_input;
+        gradient_filter_input.layers = &layers;
+        gradient_filter_input.map_filters = &map_filter_state;
+        gradient_filter_input.result_set = parcel_jurisdiction_result_set.active ? &parcel_jurisdiction_result_set : nullptr;
+        gradient_filter_input.real_property_by_blocklot = &real_property_by_blocklot;
+        gradient_filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+        gradient_filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+        gradient_filter_input.real_property_layer_idx = real_property_layer_idx;
+        gradient_filter_input.parcel_layer_idx = parcel_layer_idx;
+        gradient_filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+        gradient_filter_input.crime_legacy_layer_idx = crime_legacy_layer_idx;
+        gradient_filter_input.query_layers = &query_layers;
+        FeatureFilterContext gradient_filter_ctx = makeFeatureFilterContext(gradient_filter_input);
+        auto gradient_feature_passes_filters = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) -> bool {
+            return featurePassesFilters(gradient_filter_ctx, layer_idx, feature_idx, fg);
+        };
         drawGradientTab(GradientTabContext{
             &layers,
             &layer_heatmap_enabled,
@@ -333,6 +351,12 @@
             &layer_parcel_detail_min_zoom,
             &layer_heatmap_algo,
             &layer_heatmap_percentile_clip,
+            &layer_choropleth_gamma,
+            &layer_heatmap_state_changed,
+            parcel_layer_idx,
+            parcel_parameter_mode,
+            &unified_parcels,
+            gradient_feature_passes_filters,
             heatmap_percentile_clip,
             heatmap_algo,
             zoom
@@ -498,24 +522,3 @@
                                          ImU32 fill_color) -> bool {
             return projection_cache.drawTessellatedFill(draw, fg, world_rings, fill_color);
         };
-        auto first_prop = [&](const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
-            for (const char* k : keys) {
-                std::string v = getPropertyValue(fg, k);
-                if (!v.empty()) return v;
-            }
-            return std::string();
-        };
-        auto is_crime_layer = [&](size_t layer_idx) -> bool {
-            return (crime_nibrs_layer_idx >= 0 && (int)layer_idx == crime_nibrs_layer_idx) ||
-                   (crime_legacy_layer_idx >= 0 && (int)layer_idx == crime_legacy_layer_idx);
-        };
-        auto crime_feature_matches = [&](const LayerDef::FeatureGeom& fg) -> bool {
-            if (!crime_filter_enabled) return true;
-            const std::string desc = toLowerAscii(first_prop(fg, {"Description", "description", "OFFENSE", "UCRDescription"}));
-            const std::string code = toLowerAscii(first_prop(fg, {"CrimeCode", "UCR_CODE", "UCRCode"}));
-            const std::string dt = first_prop(fg, {"CrimeDateTime", "CrimeDate", "DATE", "RECORD_DATE"});
-            if (crime_filter_use_year) {
-                int yr = extractYearMaybe(dt);
-                if (yr < 0 || yr < crime_year_min || yr > crime_year_max) return false;
-            }
-            const bool any_type =

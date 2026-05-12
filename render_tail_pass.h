@@ -17,6 +17,7 @@ struct RenderTailPassContext {
     int math_zoom = 0;
     int parcel_layer_idx = -1;
     int parcel_parameter_mode = 0;
+    float parcel_choropleth_gamma = 1.0f;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;

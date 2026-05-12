@@ -186,6 +186,11 @@ void renderFeature(
         feature_heat_value_valid = tryGetFeaturePropertyFloat(fg, layer.heatmap_field, feature_heat_value);
         if (feature_heat_value_valid &&
             heat_normalization.normalizedValue(fg, feature_heat_value, normalization_group_key, feature_normalized_value)) {
+            const float gamma =
+                ctx.layer_choropleth_gamma && layer_idx < ctx.layer_choropleth_gamma->size()
+                    ? (*ctx.layer_choropleth_gamma)[layer_idx]
+                    : 1.0f;
+            feature_normalized_value = applyPowerGamma(feature_normalized_value, gamma);
             feature_c = ImGui::ColorConvertFloat4ToU32(heatColor(feature_normalized_value));
         }
     }

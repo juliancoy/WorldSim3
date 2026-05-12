@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -78,4 +79,8 @@ struct LayersPanelUiContext {
     int crime_nibrs_layer_idx = -1;
     int crime_legacy_layer_idx = -1;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
+
+    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
+    bool* parcel_jurisdiction_filter_dirty = nullptr;
+    std::string* parcel_jurisdiction_filter_status = nullptr;
 };

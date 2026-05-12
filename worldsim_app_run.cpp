@@ -440,6 +440,7 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<int> layer_heatmap_max_zoom(layers.size(), 13);
     std::vector<int> layer_parcel_detail_min_zoom(layers.size(), kParcelChoroplethMinZoom);
     std::vector<bool> layer_heatmap_use_gradient(layers.size(), true);
+    std::vector<float> layer_choropleth_gamma(layers.size(), 1.0f);
     std::vector<int> layer_heatmap_algo(layers.size(), -1);
     std::vector<int> layer_normalize_mode(layers.size(), 0);
     std::vector<float> layer_heatmap_cell_px(layers.size(), 24.0f);
@@ -475,6 +476,7 @@ int runWorldSim3App(int argc, char** argv) {
         &layer_heatmap_max_zoom,
         &layer_parcel_detail_min_zoom,
         &layer_heatmap_use_gradient,
+        &layer_choropleth_gamma,
         &layer_heatmap_algo,
         &layer_normalize_mode,
         &layer_heatmap_cell_px,
@@ -526,6 +528,37 @@ int runWorldSim3App(int argc, char** argv) {
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
     std::vector<QueryMapLayer> query_layers;
+    const std::array<const char*, 24> parcel_jurisdiction_options = {
+        "Allegany County",
+        "Anne Arundel County",
+        "Baltimore City",
+        "Baltimore County",
+        "Calvert County",
+        "Caroline County",
+        "Carroll County",
+        "Cecil County",
+        "Charles County",
+        "Dorchester County",
+        "Frederick County",
+        "Garrett County",
+        "Harford County",
+        "Howard County",
+        "Kent County",
+        "Montgomery County",
+        "Prince George's County",
+        "Queen Anne's County",
+        "St. Mary's County",
+        "Somerset County",
+        "Talbot County",
+        "Washington County",
+        "Wicomico County",
+        "Worcester County"
+    };
+    std::unordered_set<std::string> parcel_jurisdiction_filter;
+    for (const char* jurisdiction : parcel_jurisdiction_options) parcel_jurisdiction_filter.insert(jurisdiction);
+    bool parcel_jurisdiction_filter_dirty = true;
+    FilterResultSet parcel_jurisdiction_result_set;
+    std::string parcel_jurisdiction_filter_status = "All Maryland parcels";
     std::unordered_map<std::string, std::string> owner_class_overrides;
     bool owner_class_overrides_loaded = false;
     bool owner_class_overrides_dirty = false;
@@ -1068,6 +1101,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.layer_heatmap_max_zoom = &layer_heatmap_max_zoom;
     shutdown_input.layer_parcel_detail_min_zoom = &layer_parcel_detail_min_zoom;
     shutdown_input.layer_heatmap_use_gradient = &layer_heatmap_use_gradient;
+    shutdown_input.layer_choropleth_gamma = &layer_choropleth_gamma;
     shutdown_input.layer_heatmap_algo = &layer_heatmap_algo;
     shutdown_input.layer_normalize_mode = &layer_normalize_mode;
     shutdown_input.layer_heatmap_cell_px = &layer_heatmap_cell_px;

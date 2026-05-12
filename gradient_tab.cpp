@@ -8,6 +8,8 @@
 #include <cmath>
 #include <cctype>
 #include <iomanip>
+#include <limits>
+#include <numbers>
 #include <sstream>
 
 namespace {
@@ -43,6 +45,52 @@ std::string formatGradientValue(const std::string& field, double value) {
     }
     return compactNumber(value);
 }
+
+double parcelAreaSqM(const LayerDef::FeatureGeom& fg) {
+    if (fg.rings.empty()) return 0.0;
+    constexpr double kDegToMetersLat = 111320.0;
+    double total = 0.0;
+    for (const auto& ring : fg.rings) {
+        if (ring.size() < 3) continue;
+        double lat_sum = 0.0;
+        for (const auto& p : ring) lat_sum += (double)p.y;
+        const double lat0 = lat_sum / (double)ring.size();
+        const double sx = kDegToMetersLat * std::cos(lat0 * std::numbers::pi / 180.0);
+        double a = 0.0;
+        for (size_t i = 0, n = ring.size(); i < n; ++i) {
+            const auto& p = ring[i];
+            const auto& q = ring[(i + 1) % n];
+            a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                 ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+        }
+        total += std::abs(a) * 0.5;
+    }
+    return total;
+}
+
+double parcelParameterValue(const GradientTabContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
+    if (ctx.parcel_parameter_mode == 1) return parcelAreaSqM(fg);
+    if (ctx.parcel_parameter_mode == 2 && ctx.unified_parcels) {
+        const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
+        return rec ? rec->current_value : 0.0;
+    }
+    return 0.0;
+}
+
+void drawPowerLegend(const std::string& field, float min_v, float max_v, float gamma) {
+    const float stops[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    for (float stop : stops) {
+        const float source_t = std::pow(stop, 1.0f / std::clamp(gamma, 0.10f, 5.0f));
+        const float value = min_v + (max_v - min_v) * source_t;
+        ImGui::ColorButton(
+            (std::string("##legend_") + field + std::to_string(stop)).c_str(),
+            heatColor(stop),
+            ImGuiColorEditFlags_NoTooltip,
+            ImVec2(18, 12));
+        ImGui::SameLine();
+        ImGui::Text("%3.0f%% color: %s", stop * 100.0f, formatGradientValue(field, value).c_str());
+    }
+}
 }
 
 void drawGradientTab(const GradientTabContext& ctx) {
@@ -55,6 +103,40 @@ void drawGradientTab(const GradientTabContext& ctx) {
 
     int gradient_layer_count = 0;
     ImGui::BeginChild("gradient_scale_layers", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    if (ctx.layers && ctx.parcel_parameter_mode > 0 && ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
+        const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
+        std::vector<float> values;
+        values.reserve(parcel_layer.features.size());
+        for (size_t fi = 0; fi < parcel_layer.features.size(); ++fi) {
+            const auto& fg = parcel_layer.features[fi];
+            if (ctx.feature_passes_filters && !ctx.feature_passes_filters((size_t)ctx.parcel_layer_idx, fi, fg)) continue;
+            const double v = parcelParameterValue(ctx, fi, fg);
+            if (v > 0.0 && std::isfinite(v)) values.push_back((float)v);
+        }
+        if (!values.empty()) {
+            gradient_layer_count++;
+            std::sort(values.begin(), values.end());
+            const float min_v = values.front();
+            const float max_v = values.back();
+            const std::string field = ctx.parcel_parameter_mode == 1 ? "parcel_area_sq_m" : "current_value";
+            float gamma = ctx.layer_choropleth_gamma && (size_t)ctx.parcel_layer_idx < ctx.layer_choropleth_gamma->size()
+                ? (*ctx.layer_choropleth_gamma)[(size_t)ctx.parcel_layer_idx]
+                : 1.0f;
+            if (ImGui::CollapsingHeader("Active Parcel Choropleth", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Text("Layer: %s", parcel_layer.name.c_str());
+                ImGui::Text("Field: %s", field.c_str());
+                ImGui::Text("Filtered samples: %zu", values.size());
+                ImGui::Text("Blue floor: %s", formatGradientValue(field, min_v).c_str());
+                ImGui::Text("Red ceiling: %s", formatGradientValue(field, max_v).c_str());
+                if (ImGui::SliderFloat("Gamma##active_parcel_gamma", &gamma, 0.10f, 5.0f, "%.2f") &&
+                    ctx.layer_choropleth_gamma && (size_t)ctx.parcel_layer_idx < ctx.layer_choropleth_gamma->size()) {
+                    (*ctx.layer_choropleth_gamma)[(size_t)ctx.parcel_layer_idx] = gamma;
+                    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
+                }
+                drawPowerLegend(field, min_v, max_v, gamma);
+            }
+        }
+    }
     if (ctx.layers) {
         for (size_t li = 0; li < ctx.layers->size(); ++li) {
             const auto& layer = (*ctx.layers)[li];
@@ -63,6 +145,7 @@ void drawGradientTab(const GradientTabContext& ctx) {
             values.reserve(layer.features.size());
             for (size_t fi = 0; fi < layer.features.size(); ++fi) {
                 const auto& fg = layer.features[fi];
+                if (ctx.feature_passes_filters && !ctx.feature_passes_filters(li, fi, fg)) continue;
                 float v = 0.0f;
                 if (tryGetFeaturePropertyFloat(fg, layer.heatmap_field, v)) values.push_back(v);
             }
@@ -106,15 +189,24 @@ void drawGradientTab(const GradientTabContext& ctx) {
             else if (aggregate_now) resolved = std::string("aggregate ") + aggregateStrategyName(aggregate_algo);
 
             if (ImGui::CollapsingHeader(layer.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                float gamma = ctx.layer_choropleth_gamma && li < ctx.layer_choropleth_gamma->size()
+                    ? (*ctx.layer_choropleth_gamma)[li]
+                    : 1.0f;
                 ImGui::Text("Field: %s", layer.heatmap_field.c_str());
                 ImGui::Text("Resolved display: %s", resolved.c_str());
-                ImGui::Text("Samples: %zu", values.size());
+                ImGui::Text("Filtered samples: %zu", values.size());
                 ImGui::Text("Clip: %.0f%%", clip_pct);
                 ImGui::Text("Blue floor: %s", formatGradientValue(layer.heatmap_field, effective_min).c_str());
                 ImGui::Text("Yellow midpoint: %s", formatGradientValue(layer.heatmap_field, (effective_min + effective_max) * 0.5).c_str());
                 ImGui::Text("Red ceiling: %s", formatGradientValue(layer.heatmap_field, effective_max).c_str());
                 ImGui::TextDisabled("Median: %s", formatGradientValue(layer.heatmap_field, median).c_str());
                 ImGui::TextDisabled("Raw max: %s", formatGradientValue(layer.heatmap_field, raw_max).c_str());
+                if (ImGui::SliderFloat(("Gamma##gamma_" + std::to_string(li)).c_str(), &gamma, 0.10f, 5.0f, "%.2f") &&
+                    ctx.layer_choropleth_gamma && li < ctx.layer_choropleth_gamma->size()) {
+                    (*ctx.layer_choropleth_gamma)[li] = gamma;
+                    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
+                }
+                drawPowerLegend(layer.heatmap_field, effective_min, effective_max, gamma);
                 if (raw_max > effective_max) {
                     ImGui::TextWrapped("Values above the red ceiling are clamped to red. This prevents outliers from making ordinary parcels all blue.");
                 }
