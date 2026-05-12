@@ -19,6 +19,7 @@ struct BasemapSource {
     std::string tile_root_dir;
     float opacity = 1.0f;
     bool topo_vector = false;
+    int max_native_zoom = kMaxNativeTileZoom;
 };
 
 std::string tileUrlTemplate(const std::string& tile_root_dir) {
@@ -121,18 +122,19 @@ void drawRasterSource(
     });
 
     for (const auto& tile : work_tiles) {
-        int request_z = std::min(ctx.math_zoom, ctx.max_native_tile_zoom);
+        const int max_native_zoom = std::clamp(source.max_native_zoom, kMinZoom, kMaxInternalMathZoom);
+        int request_z = std::min(ctx.math_zoom, max_native_zoom);
         int request_x = tile.wrapped_x;
         int request_y = tile.ty;
-        if (ctx.math_zoom > ctx.max_native_tile_zoom) {
-            const int dz = ctx.math_zoom - ctx.max_native_tile_zoom;
+        if (ctx.math_zoom > max_native_zoom) {
+            const int dz = ctx.math_zoom - max_native_zoom;
             const int scale = 1 << std::min(dz, 30);
             request_x = tile.wrapped_x / scale;
             request_y = tile.ty / scale;
         }
 
         requestLazyBasemapTile(*ctx.lazy_tile_download, *ctx.root, source.tile_root_dir, tile_url_tmpl, request_z, request_x, request_y);
-        TileSample sample = getTileSample(*ctx.root, source.tile_root_dir, ctx.math_zoom, tile.wrapped_x, tile.ty);
+        TileSample sample = getTileSample(*ctx.root, source.tile_root_dir, ctx.math_zoom, tile.wrapped_x, tile.ty, max_native_zoom);
         if (!sample.tex) continue;
 
         ImVec2 tile_world((float)(tile.tx * 256), (float)(tile.ty * 256));
@@ -187,14 +189,32 @@ MapBasemapRenderResult renderMapBasemap(const MapBasemapRenderContext& ctx) {
 
     std::vector<BasemapSource> sources;
     if (ctx.app_settings->basemap_satellite_enabled) {
-        sources.push_back({"Satellite", "tiles_satellite", std::clamp(ctx.app_settings->basemap_satellite_opacity, 0.0f, 1.0f), false});
+        sources.push_back({
+            "Satellite",
+            "tiles_satellite",
+            std::clamp(ctx.app_settings->basemap_satellite_opacity, 0.0f, 1.0f),
+            false,
+            kMaxSatelliteNativeTileZoom
+        });
     }
     if (ctx.app_settings->basemap_osm_enabled) {
-        sources.push_back({"OpenStreetMap", "tiles", std::clamp(ctx.app_settings->basemap_osm_opacity, 0.0f, 1.0f), false});
+        sources.push_back({
+            "OpenStreetMap",
+            "tiles",
+            std::clamp(ctx.app_settings->basemap_osm_opacity, 0.0f, 1.0f),
+            false,
+            ctx.max_native_tile_zoom
+        });
     }
     if (ctx.app_settings->basemap_topographic_enabled) {
         const bool use_topo_vector = ctx.app_settings->topo_vector_enabled && *ctx.topo_vector_available_cached;
-        sources.push_back({"Topographic", preferredTopoTileDir(*ctx.root), std::clamp(ctx.app_settings->basemap_topographic_opacity, 0.0f, 1.0f), use_topo_vector});
+        sources.push_back({
+            "Topographic",
+            preferredTopoTileDir(*ctx.root),
+            std::clamp(ctx.app_settings->basemap_topographic_opacity, 0.0f, 1.0f),
+            use_topo_vector,
+            ctx.max_native_tile_zoom
+        });
     }
     if (sources.empty()) return result;
 

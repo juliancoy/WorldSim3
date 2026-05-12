@@ -9,6 +9,7 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
 
     const ImU32 selected_outline = IM_COL32(255, 230, 0, 255);
     const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
+    if (!parcel_layer.enabled) return;
     for (size_t idx : *ctx.selected_parcel_indices) {
         if (idx >= parcel_layer.features.size()) continue;
         const auto& fg = parcel_layer.features[idx];

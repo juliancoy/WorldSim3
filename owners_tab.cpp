@@ -175,6 +175,7 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
                     selected_owners.insert(r.owner);
                     *ctx.selected_owner_anchor = (int)visible_idx;
                 }
+                openOwnerInfoPage(*ctx.owner_info_state, r.owner);
             }
             ImGui::PopID();
             ImGui::SameLine();

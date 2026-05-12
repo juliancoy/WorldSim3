@@ -41,9 +41,10 @@ struct TileSample {
 inline constexpr const char* kAppVersion = "0.1.0";
 inline constexpr int kProtocolVersion = 1;
 inline constexpr int kMinZoom = 8;
-inline constexpr int kMaxZoom = 64;
+inline constexpr int kMaxZoom = 24;
 inline constexpr int kMaxNativeTileZoom = 18;
-inline constexpr int kMaxInternalMathZoom = 22;
+inline constexpr int kMaxSatelliteNativeTileZoom = 20;
+inline constexpr int kMaxInternalMathZoom = 24;
 inline constexpr size_t kMaxTileCache = 320;
 inline constexpr size_t kMaxSmoothHeatSamplesPerLayer = 50000;
 inline constexpr int kSmoothHeatRasterBasePx = 1536;
@@ -80,5 +81,11 @@ void drainRetiredTextures(bool force = false);
 void destroyTileTexture(TileTexture& tex);
 void destroyTileTextureNow(TileTexture& tex);
 bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, TileTexture& tex);
-TileSample getTileSample(const std::filesystem::path& root, const std::string& tile_root_dir, int z, int x, int y);
+TileSample getTileSample(
+    const std::filesystem::path& root,
+    const std::string& tile_root_dir,
+    int z,
+    int x,
+    int y,
+    int max_native_tile_zoom = kMaxNativeTileZoom);
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path& root);

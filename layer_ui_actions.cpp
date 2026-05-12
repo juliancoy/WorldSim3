@@ -72,11 +72,31 @@ void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
 
 void setCategoryVisible(LayerUiSharedContext& ctx, int parcel_layer_idx, LayerDef::Category cat, bool enabled) {
     if (!ctx.layers) return;
+    bool heatmap_changed = false;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         LayerDef& layer = (*ctx.layers)[i];
-        if (layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
-        if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) layer.enabled = enabled;
+        if (enabled && layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
+        if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) {
+            layer.enabled = enabled;
+            if (!enabled && layer.scale == "parcel" && ctx.layer_heatmap_enabled && i < ctx.layer_heatmap_enabled->size()) {
+                (*ctx.layer_heatmap_enabled)[i] = false;
+                heatmap_changed = true;
+            }
+        }
     }
+    if (!enabled && cat == LayerDef::Category::Housing) {
+        for (size_t i = 0; i < ctx.layers->size(); ++i) {
+            LayerDef& layer = (*ctx.layers)[i];
+            if (layer.category != LayerDef::Category::Housing || !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) continue;
+            layer.enabled = false;
+            if (ctx.layer_heatmap_enabled && i < ctx.layer_heatmap_enabled->size()) {
+                (*ctx.layer_heatmap_enabled)[i] = false;
+                heatmap_changed = true;
+            }
+        }
+        if (ctx.parcel_parameter_mode) *ctx.parcel_parameter_mode = 0;
+    }
+    if (heatmap_changed && ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
 }
 
 bool downloadOrUpdateLayerVersioned(const LayerActionContext& ctx, bool local_layer_exists) {

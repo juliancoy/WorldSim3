@@ -1,6 +1,7 @@
 #include "status_api.h"
 
 #include "app_utils.h"
+#include "layer_import.h"
 #include "memory_utils.h"
 #include "net_http_utils.h"
 #include "thread_utils.h"
@@ -857,7 +858,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 } else {
                                     file = layers[matched].file;
                                     const auto& layer = layers[matched];
-                                    const bool has_download_source = !layer.source_url.empty() || !layer.import_url.empty();
+                                    const bool has_download_source = !layer.source_url.empty() || layerHasImportSource(layer);
                                     if (!has_download_source) {
                                         out["ok"] = false;
                                         out["error"] = "layer has no source URL/import source";
@@ -871,7 +872,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                         {"index", matched},
                                         {"name", layer.name},
                                         {"has_source_url", !layer.source_url.empty()},
-                                        {"has_import_source", !layer.import_url.empty()},
+                                        {"has_import_source", layerHasImportSource(layer)},
                                         {"reference_url", layer.reference_url},
                                         {"source_urls", layer.source_urls},
                                         {"enqueued", has_download_source}
@@ -910,7 +911,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"label", l.name},
                             {"kind", "layer"},
                             {"index", i},
-                            {"downloadable", !l.source_url.empty() || !l.import_url.empty()}
+                            {"downloadable", !l.source_url.empty() || layerHasImportSource(l)}
                         });
                         layer_ui.push_back({
                             {"index", i},
@@ -926,7 +927,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     out["layers"] = std::move(layer_ui);
                     if (include_hierarchy == "1" || include_hierarchy == "true" || include_hierarchy.empty()) {
                         json cats = json::array();
-                        for (const auto& cat : {"Housing", "Public Health", "Safety", "Infrastructure", "Zoning"}) {
+                        for (const auto& cat : {"housing", "public_health", "safety", "infrastructure", "zoning"}) {
                             auto it = by_category.find(cat);
                             if (it != by_category.end()) cats.push_back(it->second);
                         }

@@ -604,8 +604,14 @@ static TileTexture* getTileTexture(const fs::path& root, const std::string& tile
     return loaded == g_TileCache.end() ? nullptr : &loaded->second.tex;
 }
 
-TileSample getTileSample(const fs::path& root, const std::string& tile_root_dir, int z, int x, int y) {
-    const int max_fetch_zoom = std::min(z, kMaxNativeTileZoom);
+TileSample getTileSample(
+    const fs::path& root,
+    const std::string& tile_root_dir,
+    int z,
+    int x,
+    int y,
+    int max_native_tile_zoom) {
+    const int max_fetch_zoom = std::min(z, std::clamp(max_native_tile_zoom, kMinZoom, kMaxInternalMathZoom));
     for (int pz = max_fetch_zoom; pz >= kMinZoom; --pz) {
         const int dz = z - pz;
         if (dz < 0) continue;

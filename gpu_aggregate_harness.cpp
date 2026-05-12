@@ -52,7 +52,7 @@ void drainRetiredTextures(bool) {}
 void destroyTileTexture(TileTexture&) {}
 void destroyTileTextureNow(TileTexture&) {}
 bool uploadRgbaTexture(const unsigned char*, uint32_t, uint32_t, TileTexture&) { return false; }
-TileSample getTileSample(const std::filesystem::path&, const std::string&, int, int, int) { return {}; }
+TileSample getTileSample(const std::filesystem::path&, const std::string&, int, int, int, int) { return {}; }
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path&) {
     static const std::vector<std::vector<ImVec2>> empty;
     return empty;

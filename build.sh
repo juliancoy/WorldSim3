@@ -44,6 +44,7 @@ install_required_build_tools() {
     local apt_packages=(
       cmake
       g++
+      git
       ninja-build
       python3
       libvulkan-dev
@@ -68,6 +69,10 @@ install_required_build_tools() {
     if ! command -v ninja >/dev/null 2>&1; then
       packages+=(ninja)
     fi
+
+    if ! command -v git >/dev/null 2>&1; then
+      packages+=(git)
+    fi
   fi
 
   if [[ ${#packages[@]} -eq 0 ]]; then
@@ -88,14 +93,35 @@ install_required_build_tools() {
   fi
 }
 
+ensure_git_submodules() {
+  if [[ ! -f .gitmodules ]]; then
+    return
+  fi
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "[build.sh] git is not available; CMake will fetch missing third-party dependencies where supported."
+    return
+  fi
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return
+  fi
+
+  if git submodule status --recursive 2>/dev/null | grep -q '^-'; then
+    echo "[build.sh] Initializing missing git submodules."
+    git submodule update --init --recursive
+  fi
+}
+
 usage() {
   cat <<USAGE
-Usage: ./build.sh [--asan] [--clean] [--build-dir DIR]
+Usage: ./build.sh [--asan] [--clean] [--build-dir DIR] [--jobs N]
 
 Options:
   --asan            Enable AddressSanitizer + UndefinedBehaviorSanitizer (gated opt-in)
   --clean           Remove build directory before configure
   --build-dir DIR   Build directory (default: build)
+  --jobs N          Build parallelism (default: auto, or CMAKE_BUILD_PARALLEL_LEVEL)
   -h, --help        Show this help
 USAGE
 }
@@ -103,6 +129,7 @@ USAGE
 BUILD_DIR="build"
 ENABLE_ASAN=0
 CLEAN=0
+BUILD_JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -118,6 +145,10 @@ while [[ $# -gt 0 ]]; do
       BUILD_DIR="$2"
       shift 2
       ;;
+    --jobs)
+      BUILD_JOBS="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -130,7 +161,31 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -n "$BUILD_JOBS" && ! "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--jobs must be a positive integer, got: $BUILD_JOBS" >&2
+  exit 2
+fi
+
+if [[ -z "$BUILD_JOBS" ]]; then
+  cpu_count="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 1)"
+  mem_kib="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+  if [[ "$mem_kib" -gt 0 ]]; then
+    # DuckDB's unity translation units can approach 1 GiB each with debug info.
+    mem_limited_jobs="$(( mem_kib / (3 * 1024 * 1024) ))"
+    if [[ "$mem_limited_jobs" -lt 1 ]]; then
+      mem_limited_jobs=1
+    fi
+    BUILD_JOBS="$cpu_count"
+    if [[ "$BUILD_JOBS" -gt "$mem_limited_jobs" ]]; then
+      BUILD_JOBS="$mem_limited_jobs"
+    fi
+  else
+    BUILD_JOBS="$cpu_count"
+  fi
+fi
+
 install_required_build_tools
+ensure_git_submodules
 
 if [[ $CLEAN -eq 1 ]]; then
   rm -rf "$BUILD_DIR"
@@ -210,4 +265,5 @@ else
 fi
 
 cmake "${CMAKE_ARGS[@]}"
-cmake --build "$BUILD_DIR"
+echo "[build.sh] Building with ${BUILD_JOBS} parallel job(s). Override with --jobs N or CMAKE_BUILD_PARALLEL_LEVEL=N."
+cmake --build "$BUILD_DIR" --parallel "$BUILD_JOBS"

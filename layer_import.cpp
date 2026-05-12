@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -632,9 +633,115 @@ void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::pa
     fs::rename(tmp, out_path, ec);
     if (ec) throw std::runtime_error("rename failed: " + ec.message());
 }
+
+std::string shellQuote(const fs::path& path) {
+    std::string s = path.string();
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+std::string regionalParcelJurisdictionForFile(const std::string& file) {
+    static const std::unordered_map<std::string, std::string> kJurisdictions = {
+        {"parcel.geojson", "Baltimore City"},
+        {"allegany_county_parcels.geojson", "Allegany County"},
+        {"anne_arundel_county_parcels.geojson", "Anne Arundel County"},
+        {"baltimore_county_parcels.geojson", "Baltimore County"},
+        {"calvert_county_parcels.geojson", "Calvert County"},
+        {"caroline_county_parcels.geojson", "Caroline County"},
+        {"carroll_county_parcels.geojson", "Carroll County"},
+        {"cecil_county_parcels.geojson", "Cecil County"},
+        {"charles_county_parcels.geojson", "Charles County"},
+        {"dorchester_county_parcels.geojson", "Dorchester County"},
+        {"frederick_county_parcels.geojson", "Frederick County"},
+        {"garrett_county_parcels.geojson", "Garrett County"},
+        {"harford_county_parcels.geojson", "Harford County"},
+        {"howard_county_parcels.geojson", "Howard County"},
+        {"kent_county_parcels.geojson", "Kent County"},
+        {"montgomery_county_parcels.geojson", "Montgomery County"},
+        {"prince_georges_county_parcels.geojson", "Prince George's County"},
+        {"queen_annes_county_parcels.geojson", "Queen Anne's County"},
+        {"st_marys_county_parcels.geojson", "St. Mary's County"},
+        {"somerset_county_parcels.geojson", "Somerset County"},
+        {"talbot_county_parcels.geojson", "Talbot County"},
+        {"washington_county_parcels.geojson", "Washington County"},
+        {"wicomico_county_parcels.geojson", "Wicomico County"},
+        {"worcester_county_parcels.geojson", "Worcester County"}
+    };
+    auto it = kJurisdictions.find(file);
+    return it == kJurisdictions.end() ? std::string() : it->second;
+}
+
+VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const fs::path& root) {
+    VersionedDownloadResult res;
+    const fs::path builder = root / "build" / "worldsim_regional_parcel_builder";
+    if (!fs::exists(builder)) {
+        res.message = "regional parcel builder is not built";
+        return res;
+    }
+
+    std::string cmd = shellQuote(builder);
+    size_t input_count = 0;
+    for (const auto& [file, _] : std::unordered_map<std::string, std::string>{
+             {"parcel.geojson", ""},
+             {"allegany_county_parcels.geojson", ""},
+             {"anne_arundel_county_parcels.geojson", ""},
+             {"baltimore_county_parcels.geojson", ""},
+             {"calvert_county_parcels.geojson", ""},
+             {"caroline_county_parcels.geojson", ""},
+             {"carroll_county_parcels.geojson", ""},
+             {"cecil_county_parcels.geojson", ""},
+             {"charles_county_parcels.geojson", ""},
+             {"dorchester_county_parcels.geojson", ""},
+             {"frederick_county_parcels.geojson", ""},
+             {"garrett_county_parcels.geojson", ""},
+             {"harford_county_parcels.geojson", ""},
+             {"howard_county_parcels.geojson", ""},
+             {"kent_county_parcels.geojson", ""},
+             {"montgomery_county_parcels.geojson", ""},
+             {"prince_georges_county_parcels.geojson", ""},
+             {"queen_annes_county_parcels.geojson", ""},
+             {"st_marys_county_parcels.geojson", ""},
+             {"somerset_county_parcels.geojson", ""},
+             {"talbot_county_parcels.geojson", ""},
+             {"washington_county_parcels.geojson", ""},
+             {"wicomico_county_parcels.geojson", ""},
+             {"worcester_county_parcels.geojson", ""}
+         }) {
+        const fs::path input = root / "data" / "layers" / file;
+        if (!fs::exists(input)) continue;
+        const std::string jurisdiction = regionalParcelJurisdictionForFile(file);
+        if (jurisdiction.empty()) continue;
+        cmd += " --input ";
+        cmd += shellQuote(jurisdiction + ":" + input.string());
+        input_count++;
+    }
+    if (input_count == 0) {
+        res.message = "no local county parcel layers are available to build regional_parcels.geojson";
+        return res;
+    }
+    cmd += " --output ";
+    cmd += shellQuote(out_path);
+
+    const int rc = std::system(cmd.c_str());
+    if (rc != 0) {
+        res.message = "regional parcel builder failed";
+        return res;
+    }
+    res.ok = true;
+    res.changed = true;
+    res.not_modified = false;
+    res.message = "generated from " + std::to_string(input_count) + " local parcel layer(s)";
+    return res;
+}
 }
 
 bool layerHasImportSource(const LayerDef& layer) {
+    if (layer.import_type == "regional_parcel_builder") return true;
     if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
     return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties") &&
         !layer.import_url.empty();
@@ -648,6 +755,9 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
     if (!layerHasImportSource(layer)) {
         res.message = "no source URL or import source";
         return res;
+    }
+    if (layer.import_type == "regional_parcel_builder") {
+        return buildRegionalParcelLayer(out_path, root);
     }
     if (layer.import_type == "socrata_csv_properties") {
         const fs::path csv_path = root / "data" / "imports" / (out_path.filename().string() + ".source.csv");

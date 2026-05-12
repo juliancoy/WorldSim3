@@ -6,6 +6,9 @@
     "description": "Canonical generated parcel layer for Maryland jurisdictions. Preferred source is Maryland Planning MdProperty View parcel polygons, with county-native parcel feeds used only when they are materially better than the statewide Maryland Planning product. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
     "download": false,
     "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder. Prefer Maryland Planning MdProperty View parcel polygons and Maryland statewide real-property assessments for broad county coverage; use county-native feeds only when they provide meaningfully better geometry or attributes.",
+    "import": {
+      "type": "regional_parcel_builder"
+    },
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",

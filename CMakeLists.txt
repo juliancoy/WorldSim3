@@ -64,7 +64,16 @@ set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
 set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS "" CACHE STRING "" FORCE)
 set(DISABLE_BUILTIN_EXTENSIONS TRUE CACHE BOOL "" FORCE)
-add_subdirectory(third_party/duckdb EXCLUDE_FROM_ALL)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/duckdb/CMakeLists.txt")
+  add_subdirectory(third_party/duckdb EXCLUDE_FROM_ALL)
+else()
+  FetchContent_Declare(
+    duckdb
+    GIT_REPOSITORY https://github.com/duckdb/duckdb.git
+    GIT_TAG 19864453f7d0ed095256d848b46e7b8630989bac
+  )
+  FetchContent_MakeAvailable(duckdb)
+endif()
 
 set(NO_TESTS ON CACHE BOOL "" FORCE)
 set(NO_EXAMPLES ON CACHE BOOL "" FORCE)

@@ -84,6 +84,7 @@ void drawParcelOverlayRings(
 MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
     MapOverlayResult result;
     if (!ctx.draw || !ctx.layers || !ctx.projection || ctx.parcel_layer_idx >= ctx.layers->size()) return result;
+    if (!(*ctx.layers)[ctx.parcel_layer_idx].enabled) return result;
     if (!ctx.feature_passes_filters || !ctx.should_fill_layer_polygon) {
         return result;
     }

@@ -44,6 +44,29 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
     const std::filesystem::path& local_layer_path,
     bool local_layer_exists);
 
+bool categoryHasVisibleSubdata(const LayersPanelUiContext& ctx, LayerDef::Category cat) {
+    if (!ctx.shared || !ctx.shared->layers) return false;
+    for (const LayerDef& layer : *ctx.shared->layers) {
+        if (layer.category == cat && layer.enabled) return true;
+    }
+    return false;
+}
+
+bool drawBranchVisibilityToggle(const char* id, bool visible, const char* tooltip) {
+    ImGui::PushID(id);
+    pushButtonPalette(visible ? ButtonPalette::ToggleOn : ButtonPalette::ToggleOff);
+    const bool clicked = ImGui::SmallButton("Eye");
+    ImGui::PopStyleColor(buttonPaletteColorCount(visible ? ButtonPalette::ToggleOn : ButtonPalette::ToggleOff));
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(tooltip);
+        ImGui::TextDisabled("%s", visible ? "Some subdata visible" : "All subdata hidden");
+        ImGui::EndTooltip();
+    }
+    ImGui::PopID();
+    return clicked;
+}
+
 void setParcelJurisdictionSelected(LayersPanelUiContext& ctx, const char* jurisdiction, bool selected) {
     if (!ctx.parcel_jurisdiction_filter || !jurisdiction || jurisdiction[0] == '\0') return;
     if (selected) ctx.parcel_jurisdiction_filter->insert(jurisdiction);
@@ -286,16 +309,16 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
 }
 
 void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const char* label) {
-    if (!ctx.shared || !ctx.shared->layers || !ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) return;
-    std::string show_id = std::string("Show ") + label;
-    std::string hide_id = std::string("Hide ") + label;
-    if (ImGui::Button(show_id.c_str())) {
-        setCategoryVisible(*ctx.shared, ctx.parcel_layer_idx, cat, true);
+    if (!ctx.shared || !ctx.shared->layers) return;
+    const bool any_visible = categoryHasVisibleSubdata(ctx, cat);
+    const std::string toggle_id = std::string("toggle_") + label;
+    const std::string toggle_tip = std::string("Toggle all ") + label + " subdata";
+    if (drawBranchVisibilityToggle(toggle_id.c_str(), any_visible, toggle_tip.c_str())) {
+        setCategoryVisible(*ctx.shared, ctx.parcel_layer_idx, cat, !any_visible);
     }
     ImGui::SameLine();
-    if (ImGui::Button(hide_id.c_str())) {
-        setCategoryVisible(*ctx.shared, ctx.parcel_layer_idx, cat, false);
-    }
+    const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+    if (!open) return;
 
     std::string current_subcategory;
     std::string current_scope;
@@ -439,6 +462,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
     if (!current_region.empty() && current_region_open) ImGui::TreePop();
 
     if (cat == LayerDef::Category::Safety) drawCrimeFilters(ctx);
+    ImGui::TreePop();
 }
 }
 

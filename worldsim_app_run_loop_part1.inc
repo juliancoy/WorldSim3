@@ -662,7 +662,7 @@
                     saveAppSettings(root, app_settings);
                 }
                 ImGui::TextDisabled("Tile source: data/tiles_satellite");
-                ImGui::TextDisabled("Raster tiles are fetched lazily and cached on disk.");
+                ImGui::TextDisabled("Raster tiles are fetched lazily up to native z%d and cached on disk.", kMaxSatelliteNativeTileZoom);
                 ImGui::EndPopup();
             }
             if (!topo_tiles_available && !topo_vector_available) {
