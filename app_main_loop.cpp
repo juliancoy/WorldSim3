@@ -63,6 +63,7 @@
 #include "layer_ui_state_sync.h"
 #include "layer_ui_context_builders.h"
 #include "left_panel.h"
+#include "frame_prelude.h"
 #include "download_queue.h"
 #include "basemap_panel.h"
 #include "layer_download_queue.h"
@@ -70,6 +71,7 @@
 #include "data_library_coordinator.h"
 #include "data_library_panel.h"
 #include "performance_stats_panel.h"
+#include "performance_runtime_support.h"
 #include "tiles.h"
 #include "owner_info.h"
 #include "owners_tab.h"
@@ -1134,105 +1136,73 @@ int runWorldSim3App(int argc, char** argv) {
         bool layer_heatmap_state_changed = false;
         bool heatmap_settings_state_changed = false;
         bool heatmap_controls_active = false;
-        LayerProfileSnapshotRefreshContext layer_profile_snapshot_ctx;
-        layer_profile_snapshot_ctx.layers = &layers;
-        layer_profile_snapshot_ctx.layer_spatial = &layer_spatial;
-        layer_profile_snapshot_ctx.layer_profile_dirty = &layer_profile_dirty;
-        layer_profile_snapshot_ctx.layer_profile_snapshot = &layer_profile_snapshot;
-        layer_profile_snapshot_ctx.layer_profile_mutex = &layer_profile_mutex;
-        LanDiscoveryContext lan_discovery_ctx;
-        lan_discovery_ctx.peers = &lan_peers;
-        lan_discovery_ctx.scan_status = &lan_scan_status;
-        lan_discovery_ctx.last_scan_at = &lan_last_scan_at;
-        lan_discovery_ctx.protocol_version = kProtocolVersion;
-        LayerDownloadQueueContext layer_download_ctx;
-        layer_download_ctx.root = root;
-        layer_download_ctx.layers = &layers;
-        layer_download_ctx.queue = &layer_download_queue;
-        layer_download_ctx.inflight = &layer_download_inflight;
-        layer_download_ctx.active_idx = &layer_download_active_idx;
-        layer_download_ctx.future = &layer_download_future;
-        layer_download_ctx.active_file = &layer_download_active_file;
-        layer_download_ctx.last_event = &layer_download_last_event;
-        layer_download_ctx.queue_loaded = &layer_download_queue_loaded;
-        layer_download_ctx.data_library_status_msg = &data_library_status_msg;
-        layer_download_ctx.data_freshness_state = &data_freshness_state;
-        layer_download_ctx.data_freshness_msg = &data_freshness_msg;
-        layer_download_ctx.lan = &lan_discovery_ctx;
-        layer_download_ctx.mark_local_layer_exists = [&](size_t idx, bool exists) { mark_local_layer_exists(idx, exists); };
-        layer_download_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
-        auto queue_all_missing_layer_downloads = [&]() {
-            DataLibraryCoordinatorContext data_library_ctx;
-            data_library_ctx.root = root;
-            data_library_ctx.layers = &layers;
-            data_library_ctx.layer_registry = &layer_registry;
-            data_library_ctx.local_layer_exists_cache = &local_layer_exists_cache;
-            data_library_ctx.data_freshness_state = &data_freshness_state;
-            data_library_ctx.data_freshness_msg = &data_freshness_msg;
-            data_library_ctx.data_library_status_msg = &data_library_status_msg;
-            data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
-            data_library_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueueLayerDownloadRequest(layer_download_ctx, idx); };
-            data_library_ctx.layer_download_pending = [&](size_t idx) { return layerDownloadPending(layer_download_ctx, idx); };
-            data_library_ctx.layer_download_last_event = &layer_download_last_event;
-            return queueAllMissingLayerDownloads(data_library_ctx);
-        };
-        // Apply REST control commands on main thread.
-        LayerApiCommandCoordinatorContext layer_api_ctx;
-        layer_api_ctx.layers = &layers;
-        layer_api_ctx.layer_registry = &layer_registry;
-        layer_api_ctx.api_layer_mutex = &api_layer_mutex;
-        layer_api_ctx.api_layer_enable_cmds = &api_layer_enable_cmds;
-        layer_api_ctx.api_layer_fill_cmds = &api_layer_fill_cmds;
-        layer_api_ctx.api_layer_download_cmds = &api_layer_download_cmds;
-        layer_api_ctx.layer_profile_dirty = &layer_profile_dirty;
-        layer_api_ctx.layer_fill_mutex = &layer_fill_mutex;
-        layer_api_ctx.layer_fill_enabled = &layer_fill_enabled;
-        layer_api_ctx.layer_fill_state_changed = &layer_fill_state_changed;
-        layer_api_ctx.data_library_status_msg = &data_library_status_msg;
-        layer_api_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueueLayerDownloadRequest(layer_download_ctx, idx); };
-        ApiControlContext api_control_ctx;
-        api_control_ctx.zoom = &zoom;
-        api_control_ctx.center_lon = &center_lon;
-        api_control_ctx.center_lat = &center_lat;
-        api_control_ctx.api_zoom_cmd = &api_zoom_cmd;
-        api_control_ctx.api_lon_cmd = &api_lon_cmd;
-        api_control_ctx.api_lat_cmd = &api_lat_cmd;
-        api_control_ctx.min_zoom = kMinZoom;
-        api_control_ctx.max_zoom = kMaxZoom;
-        api_control_ctx.layer_api = &layer_api_ctx;
-        api_control_ctx.api_ui_cmd_seq = &api_ui_cmd_seq;
-        api_control_ctx.api_ui_cmd_kind = &api_ui_cmd_kind;
-        api_control_ctx.api_ui_cmd_x = &api_ui_cmd_x;
-        api_control_ctx.api_ui_cmd_y = &api_ui_cmd_y;
-        api_control_ctx.api_ui_cmd_button = &api_ui_cmd_button;
-        api_control_ctx.api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y;
-        api_control_ctx.api_ui_cmd_last_seq = &api_ui_cmd_last_seq;
-        api_control_ctx.api_ui_mouse_release_pending = &api_ui_mouse_release_pending;
-        api_control_ctx.api_ui_mouse_release_button = &api_ui_mouse_release_button;
-        applyApiControlCommands(api_control_ctx);
-        current_zoom_state.store(zoom, std::memory_order_relaxed);
-        current_lon_state.store(center_lon, std::memory_order_relaxed);
-        current_lat_state.store(center_lat, std::memory_order_relaxed);
-        loadLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
-        loadLayerDownloadQueue(layer_download_ctx);
-        tickLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
-        const auto basemap_now = std::chrono::steady_clock::now();
-        if (basemap_coverage_dirty ||
-            basemap_availability_last_check.time_since_epoch().count() == 0 ||
-            (basemap_now - basemap_availability_last_check) >= kBasemapCoverageRefreshInterval) {
-            const BasemapCoverage osm_coverage = countBasemapCoverage(root, "tiles", kMinZoom, kMaxNativeTileZoom);
-            const BasemapCoverage topo_coverage = countBasemapCoverage(root, "tiles_topo", kMinZoom, kMaxNativeTileZoom);
-            osm_missing_tiles_cached = osm_coverage.missing;
-            osm_total_tiles_cached = osm_coverage.total;
-            topo_missing_tiles_cached = topo_coverage.missing;
-            topo_total_tiles_cached = topo_coverage.total;
-            basemap_source_has_any_files_cached = true;
-            topo_tiles_available_cached = true;
-            topo_vector_available_cached = fs::exists(root / "data" / "tiles_topo_vector.geojson");
-            basemap_availability_last_check = basemap_now;
-            basemap_coverage_dirty = false;
-        }
-        tickLayerDownloadQueue(layer_download_ctx);
+        FramePreludeResult frame_prelude = runFramePrelude(FramePreludeContext{
+            &root,
+            &layers,
+            &layer_spatial,
+            &layer_profile_dirty,
+            &layer_profile_snapshot,
+            &layer_profile_mutex,
+            &layer_registry,
+            &local_layer_exists_cache,
+            &data_freshness_state,
+            &data_freshness_msg,
+            &data_library_status_msg,
+            &layer_download_queue,
+            &layer_download_inflight,
+            &layer_download_active_idx,
+            &layer_download_future,
+            &layer_download_active_file,
+            &layer_download_last_event,
+            &layer_download_queue_loaded,
+            &lan_peers,
+            &lan_scan_status,
+            &lan_last_scan_at,
+            kProtocolVersion,
+            &center_lon,
+            &center_lat,
+            &zoom,
+            kMinZoom,
+            kMaxZoom,
+            &current_zoom_state,
+            &current_lon_state,
+            &current_lat_state,
+            &api_layer_mutex,
+            &api_layer_enable_cmds,
+            &api_layer_fill_cmds,
+            &api_layer_download_cmds,
+            &layer_fill_mutex,
+            &layer_fill_enabled,
+            &layer_fill_state_changed,
+            &api_ui_cmd_seq,
+            &api_ui_cmd_kind,
+            &api_ui_cmd_x,
+            &api_ui_cmd_y,
+            &api_ui_cmd_button,
+            &api_ui_cmd_scroll_y,
+            &api_ui_cmd_last_seq,
+            &api_ui_mouse_release_pending,
+            &api_ui_mouse_release_button,
+            &api_zoom_cmd,
+            &api_lon_cmd,
+            &api_lat_cmd,
+            &lazy_tile_download,
+            &basemap_coverage_dirty,
+            &basemap_availability_last_check,
+            &osm_missing_tiles_cached,
+            &osm_total_tiles_cached,
+            &topo_missing_tiles_cached,
+            &topo_total_tiles_cached,
+            &basemap_source_has_any_files_cached,
+            &topo_tiles_available_cached,
+            &topo_vector_available_cached,
+            kMinZoom,
+            kMaxNativeTileZoom,
+            kBasemapCoverageRefreshInterval,
+            [&](size_t idx, bool exists) { mark_local_layer_exists(idx, exists); },
+            [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
+            [&]() { refresh_local_layer_exists_cache(); }
+        });
         const LeftPanelResult left_panel = drawLeftPanelWindow(LeftPanelContext{
             layout_margin,
             left_panel_w,
@@ -1323,9 +1293,9 @@ int runWorldSim3App(int argc, char** argv) {
             &zoning_zone_counts,
             &zoning_group_zones,
             &zoning_group_order,
-            [&](size_t i) { return enqueueLayerDownloadRequest(layer_download_ctx, i); },
-            [&](size_t i) { return layerDownloadPending(layer_download_ctx, i); },
-            [&]() { return queue_all_missing_layer_downloads(); },
+            [&](size_t i) { return enqueueLayerDownloadRequest(frame_prelude.layer_download, i); },
+            [&](size_t i) { return layerDownloadPending(frame_prelude.layer_download, i); },
+            [&]() { return frame_prelude.queue_all_missing_layer_downloads(); },
             [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
             [&](size_t i, bool required) { enqueue_hydration(i, required); }
         });
@@ -1390,270 +1360,96 @@ int runWorldSim3App(int argc, char** argv) {
         data_library_ui_ctx.cache_rebuilds = &data_library_cache_rebuilds;
         data_library_ui_ctx.rendered_rows_last = &data_library_rendered_rows_last;
         data_library_ui_ctx.enqueue_layer_download_request = [&](size_t idx) {
-            return enqueueLayerDownloadRequest(layer_download_ctx, idx);
+            return enqueueLayerDownloadRequest(frame_prelude.layer_download, idx);
         };
         data_library_ui_ctx.queue_all_missing_layer_downloads = [&]() {
-            return queue_all_missing_layer_downloads();
+            return frame_prelude.queue_all_missing_layer_downloads();
         };
         data_library_ui_ctx.downloadable_missing_layer_count = downloadable_missing_layer_count;
         data_library_ui_ctx.queueable_missing_layer_count = queueable_missing_layer_count;
         drawDataLibraryWindow(data_library_ui_ctx);
-        LanDiscoveryPanelContext lan_panel_ctx;
-        lan_panel_ctx.discovery = &lan_discovery_ctx;
-        lan_panel_ctx.peers = &lan_peers;
-        lan_panel_ctx.scan_status = &lan_scan_status;
-        std::vector<std::string> arkavo_open_peers;
-        if (arkavo_rtc) arkavo_open_peers = arkavo_rtc->connectedPeers();
-        CacheClearUiState cache_clear_ui;
-        cache_clear_ui.clear_cache_all = clear_cache_all;
-        cache_clear_ui.clear_cache_hydration = clear_cache_hydration;
-        cache_clear_ui.clear_cache_triangulation = clear_cache_triangulation;
-        cache_clear_ui.clear_cache_derived = clear_cache_derived;
-        cache_clear_ui.clear_cache_heatmap_memory = clear_cache_heatmap_memory;
-        cache_clear_ui.clear_cache_heatmap_disk = clear_cache_heatmap_disk;
-        cache_clear_ui.clear_cache_tile_memory = clear_cache_tile_memory;
-        cache_clear_ui.clear_cache_tile_disk_presence = clear_cache_tile_disk_presence;
-        cache_clear_ui.last_cache_clear_msg = last_cache_clear_msg;
-        auto connect_arkavo = [&]() {
-            ArkavoRealtimeClient::Config cfg;
-            cfg.room_id = trimDisplayValue(arkavo_room_id);
-            cfg.signaling_url = "wss://signaling.arkavo.org/";
-            auto transport = std::make_unique<ArkavoSignalingTransportCurl>();
-            arkavo_client = std::make_unique<ArkavoRealtimeClient>(cfg, std::move(transport));
-            arkavo_rtc = std::make_unique<ArkavoRtcSessionManager>(*arkavo_client);
-            arkavo_rtc->on_log = [&](const std::string& m) { arkavo_status = m; };
-            arkavo_rtc->on_error = [&](const std::string& e) { arkavo_err = e; };
-            arkavo_rtc->on_file_received = [&](const std::string& peer, const std::filesystem::path& p) {
-                arkavo_status = "received file from " + peer + ": " + p.string();
-            };
-            arkavo_client->on_log = [&](const std::string& m) { arkavo_status = m; };
-            arkavo_client->on_error = [&](const std::string& e) { arkavo_err = e; };
-            arkavo_client->on_peer_should_connect = [&](const std::string& peer_id, bool initiator) {
-                if (arkavo_rtc) arkavo_rtc->connectPeer(peer_id, initiator);
-            };
-            arkavo_client->on_peer_left = [&](const std::string& peer_id) {
-                if (arkavo_rtc) arkavo_rtc->removePeer(peer_id);
-            };
-            arkavo_client->on_signal_payload = [&](const std::string& peer_id, const nlohmann::json& payload) {
-                if (arkavo_rtc) arkavo_rtc->handleSignal(peer_id, payload);
-            };
-            std::string err;
-            if (!arkavo_client->start(err)) {
-                arkavo_err = err;
-                arkavo_status = "connect failed";
-            } else {
-                arkavo_status = "connecting";
-            }
-        };
-        auto disconnect_arkavo = [&]() {
-            if (arkavo_rtc) arkavo_rtc->closeAll();
-            arkavo_client->stop();
-            arkavo_rtc.reset();
-            arkavo_client.reset();
-            arkavo_status = "disconnected";
-        };
-        auto send_arkavo_file = [&]() {
-            std::string err;
-            if (!arkavo_rtc->sendFile(trimDisplayValue(arkavo_send_peer), trimDisplayValue(arkavo_send_path), err)) {
-                arkavo_err = err;
-            } else {
-                arkavo_status = "file send queued";
-            }
-        };
-        auto clear_cache_action = [&]() {
-            const bool has_any_selected =
-                cache_clear_ui.clear_cache_hydration ||
-                cache_clear_ui.clear_cache_triangulation ||
-                cache_clear_ui.clear_cache_derived ||
-                cache_clear_ui.clear_cache_heatmap_memory ||
-                cache_clear_ui.clear_cache_heatmap_disk ||
-                cache_clear_ui.clear_cache_tile_memory ||
-                cache_clear_ui.clear_cache_tile_disk_presence;
-            if (!has_any_selected) {
-                cache_clear_ui.last_cache_clear_msg = "No cache scope selected for clear.";
-                return;
-            }
-            size_t removed_files = 0;
-            std::error_code ec;
-            std::vector<std::string> cleared_scopes;
-            if (cache_clear_ui.clear_cache_hydration) {
-                removed_files += clear_cache_tree(cache_hydration_dir);
-                cleared_scopes.push_back("hydration");
-            }
-            if (cache_clear_ui.clear_cache_triangulation) {
-                removed_files += clear_cache_tree(cache_triangulation_dir);
-                cleared_scopes.push_back("triangulation");
-            }
-            if (cache_clear_ui.clear_cache_derived) {
-                removed_files += clear_cache_tree(cache_derived_dir);
-                cleared_scopes.push_back("derived");
-            }
-            if (cache_clear_ui.clear_cache_heatmap_disk) {
-                removed_files += clear_cache_tree(cache_aggregate_dir);
-                cleared_scopes.push_back("heatmap-aggregate disk");
-            }
-            if (cache_clear_ui.clear_cache_heatmap_memory) {
-                clear_heatmap_runtime_cache();
-                cleared_scopes.push_back("heatmap-aggregate runtime");
-            }
-            if (cache_clear_ui.clear_cache_tile_memory) {
-                for (auto& kv : g_TileCache) destroyTileTexture(kv.second.tex);
-                g_TileCache.clear();
-                g_TileLRU.clear();
-                cleared_scopes.push_back("tile");
-            }
-            if (cache_clear_ui.clear_cache_tile_disk_presence) {
-                clearTileDiskPresenceCache();
-                cleared_scopes.push_back("tile disk presence");
-            }
-            if (cache_clear_ui.clear_cache_hydration) fs::create_directories(cache_hydration_dir, ec);
-            if (cache_clear_ui.clear_cache_triangulation) fs::create_directories(cache_triangulation_dir, ec);
-            if (cache_clear_ui.clear_cache_derived) fs::create_directories(cache_derived_dir, ec);
-            if (cache_clear_ui.clear_cache_heatmap_disk) fs::create_directories(cache_aggregate_dir, ec);
-            const bool clear_hydration_data = cache_clear_ui.clear_cache_hydration;
-            const bool clear_tri_data = cache_clear_ui.clear_cache_triangulation;
-            const bool clear_derived_data = cache_clear_ui.clear_cache_derived || cache_clear_ui.clear_cache_hydration;
-            if (clear_hydration_data) {
-                {
-                    std::lock_guard<std::mutex> lk(hydrated_mutex);
-                    hydrated_queue.clear();
-                }
-                {
-                    std::lock_guard<std::mutex> lk(tri_mutex);
-                    tri_jobs.clear();
-                    tri_results.clear();
-                }
-                {
-                    std::lock_guard<std::mutex> lk(hydrate_req_mutex);
-                    hydrate_requests.clear();
-                    std::fill(hydration_requested.begin(), hydration_requested.end(), false);
-                    std::fill(hydration_required.begin(), hydration_required.end(), false);
-                }
-                for (size_t i = 0; i < layers.size(); ++i) {
-                    releaseContainerStorage(layers[i].features);
-                    layer_spatial[i] = LayerSpatialIndex{};
-                    if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
-                }
-                {
-                    std::lock_guard<std::mutex> lk(status_mutex);
-                    for (size_t i = 0; i < layers.size(); ++i) {
-                        if (i < layer_states.size()) {
-                            layer_states[i].status = LayerPipelineStatus::Queued;
-                            layer_states[i].feature_count = 0;
-                            layer_states[i].error.clear();
-                        }
-                    }
-                }
-                for (size_t i = 0; i < layers.size(); ++i) {
-                    if (layers[i].enabled) enqueue_hydration(i);
-                }
-                trimProcessHeap();
-                hydrated_count.store(0, std::memory_order_relaxed);
-                triangulated_count.store(0, std::memory_order_relaxed);
-            }
-            if (clear_tri_data && !clear_hydration_data) {
-                {
-                    std::lock_guard<std::mutex> lk(tri_mutex);
-                    tri_jobs.clear();
-                    tri_results.clear();
-                }
-                const bool vac_layer_active_now =
-                    (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size() && layers[(size_t)vacant_notice_layer_idx].enabled) ||
-                    (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() && layers[(size_t)vacant_rehab_layer_idx].enabled);
-                for (size_t i = 0; i < layers.size(); ++i) {
-                    if (layers[i].features.empty()) continue;
-                    const bool parcel_dep_priority = vac_layer_active_now && parcel_layer_idx >= 0 && (int)i == parcel_layer_idx;
-                    if (!layers[i].enabled && !parcel_dep_priority) continue;
-                    TriJob tj;
-                    tj.index = i;
-                    tj.file = layers[i].file;
-                    tj.rings_per_feature.reserve(layers[i].features.size());
-                    for (const auto& fg : layers[i].features) tj.rings_per_feature.push_back(fg.rings);
-                    {
-                        std::lock_guard<std::mutex> lk2(tri_mutex);
-                        if (parcel_dep_priority) tri_jobs.push_front(std::move(tj));
-                        else tri_jobs.push_back(std::move(tj));
-                    }
-                    tri_cv.notify_one();
-                    {
-                        std::lock_guard<std::mutex> lk3(status_mutex);
-                        if (i < layer_states.size()) layer_states[i].status = LayerPipelineStatus::TriQueued;
-                    }
-                }
-                tri_cv.notify_all();
-            }
-            if (clear_derived_data) {
-                reset_derived_cache_state();
-            }
-            std::ostringstream clear_msg;
-            clear_msg << "Cleared cache scopes: ";
-            for (size_t i = 0; i < cleared_scopes.size(); ++i) {
-                if (i > 0) clear_msg << ", ";
-                clear_msg << cleared_scopes[i];
-            }
-            clear_msg << " | removed " << removed_files << " files.";
-            if (clear_hydration_data) clear_msg << " Rehydrating enabled layers.";
-            cache_clear_ui.last_cache_clear_msg = clear_msg.str();
-        };
-        PerformanceStatsUiContext perf_ui_ctx;
-        perf_ui_ctx.layout_margin = layout_margin;
-        perf_ui_ctx.layout_h = layout_h;
-        perf_ui_ctx.main_panel_h = main_panel_h;
-        perf_ui_ctx.layout_gap = layout_gap;
-        perf_ui_ctx.left_panel_w = left_panel_w;
-        perf_ui_ctx.layer_count = layers.size();
-        perf_ui_ctx.hydrated_now = hydrated_now;
-        perf_ui_ctx.triangulated_now = triangulated_now;
-        perf_ui_ctx.hydrated_pending = hydrated_pending;
-        perf_ui_ctx.tri_pending = tri_pending;
-        perf_ui_ctx.hydrated_frac = hydrated_frac;
-        perf_ui_ctx.tri_frac = tri_frac;
-        perf_ui_ctx.elapsed_s = elapsed_s;
-        perf_ui_ctx.hydrate_idle_s = hydrate_idle_s;
-        perf_ui_ctx.tri_idle_s = tri_idle_s;
-        perf_ui_ctx.perf_frame_ms_avg = perf_frame_ms_avg.load(std::memory_order_relaxed);
-        perf_ui_ctx.perf_frame_ms_last = perf_frame_ms_last.load(std::memory_order_relaxed);
-        perf_ui_ctx.perf_fps_avg = perf_fps_avg.load(std::memory_order_relaxed);
-        perf_ui_ctx.data_library_rendered_rows_last = data_library_rendered_rows_last;
-        perf_ui_ctx.data_library_visible_rows = data_library_visible_rows.size();
-        perf_ui_ctx.data_library_cache_rebuilds = data_library_cache_rebuilds;
-        perf_ui_ctx.people_pay_rendered_rows_last = people_pay_rendered_rows_last;
-        perf_ui_ctx.people_pay_visible_rows = people_pay_visible_rows.size();
-        perf_ui_ctx.people_pay_cache_rebuilds = people_pay_cache_rebuilds;
-        perf_ui_ctx.render_fill_success_last_frame = render_fill_success_last_frame.load(std::memory_order_relaxed);
-        perf_ui_ctx.render_fill_attempts_last_frame = render_fill_attempts_last_frame.load(std::memory_order_relaxed);
-        perf_ui_ctx.render_fill_no_triangles_last_frame = render_fill_no_triangles_last_frame.load(std::memory_order_relaxed);
-        perf_ui_ctx.render_fill_bad_indices_last_frame = render_fill_bad_indices_last_frame.load(std::memory_order_relaxed);
-        perf_ui_ctx.arkavo_room_id = arkavo_room_id;
-        perf_ui_ctx.arkavo_room_id_size = sizeof(arkavo_room_id);
-        perf_ui_ctx.arkavo_connected = arkavo_client != nullptr && arkavo_client->isConnected();
-        perf_ui_ctx.arkavo_self_peer_id = arkavo_client ? arkavo_client->selfPeerId() : std::string();
-        perf_ui_ctx.arkavo_tracked_peers = arkavo_client ? arkavo_client->peers().size() : 0;
-        perf_ui_ctx.arkavo_open_peers = std::move(arkavo_open_peers);
-        perf_ui_ctx.arkavo_send_peer = arkavo_send_peer;
-        perf_ui_ctx.arkavo_send_peer_size = sizeof(arkavo_send_peer);
-        perf_ui_ctx.arkavo_send_path = arkavo_send_path;
-        perf_ui_ctx.arkavo_send_path_size = sizeof(arkavo_send_path);
-        perf_ui_ctx.arkavo_status = &arkavo_status;
-        perf_ui_ctx.arkavo_err = &arkavo_err;
-        perf_ui_ctx.on_connect_arkavo = [&]() { connect_arkavo(); };
-        perf_ui_ctx.on_disconnect_arkavo = [&]() { disconnect_arkavo(); };
-        perf_ui_ctx.on_send_arkavo_file = [&]() { send_arkavo_file(); };
-        perf_ui_ctx.lan_panel = &lan_panel_ctx;
-        perf_ui_ctx.tile_cache_size = g_TileCache.size();
-        perf_ui_ctx.max_tile_cache = kMaxTileCache;
-        perf_ui_ctx.cache_clear = &cache_clear_ui;
-        perf_ui_ctx.on_clear_cache = [&]() { clear_cache_action(); };
-        drawPerformanceStatsPanel(perf_ui_ctx);
-        clear_cache_all = cache_clear_ui.clear_cache_all;
-        clear_cache_hydration = cache_clear_ui.clear_cache_hydration;
-        clear_cache_triangulation = cache_clear_ui.clear_cache_triangulation;
-        clear_cache_derived = cache_clear_ui.clear_cache_derived;
-        clear_cache_heatmap_memory = cache_clear_ui.clear_cache_heatmap_memory;
-        clear_cache_heatmap_disk = cache_clear_ui.clear_cache_heatmap_disk;
-        clear_cache_tile_memory = cache_clear_ui.clear_cache_tile_memory;
-        clear_cache_tile_disk_presence = cache_clear_ui.clear_cache_tile_disk_presence;
-        last_cache_clear_msg = std::move(cache_clear_ui.last_cache_clear_msg);
+        runPerformanceRuntimeSupport(PerformanceRuntimeContext{
+            layout_margin,
+            layout_h,
+            main_panel_h,
+            layout_gap,
+            left_panel_w,
+            layers.size(),
+            hydrated_now,
+            triangulated_now,
+            hydrated_pending,
+            tri_pending,
+            hydrated_frac,
+            tri_frac,
+            elapsed_s,
+            hydrate_idle_s,
+            tri_idle_s,
+            &perf_frame_ms_avg,
+            &perf_frame_ms_last,
+            &perf_fps_avg,
+            data_library_rendered_rows_last,
+            data_library_visible_rows.size(),
+            data_library_cache_rebuilds,
+            people_pay_rendered_rows_last,
+            people_pay_visible_rows.size(),
+            people_pay_cache_rebuilds,
+            &render_fill_success_last_frame,
+            &render_fill_attempts_last_frame,
+            &render_fill_no_triangles_last_frame,
+            &render_fill_bad_indices_last_frame,
+            &frame_prelude.lan_discovery,
+            &lan_peers,
+            &lan_scan_status,
+            arkavo_room_id,
+            sizeof(arkavo_room_id),
+            &arkavo_status,
+            &arkavo_err,
+            &arkavo_client,
+            &arkavo_rtc,
+            arkavo_send_peer,
+            sizeof(arkavo_send_peer),
+            arkavo_send_path,
+            sizeof(arkavo_send_path),
+            &clear_cache_all,
+            &clear_cache_hydration,
+            &clear_cache_triangulation,
+            &clear_cache_derived,
+            &clear_cache_heatmap_memory,
+            &clear_cache_heatmap_disk,
+            &clear_cache_tile_memory,
+            &clear_cache_tile_disk_presence,
+            &last_cache_clear_msg,
+            &cache_hydration_dir,
+            &cache_triangulation_dir,
+            &cache_derived_dir,
+            &cache_aggregate_dir,
+            &layers,
+            &layer_spatial,
+            &layer_profile_dirty,
+            &layer_states,
+            &hydrated_mutex,
+            &hydrated_queue,
+            &tri_mutex,
+            &tri_jobs,
+            &tri_results,
+            &tri_cv,
+            &hydrate_req_mutex,
+            &hydrate_requests,
+            &hydration_requested,
+            &hydration_required,
+            &status_mutex,
+            parcel_layer_idx,
+            vacant_notice_layer_idx,
+            vacant_rehab_layer_idx,
+            &hydrated_count,
+            &triangulated_count,
+            [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
+            [&](const fs::path& p) { return clear_cache_tree(p); },
+            [&]() { clear_heatmap_runtime_cache(); },
+            [&]() { reset_derived_cache_state(); },
+            [&]() { trimProcessHeap(); },
+            [&]() { clearTileDiskPresenceCache(); }
+        });
         const LayerUiStateSyncResult ui_state_sync = syncLayerUiState(LayerUiStateSyncContext{
             &root,
             &layers,
@@ -1824,7 +1620,7 @@ int runWorldSim3App(int argc, char** argv) {
                 if (li < layer_profile_dirty.size()) layer_profile_dirty[li] = true;
             }
         }
-        refreshLayerProfileSnapshot(layer_profile_snapshot_ctx);
+        refreshLayerProfileSnapshot(frame_prelude.layer_profile_snapshot);
 
         auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
             if (real_property_layer_idx < 0 || (size_t)real_property_layer_idx >= layers.size()) return nullptr;

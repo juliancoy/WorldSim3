@@ -20,6 +20,8 @@ The legacy include split is gone. The remaining frame orchestration now lives in
 - `owner_aggregates.h/.cpp`: owns owner-class override load/save, owner classification, owner aggregate rebuilds, filtered owner snapshot generation, and related cache invalidation bookkeeping.
 - `left_panel.h/.cpp`: owns the `Layers and Controls` window, including left-column orchestration for basemap controls, layer-category controls, global visibility/download actions, and zoning filter composition.
 - `layer_ui_state_sync.h/.cpp`: owns per-frame layer UI reconciliation, including changed-layer detection, newly-enabled hydration enqueueing, dependency coordination, and filter/UI state persistence.
+- `frame_prelude.h/.cpp`: owns frame-start API command application, download queue/lazy tile queue ticking, basemap coverage refresh, and the assembly of reusable per-frame download/LAN/profile contexts.
+- `performance_runtime_support.h/.cpp`: owns Arkavo connect/disconnect/send actions, cache-clear execution, and `Performance and Stats` window wiring to the existing stats panel.
 - `right_panel.h/.cpp`: owns the `Record Filters` window, parcel-selection helpers, DuckDB auto-rebuild gating, gradient filter setup, and right-panel tab composition.
 - `map_canvas_session.h/.cpp`: owns map canvas startup, hover target resolution, basemap rendering, overlay enablement, and projection-cache setup for the map tab.
 - `map_tab.h/.cpp`: owns the full `Map` window/tab orchestration, including map-canvas setup, map-frame session execution, and overlay panel popup wiring.
@@ -45,6 +47,8 @@ Dependency map for moved blocks:
 - Owner aggregates: inputs owner override state, unified parcel records, selected owners, parcel/tax generation counters, and layer sizes; outputs persisted overrides, rebuilt owner aggregates, filtered vacancy/value snapshots, and dirty/cache state updates.
 - Left panel: inputs left-column layout, app settings, layer/freshness/runtime state, basemap cache state, parcel-jurisdiction filters, and download/hydration callbacks; outputs the full `Layers and Controls` window plus visibility/filter mutations and missing-download summary counts for the data library window.
 - Layer UI state sync: inputs layer enablement snapshots, changed UI flags, dependency/filter state, and hydration callbacks; outputs updated persisted UI/filter state, newly enabled hydration requests, refreshed last-enabled snapshots, and the derived vacant-layer-active flag.
+- Frame prelude: inputs frame-local map state, API command atomics, download/freshness state, queue storage, and basemap coverage caches; outputs prepared frame contexts plus completed frame-start queue/API/coverage work.
+- Performance runtime support: inputs Arkavo runtime state, cache-clear toggles, layer/pipeline queues, profiling counters, and cache-reset callbacks; outputs updated Arkavo/cache UI state and invokes the existing performance panel callbacks.
 - Right panel: inputs UI layout, parcel selection state, DuckDB/query/filter state, owner aggregate state, histogram/vacancy counters, hydration queue state, and tab callbacks; outputs the full `Record Filters` window plus parcel-selection and DuckDB rebuild side effects.
 - Map canvas session: inputs viewport state, basemap cache/download state, hover toggle state, layer vectors, and tile profiling counters; outputs prepared map-canvas state including hover results, overlay enablement, basemap draw work, and a ready projection cache.
 - Map tab: inputs layout, map/view state, render/filter state, time-cube/policy overlay state, and profiling counters; outputs the full `Map` window/tab plus map-frame execution and overlay popup UI.
@@ -59,5 +63,5 @@ Behavior intentionally preserved:
 
 Remaining debt:
 
-- The old `worldsim_app_run_loop_part*.inc` files are removed, but `app_main_loop.cpp` is still a large orchestration unit. If this area gets revisited, the next worthwhile extractions are Arkavo/cache-clear support and the frame-start download/coverage orchestration.
+- The old `worldsim_app_run_loop_part*.inc` files are removed, and the Arkavo/cache-clear support plus frame-start download/coverage orchestration are now extracted. `app_main_loop.cpp` is still a large coordinator, but the remaining code is mostly true top-level sequencing and state assembly.
 - Several docs still describe the older migration path and may need another cleanup pass if the refactor keeps moving.

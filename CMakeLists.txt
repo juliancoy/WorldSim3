@@ -97,6 +97,7 @@ add_executable(worldsim3
   app_settings.cpp
   app_utils.cpp
   app_frame_support.cpp
+  frame_prelude.cpp
   memory_utils.cpp
   zoning.cpp
   parcel_matched_layers.cpp
@@ -153,6 +154,7 @@ add_executable(worldsim3
   data_library_coordinator.cpp
   data_library_panel.cpp
   performance_stats_panel.cpp
+  performance_runtime_support.cpp
   filter_context_builder.cpp
   heat_normalization.cpp
   heatmap_key_builder.cpp
