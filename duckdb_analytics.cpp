@@ -1,12 +1,14 @@
 #include "duckdb_analytics.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
 #include "feature_props.h"
 
 #include <duckdb.hpp>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <sstream>
@@ -45,6 +47,30 @@ std::string propsJson(const LayerDef::FeatureGeom& fg) {
 
 double numericProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
     return parseNumericField(firstDisplayProperty(fg, keys));
+}
+
+std::string isoNowUtc() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#if defined(_WIN32)
+    gmtime_s(&tm, &now_time);
+#else
+    gmtime_r(&now_time, &tm);
+#endif
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return std::string(buf);
+}
+
+std::string analyticsBuildSignature(const fs::path& root, const std::vector<LayerDef>& layers) {
+    std::ostringstream sig;
+    for (const auto& layer : layers) {
+        const fs::path layer_path = root / "data" / "layers" / layer.file;
+        if (!fs::exists(layer_path)) continue;
+        sig << layer.file << ":" << fileSignature(layer_path) << "|";
+    }
+    return sig.str();
 }
 }
 
@@ -139,6 +165,8 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         con.Query("DROP TABLE IF EXISTS layer_features");
         con.Query("DROP TABLE IF EXISTS unified_parcels");
         con.Query("DROP TABLE IF EXISTS parcel_events");
+        con.Query("DROP TABLE IF EXISTS analytics_build_info");
+        con.Query("DROP TABLE IF EXISTS analytics_source_contributions");
         con.Query(R"SQL(
             CREATE TABLE layer_features (
                 layer_idx UBIGINT,
@@ -216,6 +244,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_feature_idx UBIGINT,
                 real_property_feature_idx UBIGINT,
                 blocklot VARCHAR,
+                parcel_source_file VARCHAR,
+                property_source_file VARCHAR,
+                parcel_has_geometry BOOLEAN,
+                has_property_record BOOLEAN,
                 owner VARCHAR,
                 owner_display VARCHAR,
                 address VARCHAR,
@@ -247,6 +279,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_appender.Append<uint64_t>((uint64_t)parcel.parcel_feature_idx);
                 parcel_appender.Append<uint64_t>(parcel.real_property_feature_idx == (size_t)-1 ? UINT64_MAX : (uint64_t)parcel.real_property_feature_idx);
                 parcel_appender.Append<const char*>(parcel.blocklot.c_str());
+                parcel_appender.Append<const char*>(parcel.parcel_source_file.c_str());
+                parcel_appender.Append<const char*>(parcel.property_source_file.c_str());
+                parcel_appender.Append<bool>(parcel.parcel_has_geometry);
+                parcel_appender.Append<bool>(parcel.has_property_record);
                 parcel_appender.Append<const char*>(parcel.owner.c_str());
                 parcel_appender.Append<const char*>(parcel.owner_display.c_str());
                 parcel_appender.Append<const char*>(parcel.address.c_str());
@@ -277,6 +313,75 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         con.Query("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)");
         con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)");
         con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)");
+        con.Query(R"SQL(
+            CREATE TABLE analytics_build_info (
+                built_at_utc VARCHAR,
+                source_signature VARCHAR,
+                hydrated_layer_count UBIGINT,
+                hydrated_feature_count UBIGINT,
+                unified_parcel_count UBIGINT,
+                unified_parcels_with_property_record UBIGINT,
+                unified_parcels_with_geometry UBIGINT
+            )
+        )SQL");
+        con.Query(R"SQL(
+            CREATE TABLE analytics_source_contributions (
+                source_role VARCHAR,
+                source_file VARCHAR,
+                row_count UBIGINT
+            )
+        )SQL");
+        {
+            const std::string built_at_utc = isoNowUtc();
+            const std::string source_signature = analyticsBuildSignature(root_, layers);
+            size_t parcels_with_property_record = 0;
+            size_t parcels_with_geometry = 0;
+            std::unordered_map<std::string, size_t> parcel_source_counts;
+            std::unordered_map<std::string, size_t> property_source_counts;
+            for (const auto& parcel : unified_parcels) {
+                if (parcel.has_property_record) parcels_with_property_record++;
+                if (parcel.parcel_has_geometry) parcels_with_geometry++;
+                if (!parcel.parcel_source_file.empty()) parcel_source_counts[parcel.parcel_source_file] += 1;
+                if (!parcel.property_source_file.empty()) property_source_counts[parcel.property_source_file] += 1;
+            }
+
+            auto info_appender = duckdb::Appender(con, "analytics_build_info");
+            info_appender.BeginRow();
+            info_appender.Append<const char*>(built_at_utc.c_str());
+            info_appender.Append<const char*>(source_signature.c_str());
+            info_appender.Append<uint64_t>((uint64_t)layer_count);
+            info_appender.Append<uint64_t>((uint64_t)feature_count);
+            info_appender.Append<uint64_t>((uint64_t)unified_parcels.size());
+            info_appender.Append<uint64_t>((uint64_t)parcels_with_property_record);
+            info_appender.Append<uint64_t>((uint64_t)parcels_with_geometry);
+            info_appender.EndRow();
+            info_appender.Close();
+
+            auto source_appender = duckdb::Appender(con, "analytics_source_contributions");
+            for (const auto& [source_file, row_count] : parcel_source_counts) {
+                source_appender.BeginRow();
+                source_appender.Append<const char*>("parcel_geometry");
+                source_appender.Append<const char*>(source_file.c_str());
+                source_appender.Append<uint64_t>((uint64_t)row_count);
+                source_appender.EndRow();
+            }
+            for (const auto& [source_file, row_count] : property_source_counts) {
+                source_appender.BeginRow();
+                source_appender.Append<const char*>("property_record");
+                source_appender.Append<const char*>(source_file.c_str());
+                source_appender.Append<uint64_t>((uint64_t)row_count);
+                source_appender.EndRow();
+            }
+            for (const auto& layer : layers) {
+                if (layer.features.empty()) continue;
+                source_appender.BeginRow();
+                source_appender.Append<const char*>("hydrated_layer");
+                source_appender.Append<const char*>(layer.file.c_str());
+                source_appender.Append<uint64_t>((uint64_t)layer.features.size());
+                source_appender.EndRow();
+            }
+            source_appender.Close();
+        }
         con.Query(R"SQL(
             CREATE TABLE parcel_events AS
             WITH base AS (
@@ -394,6 +499,13 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             FROM layer_features
             GROUP BY layer_file, layer_name, scale, category
             ORDER BY feature_count DESC
+        )SQL");
+        con.Query(R"SQL(
+            CREATE OR REPLACE VIEW analytics_property_source_rollup AS
+            SELECT source_file, row_count
+            FROM analytics_source_contributions
+            WHERE source_role = 'property_record'
+            ORDER BY row_count DESC, source_file ASC
         )SQL");
         con.Query("COMMIT");
 

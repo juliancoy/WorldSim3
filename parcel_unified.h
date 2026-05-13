@@ -15,6 +15,10 @@ struct UnifiedParcelRecord {
     const LayerDef::FeatureGeom* parcel_geom = nullptr;
     const LayerDef::FeatureGeom* real_property = nullptr;
     size_t real_property_feature_idx = (size_t)-1;
+    std::string parcel_source_file;
+    std::string property_source_file;
+    bool parcel_has_geometry = false;
+    bool has_property_record = false;
 
     std::string owner;
     std::string owner_display;
@@ -40,6 +44,8 @@ struct UnifiedParcelBuildRequest {
     const std::vector<LayerDef>* layers = nullptr;
     int parcel_layer_idx = -1;
     int real_property_layer_idx = -1;
+    const std::vector<LayerDef::FeatureGeom>* real_property_features = nullptr;
+    const std::vector<std::string>* real_property_source_files = nullptr;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     const std::vector<int>* parcel_vac_rehab_by_feature = nullptr;

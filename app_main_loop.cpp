@@ -347,6 +347,9 @@ int runWorldSim3App(int argc, char** argv) {
     const int crime_nibrs_layer_idx = layer_indices.crime_nibrs_layer_idx;
     const int crime_legacy_layer_idx = layer_indices.crime_legacy_layer_idx;
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
+    std::vector<LayerDef::FeatureGeom> harmonized_real_property_features;
+    std::vector<std::string> harmonized_real_property_source_files;
+    std::string harmonized_real_property_signature;
     std::unordered_map<std::string, int> vacant_notice_count_by_blocklot;
     std::unordered_map<std::string, int> vacant_rehab_count_by_blocklot;
     std::unordered_map<std::string, int> tax_lien_count_by_blocklot;
@@ -1570,6 +1573,9 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.zoning_group_order = &zoning_group_order;
         derived_layer_caches_ctx.zoning_zone_discovered_feature_count = &zoning_zone_discovered_feature_count;
         derived_layer_caches_ctx.real_property_by_blocklot = &real_property_by_blocklot;
+        derived_layer_caches_ctx.harmonized_real_property_features = &harmonized_real_property_features;
+        derived_layer_caches_ctx.harmonized_real_property_source_files = &harmonized_real_property_source_files;
+        derived_layer_caches_ctx.harmonized_real_property_signature = &harmonized_real_property_signature;
         derived_layer_caches_ctx.cached_real_property_size = &cached_real_property_size;
         derived_layer_caches_ctx.cached_vac_notice_size = &cached_vac_notice_size;
         derived_layer_caches_ctx.cached_vac_rehab_size = &cached_vac_rehab_size;

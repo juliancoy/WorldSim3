@@ -36,6 +36,9 @@ struct DerivedLayerCachesContext {
     size_t* zoning_zone_discovered_feature_count = nullptr;
 
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
+    std::vector<LayerDef::FeatureGeom>* harmonized_real_property_features = nullptr;
+    std::vector<std::string>* harmonized_real_property_source_files = nullptr;
+    std::string* harmonized_real_property_signature = nullptr;
     size_t* cached_real_property_size = nullptr;
     size_t* cached_vac_notice_size = nullptr;
     size_t* cached_vac_rehab_size = nullptr;

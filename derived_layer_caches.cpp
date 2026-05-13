@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "feature_props.h"
+#include "parcel_consolidation.h"
 #include "vacancy_overlay.h"
 
 #include <algorithm>
@@ -12,7 +13,8 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.zoning_zone_enabled || !ctx.zoning_zone_color || !ctx.zoning_zone_label ||
         !ctx.zoning_zone_order || !ctx.zoning_zone_counts || !ctx.zoning_group_zones ||
         !ctx.zoning_group_order || !ctx.zoning_zone_discovered_feature_count ||
-        !ctx.real_property_by_blocklot || !ctx.cached_real_property_size ||
+        !ctx.real_property_by_blocklot || !ctx.harmonized_real_property_features ||
+        !ctx.harmonized_real_property_source_files || !ctx.harmonized_real_property_signature || !ctx.cached_real_property_size ||
         !ctx.cached_vac_notice_size || !ctx.cached_vac_rehab_size ||
         !ctx.cached_tax_lien_size || !ctx.cached_tax_sale_size ||
         !ctx.vacant_notice_count_by_blocklot || !ctx.vacant_rehab_count_by_blocklot ||
@@ -80,17 +82,19 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         }
     }
 
-    if (ctx.real_property_layer_idx >= 0) {
-        const auto& feats = layers[(size_t)ctx.real_property_layer_idx].features;
-        if (feats.size() != *ctx.cached_real_property_size) {
-            ctx.real_property_by_blocklot->clear();
-            for (size_t i = 0; i < feats.size(); ++i) {
-                std::string bl = featureBlockLotJoinKey(feats[i]);
-                if (!bl.empty() && ctx.real_property_by_blocklot->find(bl) == ctx.real_property_by_blocklot->end()) {
-                    (*ctx.real_property_by_blocklot)[bl] = i;
-                }
-            }
-            *ctx.cached_real_property_size = feats.size();
+    {
+        const std::string real_property_signature =
+            computeHarmonizedRealPropertySignature(*ctx.root, layers, ctx.real_property_layer_idx);
+        if (real_property_signature != *ctx.harmonized_real_property_signature) {
+            rebuildHarmonizedRealPropertyFeatures(
+                *ctx.root,
+                layers,
+                ctx.real_property_layer_idx,
+                *ctx.harmonized_real_property_features,
+                *ctx.harmonized_real_property_source_files,
+                *ctx.real_property_by_blocklot);
+            *ctx.harmonized_real_property_signature = real_property_signature;
+            *ctx.cached_real_property_size = ctx.harmonized_real_property_features->size();
             *ctx.owner_aggregates_dirty = true;
         }
     }
@@ -213,10 +217,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             *ctx.parcel_tax_generation_applied = *ctx.tax_maps_generation;
             *ctx.owner_aggregates_dirty = true;
         }
-        const size_t real_property_size_for_unified =
-            ctx.real_property_layer_idx >= 0 && (size_t)ctx.real_property_layer_idx < layers.size()
-                ? layers[(size_t)ctx.real_property_layer_idx].features.size()
-                : 0;
+        const size_t real_property_size_for_unified = ctx.harmonized_real_property_features->size();
         if (*ctx.unified_parcel_cached_size != pfeats.size() ||
             *ctx.unified_real_property_cached_size != real_property_size_for_unified ||
             *ctx.unified_vacancy_generation_applied != *ctx.parcel_vacancy_generation_applied ||
@@ -225,6 +226,8 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 &layers,
                 ctx.parcel_layer_idx,
                 ctx.real_property_layer_idx,
+                ctx.harmonized_real_property_features,
+                ctx.harmonized_real_property_source_files,
                 ctx.real_property_by_blocklot,
                 ctx.parcel_vac_notice_by_feature,
                 ctx.parcel_vac_rehab_by_feature,

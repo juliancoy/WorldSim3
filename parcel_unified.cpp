@@ -51,6 +51,12 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
     }
 
     const auto& parcel_layer = (*request.layers)[(size_t)request.parcel_layer_idx];
+    const std::vector<LayerDef::FeatureGeom>* real_property_features = request.real_property_features;
+    if (!real_property_features &&
+        request.real_property_layer_idx >= 0 &&
+        (size_t)request.real_property_layer_idx < request.layers->size()) {
+        real_property_features = &(*request.layers)[(size_t)request.real_property_layer_idx].features;
+    }
     out.reserve(parcel_layer.features.size());
     for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
         const auto& parcel = parcel_layer.features[i];
@@ -59,16 +65,20 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
         row.parcel_feature_idx = i;
         row.parcel_geom = &parcel;
         row.blocklot = featureBlockLotJoinKey(parcel);
+        row.parcel_source_file = parcel_layer.file;
+        row.parcel_has_geometry = !parcel.rings.empty();
 
         if (!row.blocklot.empty() &&
             request.real_property_by_blocklot &&
-            request.real_property_layer_idx >= 0 &&
-            (size_t)request.real_property_layer_idx < request.layers->size()) {
+            real_property_features) {
             auto it = request.real_property_by_blocklot->find(row.blocklot);
-            const auto& rp_layer = (*request.layers)[(size_t)request.real_property_layer_idx];
-            if (it != request.real_property_by_blocklot->end() && it->second < rp_layer.features.size()) {
+            if (it != request.real_property_by_blocklot->end() && it->second < real_property_features->size()) {
                 row.real_property_feature_idx = it->second;
-                row.real_property = &rp_layer.features[it->second];
+                row.real_property = &(*real_property_features)[it->second];
+                row.has_property_record = true;
+                if (request.real_property_source_files && it->second < request.real_property_source_files->size()) {
+                    row.property_source_file = (*request.real_property_source_files)[it->second];
+                }
             }
         }
 

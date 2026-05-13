@@ -132,6 +132,7 @@ add_executable(worldsim3
   map_viewport.cpp
   parcel_timeline.cpp
   parcel_unified.cpp
+  parcel_consolidation.cpp
   heatmap_render.cpp
   heatmap_gpu_aggregate.cpp
   heatmap_strategy_common.cpp
@@ -319,6 +320,41 @@ target_include_directories(worldsim_regional_parcel_builder PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(worldsim_regional_parcel_builder PRIVATE nlohmann_json::nlohmann_json)
+
+add_executable(worldsim3_duckdb_owner_dump
+  tools/duckdb_owner_dump.cpp
+  aggregate_visualization_strategies.cpp
+  app_utils.cpp
+  cache_io.cpp
+  cpu_affinity.cpp
+  duckdb_analytics.cpp
+  feature_props.cpp
+  geo.cpp
+  headless_layer_hydration.cpp
+  layer_geometry.cpp
+  layer_state_io.cpp
+  layer_workers.cpp
+  memory_utils.cpp
+  parcel_consolidation.cpp
+  parcel_unified.cpp
+)
+target_include_directories(worldsim3_duckdb_owner_dump PRIVATE
+  ${imgui_SOURCE_DIR}
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE nlohmann_json::nlohmann_json)
+if(TARGET duckdb_static)
+  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE duckdb_static)
+elseif(TARGET duckdb)
+  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE duckdb)
+endif()
+if(UNIX AND NOT APPLE)
+  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE dl pthread)
+endif()
+if(WIN32)
+  target_compile_definitions(worldsim3_duckdb_owner_dump PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE ws2_32)
+endif()
 
 install(TARGETS worldsim3 RUNTIME DESTINATION bin)
 
