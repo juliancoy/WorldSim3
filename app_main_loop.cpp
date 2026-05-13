@@ -18,7 +18,11 @@
 #include "dataset_library.h"
 #include "net_http_utils.h"
 #include "profiling.h"
+#include "profiling_layer_snapshot.h"
+#include "basemap_coverage.h"
 #include "layer_runtime.h"
+#include "layer_pipeline_drain.h"
+#include "derived_layer_caches.h"
 #include "layer_geometry.h"
 #include "layer_workers.h"
 #include "memory_utils.h"
@@ -37,6 +41,10 @@
 #include "map_render_projection.h"
 #include "map_render_selection.h"
 #include "map_render_utils.h"
+#include "map_canvas_session.h"
+#include "map_frame_render.h"
+#include "map_frame_session.h"
+#include "map_tab.h"
 #include "map_viewport.h"
 #include "parcel_timeline.h"
 #include "parcel_unified.h"
@@ -52,23 +60,34 @@
 #include "layers_panel_ui.h"
 #include "layer_settings.h"
 #include "layer_runtime_coordinator.h"
+#include "layer_ui_state_sync.h"
 #include "layer_ui_context_builders.h"
+#include "left_panel.h"
 #include "download_queue.h"
+#include "basemap_panel.h"
+#include "layer_download_queue.h"
+#include "lan_discovery.h"
 #include "data_library_coordinator.h"
+#include "data_library_panel.h"
+#include "performance_stats_panel.h"
 #include "tiles.h"
 #include "owner_info.h"
 #include "owners_tab.h"
+#include "owner_aggregates.h"
 #include "gradient_tab.h"
 #include "vacancy_parcel_tab.h"
 #include "parcel_info_tab.h"
 #include "filters_tab.h"
+#include "right_panel.h"
 #include "duckdb_analytics.h"
 #include "sql_tab.h"
 #include "selection.h"
 #include "app_lifecycle.h"
 #include "worldsim_app.h"
 #include "app_utils.h"
+#include "app_frame_support.h"
 #include "zoning.h"
+#include "zoning_filters_panel.h"
 #include "vacancy_overlay.h"
 #include "status_api.h"
 #include "dataset_lan_api.h"
@@ -80,6 +99,7 @@
 #include "app_shutdown_context_builder.h"
 #include "layer_registry.h"
 #include "status_api_context_builder.h"
+#include "api_control_commands.h"
 #include "cpu_affinity.h"
 #include "thread_utils.h"
 
@@ -1048,14 +1068,6 @@ int runWorldSim3App(int argc, char** argv) {
     int policy_viz_metric = 0; // 0=personnel count, 1=pay total
     size_t policy_viz_cache_rebuilds = 0;
     size_t policy_viz_node_count = 0;
-    struct LanPeerInfo {
-        std::string ip;
-        std::string app_name;
-        std::string app_version;
-        int protocol_version = 0;
-        int dataset_port = 0;
-        bool protocol_match = false;
-    };
     std::vector<LanPeerInfo> lan_peers;
     std::string lan_scan_status = "Not scanned";
     std::chrono::steady_clock::time_point lan_last_scan_at{};
@@ -1067,10 +1079,1051 @@ int runWorldSim3App(int argc, char** argv) {
     char arkavo_send_peer[160] = "";
     char arkavo_send_path[512] = "";
 
-#include "worldsim_app_run_loop_part1.inc"
-#include "worldsim_app_run_loop_part2.inc"
-#include "worldsim_app_run_loop_part3.inc"
-#include "worldsim_app_run_loop_part4.inc"
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        int fb_w = 0;
+        int fb_h = 0;
+        glfwGetFramebufferSize(window, &fb_w, &fb_h);
+        if (fb_w > 0 && fb_h > 0 && (fb_w != g_MainWindowData.Width || fb_h != g_MainWindowData.Height)) {
+            w = fb_w;
+            h = fb_h;
+            g_SwapChainRebuild = true;
+        }
+
+        if (g_SwapChainRebuild) {
+            glfwGetFramebufferSize(window, &w, &h);
+            if (w > 0 && h > 0) {
+                ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
+                ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData, g_QueueFamily, g_Allocator, w, h, g_MinImageCount);
+                g_MainWindowData.FrameIndex = 0;
+                g_SwapChainRebuild = false;
+            }
+        }
+
+        ImGui::SetCurrentContext(main_imgui_context);
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGuiIO& frame_io = ImGui::GetIO();
+        const FrameLayout frame_layout = updateFrameLayoutAndTextScale(
+            frame_io,
+            ui_left_panel_frac,
+            ui_right_panel_frac,
+            ui_text_scale);
+        const float layout_w = frame_layout.layout_w;
+        const float layout_h = frame_layout.layout_h;
+        const float layout_margin = frame_layout.layout_margin;
+        const float layout_gap = frame_layout.layout_gap;
+        const float left_panel_w = frame_layout.left_panel_w;
+        const float right_panel_w = frame_layout.right_panel_w;
+        const float map_w = frame_layout.map_w;
+        const float map_x = frame_layout.map_x;
+        const float main_panel_h = frame_layout.main_panel_h;
+        drainRetiredTextures();
+        const auto prof_frame_begin = std::chrono::steady_clock::now();
+        auto prof_ms_since = [](std::chrono::steady_clock::time_point t) {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+        };
+        size_t prof_tiles_drawn_frame = 0;
+        size_t prof_features_considered_frame = 0;
+        size_t prof_features_drawn_frame = 0;
+        bool layer_fill_state_changed = false;
+        bool layer_hover_state_changed = false;
+        bool layer_inspect_state_changed = false;
+        bool layer_heatmap_state_changed = false;
+        bool heatmap_settings_state_changed = false;
+        bool heatmap_controls_active = false;
+        LayerProfileSnapshotRefreshContext layer_profile_snapshot_ctx;
+        layer_profile_snapshot_ctx.layers = &layers;
+        layer_profile_snapshot_ctx.layer_spatial = &layer_spatial;
+        layer_profile_snapshot_ctx.layer_profile_dirty = &layer_profile_dirty;
+        layer_profile_snapshot_ctx.layer_profile_snapshot = &layer_profile_snapshot;
+        layer_profile_snapshot_ctx.layer_profile_mutex = &layer_profile_mutex;
+        LanDiscoveryContext lan_discovery_ctx;
+        lan_discovery_ctx.peers = &lan_peers;
+        lan_discovery_ctx.scan_status = &lan_scan_status;
+        lan_discovery_ctx.last_scan_at = &lan_last_scan_at;
+        lan_discovery_ctx.protocol_version = kProtocolVersion;
+        LayerDownloadQueueContext layer_download_ctx;
+        layer_download_ctx.root = root;
+        layer_download_ctx.layers = &layers;
+        layer_download_ctx.queue = &layer_download_queue;
+        layer_download_ctx.inflight = &layer_download_inflight;
+        layer_download_ctx.active_idx = &layer_download_active_idx;
+        layer_download_ctx.future = &layer_download_future;
+        layer_download_ctx.active_file = &layer_download_active_file;
+        layer_download_ctx.last_event = &layer_download_last_event;
+        layer_download_ctx.queue_loaded = &layer_download_queue_loaded;
+        layer_download_ctx.data_library_status_msg = &data_library_status_msg;
+        layer_download_ctx.data_freshness_state = &data_freshness_state;
+        layer_download_ctx.data_freshness_msg = &data_freshness_msg;
+        layer_download_ctx.lan = &lan_discovery_ctx;
+        layer_download_ctx.mark_local_layer_exists = [&](size_t idx, bool exists) { mark_local_layer_exists(idx, exists); };
+        layer_download_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
+        auto queue_all_missing_layer_downloads = [&]() {
+            DataLibraryCoordinatorContext data_library_ctx;
+            data_library_ctx.root = root;
+            data_library_ctx.layers = &layers;
+            data_library_ctx.layer_registry = &layer_registry;
+            data_library_ctx.local_layer_exists_cache = &local_layer_exists_cache;
+            data_library_ctx.data_freshness_state = &data_freshness_state;
+            data_library_ctx.data_freshness_msg = &data_freshness_msg;
+            data_library_ctx.data_library_status_msg = &data_library_status_msg;
+            data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
+            data_library_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueueLayerDownloadRequest(layer_download_ctx, idx); };
+            data_library_ctx.layer_download_pending = [&](size_t idx) { return layerDownloadPending(layer_download_ctx, idx); };
+            data_library_ctx.layer_download_last_event = &layer_download_last_event;
+            return queueAllMissingLayerDownloads(data_library_ctx);
+        };
+        // Apply REST control commands on main thread.
+        LayerApiCommandCoordinatorContext layer_api_ctx;
+        layer_api_ctx.layers = &layers;
+        layer_api_ctx.layer_registry = &layer_registry;
+        layer_api_ctx.api_layer_mutex = &api_layer_mutex;
+        layer_api_ctx.api_layer_enable_cmds = &api_layer_enable_cmds;
+        layer_api_ctx.api_layer_fill_cmds = &api_layer_fill_cmds;
+        layer_api_ctx.api_layer_download_cmds = &api_layer_download_cmds;
+        layer_api_ctx.layer_profile_dirty = &layer_profile_dirty;
+        layer_api_ctx.layer_fill_mutex = &layer_fill_mutex;
+        layer_api_ctx.layer_fill_enabled = &layer_fill_enabled;
+        layer_api_ctx.layer_fill_state_changed = &layer_fill_state_changed;
+        layer_api_ctx.data_library_status_msg = &data_library_status_msg;
+        layer_api_ctx.enqueue_layer_download_request = [&](size_t idx) { return enqueueLayerDownloadRequest(layer_download_ctx, idx); };
+        ApiControlContext api_control_ctx;
+        api_control_ctx.zoom = &zoom;
+        api_control_ctx.center_lon = &center_lon;
+        api_control_ctx.center_lat = &center_lat;
+        api_control_ctx.api_zoom_cmd = &api_zoom_cmd;
+        api_control_ctx.api_lon_cmd = &api_lon_cmd;
+        api_control_ctx.api_lat_cmd = &api_lat_cmd;
+        api_control_ctx.min_zoom = kMinZoom;
+        api_control_ctx.max_zoom = kMaxZoom;
+        api_control_ctx.layer_api = &layer_api_ctx;
+        api_control_ctx.api_ui_cmd_seq = &api_ui_cmd_seq;
+        api_control_ctx.api_ui_cmd_kind = &api_ui_cmd_kind;
+        api_control_ctx.api_ui_cmd_x = &api_ui_cmd_x;
+        api_control_ctx.api_ui_cmd_y = &api_ui_cmd_y;
+        api_control_ctx.api_ui_cmd_button = &api_ui_cmd_button;
+        api_control_ctx.api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y;
+        api_control_ctx.api_ui_cmd_last_seq = &api_ui_cmd_last_seq;
+        api_control_ctx.api_ui_mouse_release_pending = &api_ui_mouse_release_pending;
+        api_control_ctx.api_ui_mouse_release_button = &api_ui_mouse_release_button;
+        applyApiControlCommands(api_control_ctx);
+        current_zoom_state.store(zoom, std::memory_order_relaxed);
+        current_lon_state.store(center_lon, std::memory_order_relaxed);
+        current_lat_state.store(center_lat, std::memory_order_relaxed);
+        loadLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
+        loadLayerDownloadQueue(layer_download_ctx);
+        tickLazyTileDownloadQueue(lazy_tile_download, root, data_library_status_msg);
+        const auto basemap_now = std::chrono::steady_clock::now();
+        if (basemap_coverage_dirty ||
+            basemap_availability_last_check.time_since_epoch().count() == 0 ||
+            (basemap_now - basemap_availability_last_check) >= kBasemapCoverageRefreshInterval) {
+            const BasemapCoverage osm_coverage = countBasemapCoverage(root, "tiles", kMinZoom, kMaxNativeTileZoom);
+            const BasemapCoverage topo_coverage = countBasemapCoverage(root, "tiles_topo", kMinZoom, kMaxNativeTileZoom);
+            osm_missing_tiles_cached = osm_coverage.missing;
+            osm_total_tiles_cached = osm_coverage.total;
+            topo_missing_tiles_cached = topo_coverage.missing;
+            topo_total_tiles_cached = topo_coverage.total;
+            basemap_source_has_any_files_cached = true;
+            topo_tiles_available_cached = true;
+            topo_vector_available_cached = fs::exists(root / "data" / "tiles_topo_vector.geojson");
+            basemap_availability_last_check = basemap_now;
+            basemap_coverage_dirty = false;
+        }
+        tickLayerDownloadQueue(layer_download_ctx);
+        const LeftPanelResult left_panel = drawLeftPanelWindow(LeftPanelContext{
+            layout_margin,
+            left_panel_w,
+            main_panel_h,
+            &root,
+            &app_settings,
+            &layers,
+            &layer_registry,
+            &local_layer_exists_cache,
+            &data_freshness_state,
+            &data_freshness_msg,
+            &data_library_status_msg,
+            &zoom,
+            kMinZoom,
+            kMaxZoom,
+            &center_lon,
+            &center_lat,
+            &hover_inspector_mode,
+            &hover_inspector_enabled,
+            &show_sources_panel,
+            &show_data_library,
+            &parcel_parameter_mode,
+            &layer_spatial,
+            &layer_states,
+            &status_mutex,
+            &layer_fill_enabled,
+            &layer_hover_enabled,
+            &layer_inspect_enabled,
+            &layer_heatmap_enabled,
+            &layer_heatmap_algo,
+            &layer_heatmap_max_zoom,
+            &layer_parcel_detail_min_zoom,
+            &layer_normalize_mode,
+            &layer_heatmap_cell_px,
+            &layer_heatmap_bandwidth_px,
+            &layer_heatmap_blur_sigma_px,
+            &layer_heatmap_percentile_clip,
+            &layer_heatmap_multires_blend,
+            &layer_heatmap_zoom_adaptive_bandwidth,
+            &layer_heatmap_multires_enabled,
+            &layer_heatmap_use_gradient,
+            heatmap_algo,
+            &heatmap_allow_cpu_fallback,
+            &layer_fill_mutex,
+            &layer_fill_state_changed,
+            &layer_hover_state_changed,
+            &layer_inspect_state_changed,
+            &layer_heatmap_state_changed,
+            &heatmap_controls_active,
+            parcel_layer_idx,
+            crime_nibrs_layer_idx,
+            crime_legacy_layer_idx,
+            zoning_layer_idx,
+            &crime_filter_enabled,
+            &crime_filter_use_year,
+            &crime_year_min,
+            &crime_year_max,
+            &crime_filter_homicide,
+            &crime_filter_robbery,
+            &crime_filter_assault,
+            &crime_filter_burglary,
+            &crime_filter_theft,
+            &crime_filter_auto_theft,
+            &crime_filter_drug,
+            &crime_filter_shooting,
+            &crime_breakdown,
+            &parcel_jurisdiction_filter,
+            &parcel_jurisdiction_filter_dirty,
+            &parcel_jurisdiction_filter_status,
+            parcel_jurisdiction_options.data(),
+            parcel_jurisdiction_options.size(),
+            &basemap_download,
+            &lazy_tile_download,
+            &basemap_coverage_dirty,
+            osm_missing_tiles_cached,
+            osm_total_tiles_cached,
+            topo_missing_tiles_cached,
+            topo_total_tiles_cached,
+            topo_tiles_available_cached,
+            topo_vector_available_cached,
+            kMaxNativeTileZoom,
+            kMaxSatelliteNativeTileZoom,
+            &zoning_zone_enabled,
+            &zoning_zone_color,
+            &zoning_zone_label,
+            &zoning_metadata,
+            &zoning_zone_order,
+            &zoning_zone_counts,
+            &zoning_group_zones,
+            &zoning_group_order,
+            [&](size_t i) { return enqueueLayerDownloadRequest(layer_download_ctx, i); },
+            [&](size_t i) { return layerDownloadPending(layer_download_ctx, i); },
+            [&]() { return queue_all_missing_layer_downloads(); },
+            [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
+            [&](size_t i, bool required) { enqueue_hydration(i, required); }
+        });
+        bool zoning_filters_changed = left_panel.zoning_filters_changed;
+        const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
+        const size_t queueable_missing_layer_count = left_panel.queueable_missing_layer_count;
+        auto resolve_download_label = [&](const std::string& key) -> std::string {
+            return resolveDataLibraryDownloadLabel(layer_registry, layers, key);
+        };
+
+        PipelineProgressContext pipeline_progress_ctx;
+        pipeline_progress_ctx.layer_count = layers.size();
+        pipeline_progress_ctx.hydrated_count = &hydrated_count;
+        pipeline_progress_ctx.triangulated_count = &triangulated_count;
+        pipeline_progress_ctx.last_hydrated_seen = &last_hydrated_seen;
+        pipeline_progress_ctx.last_triangulated_seen = &last_triangulated_seen;
+        pipeline_progress_ctx.last_hydration_progress_at = &last_hydration_progress_at;
+        pipeline_progress_ctx.last_tri_progress_at = &last_tri_progress_at;
+        pipeline_progress_ctx.hydration_started_at = hydration_started_at;
+        pipeline_progress_ctx.hydrated_mutex = &hydrated_mutex;
+        pipeline_progress_ctx.hydrated_queue = &hydrated_queue;
+        pipeline_progress_ctx.tri_mutex = &tri_mutex;
+        pipeline_progress_ctx.tri_jobs = &tri_jobs;
+        const PipelineProgressSnapshot pipeline_progress = updatePipelineProgress(pipeline_progress_ctx);
+        const size_t hydrated_now = pipeline_progress.hydrated_now;
+        const size_t triangulated_now = pipeline_progress.triangulated_now;
+        const size_t hydrated_pending = pipeline_progress.hydrated_pending;
+        const size_t tri_pending = pipeline_progress.tri_pending;
+        const float hydrated_frac = pipeline_progress.hydrated_frac;
+        const float tri_frac = pipeline_progress.tri_frac;
+        const double elapsed_s = pipeline_progress.elapsed_s;
+        const double hydrate_idle_s = pipeline_progress.hydrate_idle_s;
+        const double tri_idle_s = pipeline_progress.tri_idle_s;
+
+        drawGearPanel(&show_sources_panel, root, bootstrap);
+        DataLibraryCoordinatorContext data_library_ctx;
+        data_library_ctx.root = root;
+        data_library_ctx.layers = &layers;
+        data_library_ctx.layer_registry = &layer_registry;
+        data_library_ctx.local_layer_exists_cache = &local_layer_exists_cache;
+        data_library_ctx.data_freshness_state = &data_freshness_state;
+        data_library_ctx.data_freshness_msg = &data_freshness_msg;
+        data_library_ctx.data_library_status_msg = &data_library_status_msg;
+        data_library_ctx.data_library_bulk_inflight = &data_library_bulk_inflight;
+        data_library_ctx.data_library_bulk_mutex = &data_library_bulk_mutex;
+        data_library_ctx.data_library_bulk_progress = &data_library_bulk_progress;
+        data_library_ctx.data_library_bulk_future = &data_library_bulk_future;
+        data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
+        data_library_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
+        DataLibraryUiContext data_library_ui_ctx;
+        data_library_ui_ctx.root = &root;
+        data_library_ui_ctx.layers = &layers;
+        data_library_ui_ctx.coordinator = &data_library_ctx;
+        data_library_ui_ctx.show_data_library = &show_data_library;
+        data_library_ui_ctx.query_buffer = data_library_query;
+        data_library_ui_ctx.query_buffer_size = sizeof(data_library_query);
+        data_library_ui_ctx.download_phase = &data_library_download_phase;
+        data_library_ui_ctx.include_large = &data_library_include_large;
+        data_library_ui_ctx.cached_query = &data_library_cached_query;
+        data_library_ui_ctx.cached_layer_count = &data_library_cached_layer_count;
+        data_library_ui_ctx.visible_rows = &data_library_visible_rows;
+        data_library_ui_ctx.cache_rebuilds = &data_library_cache_rebuilds;
+        data_library_ui_ctx.rendered_rows_last = &data_library_rendered_rows_last;
+        data_library_ui_ctx.enqueue_layer_download_request = [&](size_t idx) {
+            return enqueueLayerDownloadRequest(layer_download_ctx, idx);
+        };
+        data_library_ui_ctx.queue_all_missing_layer_downloads = [&]() {
+            return queue_all_missing_layer_downloads();
+        };
+        data_library_ui_ctx.downloadable_missing_layer_count = downloadable_missing_layer_count;
+        data_library_ui_ctx.queueable_missing_layer_count = queueable_missing_layer_count;
+        drawDataLibraryWindow(data_library_ui_ctx);
+        LanDiscoveryPanelContext lan_panel_ctx;
+        lan_panel_ctx.discovery = &lan_discovery_ctx;
+        lan_panel_ctx.peers = &lan_peers;
+        lan_panel_ctx.scan_status = &lan_scan_status;
+        std::vector<std::string> arkavo_open_peers;
+        if (arkavo_rtc) arkavo_open_peers = arkavo_rtc->connectedPeers();
+        CacheClearUiState cache_clear_ui;
+        cache_clear_ui.clear_cache_all = clear_cache_all;
+        cache_clear_ui.clear_cache_hydration = clear_cache_hydration;
+        cache_clear_ui.clear_cache_triangulation = clear_cache_triangulation;
+        cache_clear_ui.clear_cache_derived = clear_cache_derived;
+        cache_clear_ui.clear_cache_heatmap_memory = clear_cache_heatmap_memory;
+        cache_clear_ui.clear_cache_heatmap_disk = clear_cache_heatmap_disk;
+        cache_clear_ui.clear_cache_tile_memory = clear_cache_tile_memory;
+        cache_clear_ui.clear_cache_tile_disk_presence = clear_cache_tile_disk_presence;
+        cache_clear_ui.last_cache_clear_msg = last_cache_clear_msg;
+        auto connect_arkavo = [&]() {
+            ArkavoRealtimeClient::Config cfg;
+            cfg.room_id = trimDisplayValue(arkavo_room_id);
+            cfg.signaling_url = "wss://signaling.arkavo.org/";
+            auto transport = std::make_unique<ArkavoSignalingTransportCurl>();
+            arkavo_client = std::make_unique<ArkavoRealtimeClient>(cfg, std::move(transport));
+            arkavo_rtc = std::make_unique<ArkavoRtcSessionManager>(*arkavo_client);
+            arkavo_rtc->on_log = [&](const std::string& m) { arkavo_status = m; };
+            arkavo_rtc->on_error = [&](const std::string& e) { arkavo_err = e; };
+            arkavo_rtc->on_file_received = [&](const std::string& peer, const std::filesystem::path& p) {
+                arkavo_status = "received file from " + peer + ": " + p.string();
+            };
+            arkavo_client->on_log = [&](const std::string& m) { arkavo_status = m; };
+            arkavo_client->on_error = [&](const std::string& e) { arkavo_err = e; };
+            arkavo_client->on_peer_should_connect = [&](const std::string& peer_id, bool initiator) {
+                if (arkavo_rtc) arkavo_rtc->connectPeer(peer_id, initiator);
+            };
+            arkavo_client->on_peer_left = [&](const std::string& peer_id) {
+                if (arkavo_rtc) arkavo_rtc->removePeer(peer_id);
+            };
+            arkavo_client->on_signal_payload = [&](const std::string& peer_id, const nlohmann::json& payload) {
+                if (arkavo_rtc) arkavo_rtc->handleSignal(peer_id, payload);
+            };
+            std::string err;
+            if (!arkavo_client->start(err)) {
+                arkavo_err = err;
+                arkavo_status = "connect failed";
+            } else {
+                arkavo_status = "connecting";
+            }
+        };
+        auto disconnect_arkavo = [&]() {
+            if (arkavo_rtc) arkavo_rtc->closeAll();
+            arkavo_client->stop();
+            arkavo_rtc.reset();
+            arkavo_client.reset();
+            arkavo_status = "disconnected";
+        };
+        auto send_arkavo_file = [&]() {
+            std::string err;
+            if (!arkavo_rtc->sendFile(trimDisplayValue(arkavo_send_peer), trimDisplayValue(arkavo_send_path), err)) {
+                arkavo_err = err;
+            } else {
+                arkavo_status = "file send queued";
+            }
+        };
+        auto clear_cache_action = [&]() {
+            const bool has_any_selected =
+                cache_clear_ui.clear_cache_hydration ||
+                cache_clear_ui.clear_cache_triangulation ||
+                cache_clear_ui.clear_cache_derived ||
+                cache_clear_ui.clear_cache_heatmap_memory ||
+                cache_clear_ui.clear_cache_heatmap_disk ||
+                cache_clear_ui.clear_cache_tile_memory ||
+                cache_clear_ui.clear_cache_tile_disk_presence;
+            if (!has_any_selected) {
+                cache_clear_ui.last_cache_clear_msg = "No cache scope selected for clear.";
+                return;
+            }
+            size_t removed_files = 0;
+            std::error_code ec;
+            std::vector<std::string> cleared_scopes;
+            if (cache_clear_ui.clear_cache_hydration) {
+                removed_files += clear_cache_tree(cache_hydration_dir);
+                cleared_scopes.push_back("hydration");
+            }
+            if (cache_clear_ui.clear_cache_triangulation) {
+                removed_files += clear_cache_tree(cache_triangulation_dir);
+                cleared_scopes.push_back("triangulation");
+            }
+            if (cache_clear_ui.clear_cache_derived) {
+                removed_files += clear_cache_tree(cache_derived_dir);
+                cleared_scopes.push_back("derived");
+            }
+            if (cache_clear_ui.clear_cache_heatmap_disk) {
+                removed_files += clear_cache_tree(cache_aggregate_dir);
+                cleared_scopes.push_back("heatmap-aggregate disk");
+            }
+            if (cache_clear_ui.clear_cache_heatmap_memory) {
+                clear_heatmap_runtime_cache();
+                cleared_scopes.push_back("heatmap-aggregate runtime");
+            }
+            if (cache_clear_ui.clear_cache_tile_memory) {
+                for (auto& kv : g_TileCache) destroyTileTexture(kv.second.tex);
+                g_TileCache.clear();
+                g_TileLRU.clear();
+                cleared_scopes.push_back("tile");
+            }
+            if (cache_clear_ui.clear_cache_tile_disk_presence) {
+                clearTileDiskPresenceCache();
+                cleared_scopes.push_back("tile disk presence");
+            }
+            if (cache_clear_ui.clear_cache_hydration) fs::create_directories(cache_hydration_dir, ec);
+            if (cache_clear_ui.clear_cache_triangulation) fs::create_directories(cache_triangulation_dir, ec);
+            if (cache_clear_ui.clear_cache_derived) fs::create_directories(cache_derived_dir, ec);
+            if (cache_clear_ui.clear_cache_heatmap_disk) fs::create_directories(cache_aggregate_dir, ec);
+            const bool clear_hydration_data = cache_clear_ui.clear_cache_hydration;
+            const bool clear_tri_data = cache_clear_ui.clear_cache_triangulation;
+            const bool clear_derived_data = cache_clear_ui.clear_cache_derived || cache_clear_ui.clear_cache_hydration;
+            if (clear_hydration_data) {
+                {
+                    std::lock_guard<std::mutex> lk(hydrated_mutex);
+                    hydrated_queue.clear();
+                }
+                {
+                    std::lock_guard<std::mutex> lk(tri_mutex);
+                    tri_jobs.clear();
+                    tri_results.clear();
+                }
+                {
+                    std::lock_guard<std::mutex> lk(hydrate_req_mutex);
+                    hydrate_requests.clear();
+                    std::fill(hydration_requested.begin(), hydration_requested.end(), false);
+                    std::fill(hydration_required.begin(), hydration_required.end(), false);
+                }
+                for (size_t i = 0; i < layers.size(); ++i) {
+                    releaseContainerStorage(layers[i].features);
+                    layer_spatial[i] = LayerSpatialIndex{};
+                    if (i < layer_profile_dirty.size()) layer_profile_dirty[i] = true;
+                }
+                {
+                    std::lock_guard<std::mutex> lk(status_mutex);
+                    for (size_t i = 0; i < layers.size(); ++i) {
+                        if (i < layer_states.size()) {
+                            layer_states[i].status = LayerPipelineStatus::Queued;
+                            layer_states[i].feature_count = 0;
+                            layer_states[i].error.clear();
+                        }
+                    }
+                }
+                for (size_t i = 0; i < layers.size(); ++i) {
+                    if (layers[i].enabled) enqueue_hydration(i);
+                }
+                trimProcessHeap();
+                hydrated_count.store(0, std::memory_order_relaxed);
+                triangulated_count.store(0, std::memory_order_relaxed);
+            }
+            if (clear_tri_data && !clear_hydration_data) {
+                {
+                    std::lock_guard<std::mutex> lk(tri_mutex);
+                    tri_jobs.clear();
+                    tri_results.clear();
+                }
+                const bool vac_layer_active_now =
+                    (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size() && layers[(size_t)vacant_notice_layer_idx].enabled) ||
+                    (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() && layers[(size_t)vacant_rehab_layer_idx].enabled);
+                for (size_t i = 0; i < layers.size(); ++i) {
+                    if (layers[i].features.empty()) continue;
+                    const bool parcel_dep_priority = vac_layer_active_now && parcel_layer_idx >= 0 && (int)i == parcel_layer_idx;
+                    if (!layers[i].enabled && !parcel_dep_priority) continue;
+                    TriJob tj;
+                    tj.index = i;
+                    tj.file = layers[i].file;
+                    tj.rings_per_feature.reserve(layers[i].features.size());
+                    for (const auto& fg : layers[i].features) tj.rings_per_feature.push_back(fg.rings);
+                    {
+                        std::lock_guard<std::mutex> lk2(tri_mutex);
+                        if (parcel_dep_priority) tri_jobs.push_front(std::move(tj));
+                        else tri_jobs.push_back(std::move(tj));
+                    }
+                    tri_cv.notify_one();
+                    {
+                        std::lock_guard<std::mutex> lk3(status_mutex);
+                        if (i < layer_states.size()) layer_states[i].status = LayerPipelineStatus::TriQueued;
+                    }
+                }
+                tri_cv.notify_all();
+            }
+            if (clear_derived_data) {
+                reset_derived_cache_state();
+            }
+            std::ostringstream clear_msg;
+            clear_msg << "Cleared cache scopes: ";
+            for (size_t i = 0; i < cleared_scopes.size(); ++i) {
+                if (i > 0) clear_msg << ", ";
+                clear_msg << cleared_scopes[i];
+            }
+            clear_msg << " | removed " << removed_files << " files.";
+            if (clear_hydration_data) clear_msg << " Rehydrating enabled layers.";
+            cache_clear_ui.last_cache_clear_msg = clear_msg.str();
+        };
+        PerformanceStatsUiContext perf_ui_ctx;
+        perf_ui_ctx.layout_margin = layout_margin;
+        perf_ui_ctx.layout_h = layout_h;
+        perf_ui_ctx.main_panel_h = main_panel_h;
+        perf_ui_ctx.layout_gap = layout_gap;
+        perf_ui_ctx.left_panel_w = left_panel_w;
+        perf_ui_ctx.layer_count = layers.size();
+        perf_ui_ctx.hydrated_now = hydrated_now;
+        perf_ui_ctx.triangulated_now = triangulated_now;
+        perf_ui_ctx.hydrated_pending = hydrated_pending;
+        perf_ui_ctx.tri_pending = tri_pending;
+        perf_ui_ctx.hydrated_frac = hydrated_frac;
+        perf_ui_ctx.tri_frac = tri_frac;
+        perf_ui_ctx.elapsed_s = elapsed_s;
+        perf_ui_ctx.hydrate_idle_s = hydrate_idle_s;
+        perf_ui_ctx.tri_idle_s = tri_idle_s;
+        perf_ui_ctx.perf_frame_ms_avg = perf_frame_ms_avg.load(std::memory_order_relaxed);
+        perf_ui_ctx.perf_frame_ms_last = perf_frame_ms_last.load(std::memory_order_relaxed);
+        perf_ui_ctx.perf_fps_avg = perf_fps_avg.load(std::memory_order_relaxed);
+        perf_ui_ctx.data_library_rendered_rows_last = data_library_rendered_rows_last;
+        perf_ui_ctx.data_library_visible_rows = data_library_visible_rows.size();
+        perf_ui_ctx.data_library_cache_rebuilds = data_library_cache_rebuilds;
+        perf_ui_ctx.people_pay_rendered_rows_last = people_pay_rendered_rows_last;
+        perf_ui_ctx.people_pay_visible_rows = people_pay_visible_rows.size();
+        perf_ui_ctx.people_pay_cache_rebuilds = people_pay_cache_rebuilds;
+        perf_ui_ctx.render_fill_success_last_frame = render_fill_success_last_frame.load(std::memory_order_relaxed);
+        perf_ui_ctx.render_fill_attempts_last_frame = render_fill_attempts_last_frame.load(std::memory_order_relaxed);
+        perf_ui_ctx.render_fill_no_triangles_last_frame = render_fill_no_triangles_last_frame.load(std::memory_order_relaxed);
+        perf_ui_ctx.render_fill_bad_indices_last_frame = render_fill_bad_indices_last_frame.load(std::memory_order_relaxed);
+        perf_ui_ctx.arkavo_room_id = arkavo_room_id;
+        perf_ui_ctx.arkavo_room_id_size = sizeof(arkavo_room_id);
+        perf_ui_ctx.arkavo_connected = arkavo_client != nullptr && arkavo_client->isConnected();
+        perf_ui_ctx.arkavo_self_peer_id = arkavo_client ? arkavo_client->selfPeerId() : std::string();
+        perf_ui_ctx.arkavo_tracked_peers = arkavo_client ? arkavo_client->peers().size() : 0;
+        perf_ui_ctx.arkavo_open_peers = std::move(arkavo_open_peers);
+        perf_ui_ctx.arkavo_send_peer = arkavo_send_peer;
+        perf_ui_ctx.arkavo_send_peer_size = sizeof(arkavo_send_peer);
+        perf_ui_ctx.arkavo_send_path = arkavo_send_path;
+        perf_ui_ctx.arkavo_send_path_size = sizeof(arkavo_send_path);
+        perf_ui_ctx.arkavo_status = &arkavo_status;
+        perf_ui_ctx.arkavo_err = &arkavo_err;
+        perf_ui_ctx.on_connect_arkavo = [&]() { connect_arkavo(); };
+        perf_ui_ctx.on_disconnect_arkavo = [&]() { disconnect_arkavo(); };
+        perf_ui_ctx.on_send_arkavo_file = [&]() { send_arkavo_file(); };
+        perf_ui_ctx.lan_panel = &lan_panel_ctx;
+        perf_ui_ctx.tile_cache_size = g_TileCache.size();
+        perf_ui_ctx.max_tile_cache = kMaxTileCache;
+        perf_ui_ctx.cache_clear = &cache_clear_ui;
+        perf_ui_ctx.on_clear_cache = [&]() { clear_cache_action(); };
+        drawPerformanceStatsPanel(perf_ui_ctx);
+        clear_cache_all = cache_clear_ui.clear_cache_all;
+        clear_cache_hydration = cache_clear_ui.clear_cache_hydration;
+        clear_cache_triangulation = cache_clear_ui.clear_cache_triangulation;
+        clear_cache_derived = cache_clear_ui.clear_cache_derived;
+        clear_cache_heatmap_memory = cache_clear_ui.clear_cache_heatmap_memory;
+        clear_cache_heatmap_disk = cache_clear_ui.clear_cache_heatmap_disk;
+        clear_cache_tile_memory = cache_clear_ui.clear_cache_tile_memory;
+        clear_cache_tile_disk_presence = cache_clear_ui.clear_cache_tile_disk_presence;
+        last_cache_clear_msg = std::move(cache_clear_ui.last_cache_clear_msg);
+        const LayerUiStateSyncResult ui_state_sync = syncLayerUiState(LayerUiStateSyncContext{
+            &root,
+            &layers,
+            hover_inspector_mode,
+            hover_inspector_enabled,
+            &last_hover_inspector_mode,
+            &last_enabled_state,
+            zoning_filters_changed,
+            layer_fill_state_changed,
+            layer_hover_state_changed,
+            layer_inspect_state_changed,
+            layer_heatmap_state_changed,
+            heatmap_settings_state_changed,
+            &layer_profile_dirty,
+            [&](size_t i) { return layer_data_available(i); },
+            [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
+            &layer_states,
+            &status_mutex,
+            parcel_layer_idx,
+            real_property_layer_idx,
+            vacant_notice_layer_idx,
+            vacant_rehab_layer_idx,
+            tax_lien_layer_idx,
+            tax_sale_layer_idx,
+            zoning_layer_idx,
+            filter_enabled,
+            filter_owner,
+            filter_address,
+            filter_zip,
+            &zoning_zone_enabled,
+            &layer_fill_enabled,
+            &layer_hover_enabled,
+            &layer_inspect_enabled,
+            &layer_heatmap_enabled,
+            &layer_heatmap_max_zoom,
+            &layer_parcel_detail_min_zoom,
+            &layer_heatmap_use_gradient,
+            &layer_choropleth_gamma,
+            &layer_heatmap_algo,
+            &layer_normalize_mode,
+            &layer_heatmap_cell_px,
+            &layer_heatmap_bandwidth_px,
+            &layer_heatmap_blur_sigma_px,
+            &layer_heatmap_percentile_clip,
+            &layer_heatmap_zoom_adaptive_bandwidth,
+            &layer_heatmap_multires_enabled,
+            &layer_heatmap_multires_blend,
+            &heatmap_algo,
+            &heatmap_quality_preset,
+            &global_heat_cell_px,
+            &heatmap_bandwidth_px,
+            &heatmap_blur_sigma_px,
+            &heatmap_percentile_clip,
+            &heatmap_zoom_adaptive_bandwidth,
+            &heatmap_multires_enabled,
+            &heatmap_multires_blend,
+            &heatmap_allow_cpu_fallback,
+            filter_use_date,
+            filter_year_min,
+            filter_year_max,
+            filter_blocklot,
+            filter_status,
+            crime_filter_enabled,
+            crime_filter_homicide,
+            crime_filter_robbery,
+            crime_filter_assault,
+            crime_filter_burglary,
+            crime_filter_theft,
+            crime_filter_auto_theft,
+            crime_filter_drug,
+            crime_filter_shooting,
+            crime_filter_use_year,
+            crime_year_min,
+            crime_year_max,
+            owner_search_query,
+            &selected_owners
+        });
+        const bool vacant_layer_active = ui_state_sync.vacant_layer_active;
+        LayerPipelineDrainContext pipeline_drain_ctx;
+        pipeline_drain_ctx.layers = &layers;
+        pipeline_drain_ctx.hydrated_queue = &hydrated_queue;
+        pipeline_drain_ctx.hydrated_mutex = &hydrated_mutex;
+        pipeline_drain_ctx.tri_jobs = &tri_jobs;
+        pipeline_drain_ctx.tri_results = &tri_results;
+        pipeline_drain_ctx.tri_mutex = &tri_mutex;
+        pipeline_drain_ctx.tri_cv = &tri_cv;
+        pipeline_drain_ctx.layer_states = &layer_states;
+        pipeline_drain_ctx.status_mutex = &status_mutex;
+        pipeline_drain_ctx.hydration_requested = &hydration_requested;
+        pipeline_drain_ctx.hydrate_req_mutex = &hydrate_req_mutex;
+        pipeline_drain_ctx.layer_profile_dirty = &layer_profile_dirty;
+        pipeline_drain_ctx.hydrated_count = &hydrated_count;
+        pipeline_drain_ctx.triangulated_count = &triangulated_count;
+        pipeline_drain_ctx.parcel_layer_idx = parcel_layer_idx;
+        pipeline_drain_ctx.vacant_layer_active = vacant_layer_active;
+        pipeline_drain_ctx.trim_process_heap = [&]() { trimProcessHeap(); };
+        drainHydratedLayerQueue(pipeline_drain_ctx);
+        drainTriangulationResults(pipeline_drain_ctx);
+
+        DerivedLayerCachesContext derived_layer_caches_ctx;
+        derived_layer_caches_ctx.root = &root;
+        derived_layer_caches_ctx.layers = &layers;
+        derived_layer_caches_ctx.app_settings = &app_settings;
+        derived_layer_caches_ctx.zoning_layer_idx = zoning_layer_idx;
+        derived_layer_caches_ctx.real_property_layer_idx = real_property_layer_idx;
+        derived_layer_caches_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
+        derived_layer_caches_ctx.vacant_rehab_layer_idx = vacant_rehab_layer_idx;
+        derived_layer_caches_ctx.tax_lien_layer_idx = tax_lien_layer_idx;
+        derived_layer_caches_ctx.tax_sale_layer_idx = tax_sale_layer_idx;
+        derived_layer_caches_ctx.parcel_layer_idx = parcel_layer_idx;
+        derived_layer_caches_ctx.zoning_metadata = &zoning_metadata;
+        derived_layer_caches_ctx.zoning_zone_enabled = &zoning_zone_enabled;
+        derived_layer_caches_ctx.zoning_zone_color = &zoning_zone_color;
+        derived_layer_caches_ctx.zoning_zone_label = &zoning_zone_label;
+        derived_layer_caches_ctx.zoning_zone_order = &zoning_zone_order;
+        derived_layer_caches_ctx.zoning_zone_counts = &zoning_zone_counts;
+        derived_layer_caches_ctx.zoning_group_zones = &zoning_group_zones;
+        derived_layer_caches_ctx.zoning_group_order = &zoning_group_order;
+        derived_layer_caches_ctx.zoning_zone_discovered_feature_count = &zoning_zone_discovered_feature_count;
+        derived_layer_caches_ctx.real_property_by_blocklot = &real_property_by_blocklot;
+        derived_layer_caches_ctx.cached_real_property_size = &cached_real_property_size;
+        derived_layer_caches_ctx.cached_vac_notice_size = &cached_vac_notice_size;
+        derived_layer_caches_ctx.cached_vac_rehab_size = &cached_vac_rehab_size;
+        derived_layer_caches_ctx.cached_tax_lien_size = &cached_tax_lien_size;
+        derived_layer_caches_ctx.cached_tax_sale_size = &cached_tax_sale_size;
+        derived_layer_caches_ctx.vacant_notice_count_by_blocklot = &vacant_notice_count_by_blocklot;
+        derived_layer_caches_ctx.vacant_rehab_count_by_blocklot = &vacant_rehab_count_by_blocklot;
+        derived_layer_caches_ctx.tax_lien_count_by_blocklot = &tax_lien_count_by_blocklot;
+        derived_layer_caches_ctx.tax_lien_amount_by_blocklot = &tax_lien_amount_by_blocklot;
+        derived_layer_caches_ctx.tax_sale_count_by_blocklot = &tax_sale_count_by_blocklot;
+        derived_layer_caches_ctx.tax_sale_amount_by_blocklot = &tax_sale_amount_by_blocklot;
+        derived_layer_caches_ctx.vacancy_maps_generation = &vacancy_maps_generation;
+        derived_layer_caches_ctx.parcel_vacancy_generation_applied = &parcel_vacancy_generation_applied;
+        derived_layer_caches_ctx.tax_maps_generation = &tax_maps_generation;
+        derived_layer_caches_ctx.parcel_tax_generation_applied = &parcel_tax_generation_applied;
+        derived_layer_caches_ctx.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+        derived_layer_caches_ctx.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+        derived_layer_caches_ctx.parcel_tax_lien_by_feature = &parcel_tax_lien_by_feature;
+        derived_layer_caches_ctx.parcel_tax_sale_by_feature = &parcel_tax_sale_by_feature;
+        derived_layer_caches_ctx.parcel_tax_lien_amount_by_feature = &parcel_tax_lien_amount_by_feature;
+        derived_layer_caches_ctx.parcel_tax_sale_amount_by_feature = &parcel_tax_sale_amount_by_feature;
+        derived_layer_caches_ctx.vacant_notice_rows_matched_total = &vacant_notice_rows_matched_total;
+        derived_layer_caches_ctx.vacant_rehab_rows_matched_total = &vacant_rehab_rows_matched_total;
+        derived_layer_caches_ctx.vacant_parcels_matched_total = &vacant_parcels_matched_total;
+        derived_layer_caches_ctx.vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total;
+        derived_layer_caches_ctx.vacant_parcels_triangulated_renderable_total = &vacant_parcels_triangulated_renderable_total;
+        derived_layer_caches_ctx.unified_parcels = &unified_parcels;
+        derived_layer_caches_ctx.unified_parcel_cached_size = &unified_parcel_cached_size;
+        derived_layer_caches_ctx.unified_real_property_cached_size = &unified_real_property_cached_size;
+        derived_layer_caches_ctx.unified_vacancy_generation_applied = &unified_vacancy_generation_applied;
+        derived_layer_caches_ctx.unified_tax_generation_applied = &unified_tax_generation_applied;
+        derived_layer_caches_ctx.owner_aggregates_dirty = &owner_aggregates_dirty;
+        refreshDerivedLayerCaches(derived_layer_caches_ctx);
+        for (size_t li = 0; li < layers.size(); ++li) {
+            LayerPipelineStatus st = LayerPipelineStatus::Queued;
+            {
+                std::lock_guard<std::mutex> lk(status_mutex);
+                if (li < layer_states.size()) st = layer_states[li].status;
+            }
+            const bool stable =
+                st == LayerPipelineStatus::Hydrated ||
+                st == LayerPipelineStatus::TriQueued ||
+                st == LayerPipelineStatus::Triangulating ||
+                st == LayerPipelineStatus::Ready;
+            if (!stable) continue;
+            if (!layer_spatial[li].built || layer_spatial[li].feature_count_built != layers[li].features.size()) {
+                buildLayerSpatialIndex(layers[li], layer_spatial[li]);
+                if (li < layer_profile_dirty.size()) layer_profile_dirty[li] = true;
+            }
+        }
+        refreshLayerProfileSnapshot(layer_profile_snapshot_ctx);
+
+        auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
+            if (real_property_layer_idx < 0 || (size_t)real_property_layer_idx >= layers.size()) return nullptr;
+            std::string blocklot = featureBlockLotJoinKey(parcel);
+            if (blocklot.empty()) return nullptr;
+            auto itrp = real_property_by_blocklot.find(blocklot);
+            if (itrp == real_property_by_blocklot.end()) return nullptr;
+            const auto& rp_layer = layers[(size_t)real_property_layer_idx];
+            if (itrp->second >= rp_layer.features.size()) return nullptr;
+            return &rp_layer.features[itrp->second];
+        };
+        drawRightPanelWindow(RightPanelContext{
+            &root,
+            &duckdb_analytics,
+            layout_w,
+            right_panel_w,
+            layout_margin,
+            main_panel_h,
+            &layers,
+            &unified_parcels,
+            &map_filter_state,
+            &query_layers,
+            &zoning_metadata,
+            &real_property_by_blocklot,
+            &selected_owners,
+            &selected_parcel_index_set,
+            &selected_parcel_indices,
+            &parcel_selection,
+            &element_info_state,
+            &show_selected_parcel_details,
+            &show_selected_zone_details,
+            &selected_zone_idx,
+            &center_lon,
+            &center_lat,
+            &zoom,
+            parcel_layer_idx,
+            zoning_layer_idx,
+            real_property_layer_idx,
+            crime_nibrs_layer_idx,
+            crime_legacy_layer_idx,
+            vacant_notice_layer_idx,
+            vacant_rehab_layer_idx,
+            tax_lien_layer_idx,
+            tax_sale_layer_idx,
+            parcel_parameter_mode,
+            heatmap_algo,
+            &layer_heatmap_enabled,
+            &layer_heatmap_max_zoom,
+            &layer_parcel_detail_min_zoom,
+            &layer_heatmap_algo,
+            &layer_heatmap_percentile_clip,
+            &layer_choropleth_gamma,
+            &layer_heatmap_state_changed,
+            heatmap_percentile_clip,
+            &parcel_vac_notice_by_feature,
+            &parcel_vac_rehab_by_feature,
+            &parcel_jurisdiction_result_set,
+            &owner_class_overrides,
+            &owner_class_overrides_loaded,
+            &owner_class_overrides_dirty,
+            &owner_aggregates,
+            &filtered_aggregate_snapshot,
+            &owner_aggregates_dirty,
+            &owner_sort_mode,
+            &owner_sorted_mode,
+            &owner_class_filter_mode,
+            &owner_class_assign_mode,
+            &selected_owner_anchor,
+            &owner_cached_parcel_size,
+            &owner_cached_real_property_size,
+            parcel_vacancy_generation_applied,
+            parcel_tax_generation_applied,
+            &prof_owner_ms_last,
+            owner_search_query,
+            sizeof(owner_search_query),
+            &address_locate_status,
+            &address_locate_matches,
+            &record_year_hist,
+            &record_year_hist_plot,
+            &hist_feature_counts,
+            &hist_enabled,
+            &hist_dirty,
+            &record_year_hist_max_bin,
+            &record_year_nonzero_min,
+            &record_year_nonzero_max,
+            &record_year_nonzero_total,
+            &selected_record_year,
+            &selected_record_year_dirty,
+            &selected_record_year_total,
+            &selected_record_year_samples,
+            (size_t)cached_vac_notice_size,
+            (size_t)cached_vac_rehab_size,
+            &vacant_notice_rows_matched_total,
+            &vacant_rehab_rows_matched_total,
+            &vacant_parcels_matched_total,
+            &vacant_parcels_with_geometry_total,
+            &duckdb_auto_rebuild_checked,
+            &hydrate_req_mutex,
+            &hydrate_requests,
+            &hydration_requested,
+            &hydrated_mutex,
+            &hydrated_queue,
+            real_property_for_parcel
+        });
+
+        drawMapTabWindow(MapTabContext{
+            map_x,
+            map_w,
+            layout_margin,
+            main_panel_h,
+            &root,
+            &app_settings,
+            &duckdb_analytics,
+            &center_lon,
+            &center_lat,
+            &zoom,
+            kMinZoom,
+            kMaxZoom,
+            kMaxInternalMathZoom,
+            &layers,
+            &layer_spatial,
+            &map_filter_state,
+            &query_layers,
+            &real_property_by_blocklot,
+            &zoning_metadata,
+            &zoning_zone_enabled,
+            &zoning_zone_color,
+            &parcel_selection,
+            &selected_parcel_indices,
+            &show_selected_zone_details,
+            &selected_zone_idx,
+            &element_info_state,
+            real_property_layer_idx,
+            parcel_layer_idx,
+            zoning_layer_idx,
+            crime_nibrs_layer_idx,
+            crime_legacy_layer_idx,
+            vacant_notice_layer_idx,
+            vacant_rehab_layer_idx,
+            tax_lien_layer_idx,
+            tax_sale_layer_idx,
+            parcel_parameter_mode,
+            &layer_fill_enabled,
+            &layer_hover_enabled,
+            &layer_inspect_enabled,
+            &layer_heatmap_enabled,
+            &layer_heatmap_algo,
+            &layer_heatmap_max_zoom,
+            &layer_parcel_detail_min_zoom,
+            &layer_heatmap_cell_px,
+            &layer_heatmap_bandwidth_px,
+            &layer_heatmap_blur_sigma_px,
+            &layer_heatmap_percentile_clip,
+            &layer_heatmap_zoom_adaptive_bandwidth,
+            &layer_heatmap_multires_enabled,
+            &layer_heatmap_multires_blend,
+            &layer_heatmap_use_gradient,
+            &layer_choropleth_gamma,
+            &layer_normalize_mode,
+            &parcel_jurisdiction_filter,
+            parcel_jurisdiction_options.size(),
+            &parcel_jurisdiction_filter_dirty,
+            &parcel_jurisdiction_result_set,
+            &parcel_jurisdiction_filter_status,
+            &parcel_vac_notice_by_feature,
+            &parcel_vac_rehab_by_feature,
+            &parcel_tax_lien_by_feature,
+            &parcel_tax_sale_by_feature,
+            &parcel_tax_lien_amount_by_feature,
+            &parcel_tax_sale_amount_by_feature,
+            &unified_parcels,
+            global_heat_cell_px,
+            heatmap_algo,
+            heatmap_quality_preset,
+            heatmap_bandwidth_px,
+            heatmap_blur_sigma_px,
+            heatmap_percentile_clip,
+            heatmap_zoom_adaptive_bandwidth,
+            heatmap_multires_enabled,
+            heatmap_multires_blend,
+            heatmap_allow_cpu_fallback,
+            heatmap_controls_active,
+            &heatmap_runtime,
+            hover_inspector_mode,
+            &hover_inspector_enabled,
+            &lazy_tile_download,
+            &topo_tiles_available_cached,
+            &topo_vector_available_cached,
+            &basemap_source_has_any_files_cached,
+            &tile_root_dir_cached,
+            &basemap_availability_last_check,
+            kMaxNativeTileZoom,
+            &prof_tiles_drawn_frame,
+            &prof_features_considered_frame,
+            &prof_features_drawn_frame,
+            &prof_tile_ms_last,
+            &prof_layer_ms_last,
+            &prof_heatmap_ms_last,
+            &prof_heat_samples_last,
+            &prof_heatmap_gpu_splat_active,
+            &prof_heatmap_high_quality,
+            &prof_heatmap_cache_valid,
+            &prof_heatmap_texture_resident,
+            &prof_heatmap_async_inflight,
+            &prof_heatmap_cache_key,
+            &prof_heatmap_texture_cache_entries,
+            &visible_vacant_parcels_last_frame,
+            &prof_overlay_ms_last,
+            &render_fill_attempts_last_frame,
+            &render_fill_success_last_frame,
+            &render_fill_no_triangles_last_frame,
+            &render_fill_bad_indices_last_frame,
+            &time_cube_service,
+            &time_cube_ui_result,
+            &time_cube_ui_loaded,
+            &time_cube_ui_status,
+            &time_cube_ui_mutex,
+            &time_cube_ui_worker,
+            &time_cube_ui_running,
+            &time_cube_ui_done,
+            &time_cube_selected,
+            &time_cube_year_min,
+            &time_cube_year_max,
+            &time_cube_normalize_mode,
+            &time_cube_show_excluded,
+            &policy_hierarchy,
+            policy_hierarchy_loaded,
+            &policy_hierarchy_error,
+            policy_hierarchy_query,
+            sizeof(policy_hierarchy_query),
+            &policy_hierarchy_scope,
+            &public_servant_roster,
+            &people_pay_cached_query,
+            &people_pay_cached_scope,
+            &people_pay_cache_matched_count,
+            &people_pay_visible_rows,
+            &people_pay_cache_rebuilds,
+            &people_pay_rendered_rows_last,
+            &policy_viz_root,
+            &policy_viz_cached_query,
+            &policy_viz_cached_scope,
+            &policy_viz_cached_metric,
+            &policy_viz_metric,
+            &policy_viz_cache_rebuilds,
+            &policy_viz_node_count,
+            real_property_for_parcel
+        });
+        finalizeFrameSupport(FrameSupportFinalizationContext{
+            wd,
+            &last_frame_ts,
+            &ema_frame_ms,
+            kPerfAlpha,
+            prof_frame_begin,
+            prof_tiles_drawn_frame,
+            prof_features_considered_frame,
+            prof_features_drawn_frame,
+            &perf_frame_ms_last,
+            &perf_frame_ms_avg,
+            &perf_fps_avg,
+            &prof_ui_ms_last,
+            &prof_owner_ms_last,
+            &prof_tile_ms_last,
+            &prof_layer_ms_last,
+            &prof_heatmap_ms_last,
+            &prof_overlay_ms_last,
+            &prof_present_ms_last,
+            &prof_tiles_drawn_last,
+            &prof_features_considered_last,
+            &prof_features_drawn_last,
+            &prof_retired_textures,
+            &prof_tile_cache_size,
+            &prof_heat_samples_last,
+            &profile_mutex,
+            &profile_samples,
+            &profile_sample_pos,
+            &profile_sample_count
+        });
+
+        renderSecondaryDownloadQueueWindow(SecondaryDownloadQueueWindowContext{
+            download_queue_window,
+            &download_queue_swapchain_rebuild,
+            &dq_w,
+            &dq_h,
+            download_queue_imgui_context,
+            main_imgui_context,
+            &download_queue_wd,
+            ui_text_scale,
+            &basemap_download,
+            &root,
+            &data_library_status_msg,
+            resolve_download_label,
+            &lazy_tile_download,
+            layer_download_inflight,
+            layer_download_active_idx,
+            &layers,
+            &layer_download_queue,
+            &layer_download_last_event
+        });
+    }
     vkDeviceWaitIdle(g_Device);
     if (download_queue_imgui_context) {
         ImGui::SetCurrentContext(download_queue_imgui_context);

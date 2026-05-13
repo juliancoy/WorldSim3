@@ -34,3 +34,4 @@ NetSSize netRecvFrom(NetSocket fd, char* data, size_t len, sockaddr* from, NetSo
 NetSSize netSendTo(NetSocket fd, const char* data, size_t len, const sockaddr* to, NetSockLen to_len);
 bool writeAll(NetSocket fd, const char* data, size_t len);
 std::string urlDecode(const std::string& s);
+std::string urlEncodeComponent(const std::string& s);

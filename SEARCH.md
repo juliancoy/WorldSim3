@@ -93,7 +93,7 @@ Make search behave like a property-finding workflow, not just a layer filter:
 
 ### Implementation Steps
 
-1. Add runtime state in `worldsim_app_run.cpp`:
+1. Add runtime state in `app_main_loop.cpp`:
    - `bool polygon_filter_enabled`
    - `bool polygon_filter_drawing`
    - `std::vector<ImVec2> polygon_filter_vertices_lonlat`

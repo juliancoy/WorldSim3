@@ -88,7 +88,7 @@ FetchContent_MakeAvailable(libdatachannel)
 add_executable(worldsim3
   main.cpp
   worldsim_app.cpp
-  worldsim_app_run.cpp
+  app_main_loop.cpp
   worldsim_cli.cpp
   worldsim_dataset_bootstrap.cpp
   worldsim_bootstrap.cpp
@@ -96,6 +96,7 @@ add_executable(worldsim3
   app_lifecycle.cpp
   app_settings.cpp
   app_utils.cpp
+  app_frame_support.cpp
   memory_utils.cpp
   zoning.cpp
   parcel_matched_layers.cpp
@@ -107,6 +108,8 @@ add_executable(worldsim3
   status_api.cpp
   dataset_lan_api.cpp
   layer_runtime.cpp
+  layer_pipeline_drain.cpp
+  derived_layer_caches.cpp
   layer_workers.cpp
   layer_geometry.cpp
   map_render_heatmap_pass.cpp
@@ -120,6 +123,11 @@ add_executable(worldsim3
   map_render_projection.cpp
   map_render_selection.cpp
   map_render_utils.cpp
+  map_canvas_session.cpp
+  map_frame_render.cpp
+  map_frame_session.cpp
+  map_tab.cpp
+  left_panel.cpp
   map_viewport.cpp
   parcel_timeline.cpp
   parcel_unified.cpp
@@ -141,7 +149,10 @@ add_executable(worldsim3
   layer_ui_actions.cpp
   layer_ui_context_builders.cpp
   layer_runtime_coordinator.cpp
+  layer_ui_state_sync.cpp
   data_library_coordinator.cpp
+  data_library_panel.cpp
+  performance_stats_panel.cpp
   filter_context_builder.cpp
   heat_normalization.cpp
   heatmap_key_builder.cpp
@@ -149,18 +160,27 @@ add_executable(worldsim3
   render_layer_pass.cpp
   render_tail_pass.cpp
   render_policy.cpp
+  profiling_layer_snapshot.cpp
+  basemap_coverage.cpp
   render_plan_builder.cpp
   status_api_context_builder.cpp
+  api_control_commands.cpp
   app_shutdown_context_builder.cpp
   layer_settings.cpp
   download_queue.cpp
+  basemap_panel.cpp
+  layer_download_queue.cpp
+  lan_discovery.cpp
   tiles.cpp
   owner_info.cpp
+  owner_aggregates.cpp
   owners_tab.cpp
   gradient_tab.cpp
   vacancy_parcel_tab.cpp
   parcel_info_tab.cpp
   filters_tab.cpp
+  right_panel.cpp
+  zoning_filters_panel.cpp
   graph_model_tab.cpp
   star_schema_tab.cpp
   spatial_index_tab.cpp

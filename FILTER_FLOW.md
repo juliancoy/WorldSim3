@@ -7,7 +7,7 @@ This document defines the filter pipeline, the source of truth, and how UI-creat
 `MapFilterState` is the single source of truth for map filters created by UI elements.
 
 - Definition: [filters.h](/home/julian/Documents/worldsim3/filters.h:11)
-- Owner instance: [worldsim_app_run.cpp](/home/julian/Documents/worldsim3/worldsim_app_run.cpp:511)
+- Owner instance: [app_main_loop.cpp](/home/julian/Documents/worldsim3/app_main_loop.cpp:738)
 - Runtime evaluator: [filters.cpp](/home/julian/Documents/worldsim3/filters.cpp:60)
 
 UI tabs should mutate fields on `MapFilterState`; they should not create parallel filter state that the renderer also has to know about.
@@ -35,7 +35,7 @@ It contains:
 
 Frame wiring:
 
-- [worldsim_app_run_loop_part4.inc](/home/julian/Documents/worldsim3/worldsim_app_run_loop_part4.inc:16)
+- [map_frame_session.cpp](/home/julian/Documents/worldsim3/map_frame_session.cpp:36)
 
 Rule: if a filter is created by a UI element, put it in `MapFilterState`. If a filter is produced by an engine/query operation, put its canonical output in `FilterResultSet`.
 
@@ -150,7 +150,7 @@ This keeps parcel-related geometry above zoning fills.
 
 Implementation:
 
-- [worldsim_app_run_loop_part4.inc](/home/julian/Documents/worldsim3/worldsim_app_run_loop_part4.inc:320)
+- [render_plan_builder.cpp](/home/julian/Documents/worldsim3/render_plan_builder.cpp:19)
 
 ## 9) Persistence
 

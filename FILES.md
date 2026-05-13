@@ -6,11 +6,7 @@
 - `worldsim_app.h`: Public declaration for the application runner.
 - `worldsim_app.cpp`: Vulkan, swapchain, texture upload, tile-cache, screenshot, and frame present/render implementation.
 - `worldsim_app_internal.h`: Internal declarations shared between the Vulkan implementation and the app run loop.
-- `worldsim_app_run.cpp`: Compiled translation unit for `runWorldSim3App`, containing app state setup and including the run-loop fragments.
-- `worldsim_app_run_loop_part1.inc`: Main loop setup, top toolbar/menus, data source/download panels, map/layer controls, and heatmap settings UI.
-- `worldsim_app_run_loop_part2.inc`: Per-frame data refresh, filter/search state updates, and background layer preparation logic.
-- `worldsim_app_run_loop_part3.inc`: Right-side record tab bar and map interaction handling. Still owns several embedded tabs while refactoring continues.
-- `worldsim_app_run_loop_part4.inc`: Map rendering, selected parcel boundary rendering, download queue UI, frame finalization, and shutdown tail.
+- `app_main_loop.cpp`: Compiled translation unit for `runWorldSim3App`, containing app state setup, the main frame loop, and top-level orchestration of the extracted runtime/UI/render modules.
 - `worldsim_app_run_state.h`: Declaration-only shared run-state struct used for ongoing run-loop modularization.
 - `app_lifecycle.cpp`: Compiled frame finalization and shutdown implementation, including profiling sample capture, settings persistence, worker joins, and renderer cleanup.
 - `app_lifecycle.h`: Typed lifecycle contexts and lifecycle function declarations.
@@ -120,8 +116,8 @@ Most record/analysis tabs now have their own `.cpp`.
 
 - Extracted to dedicated `.cpp/.h`: `Filters`, `Parcel Info`, `SQL`, `Vacancy-Parcel`, `Gradient`, `Owner Info`, `Owners`, `Time Cube`, `Policy Hierarchy`, `Graph Model`, `Star Schema`, `Spatial Index`, `Uncertainty`, `Risk Scorecards`, `Causal Panel`, `Scenarios`, and `Change Log`.
 - Partially extracted: `Map` viewport/input, basemap pass, HUD badges, selected outlines, inspection/tooltips, and overlay popup shell all live in dedicated modules.
-- Still embedded in `worldsim_app_run_loop_part3.inc` and `worldsim_app_run_loop_part4.inc`: the `Map` tab shell plus core layer/heatmap render orchestration. Rendering is now split across `map_render_basemap`, `map_render_projection`, `map_render_hover`, `map_render_layers`, `map_render_overlays`, `map_render_heatmap_pass`, `map_render_selection`, `map_render_hud`, `map_inspection`, `map_overlay_panels`, and `map_render_utils`; the remaining include code composes those passes with frame-local cache, async heatmap texture, and profiling state.
-- Extracted from `worldsim_app_run_loop_part1.inc`: gear/source panel tabs now live in `gear_panel.cpp/.h`.
+- The `Map` tab shell and core layer/heatmap render orchestration now compose through `map_tab.cpp`, `map_frame_session.cpp`, and `map_frame_render.cpp`, with rendering split across `map_render_basemap`, `map_render_projection`, `map_render_hover`, `map_render_layers`, `map_render_overlays`, `map_render_heatmap_pass`, `map_render_selection`, `map_render_hud`, `map_inspection`, `map_overlay_panels`, and `map_render_utils`.
+- Gear/source panel tabs live in `gear_panel.cpp/.h`.
 
 ## APIs And Networking
 

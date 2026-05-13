@@ -92,3 +92,23 @@ std::string urlDecode(const std::string& s) {
     }
     return out;
 }
+
+std::string urlEncodeComponent(const std::string& s) {
+    static const char* hex = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(s.size() * 3);
+    for (unsigned char c : s) {
+        const bool safe =
+            (c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '-' || c == '_' || c == '.' || c == '~' || c == '/';
+        if (safe) out.push_back((char)c);
+        else {
+            out.push_back('%');
+            out.push_back(hex[(c >> 4) & 0x0F]);
+            out.push_back(hex[c & 0x0F]);
+        }
+    }
+    return out;
+}
