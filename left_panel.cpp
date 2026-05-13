@@ -272,5 +272,6 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     zoning_filters_ctx.zoning_group_zones = ctx.zoning_group_zones;
     zoning_filters_ctx.zoning_group_order = ctx.zoning_group_order;
     result.zoning_filters_changed = drawZoningFiltersPanel(zoning_filters_ctx);
+    ImGui::End();
     return result;
 }
