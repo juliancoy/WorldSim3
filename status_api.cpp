@@ -628,6 +628,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
                         {"status", s},
                         {"features", st.feature_count},
+                        {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
+                        {"hydration_source_signature", st.hydration_source_signature},
+                        {"triangulation_source_signature", st.triangulation_source_signature},
                         {"hydrated", st.status != LayerPipelineStatus::Queued && st.status != LayerPipelineStatus::Hydrating && st.status != LayerPipelineStatus::Failed},
                         {"triangulated", st.status == LayerPipelineStatus::Ready},
                         {"error", st.error}

@@ -59,10 +59,11 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 const std::string sig = fileSignature(layer_path);
                 std::error_code layer_size_ec;
                 const uintmax_t layer_size_bytes = fs::file_size(layer_path, layer_size_ec);
-                const bool cache_large_layers =
-                    std::getenv("WORLD_SIM3_CACHE_LARGE_LAYERS") != nullptr;
-                const bool build_hydration_cache =
-                    layer_size_ec || layer_size_bytes <= 300ull * 1024ull * 1024ull || cache_large_layers;
+                const bool disable_large_layer_cache =
+                    !layer_size_ec &&
+                    layer_size_bytes > 300ull * 1024ull * 1024ull &&
+                    std::getenv("WORLD_SIM3_DISABLE_LARGE_LAYER_CACHE") != nullptr;
+                const bool build_hydration_cache = !disable_large_layer_cache;
                 std::vector<LayerDef::FeatureGeom> cached_features;
                 if (loadHydrationCache(cache_path, sig, cached_features)) {
                     const bool suspicious_cache =

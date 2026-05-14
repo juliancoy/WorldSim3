@@ -51,6 +51,10 @@ A hydration cache stores:
 - geometry rings
 - feature properties
 
+Successful hydrations write cache files by default, including large layers such as `regional_parcels.geojson`. Set `WORLD_SIM3_DISABLE_LARGE_LAYER_CACHE=1` to suppress writes for layers over 300 MB when disk churn is more important than future startup speed.
+
+Hydration cache writes are staged through a temporary file and then renamed into place. A crash during cache serialization should leave either the old cache or no accepted cache, not a partially written target file.
+
 When a layer is rehydrated, the first hydration batch is marked as replacing existing runtime data. `layer_pipeline_drain.cpp` clears old `layers[i].features`, clears the spatial index, resets triangle provenance, and then appends the new batches. This prevents old and new source data from being mixed when a layer is downloaded or refreshed while the app is running.
 
 Runtime state records:

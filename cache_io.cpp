@@ -2,7 +2,9 @@
 
 #include "memory_utils.h"
 
+#include <chrono>
 #include <fstream>
+#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -13,6 +15,13 @@ namespace {
 struct TrimHeapOnScopeExit {
     ~TrimHeapOnScopeExit() { trimProcessHeap(); }
 };
+
+fs::path tempCachePathFor(const fs::path& cache_path) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::ostringstream name;
+    name << cache_path.filename().string() << ".tmp." << now;
+    return cache_path.parent_path() / name.str();
+}
 }
 
 std::string fileSignature(const fs::path& p) {
@@ -104,8 +113,27 @@ void saveHydrationCache(const fs::path& cache_path, const std::string& sig, cons
         }
         fs::create_directories(cache_path.parent_path());
         std::vector<uint8_t> bin = json::to_msgpack(j);
-        std::ofstream out(cache_path, std::ios::binary);
-        if (out) out.write((const char*)bin.data(), (std::streamsize)bin.size());
+        const fs::path tmp_path = tempCachePathFor(cache_path);
+        {
+            std::ofstream out(tmp_path, std::ios::binary);
+            if (!out) return;
+            out.write((const char*)bin.data(), (std::streamsize)bin.size());
+            out.flush();
+            if (!out) {
+                std::error_code remove_ec;
+                fs::remove(tmp_path, remove_ec);
+                return;
+            }
+        }
+        std::error_code rename_ec;
+        fs::rename(tmp_path, cache_path, rename_ec);
+        if (rename_ec) {
+            std::error_code remove_ec;
+            fs::remove(cache_path, remove_ec);
+            rename_ec.clear();
+            fs::rename(tmp_path, cache_path, rename_ec);
+            if (rename_ec) fs::remove(tmp_path, remove_ec);
+        }
     }
 }
 

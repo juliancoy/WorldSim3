@@ -28,16 +28,11 @@ bool layerUsesParcelChoroplethDetail(const HeatmapLayerPolicyContext& ctx, size_
 bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
     if (!ctx.layers || !ctx.layer_heatmap_enabled || !ctx.layer_heatmap_max_zoom) return false;
     if (layer_idx >= ctx.layer_heatmap_max_zoom->size()) return false;
-    const bool prefer_parcel_aggregate =
-        layer_idx < ctx.layers->size() &&
-        (*ctx.layers)[layer_idx].scale == "parcel" &&
-        (*ctx.layers)[layer_idx].features.size() >= 50000 &&
-        ctx.zoom <= (*ctx.layer_heatmap_max_zoom)[layer_idx];
     if (layer_idx >= ctx.layers->size() ||
         !(*ctx.layers)[layer_idx].enabled ||
         layer_idx >= ctx.layer_heatmap_enabled->size() ||
-        ((!(*ctx.layer_heatmap_enabled)[layer_idx]) && !prefer_parcel_aggregate) ||
-        (!prefer_parcel_aggregate && ctx.zoom > (*ctx.layer_heatmap_max_zoom)[layer_idx])) {
+        !(*ctx.layer_heatmap_enabled)[layer_idx] ||
+        ctx.zoom > (*ctx.layer_heatmap_max_zoom)[layer_idx]) {
         return false;
     }
     if (layerUsesParcelChoroplethDetail(ctx, layer_idx)) return false;
