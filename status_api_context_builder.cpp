@@ -68,6 +68,9 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.prof_features_drawn_last = input.prof_features_drawn_last;
     ctx.prof_heat_samples_last = input.prof_heat_samples_last;
     ctx.prof_retired_textures = input.prof_retired_textures;
+    ctx.prof_projection_world_ring_cache_entries = input.prof_projection_world_ring_cache_entries;
+    ctx.prof_projection_world_extent_cache_entries = input.prof_projection_world_extent_cache_entries;
+    ctx.prof_projection_cache_generation = input.prof_projection_cache_generation;
     ctx.prof_heatmap_gpu_splat_active = input.prof_heatmap_gpu_splat_active;
     ctx.prof_heatmap_high_quality = input.prof_heatmap_high_quality;
     ctx.prof_heatmap_cache_valid = input.prof_heatmap_cache_valid;

@@ -18,6 +18,16 @@ void saveHydrationCache(
     const std::string& sig,
     const std::vector<LayerDef::FeatureGeom>& features);
 
+bool loadBinaryHydrationCache(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureGeom>& out);
+
+void saveBinaryHydrationCache(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureGeom>& features);
+
 bool loadTriCache(
     const std::filesystem::path& cache_path,
     const std::string& sig,
@@ -25,6 +35,17 @@ bool loadTriCache(
     std::vector<std::vector<uint32_t>>& out);
 
 void saveTriCache(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    const std::vector<std::vector<uint32_t>>& tris);
+
+bool loadBinaryTriCache(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    size_t count,
+    std::vector<std::vector<uint32_t>>& out);
+
+void saveBinaryTriCache(
     const std::filesystem::path& cache_path,
     const std::string& sig,
     const std::vector<std::vector<uint32_t>>& tris);

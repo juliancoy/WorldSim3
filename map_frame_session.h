@@ -142,6 +142,9 @@ struct MapFrameSessionContext {
     std::atomic<size_t>* render_fill_success_last_frame = nullptr;
     std::atomic<size_t>* render_fill_no_triangles_last_frame = nullptr;
     std::atomic<size_t>* render_fill_bad_indices_last_frame = nullptr;
+    std::atomic<size_t>* prof_projection_world_ring_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_world_extent_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_cache_generation = nullptr;
 
     size_t* prof_features_considered_frame = nullptr;
     size_t* prof_features_drawn_frame = nullptr;

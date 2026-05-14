@@ -242,6 +242,8 @@ Target state:
 
 The parcel-level target is not strict zero-copy from source file to GPU. GeoJSON parsing, projection preparation, triangulation, simplification, metadata indexing, and picking support are CPU responsibilities. The target is zero-copy on the frame path: once a valid parcel GPU buffer exists, the render frame should not rebuild or recopy parcel vertices each frame.
 
+The professional path should not send hydrated GeoJSON-style feature records directly to the GPU. It should compile parcel data into render-specific buffers first. The GPU receives retained vertex/index buffers and small per-frame uniform/style/filter buffers. CPU feature metadata remains available for search, selection, picking, joins, and status reporting.
+
 Parcel-level buffer contract:
 
 - Buffers carry `source_signature`, `hydration_generation`, `triangulation_generation`, `style_generation`, and `lod_generation`.
@@ -258,11 +260,64 @@ source file
   -> CPU feature metadata + rings
   -> triangulation/simplification worker
   -> chunk/tile render batch builder
+  -> render-binary cache
   -> GPU upload worker
   -> retained parcel vertex/index buffers
   -> render snapshot
   -> render thread draw calls
 ```
+
+### Render Binary Format
+
+The current hydration cache is a persistence cache for CPU feature records. It avoids reparsing GeoJSON, but it is still expensive for very large parcel layers because it decodes a large MsgPack object graph and recreates many CPU vectors and strings. It is not the ideal format for render startup.
+
+The target architecture should add a separate render-binary cache. This cache is downstream of hydration and triangulation, and upstream of GPU upload.
+
+The first implemented step is a binary hydration cache at `data/cache/hydration/<layer-file>.bin`. That cache still stores CPU feature records, not final GPU buffers, but it removes the largest MsgPack decode cost and establishes explicit binary signatures, atomic writes, and status phases. The retained render-binary cache described below is the next downstream cache layer.
+
+The second implemented step is a binary triangulation cache at `data/cache/triangulation/<layer-file>.tri.bin`. That cache stores the per-feature triangle index vectors keyed by the same source signature. It removes the JSON triangulation decode cost and makes parcel fill readiness observable through explicit triangulation cache phases.
+
+The third implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when hydrated layer geometry is replaced. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work.
+
+Operationally, the supported migration path is:
+
+- runtime hydration workers prefer `.bin`
+- legacy `.msgpack` is read only as a fallback
+- `worldsim3 --warm-hydration-cache <layer-file>` converts one legacy cache to binary
+- `worldsim3 --warm-hydration-cache-all` converts all currently cacheable local layers that already have a cache artifact
+- triangulation workers prefer `.tri.bin`
+- legacy `.tri.json` is read only as a fallback
+- `worldsim3 --warm-triangulation-cache <layer-file>` converts one legacy triangulation cache to binary
+- `worldsim3 --warm-triangulation-cache-all` converts all currently cacheable local triangulation artifacts and skips stale legacy caches
+- the map frame reuses a persistent world-ring/world-extent projection cache until `math_zoom` or hydrated source generation changes
+
+This keeps the architecture migration incremental. Teams can materialize the faster binary hydration layer without waiting for the later retained-GPU-buffer work.
+
+Recommended parcel render-binary contents:
+
+- fixed header with schema version, source signature, feature count, chunk count, coordinate space, and bounds
+- chunk table with byte offsets, feature ranges, world-space bounds, LOD level, vertex count, and index count
+- contiguous vertex buffers, preferably already in the GPU vertex layout
+- contiguous index buffers, using `uint32_t` unless a chunk can safely use `uint16_t`
+- compact feature-id mapping from draw primitive to parcel feature id
+- optional compact style/filter attribute columns
+- separate metadata offsets for owner, address, parcel id, and other strings
+
+This format should be chunked so startup can load the visible chunks first and defer the rest. It should be memory-mappable where practical, but the render frame should still not parse or validate large structures.
+
+Binary format requirements:
+
+- source signature must match the source layer
+- schema version must match the renderer
+- byte order and alignment must be explicit
+- chunks must be independently loadable
+- failed or partial writes must never replace the last valid cache
+- cache writes must be atomic
+- GPU upload should happen on a worker or upload queue, not inside the UI frame
+
+A different binary format will be faster than the current MsgPack hydration cache for render startup if it avoids object reconstruction and stores data in the same contiguous layout the renderer needs. The expected win is not just smaller bytes on disk; it is fewer allocations, less pointer chasing, less JSON-shaped decoding, and less per-frame geometry preparation.
+
+Strict disk-to-GPU zero-copy is not the target. Vulkan normally uploads device-local buffers through staging memory or a dedicated transfer path. The professional target is direct enough for the frame loop: render-ready binary chunks are loaded, uploaded asynchronously into retained GPU buffers, and then reused without rebuilding or recopying during normal frames.
 
 ### Aggregate-Level Rendering
 

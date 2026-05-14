@@ -606,7 +606,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["perf"] = {
                     {"frame_ms_avg", perf_frame_ms_avg.load(std::memory_order_relaxed)},
                     {"frame_ms_last", perf_frame_ms_last.load(std::memory_order_relaxed)},
-                    {"fps_avg", perf_fps_avg.load(std::memory_order_relaxed)}
+                    {"fps_avg", perf_fps_avg.load(std::memory_order_relaxed)},
+                    {"projection_world_ring_cache_entries", ctx.prof_projection_world_ring_cache_entries ? ctx.prof_projection_world_ring_cache_entries->load(std::memory_order_relaxed) : 0},
+                    {"projection_world_extent_cache_entries", ctx.prof_projection_world_extent_cache_entries ? ctx.prof_projection_world_extent_cache_entries->load(std::memory_order_relaxed) : 0},
+                    {"projection_cache_generation", ctx.prof_projection_cache_generation ? ctx.prof_projection_cache_generation->load(std::memory_order_relaxed) : 0}
                 };
                 out["render_fill"] = {
                     {"attempts_last_frame", render_fill_attempts_last_frame.load(std::memory_order_relaxed)},
@@ -628,8 +631,11 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
                         {"status", s},
                         {"features", st.feature_count},
+                        {"hydration_phase", st.hydration_phase},
                         {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
                         {"hydration_source_signature", st.hydration_source_signature},
+                        {"triangulation_phase", st.triangulation_phase},
+                        {"triangulation_loaded_from_cache", st.triangulation_loaded_from_cache},
                         {"triangulation_source_signature", st.triangulation_source_signature},
                         {"hydrated", st.status != LayerPipelineStatus::Queued && st.status != LayerPipelineStatus::Hydrating && st.status != LayerPipelineStatus::Failed},
                         {"triangulated", st.status == LayerPipelineStatus::Ready},

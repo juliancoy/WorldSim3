@@ -41,6 +41,10 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
                     (*ctx.layer_states)[ready.index].triangulation_source_signature.clear();
                     (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
+                    (*ctx.layer_states)[ready.index].hydration_phase = ready.loaded_from_cache ? "cache_hit" : "source_parse";
+                }
+                if (source_signature_changed && ctx.projection_cache_generation) {
+                    *ctx.projection_cache_generation += 1;
                 }
             }
             if (!ready.features.empty()) {
@@ -56,6 +60,7 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[ready.index].feature_count = (*ctx.layers)[ready.index].features.size();
                     (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
                     (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
+                    (*ctx.layer_states)[ready.index].hydration_phase = ready.loaded_from_cache ? "cache_hit" : "source_parse";
                 }
             }
             if (ready.failed) {
@@ -69,6 +74,7 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[ready.index].error = ready.error;
                     (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
                     (*ctx.layer_states)[ready.index].triangulation_source_signature.clear();
+                    (*ctx.layer_states)[ready.index].hydration_phase = "failed";
                 }
                 continue;
             }
@@ -89,6 +95,7 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[ready.index].error.clear();
                     (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
                     (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
+                    (*ctx.layer_states)[ready.index].hydration_phase = ready.loaded_from_cache ? "cache_hit" : "source_parse";
                 }
             }
             TriJob tj;
@@ -142,6 +149,11 @@ void drainTriangulationResults(LayerPipelineDrainContext& ctx) {
                 if (tr.index < ctx.layer_states->size()) {
                     (*ctx.layer_states)[tr.index].status = LayerPipelineStatus::Ready;
                     (*ctx.layer_states)[tr.index].triangulation_source_signature = tr.source_signature;
+                    (*ctx.layer_states)[tr.index].triangulation_loaded_from_cache = tr.loaded_from_cache;
+                    (*ctx.layer_states)[tr.index].triangulation_phase =
+                        tr.loaded_from_cache
+                            ? (tr.loaded_from_binary_cache ? "binary_cache_hit" : "json_cache_hit")
+                            : "built_from_source";
                 }
                 if (ctx.trim_process_heap) ctx.trim_process_heap();
             } else {
@@ -150,6 +162,8 @@ void drainTriangulationResults(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[tr.index].status = LayerPipelineStatus::Failed;
                     (*ctx.layer_states)[tr.index].error = tr.error;
                     (*ctx.layer_states)[tr.index].triangulation_source_signature.clear();
+                    (*ctx.layer_states)[tr.index].triangulation_phase = "failed";
+                    (*ctx.layer_states)[tr.index].triangulation_loaded_from_cache = false;
                 }
             }
         }

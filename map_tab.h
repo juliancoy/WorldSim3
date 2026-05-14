@@ -145,6 +145,12 @@ struct MapTabContext {
     std::atomic<size_t>* render_fill_success_last_frame = nullptr;
     std::atomic<size_t>* render_fill_no_triangles_last_frame = nullptr;
     std::atomic<size_t>* render_fill_bad_indices_last_frame = nullptr;
+    std::unique_ptr<MapProjectionCache>* persistent_projection_cache = nullptr;
+    size_t* persistent_projection_generation = nullptr;
+    size_t projection_generation = 0;
+    std::atomic<size_t>* prof_projection_world_ring_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_world_extent_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_cache_generation = nullptr;
 
     TimeCubeService* time_cube_service = nullptr;
     TimeCubeResult* time_cube_ui_result = nullptr;

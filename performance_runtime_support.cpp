@@ -176,7 +176,10 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                         (*ctx.layer_states)[i].error.clear();
                         (*ctx.layer_states)[i].hydration_source_signature.clear();
                         (*ctx.layer_states)[i].triangulation_source_signature.clear();
+                        (*ctx.layer_states)[i].hydration_phase.clear();
+                        (*ctx.layer_states)[i].triangulation_phase.clear();
                         (*ctx.layer_states)[i].hydration_loaded_from_cache = false;
+                        (*ctx.layer_states)[i].triangulation_loaded_from_cache = false;
                     }
                 }
             }

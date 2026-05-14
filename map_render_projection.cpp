@@ -16,6 +16,22 @@ MapProjectionCache::MapProjectionCache(
     scratch_line_.reserve(1024);
 }
 
+void MapProjectionCache::updateFrameProjection(
+    int math_zoom,
+    int ring_step,
+    std::function<ImVec2(const ImVec2&)> project_world) {
+    const bool zoom_changed = math_zoom_ != math_zoom;
+    math_zoom_ = math_zoom;
+    ring_step_ = std::max(1, ring_step);
+    project_world_ = std::move(project_world);
+    if (zoom_changed) clearCachedGeometry();
+}
+
+void MapProjectionCache::clearCachedGeometry() {
+    world_rings_cache_.clear();
+    world_extent_cache_.clear();
+}
+
 const std::vector<std::vector<ImVec2>>& MapProjectionCache::getWorldRings(
     size_t layer_idx,
     uint32_t feature_idx,

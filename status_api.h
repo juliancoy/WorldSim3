@@ -90,6 +90,9 @@ struct StatusApiContext {
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
+    std::atomic<size_t>* prof_projection_world_ring_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_world_extent_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_cache_generation = nullptr;
     std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
     std::atomic<bool>* prof_heatmap_high_quality = nullptr;
     std::atomic<bool>* prof_heatmap_cache_valid = nullptr;

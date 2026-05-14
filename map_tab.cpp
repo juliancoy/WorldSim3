@@ -71,7 +71,13 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.tax_lien_layer_idx,
                 ctx.tax_sale_layer_idx,
                 ctx.prof_tiles_drawn_frame,
-                ctx.prof_tile_ms_last
+                ctx.prof_tile_ms_last,
+                ctx.persistent_projection_cache,
+                ctx.persistent_projection_generation,
+                ctx.projection_generation,
+                ctx.prof_projection_world_ring_cache_entries,
+                ctx.prof_projection_world_extent_cache_entries,
+                ctx.prof_projection_cache_generation
             });
 
             MapFrameSessionContext map_frame_session_ctx;
@@ -161,7 +167,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.parcel_jurisdiction_result_set = ctx.parcel_jurisdiction_result_set;
             map_frame_session_ctx.parcel_jurisdiction_filter_status = ctx.parcel_jurisdiction_filter_status;
             map_frame_session_ctx.heatmap_runtime = ctx.heatmap_runtime;
-            map_frame_session_ctx.projection = map_canvas_session.projection_cache.get();
+            map_frame_session_ctx.projection = map_canvas_session.projection_cache;
             map_frame_session_ctx.should_fill_layer_polygon = map_canvas_session.should_fill_layer_polygon;
             map_frame_session_ctx.project_world = map_canvas_session.project_world;
             map_frame_session_ctx.open_parcel_element = [&](size_t idx) { openElementParcelPage(*ctx.element_info_state, idx); };
@@ -182,6 +188,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.render_fill_success_last_frame = ctx.render_fill_success_last_frame;
             map_frame_session_ctx.render_fill_no_triangles_last_frame = ctx.render_fill_no_triangles_last_frame;
             map_frame_session_ctx.render_fill_bad_indices_last_frame = ctx.render_fill_bad_indices_last_frame;
+            map_frame_session_ctx.prof_projection_world_ring_cache_entries = ctx.prof_projection_world_ring_cache_entries;
+            map_frame_session_ctx.prof_projection_world_extent_cache_entries = ctx.prof_projection_world_extent_cache_entries;
+            map_frame_session_ctx.prof_projection_cache_generation = ctx.prof_projection_cache_generation;
             map_frame_session_ctx.prof_features_considered_frame = ctx.prof_features_considered_frame;
             map_frame_session_ctx.prof_features_drawn_frame = ctx.prof_features_drawn_frame;
             runMapFrameSession(map_frame_session_ctx);

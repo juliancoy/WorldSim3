@@ -51,6 +51,12 @@ struct MapCanvasSessionContext {
 
     size_t* prof_tiles_drawn_frame = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
+    std::unique_ptr<MapProjectionCache>* persistent_projection_cache = nullptr;
+    size_t* persistent_projection_generation = nullptr;
+    size_t projection_generation = 0;
+    std::atomic<size_t>* prof_projection_world_ring_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_world_extent_cache_entries = nullptr;
+    std::atomic<size_t>* prof_projection_cache_generation = nullptr;
 };
 
 struct MapCanvasSession {
@@ -79,7 +85,7 @@ struct MapCanvasSession {
     int lod_ring_step = 1;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::function<bool(size_t)> should_fill_layer_polygon;
-    std::unique_ptr<MapProjectionCache> projection_cache;
+    MapProjectionCache* projection_cache = nullptr;
 };
 
 MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx);

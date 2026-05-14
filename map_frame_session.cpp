@@ -196,6 +196,14 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
     refreshParcelJurisdictionFilter(ctx);
     const FeatureFilterContext filter_ctx = buildFrameFilterContext(ctx);
     orchestrateMapFrameRender(buildRenderFrameContext(ctx, filter_ctx));
+    if (ctx.projection) {
+        if (ctx.prof_projection_world_ring_cache_entries) {
+            ctx.prof_projection_world_ring_cache_entries->store(ctx.projection->cachedWorldRingEntries(), std::memory_order_relaxed);
+        }
+        if (ctx.prof_projection_world_extent_cache_entries) {
+            ctx.prof_projection_world_extent_cache_entries->store(ctx.projection->cachedWorldExtentEntries(), std::memory_order_relaxed);
+        }
+    }
 
     handleMapInspection(MapInspectionContext{
         ctx.map_hovered,

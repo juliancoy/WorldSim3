@@ -50,7 +50,95 @@ Coverage:
 Limitations:
 
 - It reads source files directly.
-- It does not exercise the hydration msgpack cache, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
+- It does not exercise the hydration binary cache, legacy hydration MsgPack fallback, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
+- It does not exercise persistent frame-to-frame projection-cache reuse.
+
+## Hydration Cache Self-Test
+
+```bash
+./build/worldsim3 --hydration-cache-selftest
+```
+
+Purpose:
+
+- Writes a small binary hydration cache fixture.
+- Loads the fixture through `loadBinaryHydrationCache()`.
+- Verifies feature extents, rings, properties, and stale signature rejection.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+Coverage:
+
+- Binary hydration cache round trip.
+- Binary cache source-signature validation.
+- Basic point and polygon feature shapes.
+
+Limitations:
+
+- It does not benchmark large-layer cache load speed.
+- It does not exercise the legacy MsgPack fallback conversion path.
+
+## Hydration Cache Warmer
+
+```bash
+./build/worldsim3 --warm-hydration-cache regional_parcels.geojson
+./build/worldsim3 --warm-hydration-cache-all
+```
+
+Purpose:
+
+- Validates an existing binary hydration cache for one layer.
+- If only a matching legacy MsgPack hydration cache exists, converts it into the binary cache.
+- Verifies the written binary cache can be read back with the same source signature.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+Notes:
+
+- Large layers can require substantial RAM while converting from legacy MsgPack because the converter must load the legacy cache before writing binary.
+- Prefer running this with the interactive app closed when converting `regional_parcels.geojson`.
+- `--warm-hydration-cache-all` only processes local layers that already have a binary or legacy hydration cache artifact.
+
+## Triangulation Cache Self-Test
+
+```bash
+./build/worldsim3 --triangulation-cache-selftest
+```
+
+Purpose:
+
+- Writes a small binary triangulation cache fixture.
+- Loads the fixture through `loadBinaryTriCache()`.
+- Verifies vector round-trip, stale signature rejection, and feature-count rejection.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+## Triangulation Cache Warmer
+
+```bash
+./build/worldsim3 --warm-triangulation-cache regional_parcels.geojson
+./build/worldsim3 --warm-triangulation-cache-all
+```
+
+Purpose:
+
+- Validates an existing binary triangulation cache for one layer.
+- If only a matching legacy JSON triangulation cache exists, converts it into the binary cache.
+- Bulk mode converts all discovered triangulation cache artifacts and skips stale legacy caches whose signature or feature count no longer matches the source layer.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
 
 ## DuckDB Owner Dump Integration Check
 

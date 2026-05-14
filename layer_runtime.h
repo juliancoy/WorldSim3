@@ -30,6 +30,8 @@ struct TriResult {
     std::string source_signature;
     std::vector<std::vector<uint32_t>> triangles_per_feature;
     bool ok = true;
+    bool loaded_from_cache = false;
+    bool loaded_from_binary_cache = false;
     std::string error;
 };
 
@@ -49,7 +51,10 @@ struct LayerRuntimeState {
     std::string error;
     std::string hydration_source_signature;
     std::string triangulation_source_signature;
+    std::string hydration_phase;
+    std::string triangulation_phase;
     bool hydration_loaded_from_cache = false;
+    bool triangulation_loaded_from_cache = false;
 };
 
 struct LayerSpatialIndex {

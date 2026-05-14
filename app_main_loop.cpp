@@ -444,6 +444,12 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<size_t> vacant_parcels_matched_total{0};
     std::atomic<size_t> vacant_parcels_with_geometry_total{0};
     std::atomic<size_t> vacant_parcels_triangulated_renderable_total{0};
+    std::unique_ptr<MapProjectionCache> persistent_projection_cache;
+    size_t persistent_projection_generation = 0;
+    size_t projection_generation = 0;
+    std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
+    std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
+    std::atomic<size_t> prof_projection_cache_generation{0};
     std::atomic<size_t> vacant_notice_rows_matched_total{0};
     std::atomic<size_t> vacant_rehab_rows_matched_total{0};
     std::atomic<int> current_zoom_state{12};
@@ -765,6 +771,9 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.prof_features_drawn_last = &prof_features_drawn_last;
     status_api_input.prof_heat_samples_last = &prof_heat_samples_last;
     status_api_input.prof_retired_textures = &prof_retired_textures;
+    status_api_input.prof_projection_world_ring_cache_entries = &prof_projection_world_ring_cache_entries;
+    status_api_input.prof_projection_world_extent_cache_entries = &prof_projection_world_extent_cache_entries;
+    status_api_input.prof_projection_cache_generation = &prof_projection_cache_generation;
     status_api_input.prof_heatmap_gpu_splat_active = &prof_heatmap_gpu_splat_active;
     status_api_input.prof_heatmap_high_quality = &prof_heatmap_high_quality;
     status_api_input.prof_heatmap_cache_valid = &prof_heatmap_cache_valid;
@@ -1561,6 +1570,7 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.layer_profile_dirty = &layer_profile_dirty;
         pipeline_drain_ctx.hydrated_count = &hydrated_count;
         pipeline_drain_ctx.triangulated_count = &triangulated_count;
+        pipeline_drain_ctx.projection_cache_generation = &projection_generation;
         pipeline_drain_ctx.duckdb_auto_rebuild_checked = &duckdb_auto_rebuild_checked;
         pipeline_drain_ctx.parcel_layer_idx = parcel_layer_idx;
         pipeline_drain_ctx.vacant_layer_active = vacant_layer_active;
@@ -1861,6 +1871,12 @@ int runWorldSim3App(int argc, char** argv) {
             &render_fill_success_last_frame,
             &render_fill_no_triangles_last_frame,
             &render_fill_bad_indices_last_frame,
+            &persistent_projection_cache,
+            &persistent_projection_generation,
+            projection_generation,
+            &prof_projection_world_ring_cache_entries,
+            &prof_projection_world_extent_cache_entries,
+            &prof_projection_cache_generation,
             &time_cube_service,
             &time_cube_ui_result,
             &time_cube_ui_loaded,

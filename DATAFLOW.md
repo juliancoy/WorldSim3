@@ -19,7 +19,7 @@ This signature is the invalidation key shared by hydration, triangulation, deriv
 
 On startup, `app_main_loop.cpp` enqueues every enabled layer for hydration.
 
-That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.msgpack`. If the cache exists, matches the source signature, and passes sanity checks, the worker streams cached features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
+That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`, then falls back to `data/cache/hydration/<layer-file>.msgpack` for older caches. If a cache exists, matches the source signature, and passes sanity checks, the worker streams cached features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
 
 Hydration always repopulates `layers[i].features` in RAM because render code, filters, hit testing, derived joins, and DuckDB rebuilds operate on runtime layer objects.
 
@@ -28,19 +28,25 @@ Hydration always repopulates `layers[i].features` in RAM because render code, fi
 Persistent path:
 
 ```text
+data/cache/hydration/<layer-file>.bin
 data/cache/hydration/<layer-file>.msgpack
 ```
+
+The `.bin` cache is the primary format. It stores the hydrated CPU feature records in an explicit little-endian binary layout and avoids the large MsgPack object-graph decode cost on startup.
+
+The `.msgpack` cache is a legacy fallback. If a matching MsgPack cache exists and the binary cache does not, the worker may load MsgPack once, then write the binary cache for later launches.
 
 Writer:
 
 ```text
-layer_workers.cpp -> saveHydrationCache()
+layer_workers.cpp -> saveBinaryHydrationCache()
 ```
 
 Reader:
 
 ```text
-layer_workers.cpp -> loadHydrationCache()
+layer_workers.cpp -> loadBinaryHydrationCache()
+layer_workers.cpp -> loadHydrationCache() legacy fallback
 ```
 
 A hydration cache stores:
@@ -61,28 +67,42 @@ Runtime state records:
 
 - `hydration_source_signature`
 - `hydration_loaded_from_cache`
+- `hydration_phase`
+
+`hydration_phase` distinguishes `loading_binary_cache`, `loading_msgpack_cache`, `binary_cache_hit_queueing`, `msgpack_cache_hit_queueing`, source parsing, stale cache, rejected cache, and completed cache hits. This prevents a large cache decode from looking identical to a GeoJSON source parse.
 
 ## Triangulation Cache
 
 Persistent path:
 
 ```text
+data/cache/triangulation/<layer-file>.tri.bin
 data/cache/triangulation/<layer-file>.tri.json
 ```
+
+The `.tri.bin` cache is the primary format. It stores per-feature triangle index vectors in an explicit binary layout and avoids loading a large JSON array tree on startup.
+
+The `.tri.json` cache is a legacy fallback. If a matching JSON cache exists and the binary cache does not, the worker may load JSON once, then write the binary cache for later launches.
 
 Writer:
 
 ```text
-layer_workers.cpp -> saveTriCache()
+layer_workers.cpp -> saveBinaryTriCache()
 ```
 
 Reader:
 
 ```text
-layer_workers.cpp -> loadTriCache()
+layer_workers.cpp -> loadBinaryTriCache()
+layer_workers.cpp -> loadTriCache() legacy fallback
 ```
 
 Triangulation jobs inherit the hydration source signature from the hydrated layer. The triangulation cache is accepted only when that signature and the feature count match. Results carry the same signature back into runtime state as `triangulation_source_signature`.
+
+Runtime state records:
+
+- `triangulation_phase`
+- `triangulation_loaded_from_cache`
 
 This keeps fill geometry coupled to the exact source geometry that produced the hydrated features.
 
@@ -166,6 +186,6 @@ Clearing only triangulation keeps hydrated features and schedules fresh triangul
 
 ## Important Distinction
 
-Seeing hydration progress on each startup is expected. It means runtime layer objects are being populated. If the hydration cache is valid, this path reads msgpack cache files instead of reparsing GeoJSON.
+Seeing hydration progress on each startup is expected. It means runtime layer objects are being populated. If the hydration cache is valid, this path reads binary or legacy MsgPack cache files instead of reparsing GeoJSON.
 
 DuckDB persists SQL-ready analytics tables, but it does not currently hydrate map-renderable layer geometry directly.

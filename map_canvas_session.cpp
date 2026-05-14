@@ -21,7 +21,10 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
         !ctx.lazy_tile_download || !ctx.topo_tiles_available_cached || !ctx.topo_vector_available_cached ||
         !ctx.basemap_source_has_any_files_cached || !ctx.tile_root_dir_cached || !ctx.basemap_availability_last_check ||
         !ctx.layers || !ctx.layer_spatial || !ctx.layer_hover_enabled || !ctx.layer_inspect_enabled ||
-        !ctx.hover_inspector_enabled || !ctx.prof_tiles_drawn_frame || !ctx.prof_tile_ms_last) {
+        !ctx.hover_inspector_enabled || !ctx.prof_tiles_drawn_frame || !ctx.prof_tile_ms_last ||
+        !ctx.persistent_projection_cache || !ctx.persistent_projection_generation ||
+        !ctx.prof_projection_world_ring_cache_entries || !ctx.prof_projection_world_extent_cache_entries ||
+        !ctx.prof_projection_cache_generation) {
         return session;
     }
 
@@ -123,7 +126,17 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.should_fill_layer_polygon = [layers = ctx.layers, allow_parcel_scale_fill](size_t layer_idx) {
         return !(layer_idx < layers->size() && (*layers)[layer_idx].scale == "parcel") || allow_parcel_scale_fill;
     };
-    session.projection_cache = std::make_unique<MapProjectionCache>(session.math_zoom, 1, session.project_world);
-    session.projection_cache->reserveWorldRings(8192);
+    if (*ctx.persistent_projection_generation != ctx.projection_generation) {
+        ctx.persistent_projection_cache->reset();
+        *ctx.persistent_projection_generation = ctx.projection_generation;
+    }
+    if (!*ctx.persistent_projection_cache) {
+        *ctx.persistent_projection_cache = std::make_unique<MapProjectionCache>(session.math_zoom, 1, session.project_world);
+        (*ctx.persistent_projection_cache)->reserveWorldRings(8192);
+    } else {
+        (*ctx.persistent_projection_cache)->updateFrameProjection(session.math_zoom, 1, session.project_world);
+    }
+    ctx.prof_projection_cache_generation->store(*ctx.persistent_projection_generation, std::memory_order_relaxed);
+    session.projection_cache = ctx.persistent_projection_cache->get();
     return session;
 }

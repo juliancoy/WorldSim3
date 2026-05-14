@@ -26,6 +26,7 @@ struct LayerPipelineDrainContext {
     std::vector<bool>* layer_profile_dirty = nullptr;
     std::atomic<size_t>* hydrated_count = nullptr;
     std::atomic<size_t>* triangulated_count = nullptr;
+    size_t* projection_cache_generation = nullptr;
     bool* duckdb_auto_rebuild_checked = nullptr;
     int parcel_layer_idx = -1;
     bool vacant_layer_active = false;
