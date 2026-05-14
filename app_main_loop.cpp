@@ -383,9 +383,14 @@ int runWorldSim3App(int argc, char** argv) {
     int unified_tax_generation_applied = -1;
     size_t cached_real_property_size = 0;
     size_t cached_vac_notice_size = 0;
+    std::string cached_vac_notice_signature;
     size_t cached_vac_rehab_size = 0;
+    std::string cached_vac_rehab_signature;
     size_t cached_tax_lien_size = 0;
+    std::string cached_tax_lien_signature;
     size_t cached_tax_sale_size = 0;
+    std::string cached_tax_sale_signature;
+    std::string unified_parcel_cached_signature;
     std::mutex hydrated_mutex;
     std::deque<HydratedLayer> hydrated_queue;
     std::mutex hydrate_req_mutex;
@@ -968,9 +973,18 @@ int runWorldSim3App(int argc, char** argv) {
     auto reset_derived_cache_state = [&]() {
         cached_real_property_size = 0;
         cached_vac_notice_size = 0;
+        cached_vac_notice_signature.clear();
         cached_vac_rehab_size = 0;
+        cached_vac_rehab_signature.clear();
         cached_tax_lien_size = 0;
+        cached_tax_lien_signature.clear();
         cached_tax_sale_size = 0;
+        cached_tax_sale_signature.clear();
+        unified_parcel_cached_size = (size_t)-1;
+        unified_real_property_cached_size = (size_t)-1;
+        unified_parcel_cached_signature.clear();
+        unified_vacancy_generation_applied = -1;
+        unified_tax_generation_applied = -1;
         vacancy_maps_generation = 0;
         parcel_vacancy_generation_applied = -1;
         tax_maps_generation = 0;
@@ -1540,12 +1554,14 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.tri_mutex = &tri_mutex;
         pipeline_drain_ctx.tri_cv = &tri_cv;
         pipeline_drain_ctx.layer_states = &layer_states;
+        pipeline_drain_ctx.layer_spatial = &layer_spatial;
         pipeline_drain_ctx.status_mutex = &status_mutex;
         pipeline_drain_ctx.hydration_requested = &hydration_requested;
         pipeline_drain_ctx.hydrate_req_mutex = &hydrate_req_mutex;
         pipeline_drain_ctx.layer_profile_dirty = &layer_profile_dirty;
         pipeline_drain_ctx.hydrated_count = &hydrated_count;
         pipeline_drain_ctx.triangulated_count = &triangulated_count;
+        pipeline_drain_ctx.duckdb_auto_rebuild_checked = &duckdb_auto_rebuild_checked;
         pipeline_drain_ctx.parcel_layer_idx = parcel_layer_idx;
         pipeline_drain_ctx.vacant_layer_active = vacant_layer_active;
         pipeline_drain_ctx.trim_process_heap = [&]() { trimProcessHeap(); };
@@ -1555,6 +1571,7 @@ int runWorldSim3App(int argc, char** argv) {
         DerivedLayerCachesContext derived_layer_caches_ctx;
         derived_layer_caches_ctx.root = &root;
         derived_layer_caches_ctx.layers = &layers;
+        derived_layer_caches_ctx.layer_states = &layer_states;
         derived_layer_caches_ctx.app_settings = &app_settings;
         derived_layer_caches_ctx.zoning_layer_idx = zoning_layer_idx;
         derived_layer_caches_ctx.real_property_layer_idx = real_property_layer_idx;
@@ -1578,9 +1595,13 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.harmonized_real_property_signature = &harmonized_real_property_signature;
         derived_layer_caches_ctx.cached_real_property_size = &cached_real_property_size;
         derived_layer_caches_ctx.cached_vac_notice_size = &cached_vac_notice_size;
+        derived_layer_caches_ctx.cached_vac_notice_signature = &cached_vac_notice_signature;
         derived_layer_caches_ctx.cached_vac_rehab_size = &cached_vac_rehab_size;
+        derived_layer_caches_ctx.cached_vac_rehab_signature = &cached_vac_rehab_signature;
         derived_layer_caches_ctx.cached_tax_lien_size = &cached_tax_lien_size;
+        derived_layer_caches_ctx.cached_tax_lien_signature = &cached_tax_lien_signature;
         derived_layer_caches_ctx.cached_tax_sale_size = &cached_tax_sale_size;
+        derived_layer_caches_ctx.cached_tax_sale_signature = &cached_tax_sale_signature;
         derived_layer_caches_ctx.vacant_notice_count_by_blocklot = &vacant_notice_count_by_blocklot;
         derived_layer_caches_ctx.vacant_rehab_count_by_blocklot = &vacant_rehab_count_by_blocklot;
         derived_layer_caches_ctx.tax_lien_count_by_blocklot = &tax_lien_count_by_blocklot;
@@ -1604,6 +1625,7 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.vacant_parcels_triangulated_renderable_total = &vacant_parcels_triangulated_renderable_total;
         derived_layer_caches_ctx.unified_parcels = &unified_parcels;
         derived_layer_caches_ctx.unified_parcel_cached_size = &unified_parcel_cached_size;
+        derived_layer_caches_ctx.unified_parcel_cached_signature = &unified_parcel_cached_signature;
         derived_layer_caches_ctx.unified_real_property_cached_size = &unified_real_property_cached_size;
         derived_layer_caches_ctx.unified_vacancy_generation_applied = &unified_vacancy_generation_applied;
         derived_layer_caches_ctx.unified_tax_generation_applied = &unified_tax_generation_applied;

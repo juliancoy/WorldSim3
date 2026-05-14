@@ -12,17 +12,22 @@ struct HydratedLayer {
     std::vector<LayerDef::FeatureGeom> features;
     bool done = false;
     bool failed = false;
+    bool replace_existing = false;
+    bool loaded_from_cache = false;
     std::string error;
+    std::string source_signature;
 };
 
 struct TriJob {
     size_t index = 0;
     std::string file;
+    std::string source_signature;
     std::vector<std::vector<std::vector<ImVec2>>> rings_per_feature;
 };
 
 struct TriResult {
     size_t index = 0;
+    std::string source_signature;
     std::vector<std::vector<uint32_t>> triangles_per_feature;
     bool ok = true;
     std::string error;
@@ -42,6 +47,9 @@ struct LayerRuntimeState {
     LayerPipelineStatus status = LayerPipelineStatus::Queued;
     size_t feature_count = 0;
     std::string error;
+    std::string hydration_source_signature;
+    std::string triangulation_source_signature;
+    bool hydration_loaded_from_cache = false;
 };
 
 struct LayerSpatialIndex {

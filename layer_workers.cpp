@@ -72,6 +72,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                          fs::file_size(layer_path) > 1024 * 1024 &&
                          cached_features.size() < 32);
                     if (!suspicious_cache) {
+                        bool first_chunk = true;
                         for (size_t off = 0; off < cached_features.size(); off += kHydrationBatchSize) {
                             if (hydration_stop.load(std::memory_order_relaxed) || (!layers[i].enabled && !required)) break;
                             size_t end = std::min(cached_features.size(), off + kHydrationBatchSize);
@@ -79,10 +80,29 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                             chunk.reserve(end - off);
                             for (size_t k = off; k < end; ++k) chunk.push_back(std::move(cached_features[k]));
                             std::lock_guard<std::mutex> lk(hydrated_mutex);
-                            hydrated_queue.push_back(HydratedLayer{i, std::move(chunk), false, false, ""});
+                            hydrated_queue.push_back(HydratedLayer{
+                                i,
+                                std::move(chunk),
+                                false,
+                                false,
+                                first_chunk,
+                                true,
+                                "",
+                                sig
+                            });
+                            first_chunk = false;
                         }
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
-                        hydrated_queue.push_back(HydratedLayer{i, {}, true, false, ""});
+                        hydrated_queue.push_back(HydratedLayer{
+                            i,
+                            {},
+                            true,
+                            false,
+                            first_chunk,
+                            true,
+                            "",
+                            sig
+                        });
                         releaseContainerStorage(cached_features);
                         trimProcessHeap();
                         continue;
@@ -97,6 +117,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 std::vector<LayerDef::FeatureGeom> cache_features;
                 bool hydrate_failed = false;
                 bool hydrate_done = false;
+                bool first_chunk = true;
                 hydrateLayerBatches(
                     layer_path, kHydrationBatchSize, hydration_stop,
                     [&]() { return i < layers.size() && (layers[i].enabled || required); },
@@ -107,7 +128,17 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         hydrate_failed = hydrate_failed || failed;
                         hydrate_done = hydrate_done || done;
                         std::lock_guard<std::mutex> lk(hydrated_mutex);
-                        hydrated_queue.push_back(HydratedLayer{i, std::move(chunk), done, failed, error});
+                        hydrated_queue.push_back(HydratedLayer{
+                            i,
+                            std::move(chunk),
+                            done,
+                            failed,
+                            first_chunk,
+                            false,
+                            error,
+                            sig
+                        });
+                        first_chunk = false;
                     });
                 if (hydrate_done && !hydrate_failed && !cache_features.empty() &&
                     !hydration_stop.load(std::memory_order_relaxed)) {
@@ -162,9 +193,10 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
 
             fs::path layer_path = root / "data" / "layers" / job.file;
             fs::path cache_path = root / "data" / "cache" / "triangulation" / (job.file + ".tri.json");
-            std::string sig = fileSignature(layer_path);
+            std::string sig = job.source_signature.empty() ? fileSignature(layer_path) : job.source_signature;
             TriResult result;
             result.index = job.index;
+            result.source_signature = sig;
             try {
                 if (!loadTriCache(cache_path, sig, job.rings_per_feature.size(), result.triangles_per_feature)) {
                     result.triangles_per_feature.resize(job.rings_per_feature.size());

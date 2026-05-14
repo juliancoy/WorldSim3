@@ -82,21 +82,27 @@ DuckDbAnalytics::DuckDbAnalytics(std::filesystem::path root)
 }
 
 bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {
-    std::error_code ec;
-    const fs::path db_path = status_.db_path;
-    if (!fs::exists(db_path, ec) || ec) return true;
-    const fs::file_time_type db_time = fs::last_write_time(db_path, ec);
-    if (ec) return true;
+    try {
+        std::error_code ec;
+        const fs::path db_path = status_.db_path;
+        if (!fs::exists(db_path, ec) || ec) return true;
 
-    for (const auto& layer : layers) {
-        if (layer.file.empty()) continue;
-        const fs::path layer_path = root_ / "data" / "layers" / layer.file;
-        ec.clear();
-        if (!fs::exists(layer_path, ec) || ec) continue;
-        const fs::file_time_type layer_time = fs::last_write_time(layer_path, ec);
-        if (!ec && layer_time > db_time) return true;
+        duckdb::DuckDB db(status_.db_path);
+        duckdb::Connection con(db);
+        auto signature_res = con.Query(R"SQL(
+            SELECT source_signature
+            FROM analytics_build_info
+            ORDER BY built_at_utc DESC
+            LIMIT 1
+        )SQL");
+        if (!signature_res || signature_res->HasError() || signature_res->RowCount() == 0) {
+            return true;
+        }
+        const std::string stored_signature = signature_res->GetValue(0, 0).ToString();
+        return stored_signature != analyticsBuildSignature(root_, layers);
+    } catch (...) {
+        return true;
     }
-    return false;
 }
 
 bool DuckDbAnalytics::validateExistingCache() {

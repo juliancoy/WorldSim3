@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "layer_runtime.h"
 #include "parcel_unified.h"
 #include "types.h"
 #include "zoning.h"
@@ -15,6 +16,7 @@
 struct DerivedLayerCachesContext {
     const std::filesystem::path* root = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    const std::vector<LayerRuntimeState>* layer_states = nullptr;
     const AppSettings* app_settings = nullptr;
 
     int zoning_layer_idx = -1;
@@ -41,9 +43,13 @@ struct DerivedLayerCachesContext {
     std::string* harmonized_real_property_signature = nullptr;
     size_t* cached_real_property_size = nullptr;
     size_t* cached_vac_notice_size = nullptr;
+    std::string* cached_vac_notice_signature = nullptr;
     size_t* cached_vac_rehab_size = nullptr;
+    std::string* cached_vac_rehab_signature = nullptr;
     size_t* cached_tax_lien_size = nullptr;
+    std::string* cached_tax_lien_signature = nullptr;
     size_t* cached_tax_sale_size = nullptr;
+    std::string* cached_tax_sale_signature = nullptr;
 
     std::unordered_map<std::string, int>* vacant_notice_count_by_blocklot = nullptr;
     std::unordered_map<std::string, int>* vacant_rehab_count_by_blocklot = nullptr;
@@ -72,6 +78,7 @@ struct DerivedLayerCachesContext {
 
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     size_t* unified_parcel_cached_size = nullptr;
+    std::string* unified_parcel_cached_signature = nullptr;
     size_t* unified_real_property_cached_size = nullptr;
     int* unified_vacancy_generation_applied = nullptr;
     int* unified_tax_generation_applied = nullptr;

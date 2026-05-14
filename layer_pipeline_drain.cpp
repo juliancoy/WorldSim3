@@ -1,5 +1,7 @@
 #include "layer_pipeline_drain.h"
 
+#include "memory_utils.h"
+
 #include <algorithm>
 #include <chrono>
 #include <iterator>
@@ -24,6 +26,23 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
             ctx.hydrated_queue->pop_front();
         }
         if (ready.index < ctx.layers->size()) {
+            bool source_signature_changed = false;
+            if (ready.replace_existing) {
+                releaseContainerStorage((*ctx.layers)[ready.index].features);
+                if (ctx.layer_spatial && ready.index < ctx.layer_spatial->size()) {
+                    (*ctx.layer_spatial)[ready.index] = LayerSpatialIndex{};
+                }
+                if (ready.index < ctx.layer_profile_dirty->size()) (*ctx.layer_profile_dirty)[ready.index] = true;
+                std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
+                if (ready.index < ctx.layer_states->size()) {
+                    source_signature_changed =
+                        (*ctx.layer_states)[ready.index].hydration_source_signature != ready.source_signature;
+                    (*ctx.layer_states)[ready.index].feature_count = 0;
+                    (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
+                    (*ctx.layer_states)[ready.index].triangulation_source_signature.clear();
+                    (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
+                }
+            }
             if (!ready.features.empty()) {
                 auto& dst = (*ctx.layers)[ready.index].features;
                 dst.insert(
@@ -35,6 +54,8 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                 if (ready.index < ctx.layer_states->size()) {
                     (*ctx.layer_states)[ready.index].status = LayerPipelineStatus::Hydrating;
                     (*ctx.layer_states)[ready.index].feature_count = (*ctx.layers)[ready.index].features.size();
+                    (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
+                    (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
                 }
             }
             if (ready.failed) {
@@ -46,6 +67,8 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                 if (ready.index < ctx.layer_states->size()) {
                     (*ctx.layer_states)[ready.index].status = LayerPipelineStatus::Failed;
                     (*ctx.layer_states)[ready.index].error = ready.error;
+                    (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
+                    (*ctx.layer_states)[ready.index].triangulation_source_signature.clear();
                 }
                 continue;
             }
@@ -55,17 +78,23 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                 if (ready.index < ctx.hydration_requested->size()) (*ctx.hydration_requested)[ready.index] = false;
             }
             ctx.hydrated_count->fetch_add(1, std::memory_order_relaxed);
+            if (ctx.duckdb_auto_rebuild_checked && source_signature_changed) {
+                *ctx.duckdb_auto_rebuild_checked = false;
+            }
             {
                 std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
                 if (ready.index < ctx.layer_states->size()) {
                     (*ctx.layer_states)[ready.index].status = LayerPipelineStatus::Hydrated;
                     (*ctx.layer_states)[ready.index].feature_count = (*ctx.layers)[ready.index].features.size();
                     (*ctx.layer_states)[ready.index].error.clear();
+                    (*ctx.layer_states)[ready.index].hydration_source_signature = ready.source_signature;
+                    (*ctx.layer_states)[ready.index].hydration_loaded_from_cache = ready.loaded_from_cache;
                 }
             }
             TriJob tj;
             tj.index = ready.index;
             tj.file = (*ctx.layers)[ready.index].file;
+            tj.source_signature = ready.source_signature;
             tj.rings_per_feature.reserve((*ctx.layers)[ready.index].features.size());
             for (const auto& fg : (*ctx.layers)[ready.index].features) tj.rings_per_feature.push_back(fg.rings);
             std::lock_guard<std::mutex> lk2(*ctx.tri_mutex);
@@ -110,13 +139,17 @@ void drainTriangulationResults(LayerPipelineDrainContext& ctx) {
                 if (tr.index < ctx.layer_profile_dirty->size()) (*ctx.layer_profile_dirty)[tr.index] = true;
                 ctx.triangulated_count->fetch_add(1, std::memory_order_relaxed);
                 std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
-                if (tr.index < ctx.layer_states->size()) (*ctx.layer_states)[tr.index].status = LayerPipelineStatus::Ready;
+                if (tr.index < ctx.layer_states->size()) {
+                    (*ctx.layer_states)[tr.index].status = LayerPipelineStatus::Ready;
+                    (*ctx.layer_states)[tr.index].triangulation_source_signature = tr.source_signature;
+                }
                 if (ctx.trim_process_heap) ctx.trim_process_heap();
             } else {
                 std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
                 if (tr.index < ctx.layer_states->size()) {
                     (*ctx.layer_states)[tr.index].status = LayerPipelineStatus::Failed;
                     (*ctx.layer_states)[tr.index].error = tr.error;
+                    (*ctx.layer_states)[tr.index].triangulation_source_signature.clear();
                 }
             }
         }

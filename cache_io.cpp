@@ -16,9 +16,12 @@ struct TrimHeapOnScopeExit {
 }
 
 std::string fileSignature(const fs::path& p) {
-    std::error_code ec;
-    auto sz = fs::file_size(p, ec);
-    auto wt = fs::last_write_time(p, ec);
+    std::error_code size_ec;
+    auto sz = fs::file_size(p, size_ec);
+    if (size_ec) return "missing:" + p.filename().string();
+    std::error_code time_ec;
+    auto wt = fs::last_write_time(p, time_ec);
+    if (time_ec) return std::to_string((unsigned long long)sz) + "_mtime_unavailable";
     auto ticks = wt.time_since_epoch().count();
     return std::to_string((unsigned long long)sz) + "_" + std::to_string((long long)ticks);
 }

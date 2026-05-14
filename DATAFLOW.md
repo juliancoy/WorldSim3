@@ -1,0 +1,167 @@
+# WorldSim3 Data Flow
+
+This document describes how layer data moves from source files into runtime memory, persistent caches, derived records, and DuckDB analytics.
+
+## Source Identity
+
+Every source layer file under `data/layers/` is identified by `fileSignature(path)` from `cache_io.cpp`.
+
+The signature is:
+
+- source file size
+- source file modification time
+
+If the source file is missing, the signature is a `missing:<filename>` sentinel, so an old cache file is not accepted as a substitute for absent source data.
+
+This signature is the invalidation key shared by hydration, triangulation, derived caches, and DuckDB analytics.
+
+## Startup Layer Scheduling
+
+On startup, `app_main_loop.cpp` enqueues every enabled layer for hydration.
+
+That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.msgpack`. If the cache exists, matches the source signature, and passes sanity checks, the worker streams cached features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
+
+Hydration always repopulates `layers[i].features` in RAM because render code, filters, hit testing, derived joins, and DuckDB rebuilds operate on runtime layer objects.
+
+## Hydration Cache
+
+Persistent path:
+
+```text
+data/cache/hydration/<layer-file>.msgpack
+```
+
+Writer:
+
+```text
+layer_workers.cpp -> saveHydrationCache()
+```
+
+Reader:
+
+```text
+layer_workers.cpp -> loadHydrationCache()
+```
+
+A hydration cache stores:
+
+- cache format version
+- source signature
+- feature extents
+- geometry rings
+- feature properties
+
+When a layer is rehydrated, the first hydration batch is marked as replacing existing runtime data. `layer_pipeline_drain.cpp` clears old `layers[i].features`, clears the spatial index, resets triangle provenance, and then appends the new batches. This prevents old and new source data from being mixed when a layer is downloaded or refreshed while the app is running.
+
+Runtime state records:
+
+- `hydration_source_signature`
+- `hydration_loaded_from_cache`
+
+## Triangulation Cache
+
+Persistent path:
+
+```text
+data/cache/triangulation/<layer-file>.tri.json
+```
+
+Writer:
+
+```text
+layer_workers.cpp -> saveTriCache()
+```
+
+Reader:
+
+```text
+layer_workers.cpp -> loadTriCache()
+```
+
+Triangulation jobs inherit the hydration source signature from the hydrated layer. The triangulation cache is accepted only when that signature and the feature count match. Results carry the same signature back into runtime state as `triangulation_source_signature`.
+
+This keeps fill geometry coupled to the exact source geometry that produced the hydrated features.
+
+## Derived Runtime Caches
+
+Derived caches are rebuilt in `derived_layer_caches.cpp`.
+
+The key derived data includes:
+
+- harmonized real-property records
+- vacant notice counts by blocklot
+- vacant rehab counts by blocklot
+- tax lien counts and amounts by blocklot
+- tax sale counts and amounts by blocklot
+- parcel-level vacancy/tax arrays
+- unified parcel records
+
+Invalidation uses propagated hydration source signatures, not only feature counts. This matters when a source file changes but keeps the same number of rows.
+
+The unified parcel cache is invalidated when any of these change:
+
+- parcel layer source signature
+- parcel feature count
+- harmonized real-property size
+- parcel vacancy generation
+- parcel tax generation
+
+The derived disk artifact currently written by this path is:
+
+```text
+data/cache/derived/parcel_vacancy_status.json
+```
+
+## DuckDB Analytics Cache
+
+Persistent path:
+
+```text
+data/worldsim.duckdb
+```
+
+Writer:
+
+```text
+duckdb_analytics.cpp -> DuckDbAnalytics::rebuild()
+```
+
+Reader:
+
+```text
+duckdb_analytics.cpp -> DuckDbAnalytics::executeMapQuery()
+```
+
+DuckDB is an analytics cache, not the render hydration cache. It is built from already hydrated runtime layers plus unified parcel records.
+
+The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied.
+
+Auto-rebuild waits until:
+
+- hydration requests are idle
+- the hydrated queue is empty
+- unified parcels exist
+
+When a hydrated layer's source signature changes after DuckDB has already been checked, the hydration drain marks DuckDB auto-rebuild as unchecked. The right panel can then rebuild DuckDB after the new runtime data and derived records settle.
+
+## Clear Cache Behavior
+
+The Performance panel exposes separate clear scopes:
+
+- hydration disk cache
+- triangulation disk cache
+- derived disk cache
+- heatmap aggregate disk cache
+- heatmap runtime cache
+- tile runtime cache
+- tile disk-presence memoization
+
+Clearing hydration data also clears runtime layer features, spatial indexes, queued hydration/triangulation work, runtime provenance signatures, and derived cache state, then re-enqueues enabled layers.
+
+Clearing only triangulation keeps hydrated features and schedules fresh triangulation using the hydrated layer source signature.
+
+## Important Distinction
+
+Seeing hydration progress on each startup is expected. It means runtime layer objects are being populated. If the hydration cache is valid, this path reads msgpack cache files instead of reparsing GeoJSON.
+
+DuckDB persists SQL-ready analytics tables, but it does not currently hydrate map-renderable layer geometry directly.

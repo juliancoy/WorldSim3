@@ -6,7 +6,25 @@
 #include "vacancy_overlay.h"
 
 #include <algorithm>
+#include <sstream>
 #include <unordered_set>
+
+namespace {
+std::string hydratedLayerSignature(
+    const std::vector<LayerDef>& layers,
+    const std::vector<LayerRuntimeState>* layer_states,
+    int layer_idx) {
+    if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return "missing";
+    if (layer_states && (size_t)layer_idx < layer_states->size() &&
+        !(*layer_states)[(size_t)layer_idx].hydration_source_signature.empty()) {
+        return (*layer_states)[(size_t)layer_idx].hydration_source_signature;
+    }
+    std::ostringstream fallback;
+    fallback << "runtime:" << layers[(size_t)layer_idx].file << ":"
+             << layers[(size_t)layer_idx].features.size();
+    return fallback.str();
+}
+}
 
 void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     if (!ctx.root || !ctx.layers || !ctx.app_settings || !ctx.zoning_metadata ||
@@ -15,8 +33,10 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.zoning_group_order || !ctx.zoning_zone_discovered_feature_count ||
         !ctx.real_property_by_blocklot || !ctx.harmonized_real_property_features ||
         !ctx.harmonized_real_property_source_files || !ctx.harmonized_real_property_signature || !ctx.cached_real_property_size ||
-        !ctx.cached_vac_notice_size || !ctx.cached_vac_rehab_size ||
-        !ctx.cached_tax_lien_size || !ctx.cached_tax_sale_size ||
+        !ctx.cached_vac_notice_size || !ctx.cached_vac_notice_signature ||
+        !ctx.cached_vac_rehab_size || !ctx.cached_vac_rehab_signature ||
+        !ctx.cached_tax_lien_size || !ctx.cached_tax_lien_signature ||
+        !ctx.cached_tax_sale_size || !ctx.cached_tax_sale_signature ||
         !ctx.vacant_notice_count_by_blocklot || !ctx.vacant_rehab_count_by_blocklot ||
         !ctx.tax_lien_count_by_blocklot || !ctx.tax_lien_amount_by_blocklot ||
         !ctx.tax_sale_count_by_blocklot || !ctx.tax_sale_amount_by_blocklot ||
@@ -28,7 +48,8 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.vacant_notice_rows_matched_total || !ctx.vacant_rehab_rows_matched_total ||
         !ctx.vacant_parcels_matched_total || !ctx.vacant_parcels_with_geometry_total ||
         !ctx.vacant_parcels_triangulated_renderable_total || !ctx.unified_parcels ||
-        !ctx.unified_parcel_cached_size || !ctx.unified_real_property_cached_size ||
+        !ctx.unified_parcel_cached_size || !ctx.unified_parcel_cached_signature ||
+        !ctx.unified_real_property_cached_size ||
         !ctx.unified_vacancy_generation_applied || !ctx.unified_tax_generation_applied ||
         !ctx.owner_aggregates_dirty) {
         return;
@@ -100,31 +121,36 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     }
     if (ctx.vacant_notice_layer_idx >= 0) {
         const auto& feats = layers[(size_t)ctx.vacant_notice_layer_idx].features;
-        if (feats.size() != *ctx.cached_vac_notice_size) {
+        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.vacant_notice_layer_idx);
+        if (feats.size() != *ctx.cached_vac_notice_size || sig != *ctx.cached_vac_notice_signature) {
             ctx.vacant_notice_count_by_blocklot->clear();
             for (const auto& fg : feats) {
                 std::string bl = normalizeJoinKey(getPropertyValue(fg, "BLOCKLOT"));
                 if (!bl.empty()) (*ctx.vacant_notice_count_by_blocklot)[bl] += 1;
             }
             *ctx.cached_vac_notice_size = feats.size();
+            *ctx.cached_vac_notice_signature = sig;
             *ctx.vacancy_maps_generation += 1;
         }
     }
     if (ctx.vacant_rehab_layer_idx >= 0) {
         const auto& feats = layers[(size_t)ctx.vacant_rehab_layer_idx].features;
-        if (feats.size() != *ctx.cached_vac_rehab_size) {
+        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.vacant_rehab_layer_idx);
+        if (feats.size() != *ctx.cached_vac_rehab_size || sig != *ctx.cached_vac_rehab_signature) {
             ctx.vacant_rehab_count_by_blocklot->clear();
             for (const auto& fg : feats) {
                 std::string bl = normalizeJoinKey(getPropertyValue(fg, "BLOCKLOT"));
                 if (!bl.empty()) (*ctx.vacant_rehab_count_by_blocklot)[bl] += 1;
             }
             *ctx.cached_vac_rehab_size = feats.size();
+            *ctx.cached_vac_rehab_signature = sig;
             *ctx.vacancy_maps_generation += 1;
         }
     }
     if (ctx.tax_lien_layer_idx >= 0) {
         const auto& feats = layers[(size_t)ctx.tax_lien_layer_idx].features;
-        if (feats.size() != *ctx.cached_tax_lien_size) {
+        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.tax_lien_layer_idx);
+        if (feats.size() != *ctx.cached_tax_lien_size || sig != *ctx.cached_tax_lien_signature) {
             ctx.tax_lien_count_by_blocklot->clear();
             ctx.tax_lien_amount_by_blocklot->clear();
             for (const auto& fg : feats) {
@@ -134,12 +160,14 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 (*ctx.tax_lien_amount_by_blocklot)[bl] += parseNumericField(getPropertyValue(fg, "TOTAL_AMOUNT"));
             }
             *ctx.cached_tax_lien_size = feats.size();
+            *ctx.cached_tax_lien_signature = sig;
             *ctx.tax_maps_generation += 1;
         }
     }
     if (ctx.tax_sale_layer_idx >= 0) {
         const auto& feats = layers[(size_t)ctx.tax_sale_layer_idx].features;
-        if (feats.size() != *ctx.cached_tax_sale_size) {
+        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.tax_sale_layer_idx);
+        if (feats.size() != *ctx.cached_tax_sale_size || sig != *ctx.cached_tax_sale_signature) {
             ctx.tax_sale_count_by_blocklot->clear();
             ctx.tax_sale_amount_by_blocklot->clear();
             for (const auto& fg : feats) {
@@ -152,11 +180,13 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 (*ctx.tax_sale_amount_by_blocklot)[bl] += amount;
             }
             *ctx.cached_tax_sale_size = feats.size();
+            *ctx.cached_tax_sale_signature = sig;
             *ctx.tax_maps_generation += 1;
         }
     }
     if (ctx.parcel_layer_idx >= 0) {
         const auto& pfeats = layers[(size_t)ctx.parcel_layer_idx].features;
+        const std::string parcel_sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.parcel_layer_idx);
         if (ctx.parcel_vac_notice_by_feature->size() != pfeats.size() ||
             ctx.parcel_vac_rehab_by_feature->size() != pfeats.size() ||
             *ctx.parcel_vacancy_generation_applied != *ctx.vacancy_maps_generation) {
@@ -219,6 +249,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         }
         const size_t real_property_size_for_unified = ctx.harmonized_real_property_features->size();
         if (*ctx.unified_parcel_cached_size != pfeats.size() ||
+            *ctx.unified_parcel_cached_signature != parcel_sig ||
             *ctx.unified_real_property_cached_size != real_property_size_for_unified ||
             *ctx.unified_vacancy_generation_applied != *ctx.parcel_vacancy_generation_applied ||
             *ctx.unified_tax_generation_applied != *ctx.parcel_tax_generation_applied) {
@@ -237,6 +268,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 ctx.parcel_tax_sale_amount_by_feature
             });
             *ctx.unified_parcel_cached_size = pfeats.size();
+            *ctx.unified_parcel_cached_signature = parcel_sig;
             *ctx.unified_real_property_cached_size = real_property_size_for_unified;
             *ctx.unified_vacancy_generation_applied = *ctx.parcel_vacancy_generation_applied;
             *ctx.unified_tax_generation_applied = *ctx.parcel_tax_generation_applied;

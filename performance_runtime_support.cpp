@@ -174,6 +174,9 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                         (*ctx.layer_states)[i].status = LayerPipelineStatus::Queued;
                         (*ctx.layer_states)[i].feature_count = 0;
                         (*ctx.layer_states)[i].error.clear();
+                        (*ctx.layer_states)[i].hydration_source_signature.clear();
+                        (*ctx.layer_states)[i].triangulation_source_signature.clear();
+                        (*ctx.layer_states)[i].hydration_loaded_from_cache = false;
                     }
                 }
             }
@@ -200,6 +203,9 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                 TriJob tj;
                 tj.index = i;
                 tj.file = (*ctx.layers)[i].file;
+                if (i < ctx.layer_states->size()) {
+                    tj.source_signature = (*ctx.layer_states)[i].hydration_source_signature;
+                }
                 tj.rings_per_feature.reserve((*ctx.layers)[i].features.size());
                 for (const auto& fg : (*ctx.layers)[i].features) tj.rings_per_feature.push_back(fg.rings);
                 {

@@ -19,12 +19,14 @@ struct LayerPipelineDrainContext {
     std::mutex* tri_mutex = nullptr;
     std::condition_variable* tri_cv = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
+    std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     std::mutex* status_mutex = nullptr;
     std::vector<bool>* hydration_requested = nullptr;
     std::mutex* hydrate_req_mutex = nullptr;
     std::vector<bool>* layer_profile_dirty = nullptr;
     std::atomic<size_t>* hydrated_count = nullptr;
     std::atomic<size_t>* triangulated_count = nullptr;
+    bool* duckdb_auto_rebuild_checked = nullptr;
     int parcel_layer_idx = -1;
     bool vacant_layer_active = false;
     std::function<void()> trim_process_heap;
