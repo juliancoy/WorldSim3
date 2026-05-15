@@ -1,10 +1,14 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -33,6 +37,10 @@ const std::vector<std::pair<std::string, std::vector<std::string>>> kFieldAliase
     {"year_built", {"year_built", "YEAR_BUILD", "YEARBUILT", "YR_BUILT", "BUILT", "BLDG_YEAR"}},
     {"sdat_link", {"sdat_link", "SDATLINK", "SDAT_LINK", "PROPERTY_LINK"}},
 };
+
+constexpr char kCanonicalMagic[8] = {'W', 'S', '3', 'C', 'A', 'N', '1', '\0'};
+constexpr uint32_t kCanonicalVersion = 1;
+constexpr size_t kCanonicalSignatureBytes = 256;
 
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
@@ -76,6 +84,169 @@ std::string normKey(const json& v) {
     }
     return out;
 }
+
+bool writeExact(std::ostream& out, const void* src, size_t n) {
+    out.write(static_cast<const char*>(src), static_cast<std::streamsize>(n));
+    return bool(out);
+}
+
+bool writeU32(std::ostream& out, uint32_t v) {
+    const uint8_t b[4] = {
+        static_cast<uint8_t>(v & 0xffu),
+        static_cast<uint8_t>((v >> 8) & 0xffu),
+        static_cast<uint8_t>((v >> 16) & 0xffu),
+        static_cast<uint8_t>((v >> 24) & 0xffu),
+    };
+    return writeExact(out, b, sizeof(b));
+}
+
+bool writeU64(std::ostream& out, uint64_t v) {
+    const uint8_t b[8] = {
+        static_cast<uint8_t>(v & 0xffu),
+        static_cast<uint8_t>((v >> 8) & 0xffu),
+        static_cast<uint8_t>((v >> 16) & 0xffu),
+        static_cast<uint8_t>((v >> 24) & 0xffu),
+        static_cast<uint8_t>((v >> 32) & 0xffu),
+        static_cast<uint8_t>((v >> 40) & 0xffu),
+        static_cast<uint8_t>((v >> 48) & 0xffu),
+        static_cast<uint8_t>((v >> 56) & 0xffu),
+    };
+    return writeExact(out, b, sizeof(b));
+}
+
+bool writeFloat(std::ostream& out, float v) {
+    uint32_t bits = 0;
+    static_assert(sizeof(float) == sizeof(uint32_t));
+    std::memcpy(&bits, &v, sizeof(bits));
+    return writeU32(out, bits);
+}
+
+bool writeString(std::ostream& out, const std::string& s) {
+    if (s.size() > UINT32_MAX) return false;
+    return writeU32(out, static_cast<uint32_t>(s.size())) &&
+           (s.empty() || writeExact(out, s.data(), s.size()));
+}
+
+std::string propertyValueString(const json& v) {
+    if (v.is_null()) return "";
+    if (v.is_string()) return v.get<std::string>();
+    return v.dump();
+}
+
+std::string fileSignatureForPath(const fs::path& p) {
+    std::error_code size_ec;
+    auto sz = fs::file_size(p, size_ec);
+    if (size_ec) return "missing:" + p.filename().string();
+    std::error_code time_ec;
+    auto wt = fs::last_write_time(p, time_ec);
+    if (time_ec) return std::to_string((unsigned long long)sz) + "_mtime_unavailable";
+    const auto ticks = wt.time_since_epoch().count();
+    return std::to_string((unsigned long long)sz) + "_" + std::to_string((long long)ticks);
+}
+
+template <class Fn>
+void forEachHydratedGeom(const json& geom, Fn&& fn) {
+    if (!geom.contains("type") || !geom.contains("coordinates")) return;
+    const std::string t = geom["type"].get<std::string>();
+    auto emit_polygon = [&](const json& poly_coords) {
+        std::vector<std::vector<std::pair<float, float>>> rings;
+        rings.reserve(poly_coords.size());
+        for (const auto& ring_json : poly_coords) {
+            std::vector<std::pair<float, float>> ring;
+            ring.reserve(ring_json.size());
+            for (const auto& p : ring_json) {
+                if (!p.is_array() || p.size() < 2) continue;
+                ring.push_back({p[0].get<float>(), p[1].get<float>()});
+            }
+            if (ring.size() >= 3) rings.push_back(std::move(ring));
+        }
+        if (!rings.empty()) fn(rings);
+    };
+
+    if (t == "Polygon") {
+        emit_polygon(geom["coordinates"]);
+    } else if (t == "MultiPolygon") {
+        for (const auto& poly : geom["coordinates"]) emit_polygon(poly);
+    }
+}
+
+struct CanonicalBinaryWriter {
+    fs::path path;
+    std::ofstream out;
+    uint64_t feature_count = 0;
+
+    explicit CanonicalBinaryWriter(const fs::path& p) : path(p), out(p, std::ios::binary | std::ios::trunc) {}
+
+    bool begin() {
+        if (!out) return false;
+        const uint32_t endian = 0x01020304u;
+        const uint64_t zero_count = 0;
+        const std::array<char, kCanonicalSignatureBytes> zero_sig{};
+        return writeExact(out, kCanonicalMagic, sizeof(kCanonicalMagic)) &&
+               writeU32(out, kCanonicalVersion) &&
+               writeU32(out, endian) &&
+               writeU64(out, zero_count) &&
+               writeExact(out, zero_sig.data(), zero_sig.size());
+    }
+
+    bool appendFeature(const json& geom, const json& props) {
+        bool ok = true;
+        forEachHydratedGeom(geom, [&](const std::vector<std::vector<std::pair<float, float>>>& rings) {
+            if (!ok) return;
+            float min_lon = 0.0f, min_lat = 0.0f, max_lon = 0.0f, max_lat = 0.0f;
+            bool has = false;
+            for (const auto& ring : rings) {
+                for (const auto& [lon, lat] : ring) {
+                    if (!has) {
+                        min_lon = max_lon = lon;
+                        min_lat = max_lat = lat;
+                        has = true;
+                    } else {
+                        min_lon = std::min(min_lon, lon);
+                        min_lat = std::min(min_lat, lat);
+                        max_lon = std::max(max_lon, lon);
+                        max_lat = std::max(max_lat, lat);
+                    }
+                }
+            }
+            if (!has) return;
+            ok = writeFloat(out, min_lon) &&
+                 writeFloat(out, min_lat) &&
+                 writeFloat(out, max_lon) &&
+                 writeFloat(out, max_lat) &&
+                 writeU32(out, static_cast<uint32_t>(rings.size()));
+            for (const auto& ring : rings) {
+                ok = ok && writeU32(out, static_cast<uint32_t>(ring.size()));
+                for (const auto& [lon, lat] : ring) {
+                    ok = ok && writeFloat(out, lon) && writeFloat(out, lat);
+                }
+            }
+            const uint32_t property_count = props.is_object() ? static_cast<uint32_t>(props.size()) : 0u;
+            ok = ok && writeU32(out, property_count);
+            if (props.is_object()) {
+                for (auto it = props.begin(); ok && it != props.end(); ++it) {
+                    ok = writeString(out, it.key()) && writeString(out, propertyValueString(it.value()));
+                }
+            }
+            if (ok) ++feature_count;
+        });
+        return ok;
+    }
+
+    bool finalize(const std::string& sig) {
+        if (!out) return false;
+        out.flush();
+        if (!out) return false;
+        out.seekp(16, std::ios::beg);
+        if (!writeU64(out, feature_count)) return false;
+        std::array<char, kCanonicalSignatureBytes> sig_buf{};
+        const size_t n = std::min(sig.size(), sig_buf.size() - 1);
+        std::memcpy(sig_buf.data(), sig.data(), n);
+        if (!writeExact(out, sig_buf.data(), sig_buf.size())) return false;
+        out.flush();
+        return bool(out);
+    }
+};
 
 json firstProp(const json& props, const std::vector<std::string>& keys) {
     if (!props.is_object()) return json();
@@ -203,8 +374,22 @@ int main(int argc, char** argv) {
             }
         }
 
-        json features = json::array();
         json counts = json::object();
+        json fields = json::array({"jurisdiction", "source_file", "regional_parcel_id"});
+        for (const auto& [field, _] : kFieldAliases) fields.push_back(field);
+
+        fs::create_directories(output.parent_path());
+        std::ofstream out_file(output);
+        if (!out_file) throw std::runtime_error("failed to open output " + output.string());
+        const fs::path canonical_output = fs::path(output.string() + ".canonical.bin");
+        CanonicalBinaryWriter canonical_writer(canonical_output);
+        if (!canonical_writer.begin()) {
+            throw std::runtime_error("failed to open canonical binary output " + canonical_output.string());
+        }
+        out_file << "{\"type\":\"FeatureCollection\",\"name\":\"regional_parcels\",\"features\":[";
+
+        bool wrote_feature = false;
+        size_t feature_count = 0;
         for (const auto& spec : inputs) {
             json fc = readFeatureCollection(spec.path);
             counts[spec.jurisdiction] = fc["features"].size();
@@ -222,34 +407,37 @@ int main(int argc, char** argv) {
                     if (prop_it != jur_it->second.end()) joined = &prop_it->second;
                 }
                 json regional_props = canonicalProps(spec.jurisdiction, spec.path, props, joined);
-                features.push_back({
+                json out_feature = {
                     {"type", "Feature"},
                     {"id", regional_props["regional_parcel_id"]},
                     {"properties", std::move(regional_props)},
                     {"geometry", feature["geometry"]}
-                });
+                };
+                if (wrote_feature) out_file << ',';
+                out_file << out_feature.dump();
+                if (!canonical_writer.appendFeature(feature["geometry"], out_feature["properties"])) {
+                    throw std::runtime_error("failed to append canonical binary feature");
+                }
+                wrote_feature = true;
+                ++feature_count;
             }
         }
-
-        json fields = json::array({"jurisdiction", "source_file", "regional_parcel_id"});
-        for (const auto& [field, _] : kFieldAliases) fields.push_back(field);
-        json out = {
-            {"type", "FeatureCollection"},
-            {"name", "regional_parcels"},
-            {"metadata", {
-                {"schema_version", 1},
-                {"generated_by", "worldsim_regional_parcel_builder"},
-                {"source_counts", counts},
-                {"canonical_fields", fields}
-            }},
-            {"features", std::move(features)}
-        };
-
-        fs::create_directories(output.parent_path());
-        std::ofstream out_file(output);
-        if (!out_file) throw std::runtime_error("failed to open output " + output.string());
-        out_file << out.dump();
-        std::cout << "wrote " << output << " with " << out["features"].size() << " features\n";
+        out_file << "],\"metadata\":"
+                 << json({
+                        {"schema_version", 1},
+                        {"generated_by", "worldsim_regional_parcel_builder"},
+                        {"source_counts", counts},
+                        {"canonical_fields", fields}
+                    }).dump()
+                 << "}";
+        out_file.flush();
+        if (!out_file) throw std::runtime_error("failed to finish writing " + output.string());
+        out_file.close();
+        const std::string output_sig = fileSignatureForPath(output);
+        if (!canonical_writer.finalize(output_sig)) {
+            throw std::runtime_error("failed to finalize canonical binary output " + canonical_output.string());
+        }
+        std::cout << "wrote " << output << " with " << feature_count << " features\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

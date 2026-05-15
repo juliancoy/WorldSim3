@@ -285,6 +285,104 @@ int runProjectionColorCacheSelftest() {
     return out["ok"].get<bool>() ? 0 : 1;
 }
 
+int runParcelRenderCacheSelftest(const fs::path& root) {
+    std::vector<LayerDef::FeatureGeom> features;
+
+    LayerDef::FeatureGeom a;
+    a.extent.min_lon = -76.7f;
+    a.extent.min_lat = 39.2f;
+    a.extent.max_lon = -76.6f;
+    a.extent.max_lat = 39.3f;
+    a.rings.push_back({
+        ImVec2(-76.7f, 39.2f),
+        ImVec2(-76.6f, 39.2f),
+        ImVec2(-76.6f, 39.3f),
+        ImVec2(-76.7f, 39.3f)
+    });
+    a.triangles = {0, 1, 2, 0, 2, 3};
+    features.push_back(a);
+
+    LayerDef::FeatureGeom b;
+    b.extent.min_lon = -76.5f;
+    b.extent.min_lat = 39.1f;
+    b.extent.max_lon = -76.4f;
+    b.extent.max_lat = 39.2f;
+    b.rings.push_back({
+        ImVec2(-76.5f, 39.1f),
+        ImVec2(-76.4f, 39.1f),
+        ImVec2(-76.4f, 39.2f),
+        ImVec2(-76.5f, 39.2f)
+    });
+    b.triangles = {0, 1, 2, 0, 2, 3};
+    features.push_back(b);
+
+    LayerDef::FeatureGeom skipped;
+    skipped.extent.min_lon = -76.3f;
+    skipped.extent.min_lat = 39.0f;
+    skipped.extent.max_lon = -76.2f;
+    skipped.extent.max_lat = 39.1f;
+    skipped.rings.push_back({
+        ImVec2(-76.3f, 39.0f),
+        ImVec2(-76.2f, 39.0f),
+        ImVec2(-76.2f, 39.1f),
+        ImVec2(-76.3f, 39.1f)
+    });
+    features.push_back(skipped);
+
+    const std::string sig = "parcel_render_selftest_sig";
+    ParcelRenderCacheBlob blob;
+    const bool built = buildParcelRenderCacheBlob(features, sig, blob, 1);
+    const fs::path test_dir = root / "data" / "cache" / "selftest";
+    const fs::path cache_path = test_dir / "parcel_render_cache_selftest.bin";
+    if (built) saveBinaryParcelRenderCache(cache_path, blob);
+
+    ParcelRenderCacheBlob loaded;
+    const bool loaded_ok = built && loadBinaryParcelRenderCache(cache_path, sig, loaded);
+    ParcelRenderCacheBlob stale;
+    const bool stale_rejected = !loadBinaryParcelRenderCache(cache_path, "wrong_sig", stale);
+    const bool same =
+        loaded_ok &&
+        loaded.source_signature == sig &&
+        loaded.vertices.size() == 8 &&
+        loaded.vertex_feature_refs.size() == 8 &&
+        loaded.indices.size() == 12 &&
+        loaded.line_indices.size() == 16 &&
+        loaded.features.size() == 2 &&
+        loaded.chunks.size() == 2 &&
+        loaded.features[0].feature_idx == 0 &&
+        loaded.features[1].feature_idx == 1 &&
+        loaded.chunks[0].feature_count == 1 &&
+        loaded.chunks[1].feature_count == 1 &&
+        loaded.features[0].line_index_count == 8 &&
+        loaded.features[1].line_index_count == 8 &&
+        loaded.vertex_feature_refs[0] == 0 &&
+        loaded.vertex_feature_refs[4] == 1 &&
+        loaded.indices[0] == 0 &&
+        loaded.indices[6] == 4 &&
+        loaded.line_indices[0] == 0 &&
+        loaded.line_indices[8] == 4;
+
+    std::error_code ec;
+    fs::remove(cache_path, ec);
+    fs::remove(test_dir, ec);
+
+    json out = {
+        {"mode", "parcel-render-cache-selftest"},
+        {"ok", built && same && stale_rejected},
+        {"built", built},
+        {"loaded", loaded_ok},
+        {"vertex_count", loaded.vertices.size()},
+        {"vertex_feature_ref_count", loaded.vertex_feature_refs.size()},
+        {"index_count", loaded.indices.size()},
+        {"line_index_count", loaded.line_indices.size()},
+        {"feature_records", loaded.features.size()},
+        {"chunk_records", loaded.chunks.size()},
+        {"stale_signature_rejected", stale_rejected}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
 int runTriangulationApplySelftest() {
     std::vector<LayerDef> layers(1);
     layers[0].file = "tri_apply_selftest.geojson";
@@ -783,6 +881,140 @@ int warmTriangulationCacheAll(const fs::path& root) {
     std::cout << out.dump(2) << '\n';
     return failed_count == 0 ? 0 : 1;
 }
+
+json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
+    exit_code = 0;
+    if (!isBareLayerFilename(file)) {
+        exit_code = 2;
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", false},
+            {"error", "requires a layer filename, not a path"}
+        };
+    }
+
+    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
+    const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
+    const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
+    const std::string sig = fileSignature(layer_path);
+
+    std::vector<LayerDef::FeatureGeom> features;
+    if (!loadBinaryHydrationCache(hydration_path, sig, features)) {
+        exit_code = 1;
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", false},
+            {"source_signature", sig},
+            {"error", "no valid binary hydration cache"}
+        };
+    }
+
+    std::vector<std::vector<uint32_t>> tris;
+    if (!loadBinaryTriCache(tri_path, sig, features.size(), tris)) {
+        exit_code = 1;
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", false},
+            {"source_signature", sig},
+            {"hydrated_features", features.size()},
+            {"error", "no valid binary triangulation cache"}
+        };
+    }
+
+    const size_t feature_count = std::min(features.size(), tris.size());
+    for (size_t i = 0; i < feature_count; ++i) features[i].triangles = std::move(tris[i]);
+
+    ParcelRenderCacheBlob blob;
+    const bool built = buildParcelRenderCacheBlob(features, sig, blob);
+    if (!built) {
+        exit_code = 1;
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", false},
+            {"source_signature", sig},
+            {"hydrated_features", features.size()},
+            {"error", "failed to build parcel render cache blob"}
+        };
+    }
+
+    saveBinaryParcelRenderCache(render_path, blob);
+    ParcelRenderCacheBlob verify;
+    const bool verify_ok = loadBinaryParcelRenderCache(render_path, sig, verify);
+    const bool ok =
+        verify_ok &&
+        verify.source_signature == sig &&
+        verify.vertices.size() == blob.vertices.size() &&
+        verify.indices.size() == blob.indices.size() &&
+        verify.features.size() == blob.features.size() &&
+        verify.chunks.size() == blob.chunks.size();
+    if (!ok) exit_code = 1;
+
+    return {
+        {"mode", "warm-parcel-render-cache"},
+        {"file", file},
+        {"ok", ok},
+        {"source_signature", sig},
+        {"hydrated_features", features.size()},
+        {"render_features", blob.features.size()},
+        {"vertices", blob.vertices.size()},
+        {"indices", blob.indices.size()},
+        {"chunks", blob.chunks.size()},
+        {"cache_path", render_path.string()}
+    };
+}
+
+int warmParcelRenderCache(const fs::path& root, const std::string& file) {
+    int exit_code = 0;
+    const json out = warmParcelRenderCacheOne(root, file, exit_code);
+    std::cout << out.dump(2) << '\n';
+    return exit_code;
+}
+
+int warmParcelRenderCacheAll(const fs::path& root) {
+    const fs::path tri_dir = root / "data" / "cache" / "triangulation";
+    std::error_code ec;
+    if (!fs::exists(tri_dir, ec)) {
+        std::cerr << "triangulation cache directory missing: " << tri_dir << '\n';
+        return 2;
+    }
+
+    std::vector<std::string> candidates;
+    for (const auto& entry : fs::directory_iterator(tri_dir, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file()) continue;
+        const std::string name = entry.path().filename().string();
+        if (name.ends_with(".tri.bin")) candidates.push_back(name.substr(0, name.size() - std::strlen(".tri.bin")));
+    }
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+
+    json results = json::array();
+    size_t ok_count = 0;
+    size_t failed_count = 0;
+    for (const std::string& file : candidates) {
+        int one_exit = 0;
+        json one = warmParcelRenderCacheOne(root, file, one_exit);
+        results.push_back(one);
+        if (one_exit == 0) ok_count += 1;
+        else failed_count += 1;
+    }
+
+    json out = {
+        {"mode", "warm-parcel-render-cache-all"},
+        {"ok", failed_count == 0},
+        {"candidate_count", candidates.size()},
+        {"ok_count", ok_count},
+        {"failed_count", failed_count},
+        {"results", std::move(results)}
+    };
+    std::cout << out.dump(2) << '\n';
+    return failed_count == 0 ? 0 : 1;
+}
 }
 
 WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
@@ -811,6 +1043,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--projection-color-cache-selftest") {
             options.run_projection_color_cache_selftest = true;
+            continue;
+        }
+        if (arg == "--parcel-render-cache-selftest") {
+            options.run_parcel_render_cache_selftest = true;
             continue;
         }
         if (arg == "--triangulation-apply-selftest") {
@@ -847,6 +1083,17 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_warm_triangulation_cache_all = true;
             continue;
         }
+        if (arg == "--warm-parcel-render-cache") {
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                options.run_warm_parcel_render_cache = true;
+                options.warm_parcel_render_cache_file = argv[++i];
+            }
+            continue;
+        }
+        if (arg == "--warm-parcel-render-cache-all") {
+            options.run_warm_parcel_render_cache_all = true;
+            continue;
+        }
         if (arg.rfind("--warm-hydration-cache=", 0) == 0) {
             options.run_warm_hydration_cache = true;
             options.warm_hydration_cache_file = arg.substr(std::strlen("--warm-hydration-cache="));
@@ -855,6 +1102,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--warm-triangulation-cache=", 0) == 0) {
             options.run_warm_triangulation_cache = true;
             options.warm_triangulation_cache_file = arg.substr(std::strlen("--warm-triangulation-cache="));
+            continue;
+        }
+        if (arg.rfind("--warm-parcel-render-cache=", 0) == 0) {
+            options.run_warm_parcel_render_cache = true;
+            options.warm_parcel_render_cache_file = arg.substr(std::strlen("--warm-parcel-render-cache="));
             continue;
         }
         if (arg == "--download-layers") {
@@ -918,11 +1170,14 @@ void printWorldsimUsage() {
         << "       worldsim3 --warm-hydration-cache-all\n"
         << "       worldsim3 --warm-triangulation-cache LAYER_FILE\n"
         << "       worldsim3 --warm-triangulation-cache-all\n"
+        << "       worldsim3 --warm-parcel-render-cache LAYER_FILE\n"
+        << "       worldsim3 --warm-parcel-render-cache-all\n"
         << "       worldsim3 --hydration-cache-selftest\n"
         << "       worldsim3 --triangulation-cache-selftest\n"
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
+        << "       worldsim3 --parcel-render-cache-selftest\n"
         << "       worldsim3 --triangulation-apply-selftest\n"
         << "       worldsim3 --spatial-index-selftest\n"
         << "       worldsim3 --layer-profile-selftest\n"
@@ -952,6 +1207,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_projection_color_cache_selftest) {
         return runProjectionColorCacheSelftest();
     }
+    if (options.run_parcel_render_cache_selftest) {
+        return runParcelRenderCacheSelftest(root);
+    }
     if (options.run_triangulation_apply_selftest) {
         return runTriangulationApplySelftest();
     }
@@ -972,6 +1230,12 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_warm_triangulation_cache_all) {
         return warmTriangulationCacheAll(root);
+    }
+    if (options.run_warm_parcel_render_cache) {
+        return warmParcelRenderCache(root, options.warm_parcel_render_cache_file);
+    }
+    if (options.run_warm_parcel_render_cache_all) {
+        return warmParcelRenderCacheAll(root);
     }
     if (options.run_download_layers) {
         return runLayerDownloadCli(

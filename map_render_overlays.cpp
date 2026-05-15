@@ -1,6 +1,7 @@
 #include "map_render_overlays.h"
 
 #include "map_render_utils.h"
+#include "worldsim_app.h"
 
 #include <algorithm>
 #include <cmath>
@@ -70,6 +71,13 @@ void drawParcelOverlayRings(
     const LayerDef::FeatureGeom& fg,
     const std::vector<std::vector<ImVec2>>& world_rings,
     ImU32 outline) {
+    if (parcelGpuOutlineDrawActive()) {
+        (void)ctx;
+        (void)fg;
+        (void)world_rings;
+        (void)outline;
+        return;
+    }
     for (const auto& r : world_rings) {
         ctx.projection->appendWorldRingLine(r);
         const auto& scratch_line = ctx.projection->scratchLine();
@@ -104,8 +112,8 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             max_v = std::max(max_v, v);
         }
         const bool range_valid = std::isfinite(min_v) && std::isfinite(max_v) && max_v > min_v;
-        if (range_valid) {
-            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+            if (range_valid) {
+                for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
                 auto& fg = parcel_layer.features[i];
                 if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
                 if (!featureOnScreen(ctx, ctx.parcel_layer_idx, (uint32_t)i, fg)) continue;
@@ -115,15 +123,17 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
                 const float t = applyPowerGamma(
                     std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f),
                     ctx.parcel_choropleth_gamma);
-                ctx.projection->drawTessellatedFill(
-                    ctx.draw,
-                    ctx.parcel_layer_idx,
-                    (uint32_t)i,
-                    fg,
-                    colorWithAlpha(heatColor(t), 150));
+                    if (!parcelGpuOverlayDrawActive()) {
+                        ctx.projection->drawTessellatedFill(
+                            ctx.draw,
+                            ctx.parcel_layer_idx,
+                            (uint32_t)i,
+                            fg,
+                            colorWithAlpha(heatColor(t), 150));
+                    }
+                }
             }
         }
-    }
 
     if (ctx.vacant_notice_enabled || ctx.vacant_rehab_enabled) {
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
@@ -145,7 +155,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const ImU32 vac_outline = colorWithAlpha(darkenColor(vac_base, 0.62f), 235);
             const bool notice_fill = layerFillEnabled(ctx, ctx.vacant_notice_layer_idx);
             const bool rehab_fill = layerFillEnabled(ctx, ctx.vacant_rehab_layer_idx);
-            if ((notice_fill || rehab_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
+            if ((notice_fill || rehab_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx) && !parcelGpuOverlayDrawActive()) {
                 ctx.projection->drawTessellatedFill(ctx.draw, ctx.parcel_layer_idx, (uint32_t)i, fg, vac_fill);
             }
             drawParcelOverlayRings(ctx, fg, world_rings, vac_outline);
@@ -170,7 +180,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
             const bool lien_fill = ctx.tax_lien_enabled && layerFillEnabled(ctx, ctx.tax_lien_layer_idx);
             const bool sale_fill = ctx.tax_sale_enabled && layerFillEnabled(ctx, ctx.tax_sale_layer_idx);
-            if ((lien_fill || sale_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
+            if ((lien_fill || sale_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx) && !parcelGpuOverlayDrawActive()) {
                 const int alpha = scaledOverlayAlpha(90, 10, 90, 210, weight);
                 ctx.projection->drawTessellatedFill(
                     ctx.draw,

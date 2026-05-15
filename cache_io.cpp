@@ -37,6 +37,15 @@ constexpr uint32_t kMaxBinaryHydrationStringBytes = 64u * 1024u * 1024u;
 constexpr std::array<char, 8> kTriBinaryMagic{{'W', 'S', '3', 'T', 'R', 'I', '2', '\0'}};
 constexpr uint32_t kTriBinaryVersion = 1;
 constexpr uint32_t kMaxBinaryTriIndicesPerFeature = 20000000u;
+constexpr std::array<char, 8> kParcelRenderBinaryMagic{{'W', 'S', '3', 'P', 'R', 'D', '1', '\0'}};
+constexpr uint32_t kParcelRenderBinaryVersion = 2;
+constexpr uint32_t kMaxParcelRenderVertices = 400000000u;
+constexpr uint32_t kMaxParcelRenderIndices = 1200000000u;
+constexpr uint32_t kMaxParcelRenderFeatures = 10000000u;
+constexpr uint32_t kMaxParcelRenderChunks = 100000u;
+constexpr std::array<char, 8> kCanonicalFeatureBinaryMagic{{'W', 'S', '3', 'C', 'A', 'N', '1', '\0'}};
+constexpr uint32_t kCanonicalFeatureBinaryVersion = 1;
+constexpr size_t kCanonicalFeatureSignatureBytes = 256;
 
 bool hostIsLittleEndian() {
     const uint16_t v = 1;
@@ -127,6 +136,48 @@ bool writeString(std::ostream& out, const std::string& s) {
     if (s.size() > std::numeric_limits<uint32_t>::max()) return false;
     if (!writeU32(out, static_cast<uint32_t>(s.size()))) return false;
     return s.empty() || writeExact(out, s.data(), s.size());
+}
+
+struct FlattenedParcelFeature {
+    std::vector<ImVec2> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<uint32_t> line_indices;
+};
+
+bool flattenParcelFeatureForRender(const LayerDef::FeatureGeom& fg, FlattenedParcelFeature& out) {
+    out.vertices.clear();
+    out.indices.clear();
+    out.line_indices.clear();
+    if (fg.rings.empty() || fg.triangles.empty()) return false;
+    size_t total_points = 0;
+    for (const auto& ring : fg.rings) total_points += ring.size();
+    if (total_points == 0 || total_points > std::numeric_limits<uint32_t>::max()) return false;
+    out.vertices.reserve(total_points);
+    size_t ring_vertex_offset = 0;
+    for (const auto& ring : fg.rings) {
+        out.vertices.insert(out.vertices.end(), ring.begin(), ring.end());
+        if (ring.size() >= 2) {
+            out.line_indices.reserve(out.line_indices.size() + ring.size() * 2);
+            for (size_t i = 0; i < ring.size(); ++i) {
+                const uint32_t a = static_cast<uint32_t>(ring_vertex_offset + i);
+                const uint32_t b = static_cast<uint32_t>(ring_vertex_offset + ((i + 1) % ring.size()));
+                out.line_indices.push_back(a);
+                out.line_indices.push_back(b);
+            }
+        }
+        ring_vertex_offset += ring.size();
+    }
+    out.indices.reserve(fg.triangles.size());
+    for (size_t ti = 0; ti + 2 < fg.triangles.size(); ti += 3) {
+        const uint32_t a = fg.triangles[ti + 0];
+        const uint32_t b = fg.triangles[ti + 1];
+        const uint32_t c = fg.triangles[ti + 2];
+        if (a >= out.vertices.size() || b >= out.vertices.size() || c >= out.vertices.size()) continue;
+        out.indices.push_back(a);
+        out.indices.push_back(b);
+        out.indices.push_back(c);
+    }
+    return !out.vertices.empty() && !out.indices.empty() && !out.line_indices.empty();
 }
 }
 
@@ -477,4 +528,303 @@ void saveBinaryTriCache(const fs::path& cache_path, const std::string& sig, cons
         fs::rename(tmp_path, cache_path, rename_ec);
         if (rename_ec) fs::remove(tmp_path, remove_ec);
     }
+}
+
+bool buildParcelRenderCacheBlob(
+    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::string& sig,
+    ParcelRenderCacheBlob& out,
+    size_t chunk_feature_budget) {
+    if (chunk_feature_budget == 0 || chunk_feature_budget > std::numeric_limits<uint32_t>::max()) return false;
+    out = ParcelRenderCacheBlob{};
+    out.source_signature = sig;
+    out.features.reserve(features.size());
+    out.chunks.reserve((features.size() / chunk_feature_budget) + 1);
+
+    FlattenedParcelFeature flattened;
+    ParcelRenderChunkRecord current_chunk{};
+    bool chunk_open = false;
+    for (size_t feature_idx = 0; feature_idx < features.size(); ++feature_idx) {
+        if (!flattenParcelFeatureForRender(features[feature_idx], flattened)) continue;
+        if (out.vertices.size() + flattened.vertices.size() > kMaxParcelRenderVertices) return false;
+        if (out.indices.size() + flattened.indices.size() > kMaxParcelRenderIndices) return false;
+        if (out.line_indices.size() + flattened.line_indices.size() > kMaxParcelRenderIndices) return false;
+        if (out.features.size() >= kMaxParcelRenderFeatures) return false;
+
+        if (!chunk_open || current_chunk.feature_count >= chunk_feature_budget) {
+            if (chunk_open) out.chunks.push_back(current_chunk);
+            current_chunk = ParcelRenderChunkRecord{};
+            current_chunk.chunk_idx = static_cast<uint32_t>(out.chunks.size());
+            current_chunk.feature_offset = static_cast<uint32_t>(out.features.size());
+            current_chunk.vertex_offset = static_cast<uint32_t>(out.vertices.size());
+            current_chunk.index_offset = static_cast<uint32_t>(out.indices.size());
+            current_chunk.line_index_offset = static_cast<uint32_t>(out.line_indices.size());
+            current_chunk.min_lon = features[feature_idx].extent.min_lon;
+            current_chunk.min_lat = features[feature_idx].extent.min_lat;
+            current_chunk.max_lon = features[feature_idx].extent.max_lon;
+            current_chunk.max_lat = features[feature_idx].extent.max_lat;
+            chunk_open = true;
+        } else {
+            current_chunk.min_lon = std::min(current_chunk.min_lon, features[feature_idx].extent.min_lon);
+            current_chunk.min_lat = std::min(current_chunk.min_lat, features[feature_idx].extent.min_lat);
+            current_chunk.max_lon = std::max(current_chunk.max_lon, features[feature_idx].extent.max_lon);
+            current_chunk.max_lat = std::max(current_chunk.max_lat, features[feature_idx].extent.max_lat);
+        }
+
+        ParcelRenderFeatureRecord rec{};
+        rec.feature_idx = static_cast<uint32_t>(feature_idx);
+        rec.vertex_offset = static_cast<uint32_t>(out.vertices.size());
+        rec.vertex_count = static_cast<uint32_t>(flattened.vertices.size());
+        rec.index_offset = static_cast<uint32_t>(out.indices.size());
+        rec.index_count = static_cast<uint32_t>(flattened.indices.size());
+        rec.line_index_offset = static_cast<uint32_t>(out.line_indices.size());
+        rec.line_index_count = static_cast<uint32_t>(flattened.line_indices.size());
+        rec.min_lon = features[feature_idx].extent.min_lon;
+        rec.min_lat = features[feature_idx].extent.min_lat;
+        rec.max_lon = features[feature_idx].extent.max_lon;
+        rec.max_lat = features[feature_idx].extent.max_lat;
+
+        out.vertices.insert(out.vertices.end(), flattened.vertices.begin(), flattened.vertices.end());
+        out.vertex_feature_refs.insert(
+            out.vertex_feature_refs.end(),
+            flattened.vertices.size(),
+            static_cast<uint32_t>(out.features.size()));
+        for (uint32_t idx : flattened.indices) out.indices.push_back(idx + rec.vertex_offset);
+        for (uint32_t idx : flattened.line_indices) out.line_indices.push_back(idx + rec.vertex_offset);
+        out.features.push_back(rec);
+        current_chunk.feature_count += 1;
+        current_chunk.vertex_count += rec.vertex_count;
+        current_chunk.index_count += rec.index_count;
+        current_chunk.line_index_count += rec.line_index_count;
+    }
+    if (chunk_open) out.chunks.push_back(current_chunk);
+    if (out.chunks.size() > kMaxParcelRenderChunks) return false;
+    return true;
+}
+
+bool loadBinaryParcelRenderCache(const fs::path& cache_path, const std::string& sig, ParcelRenderCacheBlob& out) {
+    std::ifstream in(cache_path, std::ios::binary);
+    if (!in) return false;
+    std::array<char, 8> magic{};
+    if (!readExact(in, magic.data(), magic.size()) || magic != kParcelRenderBinaryMagic) return false;
+    uint32_t version = 0;
+    if (!readU32(in, version) || version != kParcelRenderBinaryVersion) return false;
+    uint32_t endian_marker = 0;
+    if (!readU32(in, endian_marker) || endian_marker != 0x01020304u) return false;
+    std::string stored_sig;
+    if (!readString(in, stored_sig) || stored_sig != sig) return false;
+
+    uint32_t vertex_count = 0;
+    uint32_t index_count = 0;
+    uint32_t line_index_count = 0;
+    uint32_t feature_count = 0;
+    uint32_t chunk_count = 0;
+    if (!readU32(in, vertex_count) || vertex_count > kMaxParcelRenderVertices) return false;
+    if (!readU32(in, index_count) || index_count > kMaxParcelRenderIndices) return false;
+    if (!readU32(in, line_index_count) || line_index_count > kMaxParcelRenderIndices) return false;
+    if (!readU32(in, feature_count) || feature_count > kMaxParcelRenderFeatures) return false;
+    if (!readU32(in, chunk_count) || chunk_count > kMaxParcelRenderChunks) return false;
+
+    out = ParcelRenderCacheBlob{};
+    out.source_signature = std::move(stored_sig);
+    out.vertices.resize(vertex_count);
+    out.vertex_feature_refs.resize(vertex_count);
+    out.indices.resize(index_count);
+    out.line_indices.resize(line_index_count);
+    out.features.resize(feature_count);
+    out.chunks.resize(chunk_count);
+
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+        if (!readFloat(in, out.vertices[i].x) || !readFloat(in, out.vertices[i].y)) return false;
+    }
+    for (uint32_t i = 0; i < vertex_count; ++i) {
+        if (!readU32(in, out.vertex_feature_refs[i]) || out.vertex_feature_refs[i] >= feature_count) return false;
+    }
+    for (uint32_t i = 0; i < index_count; ++i) {
+        if (!readU32(in, out.indices[i]) || out.indices[i] >= vertex_count) return false;
+    }
+    for (uint32_t i = 0; i < line_index_count; ++i) {
+        if (!readU32(in, out.line_indices[i]) || out.line_indices[i] >= vertex_count) return false;
+    }
+    for (uint32_t i = 0; i < feature_count; ++i) {
+        auto& rec = out.features[i];
+        if (!readU32(in, rec.feature_idx) ||
+            !readU32(in, rec.vertex_offset) ||
+            !readU32(in, rec.vertex_count) ||
+            !readU32(in, rec.index_offset) ||
+            !readU32(in, rec.index_count) ||
+            !readU32(in, rec.line_index_offset) ||
+            !readU32(in, rec.line_index_count) ||
+            !readFloat(in, rec.min_lon) ||
+            !readFloat(in, rec.min_lat) ||
+            !readFloat(in, rec.max_lon) ||
+            !readFloat(in, rec.max_lat)) {
+            return false;
+        }
+        if (rec.vertex_offset + rec.vertex_count > vertex_count) return false;
+        if (rec.index_offset + rec.index_count > index_count) return false;
+        if (rec.line_index_offset + rec.line_index_count > line_index_count) return false;
+    }
+    for (uint32_t i = 0; i < chunk_count; ++i) {
+        auto& rec = out.chunks[i];
+        if (!readU32(in, rec.chunk_idx) ||
+            !readU32(in, rec.feature_offset) ||
+            !readU32(in, rec.feature_count) ||
+            !readU32(in, rec.vertex_offset) ||
+            !readU32(in, rec.vertex_count) ||
+            !readU32(in, rec.index_offset) ||
+            !readU32(in, rec.index_count) ||
+            !readU32(in, rec.line_index_offset) ||
+            !readU32(in, rec.line_index_count) ||
+            !readFloat(in, rec.min_lon) ||
+            !readFloat(in, rec.min_lat) ||
+            !readFloat(in, rec.max_lon) ||
+            !readFloat(in, rec.max_lat)) {
+            return false;
+        }
+        if (rec.feature_offset + rec.feature_count > feature_count) return false;
+        if (rec.vertex_offset + rec.vertex_count > vertex_count) return false;
+        if (rec.index_offset + rec.index_count > index_count) return false;
+        if (rec.line_index_offset + rec.line_index_count > line_index_count) return false;
+    }
+    return true;
+}
+
+void saveBinaryParcelRenderCache(const fs::path& cache_path, const ParcelRenderCacheBlob& blob) {
+    if (!hostIsLittleEndian()) return;
+    if (blob.vertices.size() > std::numeric_limits<uint32_t>::max() ||
+        blob.vertex_feature_refs.size() != blob.vertices.size() ||
+        blob.indices.size() > std::numeric_limits<uint32_t>::max() ||
+        blob.line_indices.size() > std::numeric_limits<uint32_t>::max() ||
+        blob.features.size() > std::numeric_limits<uint32_t>::max() ||
+        blob.chunks.size() > std::numeric_limits<uint32_t>::max()) {
+        return;
+    }
+    fs::create_directories(cache_path.parent_path());
+    const fs::path tmp_path = tempCachePathFor(cache_path);
+    bool ok = false;
+    {
+        std::ofstream out(tmp_path, std::ios::binary);
+        if (!out) return;
+        ok = writeExact(out, kParcelRenderBinaryMagic.data(), kParcelRenderBinaryMagic.size()) &&
+             writeU32(out, kParcelRenderBinaryVersion) &&
+             writeU32(out, 0x01020304u) &&
+             writeString(out, blob.source_signature) &&
+             writeU32(out, static_cast<uint32_t>(blob.vertices.size())) &&
+             writeU32(out, static_cast<uint32_t>(blob.indices.size())) &&
+             writeU32(out, static_cast<uint32_t>(blob.line_indices.size())) &&
+             writeU32(out, static_cast<uint32_t>(blob.features.size())) &&
+             writeU32(out, static_cast<uint32_t>(blob.chunks.size()));
+        for (const auto& v : blob.vertices) ok = ok && writeFloat(out, v.x) && writeFloat(out, v.y);
+        for (uint32_t ref : blob.vertex_feature_refs) ok = ok && writeU32(out, ref);
+        for (uint32_t i : blob.indices) ok = ok && writeU32(out, i);
+        for (uint32_t i : blob.line_indices) ok = ok && writeU32(out, i);
+        for (const auto& rec : blob.features) {
+            ok = ok &&
+                 writeU32(out, rec.feature_idx) &&
+                 writeU32(out, rec.vertex_offset) &&
+                 writeU32(out, rec.vertex_count) &&
+                 writeU32(out, rec.index_offset) &&
+                 writeU32(out, rec.index_count) &&
+                 writeU32(out, rec.line_index_offset) &&
+                 writeU32(out, rec.line_index_count) &&
+                 writeFloat(out, rec.min_lon) &&
+                 writeFloat(out, rec.min_lat) &&
+                 writeFloat(out, rec.max_lon) &&
+                 writeFloat(out, rec.max_lat);
+        }
+        for (const auto& rec : blob.chunks) {
+            ok = ok &&
+                 writeU32(out, rec.chunk_idx) &&
+                 writeU32(out, rec.feature_offset) &&
+                 writeU32(out, rec.feature_count) &&
+                 writeU32(out, rec.vertex_offset) &&
+                 writeU32(out, rec.vertex_count) &&
+                 writeU32(out, rec.index_offset) &&
+                 writeU32(out, rec.index_count) &&
+                 writeU32(out, rec.line_index_offset) &&
+                 writeU32(out, rec.line_index_count) &&
+                 writeFloat(out, rec.min_lon) &&
+                 writeFloat(out, rec.min_lat) &&
+                 writeFloat(out, rec.max_lon) &&
+                 writeFloat(out, rec.max_lat);
+        }
+        out.flush();
+        ok = ok && bool(out);
+    }
+    if (!ok) {
+        std::error_code remove_ec;
+        fs::remove(tmp_path, remove_ec);
+        return;
+    }
+    std::error_code rename_ec;
+    fs::rename(tmp_path, cache_path, rename_ec);
+    if (rename_ec) {
+        std::error_code remove_ec;
+        fs::remove(cache_path, remove_ec);
+        rename_ec.clear();
+        fs::rename(tmp_path, cache_path, rename_ec);
+        if (rename_ec) fs::remove(tmp_path, remove_ec);
+    }
+}
+
+bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
+    std::ifstream in(cache_path, std::ios::binary);
+    if (!in) return false;
+    std::array<char, 8> magic{};
+    if (!readExact(in, magic.data(), magic.size()) || magic != kCanonicalFeatureBinaryMagic) return false;
+
+    uint32_t version = 0;
+    if (!readU32(in, version) || version != kCanonicalFeatureBinaryVersion) return false;
+    uint32_t endian_marker = 0;
+    if (!readU32(in, endian_marker) || endian_marker != 0x01020304u) return false;
+
+    uint64_t feature_count = 0;
+    if (!readU64(in, feature_count) || feature_count > kMaxBinaryHydrationFeatures) return false;
+
+    std::array<char, kCanonicalFeatureSignatureBytes> sig_buf{};
+    if (!readExact(in, sig_buf.data(), sig_buf.size())) return false;
+    const std::string stored_sig(sig_buf.data(),
+                                 std::find(sig_buf.begin(), sig_buf.end(), '\0'));
+    if (stored_sig != sig) return false;
+
+    out.clear();
+    out.reserve(static_cast<size_t>(feature_count));
+    for (uint64_t fi = 0; fi < feature_count; ++fi) {
+        LayerDef::FeatureGeom fg{};
+        if (!readFloat(in, fg.extent.min_lon) ||
+            !readFloat(in, fg.extent.min_lat) ||
+            !readFloat(in, fg.extent.max_lon) ||
+            !readFloat(in, fg.extent.max_lat)) {
+            return false;
+        }
+
+        uint32_t ring_count = 0;
+        if (!readU32(in, ring_count) || ring_count > kMaxBinaryHydrationRingsPerFeature) return false;
+        fg.rings.reserve(ring_count);
+        for (uint32_t ri = 0; ri < ring_count; ++ri) {
+            uint32_t point_count = 0;
+            if (!readU32(in, point_count) || point_count > kMaxBinaryHydrationPointsPerRing) return false;
+            std::vector<ImVec2> ring;
+            ring.reserve(point_count);
+            for (uint32_t pi = 0; pi < point_count; ++pi) {
+                ImVec2 p;
+                if (!readFloat(in, p.x) || !readFloat(in, p.y)) return false;
+                ring.push_back(p);
+            }
+            fg.rings.push_back(std::move(ring));
+        }
+
+        uint32_t property_count = 0;
+        if (!readU32(in, property_count) || property_count > kMaxBinaryHydrationPropertiesPerFeature) return false;
+        fg.properties.reserve(property_count);
+        for (uint32_t pi = 0; pi < property_count; ++pi) {
+            std::string key;
+            std::string value;
+            if (!readString(in, key) || !readString(in, value)) return false;
+            fg.properties.push_back({std::move(key), std::move(value)});
+        }
+        out.push_back(std::move(fg));
+    }
+    return true;
 }

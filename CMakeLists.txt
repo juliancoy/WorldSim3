@@ -212,7 +212,11 @@ add_executable(worldsim3
   ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
-target_compile_definitions(worldsim3 PRIVATE WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp")
+target_compile_definitions(worldsim3 PRIVATE
+  WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp"
+  WS3_PARCEL_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert"
+  WS3_PARCEL_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
+)
 
 target_include_directories(worldsim3 PRIVATE
   ${imgui_SOURCE_DIR}
@@ -225,6 +229,8 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   set(WS3_SHADER_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_shaders")
   file(MAKE_DIRECTORY "${WS3_SHADER_OUT_DIR}")
   set(WS3_GPU_SPLAT_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat.comp.spv")
+  set(WS3_PARCEL_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.vert.spv")
+  set(WS3_PARCEL_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.frag.spv")
   add_custom_command(
     OUTPUT "${WS3_GPU_SPLAT_SHADER_SPV}"
     COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp" -o "${WS3_GPU_SPLAT_SHADER_SPV}"
@@ -232,9 +238,31 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     COMMENT "Compiling heatmap_splat.comp -> SPIR-V"
     VERBATIM
   )
-  add_custom_target(worldsim3_shaders DEPENDS "${WS3_GPU_SPLAT_SHADER_SPV}")
+  add_custom_command(
+    OUTPUT "${WS3_PARCEL_GPU_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert" -o "${WS3_PARCEL_GPU_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert"
+    COMMENT "Compiling parcel_fill.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_PARCEL_GPU_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag" -o "${WS3_PARCEL_GPU_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
+    COMMENT "Compiling parcel_fill.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_target(worldsim3_shaders DEPENDS
+    "${WS3_GPU_SPLAT_SHADER_SPV}"
+    "${WS3_PARCEL_GPU_VERT_SPV}"
+    "${WS3_PARCEL_GPU_FRAG_SPV}"
+  )
   add_dependencies(worldsim3 worldsim3_shaders)
-  target_compile_definitions(worldsim3 PRIVATE WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}")
+  target_compile_definitions(worldsim3 PRIVATE
+    WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}"
+    WS3_PARCEL_GPU_VERT_SPV="${WS3_PARCEL_GPU_VERT_SPV}"
+    WS3_PARCEL_GPU_FRAG_SPV="${WS3_PARCEL_GPU_FRAG_SPV}"
+  )
 endif()
 
 target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl ZLIB::ZLIB datachannel)

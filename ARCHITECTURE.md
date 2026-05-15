@@ -142,7 +142,49 @@ hydrated layers + unified parcels
   -> SQL/query UI
 ```
 
-DuckDB should remain analytics-oriented unless a separate decision is made to use it as a renderable geometry store.
+DuckDB should remain analytics-oriented. Parcel render geometry should move into a dedicated render sidecar cache rather than becoming a DuckDB-backed draw source.
+
+Target render-cache flow:
+
+```text
+source parcel geometry
+  -> hydration cache
+  -> triangulation cache
+  -> parcel render sidecar cache
+  -> async upload staging
+  -> retained GPU vertex/index buffers
+  -> render thread
+```
+
+The first implemented step toward that boundary is a binary parcel render sidecar cache. It is chunked, versioned, signature-validated, and stores contiguous world-space vertex/index streams plus feature and chunk lookup tables. It is not yet bound into Vulkan draw buffers, but it establishes the correct storage target for parcel geometry and keeps that geometry out of DuckDB.
+
+KISS data rule:
+
+- DuckDB stores parcel facts, joins, and analytics.
+- Parcel render sidecar stores only the geometry needed for retained rendering plus minimal lookup metadata.
+- Do not duplicate parcel attribute payloads into the render sidecar unless a render-time lookup proves necessary.
+
+The next implemented step is GPU residency for parcel geometry. Runtime now uploads:
+
+- immutable parcel position buffer
+- immutable parcel index buffer
+- immutable vertex-to-parcel-slot reference buffer
+- mutable per-parcel RGBA buffer
+
+The DuckDB/query-driven filter path writes colors into that per-parcel RGBA buffer.
+
+The next implemented step is the actual parcel fill pipeline cutover. Parcel base fills are now rendered by a dedicated Vulkan graphics pipeline inserted into the map draw stream through an ImGui draw callback. That pipeline:
+
+- binds retained parcel position, index, vertex-to-parcel-slot, and RGBA buffers
+- uses per-frame viewport and map-transform push constants
+- culls work at chunk granularity on CPU before issuing draws
+- keeps outlines and overlay fills on the existing CPU/ImGui path for now
+
+This means parcel base fills no longer rebuild triangles into ImGui every frame when the GPU parcel path is active.
+
+The next implemented step is parcel overlay fill cutover on the same retained geometry. Runtime now maintains a second mutable per-parcel RGBA buffer for overlay fills and issues a second parcel draw pass from the render tail stage. Vacancy, tax, and parcel-parameter fill overlays now use the retained parcel GPU geometry instead of CPU tessellation when the parcel GPU path is active.
+
+The next implemented step is parcel outline cutover. The parcel render sidecar now carries explicit ring-edge topology, runtime uploads a retained line-index buffer, and the render tail stage issues a dedicated GPU line pass for parcel boundaries and selected-parcel emphasis. This avoids drawing triangle edges or rebuilding CPU polylines for parcel rings.
 
 ## Frame Budget
 
@@ -226,9 +268,12 @@ Current state:
 - Parcel features are hydrated into CPU `LayerDef::FeatureGeom` records.
 - The render frame queries the CPU spatial index for visible feature candidates.
 - Ring coordinates are projected on CPU into world/screen-space caches.
-- Polygon fills are rebuilt into CPU scratch buffers and submitted through ImGui draw lists.
+- Parcel base fills can now bypass the CPU/ImGui fill path when GPU residency and draw state are ready.
+- Non-parcel polygon fills are still rebuilt into CPU scratch buffers and submitted through ImGui draw lists.
+- Parcel outlines can now use a retained GPU edge path built from explicit ring-edge topology.
+- Parcel overlay fills can now use a second retained GPU color stream on the same geometry.
 - Outlines are submitted through ImGui polyline commands.
-- Vulkan eventually renders the ImGui command buffers, but the parcel vertex/index data is CPU-generated and copied through ImGui first.
+- Vulkan now also owns a dedicated parcel fill graphics pipeline that binds retained buffers and issues chunked indexed draws inside the map draw stream.
 
 Target state:
 
@@ -289,7 +334,78 @@ The seventh implemented step is bounded no-index render fallback. When a large l
 
 The eighth implemented step is cached heat normalization. Heat layers no longer rebuild percentile and grouped normalization distributions every frame when filter/domain state is unchanged. The render path now reuses normalization state keyed by the stable heatmap data key plus layer index, with bounded cache retention inside `HeatmapRuntimeState`.
 
-The ninth implemented step is retained CPU fill-geometry caching inside `MapProjectionCache`. For polygon features, the render path now caches a flattened world-space vertex stream and a prevalidated triangle-index stream per feature. Frame rendering still projects those cached world vertices to screen space and still submits through ImGui, so this is not yet a GPU-resident parcel mesh path. It does, however, remove repeated per-frame ring flattening and triangle-index validation from parcel fill rendering and establishes a cleaner separation between retained geometry data and per-frame color/style decisions.
+The ninth implemented step is retained CPU fill-geometry caching inside `MapProjectionCache`. For polygon features, the render path now caches a flattened world-space vertex stream and a prevalidated triangle-index stream per feature. This remains useful for overlays, outlines, and non-GPU polygon paths even after parcel base fills move to a dedicated Vulkan parcel pipeline.
+
+The tenth implemented step is the dedicated parcel fill graphics pipeline. The runtime now:
+
+- loads parcel geometry from the render sidecar into retained GPU buffers
+- keeps a separate vertex-to-parcel-slot buffer
+- keeps a separate mutable RGBA buffer keyed by parcel slot
+- updates that RGBA buffer from the DuckDB/query filter state
+- inserts a Vulkan parcel draw callback into the map draw stream
+- issues indexed draws only for visible parcel chunks
+
+This is the first real frame-path cutover away from ImGui parcel triangle submission.
+
+The eleventh implemented step is GPU parcel overlay fills. The runtime now:
+
+- keeps a second mutable per-parcel RGBA buffer for overlay fills
+- computes parcel-parameter, vacancy, and tax overlay fills into that buffer from current filter/query state
+- injects a second parcel GPU draw from the render tail stage so overlay ordering remains consistent
+- skips CPU tessellated parcel overlay fills when the overlay GPU pass is active
+
+The twelfth implemented step is GPU parcel outlines and selection emphasis. The runtime now:
+
+- stores explicit line-index topology in the parcel render sidecar
+- uploads a retained parcel line-index buffer alongside fill indices
+- keeps a third mutable per-parcel RGBA buffer for outline/selection color
+- injects a dedicated line-list parcel draw from the render tail stage
+- skips CPU parcel polylines and selected-parcel stroke submission when the GPU outline path is active
+
+At this point the parcel layer is off the ImGui geometry path for base fills, overlay fills, outlines, and selected-parcel emphasis.
+
+The thirteenth implemented step is asynchronous parcel render-cache load/build. The UI/frame loop no longer loads or rebuilds the parcel render sidecar inline. Instead:
+
+- the frame loop publishes a parcel render-cache request keyed by layer file and source signature
+- a background parcel render worker loads the binary sidecar, or rebuilds it from persisted hydration and triangulation caches when needed
+- the main thread only consumes completed blobs, uploads retained GPU buffers, and updates the small mutable RGBA streams
+
+This is the first real separation between parcel render-cache IO/build work and the frame loop. GPU buffer creation and upload still happen on the main/render side in this step because the Vulkan upload path is still using the shared upload command pool and command buffer.
+
+The fourteenth implemented step is asynchronous parcel GPU upload. The runtime now has a dedicated parcel GPU upload worker inside the Vulkan subsystem. That worker:
+
+- owns a private Vulkan command pool and command buffer
+- accepts completed `ParcelRenderCacheBlob` upload requests
+- builds fully uploaded parcel GPU payloads off the frame-thread orchestration path
+- publishes completed payloads back to the main thread
+- lets the main thread adopt completed payloads and retire the previous live parcel buffers
+
+This keeps Vulkan object ownership coherent while moving device-local buffer creation and transfer work off the frame-loop orchestration path. Mutable per-parcel RGBA buffer updates still happen on the main/render side in this step because those are small mapped-memory writes.
+
+The fifteenth implemented step is generation-tracked parcel GPU buffer retirement. When a new parcel GPU payload is adopted:
+
+- the previous live parcel GPU payload is not destroyed immediately
+- it is moved into a retired payload queue with a retire-after frame serial
+- retirement drains only after enough presented frames have elapsed
+- forced shutdown still drains the queue synchronously
+
+This removes the last immediate destructive replacement in the parcel GPU residency path and makes payload lifetime match frame presentation progress instead of adoption timing.
+
+The sixteenth implemented step is session-static parcel GPU geometry. Parcel geometry is now treated as startup residency, not as a hot-swappable runtime asset:
+
+- the first successful parcel GPU upload locks the active parcel geometry source signature for the rest of the process
+- long-lived large parcel buffers are therefore allocated and populated only for startup geometry residency
+- after that point, runtime parcel work is limited to the mutable per-parcel RGBA streams
+- if the parcel geometry source signature changes later in the same session, the runtime keeps the existing GPU geometry and logs a restart-required warning instead of replacing live geometry in-process
+
+This is the correct professional boundary for the current product model. DuckDB filters and query state can continue to restyle parcels by writing color, but parcel geometry itself is now session-static.
+
+The seventeenth implemented step is a compact canonical parcel binary companion for the statewide parcel layer. `worldsim_regional_parcel_builder` now emits:
+
+- `data/layers/regional_parcels.geojson`
+- `data/layers/regional_parcels.geojson.canonical.bin`
+
+The GeoJSON file remains the human-readable interchange and debugging artifact. The companion binary stores the hydrated parcel feature content in a dense binary layout keyed to the final GeoJSON file signature. Hydration workers can consume that binary companion directly when the normal hydration cache is absent or stale, instead of reparsing multi-gigabyte GeoJSON text.
 
 The tenth implemented step is independent retained parcel color storage. `MapProjectionCache` now stores a per-feature style record keyed by layer, feature index, and style generation, with a feature-wide color plus a subpolygon color vector. The current feature model still represents a parcel as one polygon-with-holes, so the subpolygon vector presently defaults to one entry for polygonal parcel features. The storage boundary is now explicit, though: geometry and color are retained separately, and color storage survives pan/zoom projection churn until a real source replacement resets the cache owner.
 

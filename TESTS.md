@@ -172,6 +172,43 @@ Additional color-cache coverage:
 - Verifies overwriting the same parcel feature with a new style key replaces the retained feature color and subpolygon color vector.
 - Verifies color storage survives zoom/projection cache invalidation because it is independent from world-geometry caches.
 
+## Parcel Render Cache Self-Test
+
+```bash
+./build/worldsim3 --parcel-render-cache-selftest
+./build/worldsim3 --warm-parcel-render-cache regional_parcels.geojson
+./build/worldsim3 --warm-parcel-render-cache-all
+```
+
+Purpose:
+
+- Verifies a parcel render sidecar blob can be built from hydrated and triangulated parcel features.
+- Verifies the binary sidecar round-trips contiguous vertex/index data, line-index topology, plus feature/chunk tables.
+- Verifies a stale source signature is rejected.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+Additional warmer coverage:
+
+- `--warm-parcel-render-cache <layer>` verifies a real layer can be loaded from binary hydration + binary triangulation caches and converted into a binary parcel render sidecar.
+- `--warm-parcel-render-cache-all` attempts the same conversion for every layer with a binary triangulation cache.
+- The parcel render self-test also verifies vertex-to-parcel-slot references and line-index topology round-trip, which are the lookups used by the GPU-side parcel fill and outline paths.
+
+Current additional verification:
+
+- `cmake --build build --target worldsim3 -j1` now also verifies the parcel fill vertex and fragment shaders compile to SPIR-V and the dedicated parcel Vulkan pipeline code links cleanly.
+- The same build now verifies the retained parcel overlay GPU color-buffer path, retained parcel outline GPU color-buffer path, and the parcel fill/overlay/outline draw callbacks compile and link.
+- The same build now verifies the asynchronous parcel render worker wiring compiles and links, including shutdown/join handling and sidecar request/result plumbing.
+- The same build now verifies the asynchronous parcel GPU upload worker wiring compiles and links, including worker-owned Vulkan upload context creation, stale-result discard, payload adoption, and shutdown/join handling.
+- The same build now verifies generation-tracked parcel GPU retirement wiring compiles and links, including retire-after-frame tracking, per-frame drain hooks, and forced shutdown drain.
+- The same build now verifies the session-static parcel geometry residency policy compiles and links: startup upload remains supported, while later in-process parcel source signature changes are handled as restart-required instead of live geometry replacement.
+- The same build now verifies the canonical parcel binary companion path compiles and links: the regional parcel builder emits `regional_parcels.geojson.canonical.bin`, and hydration workers can load that companion directly through the normal source-signature validation path.
+- There is not yet a dedicated headless harness that asserts parcel GPU draw callback output on a live Vulkan frame.
+- The current parcel GPU cutover is therefore covered by build integration plus the parcel-render-sidecar round-trip tests.
+
 ## Triangulation Apply Self-Test
 
 ```bash

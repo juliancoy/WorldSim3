@@ -19,11 +19,11 @@ This signature is the invalidation key shared by hydration, triangulation, deriv
 
 On startup, `app_main_loop.cpp` enqueues every enabled layer for hydration.
 
-That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`, then falls back to `data/cache/hydration/<layer-file>.msgpack` for older caches. If a cache exists, matches the source signature, and passes sanity checks, the worker streams cached features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
+That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`, then falls back to `data/cache/hydration/<layer-file>.msgpack` for older caches. For `regional_parcels.geojson`, it can also load `data/layers/regional_parcels.geojson.canonical.bin`, which is a compact canonical parcel binary companion emitted by the regional parcel builder. If one of these binary sources exists, matches the source signature, and passes sanity checks, the worker streams structured features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
 
 Hydration always repopulates `layers[i].features` in RAM because render code, filters, hit testing, derived joins, and DuckDB rebuilds operate on runtime layer objects.
 
-For `regional_parcels.geojson`, the import path is now allowed to materialize missing official Maryland parcel staging layers before the regional builder runs. The builder prefers the Maryland Planning parcel catalog for statewide county coverage, while keeping Baltimore County and Howard County on their better county-native feeds.
+For `regional_parcels.geojson`, the import path is now allowed to materialize missing official Maryland parcel staging layers before the regional builder runs. The builder prefers the Maryland Planning parcel catalog for statewide county coverage, while keeping Baltimore County and Howard County on their better county-native feeds. The builder now writes both the canonical GeoJSON layer and a signature-bound compact binary companion in the same pass.
 
 ## Hydration Cache
 
@@ -71,7 +71,7 @@ Runtime state records:
 - `hydration_loaded_from_cache`
 - `hydration_phase`
 
-`hydration_phase` distinguishes `loading_binary_cache`, `loading_msgpack_cache`, `binary_cache_hit_queueing`, `msgpack_cache_hit_queueing`, source parsing, stale cache, rejected cache, and completed cache hits. This prevents a large cache decode from looking identical to a GeoJSON source parse.
+`hydration_phase` distinguishes `loading_binary_cache`, `loading_msgpack_cache`, `loading_canonical_binary_source`, `binary_cache_hit_queueing`, `msgpack_cache_hit_queueing`, `canonical_binary_queueing`, source parsing, stale cache, rejected cache, and completed cache hits. This prevents a large cache decode from looking identical to a GeoJSON source parse.
 
 ## Triangulation Cache
 
@@ -191,3 +191,82 @@ Clearing only triangulation keeps hydrated features and schedules fresh triangul
 Seeing hydration progress on each startup is expected. It means runtime layer objects are being populated. If the hydration cache is valid, this path reads binary or legacy MsgPack cache files instead of reparsing GeoJSON.
 
 DuckDB persists SQL-ready analytics tables, but it does not currently hydrate map-renderable layer geometry directly.
+
+## Parcel Render Sidecar Cache
+
+Parcel polygon geometry should not use DuckDB as its primary render storage target. The correct target is a dedicated binary sidecar shaped for retained rendering resources.
+
+Current binary sidecar support:
+
+```text
+data/cache/render/<layer-file>.parcel-render.bin
+```
+
+The sidecar stores:
+
+- source signature
+- contiguous world-space vertex stream
+- contiguous vertex-to-render-feature reference stream
+- contiguous triangle index stream
+- contiguous line index stream for parcel ring edges
+- per-feature offset/count records
+- per-chunk offset/count and bounds records
+
+It deliberately does not store the full parcel property bags. The sidecar follows a KISS rule: geometry and the smallest lookup metadata needed for rendering stay in the render cache; parcel attributes remain in runtime layer records and DuckDB analytics tables.
+
+Sidecar production is now asynchronous at runtime:
+
+- the frame loop requests a sidecar by `layer_file + source_signature`
+- a background parcel render worker tries to load `data/cache/render/<layer-file>.parcel-render.bin`
+- on a miss, that worker rebuilds the sidecar from persisted hydration and triangulation caches instead of touching live frame-owned layer state
+- the main thread consumes only completed sidecar blobs
+
+GPU upload is now asynchronous too:
+
+- the main thread submits a completed `ParcelRenderCacheBlob` to the parcel GPU upload worker
+- the upload worker owns a private Vulkan command pool and command buffer
+- that worker builds a fully uploaded parcel GPU payload off the frame-loop orchestration path
+- the main thread adopts only completed payloads, keyed by source signature, and discards stale upload results
+- previously live parcel GPU payloads are retired against a presented-frame serial and drained later instead of being destroyed immediately on adoption
+
+Parcel geometry residency is now session-static:
+
+- the first successful parcel GPU upload locks the parcel geometry source signature for the rest of the process
+- later source-signature changes do not trigger in-process parcel geometry replacement
+- instead, the runtime keeps the existing long-lived parcel geometry buffers and logs that restart is required for geometry refresh
+- only the per-parcel RGBA buffers remain mutable during steady-state runtime
+
+At runtime, Vulkan uploads the sidecar into separate GPU buffers:
+
+- parcel positions
+- parcel triangle indices
+- parcel line indices
+- vertex-to-parcel-slot references
+- parcel RGBA colors
+- parcel overlay RGBA colors
+- parcel outline RGBA colors
+
+The parcel RGBA buffers are mutable. DuckDB/query-driven filter state writes base parcel colors into one buffer and parcel overlay fills into a second buffer without rebuilding parcel geometry.
+
+When the map viewport is active, runtime also derives a per-frame parcel draw state from:
+
+- current map viewport origin and size
+- current `math_zoom`, `zoom_scale`, and `center_world`
+- current visible lon/lat bounds
+
+That state is used to:
+
+- cull parcel render chunks on CPU by chunk bounds
+- bind the retained parcel GPU buffers
+- issue indexed parcel base-fill draws through a dedicated Vulkan parcel pipeline inserted into the map draw stream
+- issue indexed parcel overlay-fill draws from the render tail stage on the same retained geometry
+- issue indexed parcel outline draws from the render tail stage using explicit line topology
+
+Current boundary:
+
+- parcel base fills use the dedicated Vulkan pipeline
+- parcel overlay fills use the dedicated Vulkan pipeline with a second color buffer
+- parcel outlines and selected-parcel emphasis use the dedicated Vulkan line path with a third color buffer
+- parcel visibility filtering is represented by RGBA updates, with transparent parcels discarded in the fragment stage
+
+This cache is intended to become the source for asynchronous GPU upload. It is not a literal disk-to-GPU zero-copy draw buffer. The file remains a durable cache artifact, while Vulkan buffers remain runtime-owned GPU resources.

@@ -43,6 +43,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.map_active = map_viewport.active;
     session.math_zoom = map_viewport.math_zoom;
     session.zoom_scale = map_viewport.zoom_scale;
+    session.center_world = map_viewport.center_world;
     session.view_min_lon = map_viewport.view_min_lon;
     session.view_max_lon = map_viewport.view_max_lon;
     session.view_min_lat = map_viewport.view_min_lat;

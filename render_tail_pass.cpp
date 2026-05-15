@@ -3,6 +3,7 @@
 #include "map_render_hud.h"
 #include "map_render_overlays.h"
 #include "map_render_selection.h"
+#include "worldsim_app.h"
 
 RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     MapRenderContext overlay_ctx;
@@ -34,17 +35,24 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.projection = ctx.projection;
 
     const MapOverlayResult overlay_result = renderParcelSourceOverlays(overlay_ctx);
-    renderSelectedParcelOutlines(MapSelectionRenderContext{
-        ctx.draw,
-        ctx.origin,
-        ctx.size,
-        ctx.layers,
-        ctx.parcel_layer_idx,
-        ctx.selected_parcel_indices,
-        ctx.math_zoom,
-        ctx.projection,
-        ctx.project_world
-    });
+    if (parcelGpuOverlayDrawActive()) {
+        enqueueParcelGpuOverlayDraw(ctx.draw);
+    }
+    if (parcelGpuOutlineDrawActive()) {
+        enqueueParcelGpuOutlineDraw(ctx.draw);
+    } else {
+        renderSelectedParcelOutlines(MapSelectionRenderContext{
+            ctx.draw,
+            ctx.origin,
+            ctx.size,
+            ctx.layers,
+            ctx.parcel_layer_idx,
+            ctx.selected_parcel_indices,
+            ctx.math_zoom,
+            ctx.projection,
+            ctx.project_world
+        });
+    }
     drawMapZoomBadge(ctx.draw, ctx.origin, ctx.size, ctx.zoom);
 
     RenderTailPassResult result;

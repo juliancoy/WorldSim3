@@ -197,7 +197,123 @@ VkDescriptorPool g_DescriptorPool = VK_NULL_HANDLE;
 VkSampler g_TileSampler = VK_NULL_HANDLE;
 static VkCommandPool g_UploadCommandPool = VK_NULL_HANDLE;
 static VkCommandBuffer g_UploadCommandBuffer = VK_NULL_HANDLE;
+
+struct ParcelGpuBuffer {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    void* mapped = nullptr;
+    VkDeviceSize size_bytes = 0;
+};
+
+struct ParcelGpuBuffers {
+    ParcelGpuBuffer positions;
+    ParcelGpuBuffer indices;
+    ParcelGpuBuffer line_indices;
+    ParcelGpuBuffer vertex_feature_refs;
+    ParcelGpuBuffer colors;
+    ParcelGpuBuffer overlay_colors;
+    ParcelGpuBuffer outline_colors;
+    std::vector<ParcelRenderChunkRecord> chunks;
+    uint32_t render_features = 0;
+    uint32_t vertices = 0;
+    uint32_t indices_count = 0;
+    uint32_t line_indices_count = 0;
+    std::string source_signature;
+};
+
+struct ParcelGpuDrawChunk {
+    uint32_t first_index = 0;
+    uint32_t index_count = 0;
+};
+
+struct ParcelGpuLineDrawChunk {
+    uint32_t first_index = 0;
+    uint32_t index_count = 0;
+};
+
+struct ParcelGpuDrawState {
+    bool active = false;
+    int math_zoom = 0;
+    float zoom_scale = 1.0f;
+    ImVec2 center_world = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_origin = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_size = ImVec2(0.0f, 0.0f);
+    ImVec2 framebuffer_size = ImVec2(0.0f, 0.0f);
+    std::vector<ParcelGpuDrawChunk> visible_chunks;
+    std::vector<ParcelGpuLineDrawChunk> visible_line_chunks;
+};
+
+struct ParcelGpuPipeline {
+    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+    VkDescriptorSet base_descriptor_set = VK_NULL_HANDLE;
+    VkDescriptorSet overlay_descriptor_set = VK_NULL_HANDLE;
+    VkDescriptorSet outline_descriptor_set = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline fill_pipeline = VK_NULL_HANDLE;
+    VkPipeline line_pipeline = VK_NULL_HANDLE;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    bool descriptor_dirty = true;
+};
+
+struct ParcelGpuUploadContext {
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+};
+
+struct ParcelGpuUploadPayload {
+    ParcelGpuBuffers buffers;
+};
+
+struct RetiredParcelGpuPayload {
+    ParcelGpuBuffers buffers;
+    uint64_t retire_after_frame = 0;
+};
+
+struct ParcelGpuUploadResult {
+    bool ok = false;
+    std::string source_signature;
+    std::string error;
+    ParcelGpuUploadPayload payload;
+};
+
+static ParcelGpuBuffers g_ParcelGpuBuffers;
+static ParcelGpuDrawState g_ParcelGpuDrawState;
+static ParcelGpuPipeline g_ParcelGpuPipeline;
+static VkCommandBuffer g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
+static VkRenderPass g_CurrentFrameRenderPass = VK_NULL_HANDLE;
+static std::atomic<bool> g_ParcelGpuUploadStop{false};
+static std::mutex g_ParcelGpuUploadRequestMutex;
+static std::condition_variable g_ParcelGpuUploadCv;
+static std::optional<ParcelRenderCacheBlob> g_ParcelGpuUploadPendingRequest;
+static std::mutex g_ParcelGpuUploadResultMutex;
+static std::optional<ParcelGpuUploadResult> g_ParcelGpuUploadCompletedResult;
+static std::thread g_ParcelGpuUploadWorker;
+static std::vector<RetiredParcelGpuPayload> g_RetiredParcelGpuPayloads;
+static std::atomic<uint64_t> g_PresentedFrameSerial{0};
 static VkDebugUtilsMessengerEXT g_DebugUtilsMessenger = VK_NULL_HANDLE;
+
+static void submitUploadCommands(std::function<void(VkCommandBuffer)> record);
+
+#if defined(WS3_PARCEL_GPU_VERT_SPV)
+static const char* kParcelGpuVertShaderPath = WS3_PARCEL_GPU_VERT_SPV;
+#else
+static const char* kParcelGpuVertShaderPath = nullptr;
+#endif
+
+#if defined(WS3_PARCEL_GPU_FRAG_SPV)
+static const char* kParcelGpuFragShaderPath = WS3_PARCEL_GPU_FRAG_SPV;
+#else
+static const char* kParcelGpuFragShaderPath = nullptr;
+#endif
+
+struct ParcelGpuPushConstants {
+    float center_world[2];
+    float viewport_origin[2];
+    float viewport_size[2];
+    float framebuffer_size[2];
+    float math_zoom = 0.0f;
+    float zoom_scale = 1.0f;
+};
 
 ImGui_ImplVulkanH_Window g_MainWindowData;
 int g_MinImageCount = 2;
@@ -301,6 +417,1139 @@ static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPr
     alloc.memoryTypeIndex = findMemoryType(req.memoryTypeBits, properties);
     check_vk_result(vkAllocateMemory(g_Device, &alloc, g_Allocator, &memory));
     check_vk_result(vkBindBufferMemory(g_Device, buffer, memory, 0));
+}
+
+static void destroyParcelGpuBuffer(ParcelGpuBuffer& b) {
+    if (b.mapped && b.memory) {
+        vkUnmapMemory(g_Device, b.memory);
+        b.mapped = nullptr;
+    }
+    if (b.buffer) {
+        vkDestroyBuffer(g_Device, b.buffer, g_Allocator);
+        b.buffer = VK_NULL_HANDLE;
+    }
+    if (b.memory) {
+        vkFreeMemory(g_Device, b.memory, g_Allocator);
+        b.memory = VK_NULL_HANDLE;
+    }
+    b.size_bytes = 0;
+}
+
+static void destroyParcelGpuBuffers(ParcelGpuBuffers& buffers) {
+    destroyParcelGpuBuffer(buffers.positions);
+    destroyParcelGpuBuffer(buffers.indices);
+    destroyParcelGpuBuffer(buffers.line_indices);
+    destroyParcelGpuBuffer(buffers.vertex_feature_refs);
+    destroyParcelGpuBuffer(buffers.colors);
+    destroyParcelGpuBuffer(buffers.overlay_colors);
+    destroyParcelGpuBuffer(buffers.outline_colors);
+    buffers.chunks.clear();
+    buffers.render_features = 0;
+    buffers.vertices = 0;
+    buffers.indices_count = 0;
+    buffers.line_indices_count = 0;
+    buffers.source_signature.clear();
+}
+
+static void retireParcelGpuBuffers(ParcelGpuBuffers&& buffers) {
+    if (!buffers.positions.buffer &&
+        !buffers.indices.buffer &&
+        !buffers.line_indices.buffer &&
+        !buffers.vertex_feature_refs.buffer &&
+        !buffers.colors.buffer &&
+        !buffers.overlay_colors.buffer &&
+        !buffers.outline_colors.buffer) {
+        return;
+    }
+    RetiredParcelGpuPayload retired;
+    retired.buffers = std::move(buffers);
+    retired.retire_after_frame = g_PresentedFrameSerial.load(std::memory_order_relaxed) + std::max<uint64_t>(2, (uint64_t)g_MinImageCount + 1);
+    g_RetiredParcelGpuPayloads.push_back(std::move(retired));
+}
+
+static void drainRetiredParcelGpuPayloads(bool force = false) {
+    if (g_RetiredParcelGpuPayloads.empty()) return;
+    const uint64_t presented_frame = g_PresentedFrameSerial.load(std::memory_order_relaxed);
+    auto it = g_RetiredParcelGpuPayloads.begin();
+    while (it != g_RetiredParcelGpuPayloads.end()) {
+        if (!force && presented_frame < it->retire_after_frame) {
+            ++it;
+            continue;
+        }
+        destroyParcelGpuBuffers(it->buffers);
+        it = g_RetiredParcelGpuPayloads.erase(it);
+    }
+}
+
+void drainRetiredParcelGpuResources() {
+    drainRetiredParcelGpuPayloads(false);
+}
+
+static bool createHostVisibleParcelBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error) {
+    destroyParcelGpuBuffer(out);
+    createBuffer(
+        size,
+        usage,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        out.buffer,
+        out.memory);
+    if (!out.buffer || !out.memory) {
+        if (error) *error = "failed to create host-visible parcel buffer";
+        return false;
+    }
+    if (vkMapMemory(g_Device, out.memory, 0, size, 0, &out.mapped) != VK_SUCCESS) {
+        if (error) *error = "failed to map host-visible parcel buffer";
+        destroyParcelGpuBuffer(out);
+        return false;
+    }
+    out.size_bytes = size;
+    return true;
+}
+
+static bool createParcelGpuUploadContext(ParcelGpuUploadContext& out, std::string* error) {
+    if (!g_Device) {
+        if (error) *error = "Vulkan device is not ready";
+        return false;
+    }
+    VkCommandPoolCreateInfo pool{};
+    pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool.queueFamilyIndex = g_QueueFamily;
+    pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    if (vkCreateCommandPool(g_Device, &pool, g_Allocator, &out.command_pool) != VK_SUCCESS) {
+        if (error) *error = "vkCreateCommandPool failed for parcel upload worker";
+        return false;
+    }
+    VkCommandBufferAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc.commandPool = out.command_pool;
+    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(g_Device, &alloc, &out.command_buffer) != VK_SUCCESS) {
+        if (error) *error = "vkAllocateCommandBuffers failed for parcel upload worker";
+        vkDestroyCommandPool(g_Device, out.command_pool, g_Allocator);
+        out.command_pool = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+static void destroyParcelGpuUploadContext(ParcelGpuUploadContext& ctx) {
+    if (ctx.command_pool) {
+        vkDestroyCommandPool(g_Device, ctx.command_pool, g_Allocator);
+        ctx.command_pool = VK_NULL_HANDLE;
+        ctx.command_buffer = VK_NULL_HANDLE;
+    }
+}
+
+static void submitUploadCommands(ParcelGpuUploadContext& ctx, std::function<void(VkCommandBuffer)> record) {
+    check_vk_result(vkResetCommandPool(g_Device, ctx.command_pool, 0));
+
+    VkCommandBufferBeginInfo begin{};
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check_vk_result(vkBeginCommandBuffer(ctx.command_buffer, &begin));
+    record(ctx.command_buffer);
+    check_vk_result(vkEndCommandBuffer(ctx.command_buffer));
+
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &ctx.command_buffer;
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+        check_vk_result(vkQueueWaitIdle(g_Queue));
+    }
+}
+
+static bool uploadDeviceLocalParcelBuffer(
+    const void* src,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error) {
+    destroyParcelGpuBuffer(out);
+    if (!src || size == 0) {
+        if (error) *error = "invalid parcel buffer upload input";
+        return false;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    createBuffer(
+        size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        staging,
+        staging_mem);
+    if (!staging || !staging_mem) {
+        if (error) *error = "failed to create staging buffer";
+        return false;
+    }
+
+    void* mapped = nullptr;
+    if (vkMapMemory(g_Device, staging_mem, 0, size, 0, &mapped) != VK_SUCCESS) {
+        if (error) *error = "failed to map staging buffer";
+        vkDestroyBuffer(g_Device, staging, g_Allocator);
+        vkFreeMemory(g_Device, staging_mem, g_Allocator);
+        return false;
+    }
+    std::memcpy(mapped, src, static_cast<size_t>(size));
+    vkUnmapMemory(g_Device, staging_mem);
+
+    createBuffer(
+        size,
+        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        out.buffer,
+        out.memory);
+    if (!out.buffer || !out.memory) {
+        if (error) *error = "failed to create device-local parcel buffer";
+        vkDestroyBuffer(g_Device, staging, g_Allocator);
+        vkFreeMemory(g_Device, staging_mem, g_Allocator);
+        return false;
+    }
+
+    submitUploadCommands([&](VkCommandBuffer cmd) {
+        VkBufferCopy copy{};
+        copy.size = size;
+        vkCmdCopyBuffer(cmd, staging, out.buffer, 1, &copy);
+    });
+
+    vkDestroyBuffer(g_Device, staging, g_Allocator);
+    vkFreeMemory(g_Device, staging_mem, g_Allocator);
+    out.size_bytes = size;
+    return true;
+}
+
+static bool uploadDeviceLocalParcelBuffer(
+    ParcelGpuUploadContext& ctx,
+    const void* src,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error) {
+    destroyParcelGpuBuffer(out);
+    if (!src || size == 0) {
+        if (error) *error = "invalid parcel buffer upload input";
+        return false;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory staging_mem = VK_NULL_HANDLE;
+    createBuffer(
+        size,
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        staging,
+        staging_mem);
+    if (!staging || !staging_mem) {
+        if (error) *error = "failed to create staging buffer";
+        return false;
+    }
+
+    void* mapped = nullptr;
+    if (vkMapMemory(g_Device, staging_mem, 0, size, 0, &mapped) != VK_SUCCESS) {
+        if (error) *error = "failed to map staging buffer";
+        vkDestroyBuffer(g_Device, staging, g_Allocator);
+        vkFreeMemory(g_Device, staging_mem, g_Allocator);
+        return false;
+    }
+    std::memcpy(mapped, src, static_cast<size_t>(size));
+    vkUnmapMemory(g_Device, staging_mem);
+
+    createBuffer(
+        size,
+        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        out.buffer,
+        out.memory);
+    if (!out.buffer || !out.memory) {
+        if (error) *error = "failed to create device-local parcel buffer";
+        vkDestroyBuffer(g_Device, staging, g_Allocator);
+        vkFreeMemory(g_Device, staging_mem, g_Allocator);
+        return false;
+    }
+
+    submitUploadCommands(ctx, [&](VkCommandBuffer cmd) {
+        VkBufferCopy copy{};
+        copy.size = size;
+        vkCmdCopyBuffer(cmd, staging, out.buffer, 1, &copy);
+    });
+
+    vkDestroyBuffer(g_Device, staging, g_Allocator);
+    vkFreeMemory(g_Device, staging_mem, g_Allocator);
+    out.size_bytes = size;
+    return true;
+}
+
+void clearParcelGpuBuffers() {
+    destroyParcelGpuBuffers(g_ParcelGpuBuffers);
+    drainRetiredParcelGpuPayloads(true);
+    g_ParcelGpuPipeline.descriptor_dirty = true;
+    clearParcelGpuDrawState();
+}
+
+static bool buildParcelGpuUploadPayload(
+    ParcelGpuUploadContext& ctx,
+    const ParcelRenderCacheBlob& blob,
+    ParcelGpuUploadPayload& out,
+    std::string* error) {
+    if (blob.vertices.empty() || blob.indices.empty() || blob.line_indices.empty() || blob.features.empty() ||
+        blob.vertex_feature_refs.size() != blob.vertices.size()) {
+        if (error) *error = "parcel render cache blob is incomplete";
+        return false;
+    }
+
+    destroyParcelGpuBuffers(out.buffers);
+    const VkDeviceSize positions_size = sizeof(ImVec2) * blob.vertices.size();
+    const VkDeviceSize indices_size = sizeof(uint32_t) * blob.indices.size();
+    const VkDeviceSize line_indices_size = sizeof(uint32_t) * blob.line_indices.size();
+    const VkDeviceSize refs_size = sizeof(uint32_t) * blob.vertex_feature_refs.size();
+    const VkDeviceSize colors_size = sizeof(ImU32) * blob.features.size();
+    if (!uploadDeviceLocalParcelBuffer(ctx, blob.vertices.data(), positions_size,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.positions, error) ||
+        !uploadDeviceLocalParcelBuffer(ctx, blob.indices.data(), indices_size,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.indices, error) ||
+        !uploadDeviceLocalParcelBuffer(ctx, blob.line_indices.data(), line_indices_size,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.line_indices, error) ||
+        !uploadDeviceLocalParcelBuffer(ctx, blob.vertex_feature_refs.data(), refs_size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.vertex_feature_refs, error) ||
+        !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.colors, error) ||
+        !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.overlay_colors, error) ||
+        !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.outline_colors, error)) {
+        destroyParcelGpuBuffers(out.buffers);
+        return false;
+    }
+
+    std::vector<ImU32> default_colors(blob.features.size(), IM_COL32(0, 0, 0, 0));
+    std::memcpy(out.buffers.colors.mapped, default_colors.data(), static_cast<size_t>(colors_size));
+    std::memcpy(out.buffers.overlay_colors.mapped, default_colors.data(), static_cast<size_t>(colors_size));
+    std::memcpy(out.buffers.outline_colors.mapped, default_colors.data(), static_cast<size_t>(colors_size));
+    out.buffers.render_features = static_cast<uint32_t>(blob.features.size());
+    out.buffers.vertices = static_cast<uint32_t>(blob.vertices.size());
+    out.buffers.indices_count = static_cast<uint32_t>(blob.indices.size());
+    out.buffers.line_indices_count = static_cast<uint32_t>(blob.line_indices.size());
+    out.buffers.chunks = blob.chunks;
+    out.buffers.source_signature = blob.source_signature;
+    return true;
+}
+
+bool ensureParcelGpuBuffersResident(const ParcelRenderCacheBlob& blob, std::string* error) {
+    if (!g_Device || !g_UploadCommandBuffer) {
+        if (error) *error = "Vulkan device/upload command buffer is not ready";
+        return false;
+    }
+    if (blob.vertices.empty() || blob.indices.empty() || blob.features.empty() ||
+        blob.line_indices.empty() ||
+        blob.vertex_feature_refs.size() != blob.vertices.size()) {
+        if (error) *error = "parcel render cache blob is incomplete";
+        return false;
+    }
+    if (g_ParcelGpuBuffers.source_signature == blob.source_signature &&
+        g_ParcelGpuBuffers.vertices == blob.vertices.size() &&
+        g_ParcelGpuBuffers.indices_count == blob.indices.size() &&
+        g_ParcelGpuBuffers.line_indices_count == blob.line_indices.size() &&
+        g_ParcelGpuBuffers.render_features == blob.features.size()) {
+        return true;
+    }
+
+    ParcelGpuUploadPayload payload;
+    payload.buffers = ParcelGpuBuffers{};
+    ParcelGpuUploadContext ctx;
+    ctx.command_pool = g_UploadCommandPool;
+    ctx.command_buffer = g_UploadCommandBuffer;
+    g_ParcelGpuPipeline.descriptor_dirty = true;
+    if (!buildParcelGpuUploadPayload(ctx, blob, payload, error)) {
+        return false;
+    }
+    clearParcelGpuBuffers();
+    g_ParcelGpuBuffers = std::move(payload.buffers);
+    g_ParcelGpuPipeline.descriptor_dirty = true;
+    return true;
+}
+
+bool updateParcelGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_ParcelGpuBuffers.colors.mapped || g_ParcelGpuBuffers.render_features == 0) {
+        if (error) *error = "parcel GPU color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_ParcelGpuBuffers.render_features) {
+        if (error) *error = "parcel GPU color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(
+        g_ParcelGpuBuffers.colors.mapped,
+        colors_rgba.data(),
+        colors_rgba.size() * sizeof(ImU32));
+    return true;
+}
+
+bool updateParcelGpuOverlayColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_ParcelGpuBuffers.overlay_colors.mapped || g_ParcelGpuBuffers.render_features == 0) {
+        if (error) *error = "parcel GPU overlay color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_ParcelGpuBuffers.render_features) {
+        if (error) *error = "parcel GPU overlay color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(
+        g_ParcelGpuBuffers.overlay_colors.mapped,
+        colors_rgba.data(),
+        colors_rgba.size() * sizeof(ImU32));
+    return true;
+}
+
+bool updateParcelGpuOutlineColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_ParcelGpuBuffers.outline_colors.mapped || g_ParcelGpuBuffers.render_features == 0) {
+        if (error) *error = "parcel GPU outline color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_ParcelGpuBuffers.render_features) {
+        if (error) *error = "parcel GPU outline color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(
+        g_ParcelGpuBuffers.outline_colors.mapped,
+        colors_rgba.data(),
+        colors_rgba.size() * sizeof(ImU32));
+    return true;
+}
+
+ParcelGpuResidencyStatus getParcelGpuResidencyStatus() {
+    ParcelGpuResidencyStatus out;
+    out.resident =
+        g_ParcelGpuBuffers.positions.buffer &&
+        g_ParcelGpuBuffers.indices.buffer &&
+        g_ParcelGpuBuffers.line_indices.buffer &&
+        g_ParcelGpuBuffers.vertex_feature_refs.buffer &&
+        g_ParcelGpuBuffers.colors.buffer &&
+        g_ParcelGpuBuffers.overlay_colors.buffer &&
+        g_ParcelGpuBuffers.outline_colors.buffer;
+    out.render_features = g_ParcelGpuBuffers.render_features;
+    out.vertices = g_ParcelGpuBuffers.vertices;
+    out.indices = g_ParcelGpuBuffers.indices_count;
+    out.colors = g_ParcelGpuBuffers.render_features;
+    out.source_signature = g_ParcelGpuBuffers.source_signature;
+    return out;
+}
+
+static void adoptParcelGpuUploadPayload(ParcelGpuUploadPayload&& payload) {
+    retireParcelGpuBuffers(std::move(g_ParcelGpuBuffers));
+    g_ParcelGpuBuffers = ParcelGpuBuffers{};
+    g_ParcelGpuBuffers = std::move(payload.buffers);
+    g_ParcelGpuPipeline.descriptor_dirty = true;
+}
+
+bool startParcelGpuUploadWorker(std::string* error) {
+    if (g_ParcelGpuUploadWorker.joinable()) return true;
+    g_ParcelGpuUploadStop.store(false, std::memory_order_relaxed);
+    g_ParcelGpuUploadPendingRequest.reset();
+    g_ParcelGpuUploadCompletedResult.reset();
+
+    std::string ctx_error;
+    ParcelGpuUploadContext startup_ctx;
+    if (!createParcelGpuUploadContext(startup_ctx, &ctx_error)) {
+        if (error) *error = ctx_error;
+        return false;
+    }
+
+    g_ParcelGpuUploadWorker = std::thread([ctx = std::move(startup_ctx)]() mutable {
+        while (!g_ParcelGpuUploadStop.load(std::memory_order_relaxed)) {
+            ParcelRenderCacheBlob request_blob;
+            {
+                std::unique_lock<std::mutex> lk(g_ParcelGpuUploadRequestMutex);
+                g_ParcelGpuUploadCv.wait(lk, [] {
+                    return g_ParcelGpuUploadStop.load(std::memory_order_relaxed) || g_ParcelGpuUploadPendingRequest.has_value();
+                });
+                if (g_ParcelGpuUploadStop.load(std::memory_order_relaxed)) break;
+                request_blob = std::move(*g_ParcelGpuUploadPendingRequest);
+                g_ParcelGpuUploadPendingRequest.reset();
+            }
+
+            ParcelGpuUploadResult result;
+            result.source_signature = request_blob.source_signature;
+            result.ok = buildParcelGpuUploadPayload(ctx, request_blob, result.payload, &result.error);
+            {
+                std::lock_guard<std::mutex> lk(g_ParcelGpuUploadResultMutex);
+                if (g_ParcelGpuUploadCompletedResult && g_ParcelGpuUploadCompletedResult->ok) {
+                    destroyParcelGpuBuffers(g_ParcelGpuUploadCompletedResult->payload.buffers);
+                }
+                g_ParcelGpuUploadCompletedResult = std::move(result);
+            }
+        }
+        destroyParcelGpuUploadContext(ctx);
+    });
+    return true;
+}
+
+void stopParcelGpuUploadWorker() {
+    g_ParcelGpuUploadStop.store(true, std::memory_order_relaxed);
+    g_ParcelGpuUploadCv.notify_all();
+    if (g_ParcelGpuUploadWorker.joinable()) g_ParcelGpuUploadWorker.join();
+    if (g_ParcelGpuUploadCompletedResult && g_ParcelGpuUploadCompletedResult->ok) {
+        destroyParcelGpuBuffers(g_ParcelGpuUploadCompletedResult->payload.buffers);
+    }
+    g_ParcelGpuUploadCompletedResult.reset();
+    g_ParcelGpuUploadPendingRequest.reset();
+}
+
+bool requestParcelGpuUpload(const ParcelRenderCacheBlob& blob, std::string* error) {
+    if (!g_ParcelGpuUploadWorker.joinable()) {
+        if (error) *error = "parcel GPU upload worker is not running";
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_ParcelGpuUploadRequestMutex);
+        g_ParcelGpuUploadPendingRequest = blob;
+    }
+    g_ParcelGpuUploadCv.notify_one();
+    return true;
+}
+
+bool drainParcelGpuUploadResults(const std::string* expected_signature, std::string* adopted_signature, std::string* error) {
+    std::optional<ParcelGpuUploadResult> result;
+    {
+        std::lock_guard<std::mutex> lk(g_ParcelGpuUploadResultMutex);
+        if (!g_ParcelGpuUploadCompletedResult.has_value()) return false;
+        result = std::move(g_ParcelGpuUploadCompletedResult);
+        g_ParcelGpuUploadCompletedResult.reset();
+    }
+    if (!result->ok) {
+        if (error) *error = result->error;
+        return false;
+    }
+    if (adopted_signature) *adopted_signature = result->source_signature;
+    if (expected_signature && result->source_signature != *expected_signature) {
+        destroyParcelGpuBuffers(result->payload.buffers);
+        if (error) *error = "stale parcel GPU upload result discarded";
+        return false;
+    }
+    adoptParcelGpuUploadPayload(std::move(result->payload));
+    return true;
+}
+
+static std::vector<uint32_t> loadSpirvFile(const char* path) {
+    if (!path || !*path) return {};
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    in.seekg(0, std::ios::end);
+    const std::streamsize size = in.tellg();
+    if (size <= 0 || (size % 4) != 0) return {};
+    in.seekg(0, std::ios::beg);
+    std::vector<uint32_t> code((size_t)size / 4);
+    in.read(reinterpret_cast<char*>(code.data()), size);
+    if (!in) return {};
+    return code;
+}
+
+static bool rectsOverlap(
+    float a_min_x,
+    float a_min_y,
+    float a_max_x,
+    float a_max_y,
+    float b_min_x,
+    float b_min_y,
+    float b_max_x,
+    float b_max_y) {
+    return !(a_max_x < b_min_x || a_min_x > b_max_x || a_max_y < b_min_y || a_min_y > b_max_y);
+}
+
+static void destroyParcelGpuPipeline() {
+    if (g_ParcelGpuPipeline.fill_pipeline) {
+        vkDestroyPipeline(g_Device, g_ParcelGpuPipeline.fill_pipeline, g_Allocator);
+        g_ParcelGpuPipeline.fill_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ParcelGpuPipeline.line_pipeline) {
+        vkDestroyPipeline(g_Device, g_ParcelGpuPipeline.line_pipeline, g_Allocator);
+        g_ParcelGpuPipeline.line_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ParcelGpuPipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_ParcelGpuPipeline.pipeline_layout, g_Allocator);
+        g_ParcelGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (g_ParcelGpuPipeline.descriptor_set_layout) {
+        vkDestroyDescriptorSetLayout(g_Device, g_ParcelGpuPipeline.descriptor_set_layout, g_Allocator);
+        g_ParcelGpuPipeline.descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    g_ParcelGpuPipeline.base_descriptor_set = VK_NULL_HANDLE;
+    g_ParcelGpuPipeline.overlay_descriptor_set = VK_NULL_HANDLE;
+    g_ParcelGpuPipeline.outline_descriptor_set = VK_NULL_HANDLE;
+    g_ParcelGpuPipeline.render_pass = VK_NULL_HANDLE;
+    g_ParcelGpuPipeline.descriptor_dirty = true;
+}
+
+static bool ensureParcelGpuDescriptorSet(std::string* error) {
+    if (!g_Device || !g_DescriptorPool || !g_ParcelGpuBuffers.colors.buffer || !g_ParcelGpuBuffers.overlay_colors.buffer || !g_ParcelGpuBuffers.outline_colors.buffer) {
+        if (error) *error = "parcel GPU descriptor prerequisites are not ready";
+        return false;
+    }
+    if (!g_ParcelGpuPipeline.descriptor_set_layout) {
+        VkDescriptorSetLayoutBinding color_binding{};
+        color_binding.binding = 0;
+        color_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        color_binding.descriptorCount = 1;
+        color_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &color_binding;
+        if (vkCreateDescriptorSetLayout(g_Device, &layout_info, g_Allocator, &g_ParcelGpuPipeline.descriptor_set_layout) != VK_SUCCESS) {
+            if (error) *error = "vkCreateDescriptorSetLayout failed for parcel GPU pipeline";
+            return false;
+        }
+    }
+    if (!g_ParcelGpuPipeline.base_descriptor_set || !g_ParcelGpuPipeline.overlay_descriptor_set || !g_ParcelGpuPipeline.outline_descriptor_set) {
+        VkDescriptorSetLayout layouts[3] = {
+            g_ParcelGpuPipeline.descriptor_set_layout,
+            g_ParcelGpuPipeline.descriptor_set_layout,
+            g_ParcelGpuPipeline.descriptor_set_layout
+        };
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = g_DescriptorPool;
+        alloc_info.descriptorSetCount = 3;
+        alloc_info.pSetLayouts = layouts;
+        VkDescriptorSet sets[3]{};
+        if (vkAllocateDescriptorSets(g_Device, &alloc_info, sets) != VK_SUCCESS) {
+            if (error) *error = "vkAllocateDescriptorSets failed for parcel GPU pipeline";
+            return false;
+        }
+        g_ParcelGpuPipeline.base_descriptor_set = sets[0];
+        g_ParcelGpuPipeline.overlay_descriptor_set = sets[1];
+        g_ParcelGpuPipeline.outline_descriptor_set = sets[2];
+        g_ParcelGpuPipeline.descriptor_dirty = true;
+    }
+    if (!g_ParcelGpuPipeline.descriptor_dirty) return true;
+
+    VkDescriptorBufferInfo base_color_info{};
+    base_color_info.buffer = g_ParcelGpuBuffers.colors.buffer;
+    base_color_info.offset = 0;
+    base_color_info.range = g_ParcelGpuBuffers.colors.size_bytes;
+    VkDescriptorBufferInfo overlay_color_info{};
+    overlay_color_info.buffer = g_ParcelGpuBuffers.overlay_colors.buffer;
+    overlay_color_info.offset = 0;
+    overlay_color_info.range = g_ParcelGpuBuffers.overlay_colors.size_bytes;
+    VkDescriptorBufferInfo outline_color_info{};
+    outline_color_info.buffer = g_ParcelGpuBuffers.outline_colors.buffer;
+    outline_color_info.offset = 0;
+    outline_color_info.range = g_ParcelGpuBuffers.outline_colors.size_bytes;
+
+    VkWriteDescriptorSet writes[3]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = g_ParcelGpuPipeline.base_descriptor_set;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[0].pBufferInfo = &base_color_info;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = g_ParcelGpuPipeline.overlay_descriptor_set;
+    writes[1].dstBinding = 0;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &overlay_color_info;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = g_ParcelGpuPipeline.outline_descriptor_set;
+    writes[2].dstBinding = 0;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[2].pBufferInfo = &outline_color_info;
+    vkUpdateDescriptorSets(g_Device, 3, writes, 0, nullptr);
+    g_ParcelGpuPipeline.descriptor_dirty = false;
+    return true;
+}
+
+static bool ensureParcelGpuPipeline(VkRenderPass render_pass, std::string* error) {
+    if (!g_Device || !render_pass) {
+        if (error) *error = "parcel GPU render pass/device is not ready";
+        return false;
+    }
+    if (!ensureParcelGpuDescriptorSet(error)) return false;
+    if (g_ParcelGpuPipeline.fill_pipeline && g_ParcelGpuPipeline.line_pipeline && g_ParcelGpuPipeline.render_pass == render_pass) return true;
+
+    if (g_ParcelGpuPipeline.fill_pipeline) {
+        vkDestroyPipeline(g_Device, g_ParcelGpuPipeline.fill_pipeline, g_Allocator);
+        g_ParcelGpuPipeline.fill_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ParcelGpuPipeline.line_pipeline) {
+        vkDestroyPipeline(g_Device, g_ParcelGpuPipeline.line_pipeline, g_Allocator);
+        g_ParcelGpuPipeline.line_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ParcelGpuPipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_ParcelGpuPipeline.pipeline_layout, g_Allocator);
+        g_ParcelGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+
+    const std::vector<uint32_t> vert_code = loadSpirvFile(kParcelGpuVertShaderPath);
+    const std::vector<uint32_t> frag_code = loadSpirvFile(kParcelGpuFragShaderPath);
+    if (vert_code.empty() || frag_code.empty()) {
+        if (error) *error = "parcel GPU shader SPIR-V is unavailable";
+        return false;
+    }
+
+    VkShaderModuleCreateInfo shader_info{};
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.codeSize = vert_code.size() * sizeof(uint32_t);
+    shader_info.pCode = vert_code.data();
+    VkShaderModule vert_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &vert_shader) != VK_SUCCESS) {
+        if (error) *error = "vkCreateShaderModule failed for parcel vertex shader";
+        return false;
+    }
+    shader_info.codeSize = frag_code.size() * sizeof(uint32_t);
+    shader_info.pCode = frag_code.data();
+    VkShaderModule frag_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &frag_shader) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        if (error) *error = "vkCreateShaderModule failed for parcel fragment shader";
+        return false;
+    }
+
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(ParcelGpuPushConstants);
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &g_ParcelGpuPipeline.descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_range;
+    if (vkCreatePipelineLayout(g_Device, &pipeline_layout_info, g_Allocator, &g_ParcelGpuPipeline.pipeline_layout) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+        if (error) *error = "vkCreatePipelineLayout failed for parcel GPU pipeline";
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert_shader;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag_shader;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].stride = sizeof(ImVec2);
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(uint32_t);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attrs[2]{};
+    attrs[0].location = 0;
+    attrs[0].binding = 0;
+    attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[0].offset = 0;
+    attrs[1].location = 1;
+    attrs[1].binding = 1;
+    attrs[1].format = VK_FORMAT_R32_UINT;
+    attrs[1].offset = 0;
+
+    VkPipelineVertexInputStateCreateInfo vertex_input{};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount = 2;
+    vertex_input.pVertexBindingDescriptions = bindings;
+    vertex_input.vertexAttributeDescriptionCount = 2;
+    vertex_input.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo assembly{};
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.lineWidth = 1.0f;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+
+    VkPipelineMultisampleStateCreateInfo msaa{};
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blend_attachment{};
+    blend_attachment.blendEnable = VK_TRUE;
+    blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blend_attachment;
+
+    const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic{};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = (uint32_t)IM_ARRAYSIZE(dynamic_states);
+    dynamic.pDynamicStates = dynamic_states;
+
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &raster;
+    pipeline_info.pMultisampleState = &msaa;
+    pipeline_info.pColorBlendState = &blend;
+    pipeline_info.pDynamicState = &dynamic;
+    pipeline_info.layout = g_ParcelGpuPipeline.pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+
+    VkPipeline fill_pipeline = VK_NULL_HANDLE;
+    const VkResult fill_result =
+        vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &fill_pipeline);
+    VkPipeline line_pipeline = VK_NULL_HANDLE;
+    if (fill_result == VK_SUCCESS) {
+        VkPipelineInputAssemblyStateCreateInfo line_assembly = assembly;
+        line_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        VkPipelineRasterizationStateCreateInfo line_raster = raster;
+        line_raster.lineWidth = 1.0f;
+        pipeline_info.pInputAssemblyState = &line_assembly;
+        pipeline_info.pRasterizationState = &line_raster;
+        const VkResult line_result =
+            vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &line_pipeline);
+        if (line_result != VK_SUCCESS) {
+            vkDestroyPipeline(g_Device, fill_pipeline, g_Allocator);
+            fill_pipeline = VK_NULL_HANDLE;
+        }
+    }
+    vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+    vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+    if (!fill_pipeline || !line_pipeline) {
+        if (error) *error = "vkCreateGraphicsPipelines failed for parcel GPU pipeline";
+        vkDestroyPipelineLayout(g_Device, g_ParcelGpuPipeline.pipeline_layout, g_Allocator);
+        g_ParcelGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+        return false;
+    }
+    g_ParcelGpuPipeline.fill_pipeline = fill_pipeline;
+    g_ParcelGpuPipeline.line_pipeline = line_pipeline;
+    g_ParcelGpuPipeline.render_pass = render_pass;
+    return true;
+}
+
+bool configureParcelGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error) {
+    g_ParcelGpuDrawState = ParcelGpuDrawState{};
+    if (!config.active) return true;
+    if (!g_ParcelGpuBuffers.positions.buffer || !g_ParcelGpuBuffers.indices.buffer || g_ParcelGpuBuffers.chunks.empty()) {
+        if (error) *error = "parcel GPU buffers are not resident";
+        return false;
+    }
+    g_ParcelGpuDrawState.active = true;
+    g_ParcelGpuDrawState.math_zoom = config.math_zoom;
+    g_ParcelGpuDrawState.zoom_scale = config.zoom_scale;
+    g_ParcelGpuDrawState.center_world = config.center_world;
+    g_ParcelGpuDrawState.viewport_origin = config.viewport_origin;
+    g_ParcelGpuDrawState.viewport_size = config.viewport_size;
+    g_ParcelGpuDrawState.framebuffer_size = config.framebuffer_size;
+    g_ParcelGpuDrawState.visible_chunks.reserve(g_ParcelGpuBuffers.chunks.size());
+    g_ParcelGpuDrawState.visible_line_chunks.reserve(g_ParcelGpuBuffers.chunks.size());
+    for (const ParcelRenderChunkRecord& chunk : g_ParcelGpuBuffers.chunks) {
+        if (!rectsOverlap(
+                chunk.min_lon,
+                chunk.min_lat,
+                chunk.max_lon,
+                chunk.max_lat,
+                config.view_min_lon,
+                config.view_min_lat,
+                config.view_max_lon,
+                config.view_max_lat)) {
+            continue;
+        }
+        if (chunk.index_count == 0) continue;
+        g_ParcelGpuDrawState.visible_chunks.push_back(ParcelGpuDrawChunk{
+            chunk.index_offset,
+            chunk.index_count
+        });
+        if (chunk.line_index_count > 0) {
+            g_ParcelGpuDrawState.visible_line_chunks.push_back(ParcelGpuLineDrawChunk{
+                chunk.line_index_offset,
+                chunk.line_index_count
+            });
+        }
+    }
+    return true;
+}
+
+void clearParcelGpuDrawState() {
+    g_ParcelGpuDrawState = ParcelGpuDrawState{};
+}
+
+bool parcelGpuDrawActive() {
+    return g_ParcelGpuDrawState.active &&
+        !g_ParcelGpuDrawState.visible_chunks.empty() &&
+        g_ParcelGpuBuffers.positions.buffer &&
+        g_ParcelGpuBuffers.indices.buffer &&
+        g_ParcelGpuBuffers.vertex_feature_refs.buffer &&
+        g_ParcelGpuBuffers.colors.buffer;
+}
+
+static void renderParcelGpuDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!parcelGpuDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureParcelGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) {
+        std::fprintf(stderr, "[worldsim3] Parcel GPU pipeline unavailable: %s\n", pipeline_error.c_str());
+        return;
+    }
+
+    ParcelGpuPushConstants push{};
+    push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
+    push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_ParcelGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_ParcelGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_ParcelGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_ParcelGpuDrawState.math_zoom;
+    push.zoom_scale = g_ParcelGpuDrawState.zoom_scale;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = push.framebuffer_size[0];
+    viewport.height = push.framebuffer_size[1];
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+
+    const VkBuffer vertex_buffers[] = {
+        g_ParcelGpuBuffers.positions.buffer,
+        g_ParcelGpuBuffers.vertex_feature_refs.buffer
+    };
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ParcelGpuPipeline.fill_pipeline);
+    vkCmdBindDescriptorSets(
+        g_CurrentFrameRenderCommandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        g_ParcelGpuPipeline.pipeline_layout,
+        0,
+        1,
+        &g_ParcelGpuPipeline.base_descriptor_set,
+        0,
+        nullptr);
+    vkCmdPushConstants(
+        g_CurrentFrameRenderCommandBuffer,
+        g_ParcelGpuPipeline.pipeline_layout,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(push),
+        &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, g_ParcelGpuBuffers.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    for (const ParcelGpuDrawChunk& chunk : g_ParcelGpuDrawState.visible_chunks) {
+        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    }
+}
+
+void enqueueParcelGpuDraw(ImDrawList* draw_list) {
+    if (!draw_list || !parcelGpuDrawActive()) return;
+    draw_list->AddCallback(renderParcelGpuDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+}
+
+bool parcelGpuOverlayDrawActive() {
+    if (!parcelGpuDrawActive() || !g_ParcelGpuBuffers.overlay_colors.mapped) return false;
+    const ImU32* colors = static_cast<const ImU32*>(g_ParcelGpuBuffers.overlay_colors.mapped);
+    for (uint32_t i = 0; i < g_ParcelGpuBuffers.render_features; ++i) {
+        if ((colors[i] >> 24) != 0) return true;
+    }
+    return false;
+}
+
+static void renderParcelGpuOverlayDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!parcelGpuOverlayDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureParcelGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) {
+        std::fprintf(stderr, "[worldsim3] Parcel GPU overlay pipeline unavailable: %s\n", pipeline_error.c_str());
+        return;
+    }
+
+    ParcelGpuPushConstants push{};
+    push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
+    push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_ParcelGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_ParcelGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_ParcelGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_ParcelGpuDrawState.math_zoom;
+    push.zoom_scale = g_ParcelGpuDrawState.zoom_scale;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = push.framebuffer_size[0];
+    viewport.height = push.framebuffer_size[1];
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+
+    const VkBuffer vertex_buffers[] = {
+        g_ParcelGpuBuffers.positions.buffer,
+        g_ParcelGpuBuffers.vertex_feature_refs.buffer
+    };
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ParcelGpuPipeline.fill_pipeline);
+    vkCmdBindDescriptorSets(
+        g_CurrentFrameRenderCommandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        g_ParcelGpuPipeline.pipeline_layout,
+        0,
+        1,
+        &g_ParcelGpuPipeline.overlay_descriptor_set,
+        0,
+        nullptr);
+    vkCmdPushConstants(
+        g_CurrentFrameRenderCommandBuffer,
+        g_ParcelGpuPipeline.pipeline_layout,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(push),
+        &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, g_ParcelGpuBuffers.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    for (const ParcelGpuDrawChunk& chunk : g_ParcelGpuDrawState.visible_chunks) {
+        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    }
+}
+
+void enqueueParcelGpuOverlayDraw(ImDrawList* draw_list) {
+    if (!draw_list || !parcelGpuOverlayDrawActive()) return;
+    draw_list->AddCallback(renderParcelGpuOverlayDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+}
+
+bool parcelGpuOutlineDrawActive() {
+    if (!parcelGpuDrawActive() || !g_ParcelGpuBuffers.outline_colors.mapped || g_ParcelGpuDrawState.visible_line_chunks.empty()) return false;
+    const ImU32* colors = static_cast<const ImU32*>(g_ParcelGpuBuffers.outline_colors.mapped);
+    for (uint32_t i = 0; i < g_ParcelGpuBuffers.render_features; ++i) {
+        if ((colors[i] >> 24) != 0) return true;
+    }
+    return false;
+}
+
+static void renderParcelGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!parcelGpuOutlineDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureParcelGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) {
+        std::fprintf(stderr, "[worldsim3] Parcel GPU outline pipeline unavailable: %s\n", pipeline_error.c_str());
+        return;
+    }
+
+    ParcelGpuPushConstants push{};
+    push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
+    push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_ParcelGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_ParcelGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_ParcelGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_ParcelGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_ParcelGpuDrawState.math_zoom;
+    push.zoom_scale = g_ParcelGpuDrawState.zoom_scale;
+
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = push.framebuffer_size[0];
+    viewport.height = push.framebuffer_size[1];
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_ParcelGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+
+    const VkBuffer vertex_buffers[] = {
+        g_ParcelGpuBuffers.positions.buffer,
+        g_ParcelGpuBuffers.vertex_feature_refs.buffer
+    };
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ParcelGpuPipeline.line_pipeline);
+    vkCmdBindDescriptorSets(
+        g_CurrentFrameRenderCommandBuffer,
+        VK_PIPELINE_BIND_POINT_GRAPHICS,
+        g_ParcelGpuPipeline.pipeline_layout,
+        0,
+        1,
+        &g_ParcelGpuPipeline.outline_descriptor_set,
+        0,
+        nullptr);
+    vkCmdPushConstants(
+        g_CurrentFrameRenderCommandBuffer,
+        g_ParcelGpuPipeline.pipeline_layout,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        0,
+        sizeof(push),
+        &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, g_ParcelGpuBuffers.line_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    for (const ParcelGpuLineDrawChunk& chunk : g_ParcelGpuDrawState.visible_line_chunks) {
+        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    }
+}
+
+void enqueueParcelGpuOutlineDraw(ImDrawList* draw_list) {
+    if (!draw_list || !parcelGpuOutlineDrawActive()) return;
+    draw_list->AddCallback(renderParcelGpuOutlineDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }
 
 static uint32_t calcMipLevels(uint32_t w, uint32_t h) {
@@ -858,6 +2107,10 @@ static void CleanupTileCache() {
 void CleanupVulkan() {
     CleanupTileCache();
     shutdownGpuSplatAggregate();
+    stopParcelGpuUploadWorker();
+    clearParcelGpuBuffers();
+    drainRetiredParcelGpuPayloads(true);
+    destroyParcelGpuPipeline();
     if (g_UploadCommandPool) vkDestroyCommandPool(g_Device, g_UploadCommandPool, g_Allocator);
     if (g_TileSampler) vkDestroySampler(g_Device, g_TileSampler, g_Allocator);
     vkDestroyDescriptorPool(g_Device, g_DescriptorPool, g_Allocator);
@@ -903,7 +2156,11 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     rp.pClearValues = &wd->ClearValue;
     vkCmdBeginRenderPass(fd->CommandBuffer, &rp, VK_SUBPASS_CONTENTS_INLINE);
 
+    g_CurrentFrameRenderCommandBuffer = fd->CommandBuffer;
+    g_CurrentFrameRenderPass = wd->RenderPass;
     ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
+    g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
+    g_CurrentFrameRenderPass = VK_NULL_HANDLE;
     vkCmdEndRenderPass(fd->CommandBuffer);
     check_vk_result(vkEndCommandBuffer(fd->CommandBuffer));
 
@@ -1145,6 +2402,7 @@ void FramePresent(ImGui_ImplVulkanH_Window* wd) {
     }
     check_vk_result(err);
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
+    g_PresentedFrameSerial.fetch_add(1, std::memory_order_relaxed);
 }
 
 void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, bool& swapchain_rebuild) {

@@ -5,6 +5,7 @@
 #include "geo.h"
 #include "layer_geometry.h"
 #include "map_render_utils.h"
+#include "worldsim_app.h"
 
 #include <algorithm>
 #include <cmath>
@@ -194,7 +195,9 @@ void drawFeatureGeometry(
         const auto& world_rings = ctx.projection->getWorldRings(layer_idx, (uint32_t)feature_idx, fg);
         const bool fill_enabled_for_layer =
             layer_idx < ctx.layer_fill_enabled->size() && (*ctx.layer_fill_enabled)[layer_idx];
-        if (fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
+        const bool use_gpu_parcel_fill =
+            (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
+        if (!use_gpu_parcel_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
             ImU32 fill = (feature_c & 0x00FFFFFF) | (170u << 24);
             ctx.projection->drawTessellatedFill(ctx.draw, layer_idx, (uint32_t)feature_idx, fg, fill);
         }
@@ -220,7 +223,9 @@ void drawFeatureGeometry(
                     ctx.vacant_rehab_layer_idx >= 0 &&
                     (size_t)ctx.vacant_rehab_layer_idx < ctx.layer_fill_enabled->size() &&
                     (*ctx.layer_fill_enabled)[(size_t)ctx.vacant_rehab_layer_idx];
-                if ((notice_fill || rehab_fill) && ctx.should_fill_layer_polygon((size_t)ctx.parcel_layer_idx)) {
+                if ((notice_fill || rehab_fill) &&
+                    ctx.should_fill_layer_polygon((size_t)ctx.parcel_layer_idx) &&
+                    !parcelGpuOverlayDrawActive()) {
                     const int alpha = scaledOverlayAlpha(95, 16, 95, 220, weight);
                     ImVec4 vac_base = blendVacancyColor(
                         *ctx.vacancy_notice_color,
@@ -234,9 +239,11 @@ void drawFeatureGeometry(
         }
 
         for (const auto& r : world_rings) {
-            ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
-            const auto& line = ctx.projection->scratchLine();
-            ctx.draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+            if ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) {
+                ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
+                const auto& line = ctx.projection->scratchLine();
+                ctx.draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+            }
         }
         return;
     }
@@ -362,6 +369,9 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
     for (size_t layer_idx : ctx.render_plan->draw_layer_order) {
         auto& l = (*ctx.layers)[layer_idx];
         if (!l.enabled) continue;
+        if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
+            enqueueParcelGpuDraw(ctx.draw);
+        }
 
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);

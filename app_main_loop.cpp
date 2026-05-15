@@ -144,6 +144,44 @@
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+namespace {
+struct ParcelRenderCacheRequest {
+    std::string layer_file;
+    std::string source_signature;
+    fs::path cache_path;
+};
+
+struct ParcelRenderCacheResult {
+    std::string layer_file;
+    std::string source_signature;
+    ParcelRenderCacheBlob blob;
+    std::string error;
+};
+
+bool loadHydratedFeaturesForParcelRender(
+    const fs::path& root,
+    const std::string& layer_file,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureGeom>& out) {
+    const fs::path hydration_bin = root / "data" / "cache" / "hydration" / (layer_file + ".bin");
+    if (loadBinaryHydrationCache(hydration_bin, sig, out)) return true;
+    const fs::path hydration_msgpack = root / "data" / "cache" / "hydration" / (layer_file + ".msgpack");
+    return loadHydrationCache(hydration_msgpack, sig, out);
+}
+
+bool loadTrianglesForParcelRender(
+    const fs::path& root,
+    const std::string& layer_file,
+    const std::string& sig,
+    size_t feature_count,
+    std::vector<std::vector<uint32_t>>& out) {
+    const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
+    if (loadBinaryTriCache(tri_bin, sig, feature_count, out)) return true;
+    const fs::path tri_json = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.json");
+    return loadTriCache(tri_json, sig, feature_count, out);
+}
+}
+
 static void clearTileDiskPresenceCache() {
     // Legacy hook: disk-presence memoization was removed during run-loop refactor.
 }
@@ -213,6 +251,12 @@ int runWorldSim3App(int argc, char** argv) {
     glfwGetFramebufferSize(window, &w, &h);
     ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
     SetupVulkanWindow(wd, surface, w, h);
+    {
+        std::string parcel_upload_error;
+        if (!startParcelGpuUploadWorker(&parcel_upload_error)) {
+            std::fprintf(stderr, "[worldsim3] Failed to start parcel GPU upload worker: %s\n", parcel_upload_error.c_str());
+        }
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -452,6 +496,18 @@ int runWorldSim3App(int argc, char** argv) {
     std::unique_ptr<MapProjectionCache> persistent_projection_cache;
     size_t persistent_projection_generation = 0;
     size_t projection_generation = 0;
+    std::string parcel_gpu_uploaded_signature;
+    std::string parcel_geometry_locked_signature;
+    std::string parcel_geometry_restart_required_signature;
+    std::string parcel_render_requested_signature;
+    std::string parcel_gpu_upload_requested_signature;
+    uint64_t parcel_gpu_filter_state_key = 0;
+    uint64_t parcel_gpu_overlay_state_key = 0;
+    uint64_t parcel_gpu_outline_state_key = 0;
+    std::vector<ImU32> parcel_gpu_last_base_colors;
+    std::vector<ImU32> parcel_gpu_last_overlay_colors;
+    std::vector<ImU32> parcel_gpu_last_outline_colors;
+    ParcelRenderCacheBlob parcel_gpu_render_blob;
     std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
     std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
     std::atomic<size_t> prof_projection_cache_generation{0};
@@ -716,6 +772,58 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<std::thread> hydration_workers = startHydrationWorkers(layer_workers_ctx, hydration_worker_count);
     std::thread triangulation_worker = startTriangulationWorker(layer_workers_ctx);
     std::thread spatial_index_worker = startSpatialIndexWorker(layer_workers_ctx);
+    std::atomic<bool> parcel_render_stop{false};
+    std::mutex parcel_render_req_mutex;
+    std::condition_variable parcel_render_cv;
+    std::deque<ParcelRenderCacheRequest> parcel_render_requests;
+    std::mutex parcel_render_result_mutex;
+    std::deque<ParcelRenderCacheResult> parcel_render_results;
+    std::thread parcel_render_worker([&] {
+        while (!parcel_render_stop.load(std::memory_order_relaxed)) {
+            ParcelRenderCacheRequest req;
+            {
+                std::unique_lock<std::mutex> lk(parcel_render_req_mutex);
+                parcel_render_cv.wait(lk, [&] {
+                    return parcel_render_stop.load(std::memory_order_relaxed) || !parcel_render_requests.empty();
+                });
+                if (parcel_render_stop.load(std::memory_order_relaxed)) break;
+                req = std::move(parcel_render_requests.front());
+                parcel_render_requests.pop_front();
+            }
+
+            ParcelRenderCacheResult result;
+            result.layer_file = req.layer_file;
+            result.source_signature = req.source_signature;
+            if (!loadBinaryParcelRenderCache(req.cache_path, req.source_signature, result.blob)) {
+                std::vector<LayerDef::FeatureGeom> hydrated_features;
+                if (!loadHydratedFeaturesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features)) {
+                    result.error = "failed to load hydration cache for parcel render build";
+                } else {
+                    std::vector<std::vector<uint32_t>> triangles;
+                    if (!loadTrianglesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features.size(), triangles)) {
+                        result.error = "failed to load triangulation cache for parcel render build";
+                    } else {
+                        for (size_t i = 0; i < hydrated_features.size() && i < triangles.size(); ++i) {
+                            hydrated_features[i].triangles = std::move(triangles[i]);
+                        }
+                        if (!buildParcelRenderCacheBlob(hydrated_features, req.source_signature, result.blob)) {
+                            result.error = "failed to build parcel render cache blob";
+                        } else {
+                            saveBinaryParcelRenderCache(req.cache_path, result.blob);
+                        }
+                    }
+                }
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(parcel_render_result_mutex);
+                parcel_render_results.push_back(std::move(result));
+                while (parcel_render_results.size() > 4) {
+                    parcel_render_results.pop_front();
+                }
+            }
+        }
+    });
 
     StatusApiContextFactoryInput status_api_input;
     status_api_input.app_version = kAppVersion;
@@ -1162,6 +1270,7 @@ int runWorldSim3App(int argc, char** argv) {
         const float map_x = frame_layout.map_x;
         const float main_panel_h = frame_layout.main_panel_h;
         drainRetiredTextures();
+        drainRetiredParcelGpuResources();
         const auto prof_frame_begin = std::chrono::steady_clock::now();
         auto prof_ms_since = [](std::chrono::steady_clock::time_point t) {
             return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
@@ -1719,6 +1828,391 @@ int runWorldSim3App(int argc, char** argv) {
         }
         refreshLayerProfileSnapshot(frame_prelude.layer_profile_snapshot);
 
+        if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size() &&
+            (size_t)parcel_layer_idx < layer_states.size()) {
+            const LayerDef& parcel_layer = layers[(size_t)parcel_layer_idx];
+            const LayerRuntimeState& parcel_state = layer_states[(size_t)parcel_layer_idx];
+            const bool parcel_ready =
+                parcel_state.status == LayerPipelineStatus::Ready &&
+                !parcel_state.hydration_source_signature.empty() &&
+                parcel_state.hydration_source_signature == parcel_state.triangulation_source_signature;
+            if (!parcel_ready) {
+                if (parcel_geometry_locked_signature.empty()) {
+                    clearParcelGpuBuffers();
+                    parcel_gpu_uploaded_signature.clear();
+                    parcel_render_requested_signature.clear();
+                    parcel_gpu_upload_requested_signature.clear();
+                    parcel_gpu_filter_state_key = 0;
+                    parcel_gpu_overlay_state_key = 0;
+                    parcel_gpu_outline_state_key = 0;
+                    parcel_gpu_last_base_colors.clear();
+                    parcel_gpu_last_overlay_colors.clear();
+                    parcel_gpu_last_outline_colors.clear();
+                    parcel_gpu_render_blob = ParcelRenderCacheBlob{};
+                }
+            } else {
+                const std::string& sig = parcel_state.hydration_source_signature;
+                const fs::path render_cache_path = root / "data" / "cache" / "render" / (parcel_layer.file + ".parcel-render.bin");
+                const bool parcel_geometry_refresh_allowed =
+                    parcel_geometry_locked_signature.empty() || sig == parcel_geometry_locked_signature;
+                if (!parcel_geometry_refresh_allowed) {
+                    if (parcel_geometry_restart_required_signature != sig) {
+                        std::fprintf(
+                            stderr,
+                            "[worldsim3] Parcel geometry source changed from %s to %s after startup. "
+                            "Parcel GPU geometry is session-static; restart required for geometry refresh.\n",
+                            parcel_geometry_locked_signature.c_str(),
+                            sig.c_str());
+                        parcel_geometry_restart_required_signature = sig;
+                    }
+                } else if (parcel_render_requested_signature != sig && parcel_gpu_uploaded_signature != sig) {
+                    {
+                        std::lock_guard<std::mutex> lk(parcel_render_req_mutex);
+                        parcel_render_requests.clear();
+                        parcel_render_requests.push_back(ParcelRenderCacheRequest{
+                            parcel_layer.file,
+                            sig,
+                            render_cache_path
+                        });
+                    }
+                    parcel_render_requested_signature = sig;
+                    parcel_render_cv.notify_one();
+                }
+
+                if (parcel_geometry_refresh_allowed) {
+                    std::lock_guard<std::mutex> lk(parcel_render_result_mutex);
+                    while (!parcel_render_results.empty()) {
+                        ParcelRenderCacheResult result = std::move(parcel_render_results.front());
+                        parcel_render_results.pop_front();
+                        if (result.layer_file != parcel_layer.file || result.source_signature != sig) {
+                            continue;
+                        }
+                        if (!result.blob.features.empty()) {
+                            parcel_gpu_render_blob = std::move(result.blob);
+                            parcel_render_requested_signature.clear();
+                            if (parcel_gpu_upload_requested_signature != sig) {
+                                std::string gpu_error;
+                                if (requestParcelGpuUpload(parcel_gpu_render_blob, &gpu_error)) {
+                                    parcel_gpu_upload_requested_signature = sig;
+                                } else {
+                                    std::fprintf(stderr, "[worldsim3] Parcel GPU upload request failed: %s\n", gpu_error.c_str());
+                                }
+                            }
+                        }
+                    }
+                }
+                if (parcel_geometry_refresh_allowed) {
+                    std::string adopted_signature;
+                    std::string upload_error;
+                    if (drainParcelGpuUploadResults(&sig, &adopted_signature, &upload_error)) {
+                        if (adopted_signature == sig) {
+                            parcel_gpu_uploaded_signature = sig;
+                            if (parcel_geometry_locked_signature.empty()) {
+                                parcel_geometry_locked_signature = sig;
+                            }
+                            parcel_geometry_restart_required_signature.clear();
+                            parcel_gpu_upload_requested_signature.clear();
+                            parcel_gpu_filter_state_key = 0;
+                            parcel_gpu_overlay_state_key = 0;
+                            parcel_gpu_outline_state_key = 0;
+                            parcel_gpu_last_base_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                            parcel_gpu_last_overlay_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                            parcel_gpu_last_outline_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        }
+                    } else if (!upload_error.empty()) {
+                        std::fprintf(stderr, "[worldsim3] Parcel GPU upload failed: %s\n", upload_error.c_str());
+                        parcel_gpu_upload_requested_signature.clear();
+                    }
+                }
+                if (parcel_gpu_uploaded_signature == sig &&
+                    parcel_geometry_refresh_allowed &&
+                    !parcel_gpu_render_blob.features.empty()) {
+                    auto hash_mix = [](uint64_t& h, uint64_t v) {
+                        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    };
+                    auto hash_cstr = [&](uint64_t& h, const char* s) {
+                        const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
+                        while (*p) {
+                            hash_mix(h, *p);
+                            ++p;
+                        }
+                    };
+                    uint64_t color_state_key = 1469598103934665603ULL;
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_min);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_max);
+                    hash_cstr(color_state_key, map_filter_state.blocklot);
+                    hash_cstr(color_state_key, map_filter_state.status);
+                    hash_cstr(color_state_key, map_filter_state.address);
+                    hash_cstr(color_state_key, map_filter_state.owner);
+                    hash_cstr(color_state_key, map_filter_state.zip);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.selected_owners.size());
+                    for (const auto& owner : map_filter_state.selected_owners) {
+                        for (unsigned char ch : owner) hash_mix(color_state_key, ch);
+                    }
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.active);
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.features.size());
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.blocklots.size());
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.owners.size());
+                    hash_mix(color_state_key, (uint64_t)query_layers.size());
+                    for (const auto& ql : query_layers) {
+                        hash_mix(color_state_key, (uint64_t)ql.enabled);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.active);
+                        hash_mix(color_state_key, (uint64_t)ql.row_count);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.blocklots.size());
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.owners.size());
+                        for (float c : ql.color) {
+                            uint32_t bits = 0;
+                            std::memcpy(&bits, &c, sizeof(bits));
+                            hash_mix(color_state_key, bits);
+                        }
+                    }
+                    uint64_t overlay_state_key = color_state_key;
+                    hash_mix(overlay_state_key, (uint64_t)parcel_parameter_mode);
+                    uint32_t gamma_bits = 0;
+                    if ((size_t)parcel_layer_idx < layer_choropleth_gamma.size()) {
+                        std::memcpy(&gamma_bits, &layer_choropleth_gamma[(size_t)parcel_layer_idx], sizeof(gamma_bits));
+                    }
+                    hash_mix(overlay_state_key, gamma_bits);
+                    hash_mix(overlay_state_key, (uint64_t)layer_fill_enabled.size());
+                    hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_notice_layer_idx] : false));
+                    hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_rehab_layer_idx] : false));
+                    hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)tax_lien_layer_idx] : false));
+                    hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)tax_sale_layer_idx] : false));
+                    hash_mix(overlay_state_key, (uint64_t)layers[(size_t)parcel_layer_idx].enabled);
+                    hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size() ? layers[(size_t)vacant_notice_layer_idx].enabled : false));
+                    hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() ? layers[(size_t)vacant_rehab_layer_idx].enabled : false));
+                    hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size() ? layers[(size_t)tax_lien_layer_idx].enabled : false));
+                    hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size() ? layers[(size_t)tax_sale_layer_idx].enabled : false));
+                    uint64_t outline_state_key = overlay_state_key;
+                    hash_mix(outline_state_key, (uint64_t)selected_parcel_indices.size());
+                    for (size_t selected_idx : selected_parcel_indices) {
+                        hash_mix(outline_state_key, (uint64_t)selected_idx);
+                    }
+
+                    FeatureFilterContextFactoryInput filter_input;
+                    filter_input.layers = &layers;
+                    filter_input.map_filters = &map_filter_state;
+                    filter_input.result_set = parcel_jurisdiction_result_set.active ? &parcel_jurisdiction_result_set : nullptr;
+                    filter_input.query_layers = &query_layers;
+                    filter_input.real_property_by_blocklot = &real_property_by_blocklot;
+                    filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+                    filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+                    filter_input.real_property_layer_idx = real_property_layer_idx;
+                    filter_input.parcel_layer_idx = parcel_layer_idx;
+                    filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+                    filter_input.crime_legacy_layer_idx = crime_legacy_layer_idx;
+                    const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+
+                    if (color_state_key != parcel_gpu_filter_state_key) {
+                        std::vector<ImU32> parcel_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
+                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
+                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
+                            if (feature_idx >= parcel_layer.features.size()) continue;
+                            const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                                parcel_colors[i] = IM_COL32(0, 0, 0, 0);
+                                continue;
+                            }
+                            float query_color[4] = {0, 0, 0, 0};
+                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg, query_color)) {
+                                parcel_colors[i] = ImGui::ColorConvertFloat4ToU32(
+                                    ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                            } else {
+                                parcel_colors[i] = base_color;
+                            }
+                        }
+                        std::string color_error;
+                        if (updateParcelGpuColorBuffer(parcel_colors, &color_error)) {
+                            parcel_gpu_filter_state_key = color_state_key;
+                            parcel_gpu_last_base_colors = parcel_colors;
+                        }
+                    }
+                    if (overlay_state_key != parcel_gpu_overlay_state_key) {
+                        auto layer_fill_enabled_at = [&](int idx) -> bool {
+                            return idx >= 0 && (size_t)idx < layer_fill_enabled.size() && layer_fill_enabled[(size_t)idx];
+                        };
+                        auto layer_enabled_at = [&](int idx) -> bool {
+                            return idx >= 0 && (size_t)idx < layers.size() && layers[(size_t)idx].enabled;
+                        };
+                        auto value_at = [](const std::vector<int>& values, size_t idx) -> int {
+                            return idx < values.size() ? values[idx] : 0;
+                        };
+                        auto parcel_area_sq_m = [](const LayerDef::FeatureGeom& fg) -> double {
+                            if (fg.rings.empty()) return 0.0;
+                            constexpr double kDegToMetersLat = 111320.0;
+                            double total = 0.0;
+                            for (const auto& ring : fg.rings) {
+                                if (ring.size() < 3) continue;
+                                double lat_sum = 0.0;
+                                for (const auto& p : ring) lat_sum += (double)p.y;
+                                const double lat0 = lat_sum / (double)ring.size();
+                                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
+                                double a = 0.0;
+                                for (size_t ri = 0, n = ring.size(); ri < n; ++ri) {
+                                    const auto& p = ring[ri];
+                                    const auto& q = ring[(ri + 1) % n];
+                                    a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                                         ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+                                }
+                                total += std::abs(a) * 0.5;
+                            }
+                            return total;
+                        };
+                        auto parameter_value = [&](size_t parcel_idx, const LayerDef::FeatureGeom& fg) -> double {
+                            switch (parcel_parameter_mode) {
+                                case 1:
+                                    return parcel_area_sq_m(fg);
+                                case 2: {
+                                    const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
+                                    return rec ? rec->current_value : 0.0;
+                                }
+                                default:
+                                    return 0.0;
+                            }
+                        };
+                        std::vector<ImU32> overlay_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        const bool parameter_fill_enabled = parcel_parameter_mode > 0 && layer_enabled_at(parcel_layer_idx);
+                        const bool vacancy_fill_enabled =
+                            (layer_enabled_at(vacant_notice_layer_idx) || layer_enabled_at(vacant_rehab_layer_idx)) &&
+                            (layer_fill_enabled_at(vacant_notice_layer_idx) || layer_fill_enabled_at(vacant_rehab_layer_idx));
+                        const bool tax_fill_enabled =
+                            (layer_enabled_at(tax_lien_layer_idx) || layer_enabled_at(tax_sale_layer_idx)) &&
+                            (layer_fill_enabled_at(tax_lien_layer_idx) || layer_fill_enabled_at(tax_sale_layer_idx));
+                        double min_parameter = std::numeric_limits<double>::infinity();
+                        double max_parameter = -std::numeric_limits<double>::infinity();
+                        if (parameter_fill_enabled) {
+                            for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
+                                const uint32_t feature_idx = rec.feature_idx;
+                                if (feature_idx >= parcel_layer.features.size()) continue;
+                                const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
+                                if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                const double v = parameter_value(feature_idx, fg);
+                                if (v <= 0.0 || !std::isfinite(v)) continue;
+                                min_parameter = std::min(min_parameter, v);
+                                max_parameter = std::max(max_parameter, v);
+                            }
+                        }
+                        const bool parameter_range_valid =
+                            parameter_fill_enabled &&
+                            std::isfinite(min_parameter) &&
+                            std::isfinite(max_parameter) &&
+                            max_parameter > min_parameter;
+                        const ImVec4 lien_c =
+                            (tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size())
+                                ? layers[(size_t)tax_lien_layer_idx].color
+                                : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
+                        const ImVec4 sale_c =
+                            (tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size())
+                                ? layers[(size_t)tax_sale_layer_idx].color
+                                : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
+                        const ImVec4 notice_c =
+                            (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size())
+                                ? layers[(size_t)vacant_notice_layer_idx].color
+                                : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+                        const ImVec4 rehab_c =
+                            (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
+                                ? layers[(size_t)vacant_rehab_layer_idx].color
+                                : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                        const float parcel_gamma =
+                            (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
+                                ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
+                                : 1.0f;
+                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
+                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
+                            if (feature_idx >= parcel_layer.features.size()) continue;
+                            const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
+                            if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                                continue;
+                            }
+                            ImU32 overlay = IM_COL32(0, 0, 0, 0);
+                            if (parameter_range_valid) {
+                                const double v = parameter_value(feature_idx, fg);
+                                if (v > 0.0 && std::isfinite(v)) {
+                                    const float t = applyPowerGamma(
+                                        std::clamp((float)((v - min_parameter) / (max_parameter - min_parameter)), 0.0f, 1.0f),
+                                        parcel_gamma);
+                                    overlay = colorWithAlpha(heatColor(t), 150);
+                                }
+                            }
+                            const int vac_notice = value_at(parcel_vac_notice_by_feature, feature_idx);
+                            const int vac_rehab = value_at(parcel_vac_rehab_by_feature, feature_idx);
+                            const int vac_weight = overlayWeight(
+                                layer_enabled_at(vacant_notice_layer_idx), vac_notice,
+                                layer_enabled_at(vacant_rehab_layer_idx), vac_rehab);
+                            if (vacancy_fill_enabled && vac_weight > 0) {
+                                const int alpha = scaledOverlayAlpha(120, 18, 120, 230, vac_weight);
+                                const ImVec4 vac_base = blendVacancyColor(
+                                    notice_c,
+                                    rehab_c,
+                                    vac_notice,
+                                    vac_rehab);
+                                overlay = colorWithAlpha(vac_base, alpha);
+                            }
+                            const int lien_count = value_at(parcel_tax_lien_by_feature, feature_idx);
+                            const int sale_count = value_at(parcel_tax_sale_by_feature, feature_idx);
+                            const int tax_weight = overlayWeight(
+                                layer_enabled_at(tax_lien_layer_idx), lien_count,
+                                layer_enabled_at(tax_sale_layer_idx), sale_count);
+                            if (tax_fill_enabled && tax_weight > 0) {
+                                const int alpha = scaledOverlayAlpha(90, 10, 90, 210, tax_weight);
+                                const ImVec4 tax_base = blendTaxColor(
+                                    lien_c,
+                                    sale_c,
+                                    layer_enabled_at(tax_lien_layer_idx),
+                                    layer_enabled_at(tax_sale_layer_idx),
+                                    lien_count,
+                                    sale_count);
+                                overlay = colorWithAlpha(tax_base, alpha);
+                            }
+                            overlay_colors[i] = overlay;
+                        }
+                        std::string overlay_error;
+                        if (updateParcelGpuOverlayColorBuffer(overlay_colors, &overlay_error)) {
+                            parcel_gpu_overlay_state_key = overlay_state_key;
+                            parcel_gpu_last_overlay_colors = overlay_colors;
+                        }
+                    }
+                    if (outline_state_key != parcel_gpu_outline_state_key) {
+                        std::vector<ImU32> outline_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
+                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
+                            if (feature_idx >= parcel_layer.features.size()) continue;
+                            const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
+                            if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                                continue;
+                            }
+                            ImU32 outline =
+                                i < parcel_gpu_last_base_colors.size()
+                                    ? parcel_gpu_last_base_colors[i]
+                                    : ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
+                            const ImU32 overlay_fill =
+                                i < parcel_gpu_last_overlay_colors.size()
+                                    ? parcel_gpu_last_overlay_colors[i]
+                                    : IM_COL32(0, 0, 0, 0);
+                            if ((overlay_fill >> 24) != 0) {
+                                const ImVec4 overlay_v = ImGui::ColorConvertU32ToFloat4(overlay_fill);
+                                outline = colorWithAlpha(darkenColor(overlay_v, 0.60f), 235);
+                            } else if (selected_parcel_indices.end() != std::find(selected_parcel_indices.begin(), selected_parcel_indices.end(), (size_t)feature_idx)) {
+                                outline = IM_COL32(255, 230, 0, 255);
+                            } else {
+                                ImVec4 base_v = ImGui::ColorConvertU32ToFloat4(outline);
+                                outline = colorWithAlpha(darkenColor(base_v, 0.72f), 220);
+                            }
+                            outline_colors[i] = outline;
+                        }
+                        std::string outline_error;
+                        if (updateParcelGpuOutlineColorBuffer(outline_colors, &outline_error)) {
+                            parcel_gpu_outline_state_key = outline_state_key;
+                        }
+                    }
+                }
+            }
+        }
+
         auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
             if (real_property_layer_idx < 0 || (size_t)real_property_layer_idx >= layers.size()) return nullptr;
             std::string blocklot = featureBlockLotJoinKey(parcel);
@@ -2107,9 +2601,12 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.hydrate_req_cv = &hydrate_req_cv;
     shutdown_input.tri_cv = &tri_cv;
     shutdown_input.spatial_cv = &spatial_cv;
+    shutdown_input.parcel_render_stop = &parcel_render_stop;
+    shutdown_input.parcel_render_cv = &parcel_render_cv;
     shutdown_input.hydration_workers = &hydration_workers;
     shutdown_input.triangulation_worker = &triangulation_worker;
     shutdown_input.spatial_index_worker = &spatial_index_worker;
+    shutdown_input.parcel_render_worker = &parcel_render_worker;
     shutdown_input.status_api_worker = &status_api_worker;
     shutdown_input.dataset_api_worker = &dataset_api_worker;
     shutdown_input.lan_discovery_worker = &lan_discovery_worker;

@@ -67,6 +67,7 @@ struct MapCanvasSession {
     bool map_active = false;
     int math_zoom = 0;
     double zoom_scale = 1.0;
+    ImVec2 center_world = ImVec2(0.0f, 0.0f);
     float view_min_lon = 0.0f;
     float view_max_lon = 0.0f;
     float view_min_lat = 0.0f;

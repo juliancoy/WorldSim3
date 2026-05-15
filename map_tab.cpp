@@ -2,6 +2,7 @@
 
 #include "map_overlay_panels.h"
 #include "owner_info.h"
+#include "worldsim_app.h"
 
 void drawMapTabWindow(const MapTabContext& ctx) {
     if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.center_lon || !ctx.center_lat || !ctx.zoom ||
@@ -36,6 +37,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
         !ctx.policy_viz_metric || !ctx.policy_viz_cache_rebuilds || !ctx.policy_viz_node_count) {
         return;
     }
+
+    clearParcelGpuDrawState();
 
     ImGui::SetNextWindowPos(ImVec2(ctx.map_x, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.map_w, ctx.main_panel_h), ImGuiCond_Always);
@@ -79,6 +82,29 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.prof_projection_world_extent_cache_entries,
                 ctx.prof_projection_cache_generation
             });
+
+            if (ctx.parcel_layer_idx >= 0 &&
+                (size_t)ctx.parcel_layer_idx < ctx.layers->size() &&
+                (*ctx.layers)[(size_t)ctx.parcel_layer_idx].enabled) {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImVec2 fb_scale = io.DisplayFramebufferScale;
+                ParcelGpuDrawConfig parcel_draw_cfg;
+                parcel_draw_cfg.active = true;
+                parcel_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                parcel_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                parcel_draw_cfg.center_world = map_canvas_session.center_world;
+                parcel_draw_cfg.viewport_origin =
+                    ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                parcel_draw_cfg.viewport_size =
+                    ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                parcel_draw_cfg.framebuffer_size =
+                    ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                parcel_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                parcel_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                parcel_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                parcel_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                configureParcelGpuDrawState(parcel_draw_cfg);
+            }
 
             MapFrameSessionContext map_frame_session_ctx;
             map_frame_session_ctx.root = ctx.root;

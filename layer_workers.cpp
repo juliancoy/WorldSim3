@@ -57,6 +57,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 const fs::path layer_path = root / "data" / "layers" / layers[i].file;
                 const fs::path cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".msgpack");
                 const fs::path binary_cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".bin");
+                const fs::path canonical_binary_path = root / "data" / "layers" / (layers[i].file + ".canonical.bin");
                 const std::string sig = fileSignature(layer_path);
                 std::error_code layer_size_ec;
                 const uintmax_t layer_size_bytes = fs::file_size(layer_path, layer_size_ec);
@@ -68,6 +69,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 std::vector<LayerDef::FeatureGeom> cached_features;
                 bool loaded_binary_cache = false;
                 bool loaded_msgpack_cache = false;
+                bool loaded_canonical_binary = false;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
                     if (i < layer_states.size()) {
@@ -79,6 +81,8 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                             layer_states[i].hydration_phase = "loading_binary_cache";
                         } else if (fs::exists(cache_path)) {
                             layer_states[i].hydration_phase = "loading_msgpack_cache";
+                        } else if (fs::exists(canonical_binary_path)) {
+                            layer_states[i].hydration_phase = "loading_canonical_binary_source";
                         } else {
                             layer_states[i].hydration_phase = "parsing_source_cache_missing";
                         }
@@ -94,7 +98,14 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     }
                     loaded_msgpack_cache = loadHydrationCache(cache_path, sig, cached_features);
                 }
-                if (loaded_binary_cache || loaded_msgpack_cache) {
+                if (!loaded_binary_cache && !loaded_msgpack_cache && fs::exists(canonical_binary_path)) {
+                    {
+                        std::lock_guard<std::mutex> lk(status_mutex);
+                        if (i < layer_states.size()) layer_states[i].hydration_phase = "loading_canonical_binary_source";
+                    }
+                    loaded_canonical_binary = loadBinaryCanonicalFeatureCollection(canonical_binary_path, sig, cached_features);
+                }
+                if (loaded_binary_cache || loaded_msgpack_cache || loaded_canonical_binary) {
                     const bool suspicious_cache =
                         cached_features.empty() ||
                         implausibleHydrationCache(layers[i].file, cached_features.size()) ||
@@ -107,10 +118,11 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                             if (i < layer_states.size()) {
                                 layer_states[i].hydration_phase = loaded_binary_cache
                                     ? "binary_cache_hit_queueing"
-                                    : "msgpack_cache_hit_queueing";
+                                    : (loaded_msgpack_cache ? "msgpack_cache_hit_queueing"
+                                                            : "canonical_binary_queueing");
                             }
                         }
-                        if (loaded_msgpack_cache && build_hydration_cache) {
+                        if ((loaded_msgpack_cache || loaded_canonical_binary) && build_hydration_cache) {
                             saveBinaryHydrationCache(binary_cache_path, sig, cached_features);
                         }
                         bool first_chunk = true;

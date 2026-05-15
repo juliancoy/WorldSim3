@@ -122,9 +122,12 @@ struct AppShutdownContext {
     std::condition_variable* hydrate_req_cv = nullptr;
     std::condition_variable* tri_cv = nullptr;
     std::condition_variable* spatial_cv = nullptr;
+    std::atomic<bool>* parcel_render_stop = nullptr;
+    std::condition_variable* parcel_render_cv = nullptr;
     std::vector<std::thread>* hydration_workers = nullptr;
     std::thread* triangulation_worker = nullptr;
     std::thread* spatial_index_worker = nullptr;
+    std::thread* parcel_render_worker = nullptr;
     std::thread* status_api_worker = nullptr;
     std::thread* dataset_api_worker = nullptr;
     std::thread* lan_discovery_worker = nullptr;
