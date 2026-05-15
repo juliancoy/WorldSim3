@@ -29,12 +29,17 @@ struct PerformanceStatsUiContext {
     float left_panel_w = 0.0f;
 
     size_t layer_count = 0;
+    size_t enabled_layer_count = 0;
     size_t hydrated_now = 0;
     size_t triangulated_now = 0;
+    size_t enabled_hydrated_now = 0;
+    size_t enabled_ready_now = 0;
     size_t hydrated_pending = 0;
     size_t tri_pending = 0;
     float hydrated_frac = 1.0f;
     float tri_frac = 1.0f;
+    float enabled_hydrated_frac = 1.0f;
+    float enabled_ready_frac = 1.0f;
     double elapsed_s = 0.0;
     double hydrate_idle_s = 0.0;
     double tri_idle_s = 0.0;

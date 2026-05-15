@@ -204,6 +204,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         });
         drawElementInfoTab(OwnerInfoTabContext{
             ctx.element_info_state,
+            ctx.duckdb_analytics,
             ctx.layers,
             ctx.parcel_layer_idx,
             ctx.unified_parcels,

@@ -676,6 +676,78 @@ std::string regionalParcelJurisdictionForFile(const std::string& file) {
     return it == kJurisdictions.end() ? std::string() : it->second;
 }
 
+bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer) {
+    layer = LayerDef{};
+    layer.file = file;
+    if (file == "parcel.geojson") {
+        layer.name = "Baltimore City Parcels";
+        layer.source_url =
+            "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0";
+        return true;
+    }
+    if (file == "baltimore_county_parcels.geojson") {
+        layer.name = "Baltimore County Parcels";
+        layer.import_type = "arcgis_feature_layer";
+        layer.import_service_url = "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1";
+        return true;
+    }
+    if (file == "howard_county_parcels.geojson") {
+        layer.name = "Howard County Parcels";
+        layer.import_type = "zipped_shapefile";
+        layer.import_url = "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip";
+        layer.import_shapefile = "Property.shp";
+        layer.import_source_crs = "EPSG:2248";
+        return true;
+    }
+    static const std::unordered_map<std::string, std::pair<std::string, std::string>> kMarylandPlanningCountyZips = {
+        {"allegany_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/0vq8xyexfe2juqcoeclqn/ALLEparcels0226.zip?dl=1&rlkey=6dfrsl38xrpujh6ouczpwnikp", "ALLEPOLY.shp"}},
+        {"anne_arundel_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/4grva91527p7dc7pk96zc/ANNEparcels0226.zip?dl=1&rlkey=3ev0osf81ryh65nc443juweju", "ANNEPOLY.shp"}},
+        {"calvert_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/1d18z9vwbr8o9c329n7hb/CALVparcels0226.zip?dl=1&rlkey=wwjs2awg5nh88leik5upfin4u", "CALVPOLY.shp"}},
+        {"caroline_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/e6070aylp5n5oo4bohodt/CAROparcels0226.zip?dl=1&rlkey=4itc5bvhvrnzsbgsm9wp0v1vi", "CAROPOLY.shp"}},
+        {"carroll_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/g9voz3iu9yzourajhab3k/CARRparcels0226.zip?dl=1&rlkey=y5f6y65zcrh71k9jatb0y7ygz", "CARRPOLY.shp"}},
+        {"cecil_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/5k5lik3jh3ev05dyqxofo/CECIparcels0226.zip?dl=1&rlkey=afnszcr4yc27slnai6xfxp8fn", "CECIPOLY.shp"}},
+        {"charles_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/nplpj2vibo6mfij9yvosd/CHARparcels0226.zip?dl=1&rlkey=zj8b42mxepjs0043exlqyanfi", "CHARPOLY.shp"}},
+        {"dorchester_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/rq5dhlu0ian6x15xiaac7/DORCparcels0226.zip?dl=1&rlkey=b5z8b9de701rd493c21saqa0i", "DORCPOLY.shp"}},
+        {"frederick_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/9wt3rwqv0u23gebgl9tfa/FREDparcels0226.zip?dl=1&rlkey=p59y96s9k1neapw19tgxd7xen", "FREDPOLY.shp"}},
+        {"garrett_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/whplsq4nkd7lh8xbyv6dz/GARRparcels0226.zip?dl=1&rlkey=pb7m5jtmb1qkpvd1toqjj6ggd", "GARRPOLY.shp"}},
+        {"harford_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/h17fdtpi5rlfezmjvrwqa/HARFparcels0226.zip?dl=1&rlkey=bh763wr1s3tz5z6y3b2o7ne32", "HARFPOLY.shp"}},
+        {"kent_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/esnv0nzpk2o0uibmterif/KENTparcels0226.zip?dl=1&rlkey=f7eszhurib9rcaox4g57vghaf", "KENTPOLY.shp"}},
+        {"montgomery_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/cfz86bco1s8lxmqm9b2ux/MONTparcels0226.zip?dl=1&rlkey=7n5o9icvdy83a0b6qhyy68mz3", "MONTPOLY.shp"}},
+        {"prince_georges_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/h74wrhh7e5m3o1rkx51jy/PRINparcels0226.zip?dl=1&rlkey=u5ly9afqgehr3tsp3rtc1fgja", "PRINPOLY.shp"}},
+        {"queen_annes_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/k30hp5aaopaem6kf7kigi/QUEEparcels0226.zip?dl=1&rlkey=rc99o6igbr4ktx561deh0yazv", "QUEEPOLY.shp"}},
+        {"st_marys_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/j7sxbgr2lm4kgpzp027im/STMAparcels0226.zip?dl=1&rlkey=4dl0u5qpjuj6ahrbz2qwq2bi1", "STMAPOLY.shp"}},
+        {"somerset_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/4x0x495lyd9buejgesdq9/SOMEparcels0226.zip?dl=1&rlkey=rus957682qasf063rpgjkchmv", "SOMEPOLY.shp"}},
+        {"talbot_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/mfcan19ls76ftvfb4js6a/TALBparcels0226.zip?dl=1&rlkey=hec1eqadkui5rtj9w260rfjdd", "TALBPOLY.shp"}},
+        {"washington_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/xqp1pwc83o32rxh0tv3re/WASHparcels0226.zip?dl=1&rlkey=mcntcjujf63poxwa6cy610896", "WASHPOLY.shp"}},
+        {"wicomico_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/m38c63axnabt6uzrhl5wg/WICOparcels0226.zip?dl=1&rlkey=cwx7xits93t0batx6w0kngq13", "WICOPOLY.shp"}},
+        {"worcester_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/2yxas503opb7bopi2svls/WORCparcels0226.zip?dl=1&rlkey=57mz9ovyuieorvzlw4gp0hsbq", "WORCPOLY.shp"}}
+    };
+    auto it = kMarylandPlanningCountyZips.find(file);
+    if (it == kMarylandPlanningCountyZips.end()) return false;
+    layer.name = regionalParcelJurisdictionForFile(file) + " Parcels";
+    layer.import_type = "zipped_shapefile";
+    layer.import_url = it->second.first;
+    layer.import_shapefile = it->second.second;
+    layer.import_source_crs = "EPSG:26985";
+    return true;
+}
+
+bool ensureRegionalParcelInputAvailable(const fs::path& root, const std::string& file, std::string* err) {
+    const fs::path input = root / "data" / "layers" / file;
+    if (fs::exists(input)) return true;
+    LayerDef source;
+    if (!populateRegionalParcelSourceLayer(file, source)) {
+        if (err) *err = "no configured parcel source for " + file;
+        return false;
+    }
+    VersionedDownloadResult res = downloadOrImportLayer(source, input, root);
+    if (!res.ok) {
+        if (err) *err = "failed to materialize " + file + ": " + res.message;
+        return false;
+    }
+    return fs::exists(input);
+}
+
 VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const fs::path& root) {
     VersionedDownloadResult res;
     const fs::path builder = root / "build" / "worldsim_regional_parcel_builder";
@@ -713,6 +785,10 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
              {"worcester_county_parcels.geojson", ""}
          }) {
         const fs::path input = root / "data" / "layers" / file;
+        if (!fs::exists(input)) {
+            std::string import_err;
+            ensureRegionalParcelInputAvailable(root, file, &import_err);
+        }
         if (!fs::exists(input)) continue;
         const std::string jurisdiction = regionalParcelJurisdictionForFile(file);
         if (jurisdiction.empty()) continue;

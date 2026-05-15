@@ -17,18 +17,27 @@ const char* statusToString(LayerPipelineStatus s) {
 }
 
 void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si) {
+    std::vector<LayerDef::FeatureExtent> feature_extents;
+    feature_extents.reserve(layer.features.size());
+    for (const auto& fg : layer.features) feature_extents.push_back(fg.extent);
+    buildLayerSpatialIndexForExtents(feature_extents, si);
+}
+
+void buildLayerSpatialIndexForExtents(
+    const std::vector<LayerDef::FeatureExtent>& feature_extents,
+    LayerSpatialIndex& si) {
     si = LayerSpatialIndex{};
-    const size_t n = layer.features.size();
+    const size_t n = feature_extents.size();
     if (n == 0) return;
-    float min_lon = layer.features[0].extent.min_lon;
-    float min_lat = layer.features[0].extent.min_lat;
-    float max_lon = layer.features[0].extent.max_lon;
-    float max_lat = layer.features[0].extent.max_lat;
-    for (const auto& fg : layer.features) {
-        min_lon = std::min(min_lon, fg.extent.min_lon);
-        min_lat = std::min(min_lat, fg.extent.min_lat);
-        max_lon = std::max(max_lon, fg.extent.max_lon);
-        max_lat = std::max(max_lat, fg.extent.max_lat);
+    float min_lon = feature_extents[0].min_lon;
+    float min_lat = feature_extents[0].min_lat;
+    float max_lon = feature_extents[0].max_lon;
+    float max_lat = feature_extents[0].max_lat;
+    for (const auto& ex : feature_extents) {
+        min_lon = std::min(min_lon, ex.min_lon);
+        min_lat = std::min(min_lat, ex.min_lat);
+        max_lon = std::max(max_lon, ex.max_lon);
+        max_lat = std::max(max_lat, ex.max_lat);
     }
     si.min_lon = min_lon;
     si.min_lat = min_lat;
@@ -52,7 +61,7 @@ void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si) {
     };
 
     for (size_t i = 0; i < n; ++i) {
-        const auto& ex = layer.features[i].extent;
+        const auto& ex = feature_extents[i];
         const int x0 = cell_x(ex.min_lon);
         const int x1 = cell_x(ex.max_lon);
         const int y0 = cell_y(ex.min_lat);

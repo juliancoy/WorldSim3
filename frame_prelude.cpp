@@ -2,7 +2,7 @@
 
 FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     FramePreludeResult result;
-    if (!ctx.root || !ctx.layers || !ctx.layer_spatial || !ctx.layer_profile_dirty ||
+    if (!ctx.root || !ctx.layers || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty ||
         !ctx.layer_profile_snapshot || !ctx.layer_profile_mutex || !ctx.layer_registry ||
         !ctx.local_layer_exists_cache || !ctx.data_freshness_state || !ctx.data_freshness_msg ||
         !ctx.data_library_status_msg || !ctx.layer_download_queue || !ctx.layer_download_inflight ||
@@ -25,7 +25,7 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     }
 
     result.layer_profile_snapshot.layers = ctx.layers;
-    result.layer_profile_snapshot.layer_spatial = ctx.layer_spatial;
+    result.layer_profile_snapshot.layer_profile_accumulators = ctx.layer_profile_accumulators;
     result.layer_profile_snapshot.layer_profile_dirty = ctx.layer_profile_dirty;
     result.layer_profile_snapshot.layer_profile_snapshot = ctx.layer_profile_snapshot;
     result.layer_profile_snapshot.layer_profile_mutex = ctx.layer_profile_mutex;

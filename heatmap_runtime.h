@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aggregate_visualization_strategies.h"
+#include "heat_normalization.h"
 #include "heatmap_render.h"
 #include "map_render_heatmap_pass.h"
 #include "worldsim_app_internal.h"
@@ -16,6 +17,11 @@ struct CachedAggregateTexture {
     std::vector<CachedHeatCell> cells;
     HeatmapRaster raster;
     TileTexture texture;
+    uint64_t last_used_frame = 0;
+};
+
+struct CachedHeatNormalization {
+    HeatNormalizationState state;
     uint64_t last_used_frame = 0;
 };
 
@@ -43,6 +49,7 @@ struct HeatmapRuntimeState {
     uint64_t pending_key = 0;
     std::unordered_map<uint64_t, CachedAggregateTexture> texture_cache;
     uint64_t texture_cache_frame = 0;
+    std::unordered_map<uint64_t, CachedHeatNormalization> normalization_cache;
 };
 
 struct HeatmapCacheLookup {

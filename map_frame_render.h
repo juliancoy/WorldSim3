@@ -63,6 +63,7 @@ struct RenderFrameOrchestrationContext {
 
     std::vector<LayerDef>* layers = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<bool>* layer_heatmap_enabled = nullptr;
     const std::vector<int>* layer_heatmap_algo = nullptr;

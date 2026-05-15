@@ -11,7 +11,6 @@
 namespace {
 
 constexpr size_t kMaxHeatmapTextureCacheEntries = 8;
-
 std::filesystem::path aggregateCachePath(const std::filesystem::path& root, uint64_t key) {
     std::ostringstream name;
     name << std::hex << key << ".raster.bin";
@@ -42,6 +41,7 @@ void clearHeatmapRuntimeCache(HeatmapRuntimeState& state) {
     if (state.raster_texture.descriptor) destroyTileTexture(state.raster_texture);
     state.raster_texture_valid = false;
     state.texture_cache_frame = 0;
+    state.normalization_cache.clear();
     if (state.async_inflight) {
         state.async_inflight = false;
         state.pending_key = 0;

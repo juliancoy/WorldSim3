@@ -1,6 +1,7 @@
 #pragma once
 
 #include "layer_runtime.h"
+#include "profiling.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -18,8 +19,14 @@ struct LayerPipelineDrainContext {
     std::deque<TriResult>* tri_results = nullptr;
     std::mutex* tri_mutex = nullptr;
     std::condition_variable* tri_cv = nullptr;
+    std::deque<SpatialIndexResult>* spatial_results = nullptr;
+    std::mutex* spatial_mutex = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
+    std::vector<LayerProfileAccumulator>* layer_profile_accumulators = nullptr;
+    std::vector<size_t>* spatial_index_requested_feature_count = nullptr;
+    std::vector<std::string>* spatial_index_requested_signature = nullptr;
     std::mutex* status_mutex = nullptr;
     std::vector<bool>* hydration_requested = nullptr;
     std::mutex* hydrate_req_mutex = nullptr;
@@ -35,3 +42,4 @@ struct LayerPipelineDrainContext {
 
 void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx);
 void drainTriangulationResults(LayerPipelineDrainContext& ctx);
+void drainSpatialIndexResults(LayerPipelineDrainContext& ctx);

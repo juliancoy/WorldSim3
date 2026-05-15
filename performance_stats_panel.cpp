@@ -11,11 +11,31 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
         ImVec2(ctx.left_panel_w, std::max(0.0f, ctx.layout_h - ctx.main_panel_h - ctx.layout_margin * 2.0f - ctx.layout_gap)),
         ImGuiCond_Always);
     ImGui::Begin("Performance and Stats", nullptr, ImGuiWindowFlags_NoCollapse);
-    ImGui::Text("Hydration: %zu / %zu (%.1f%%)", ctx.hydrated_now, ctx.layer_count, ctx.hydrated_frac * 100.0f);
-    ImGui::ProgressBar(ctx.hydrated_frac, ImVec2(-1.0f, 0.0f));
-    ImGui::Text("Triangulation: %zu / %zu (%.1f%%)", ctx.triangulated_now, ctx.layer_count, ctx.tri_frac * 100.0f);
-    ImGui::ProgressBar(ctx.tri_frac, ImVec2(-1.0f, 0.0f));
-    ImGui::TextDisabled("Hydration queue: %zu | Tri queue: %zu | elapsed: %.1fs", ctx.hydrated_pending, ctx.tri_pending, ctx.elapsed_s);
+    ImGui::Text(
+        "Enabled layers ready: %zu / %zu (%.1f%%)",
+        ctx.enabled_ready_now,
+        ctx.enabled_layer_count,
+        ctx.enabled_ready_frac * 100.0f);
+    ImGui::ProgressBar(ctx.enabled_ready_frac, ImVec2(-1.0f, 0.0f));
+    if (ctx.enabled_layer_count > 0 &&
+        ctx.enabled_hydrated_now == ctx.enabled_layer_count &&
+        ctx.enabled_ready_now < ctx.enabled_layer_count) {
+        ImGui::TextDisabled("Enabled layer cache load complete; render preparation still running.");
+    }
+    ImGui::TextDisabled(
+        "Enabled layers hydrated: %zu / %zu (%.1f%%)",
+        ctx.enabled_hydrated_now,
+        ctx.enabled_layer_count,
+        ctx.enabled_hydrated_frac * 100.0f);
+    ImGui::TextDisabled(
+        "Global cached/loaded layers: %zu / %zu (%.1f%%) | Global ready layers: %zu / %zu (%.1f%%)",
+        ctx.hydrated_now,
+        ctx.layer_count,
+        ctx.hydrated_frac * 100.0f,
+        ctx.triangulated_now,
+        ctx.layer_count,
+        ctx.tri_frac * 100.0f);
+    ImGui::TextDisabled("Background layer queue: %zu | Tri queue: %zu | elapsed: %.1fs", ctx.hydrated_pending, ctx.tri_pending, ctx.elapsed_s);
     ImGui::TextDisabled("Frame: %.2f ms (last %.2f) | FPS: %.1f", ctx.perf_frame_ms_avg, ctx.perf_frame_ms_last, ctx.perf_fps_avg);
     ImGui::TextDisabled(
         "UI rows: Data Library %zu/%zu (rebuilds %zu) | People & Pay %zu/%zu (rebuilds %zu)",
@@ -56,8 +76,8 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
     ImGui::TextDisabled("status: %s", ctx.arkavo_status->c_str());
     if (!ctx.arkavo_err->empty()) ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "arkavo: %s", ctx.arkavo_err->c_str());
     drawLanDiscoveryPanel(*ctx.lan_panel);
-    if (ctx.hydrated_now < ctx.layer_count && ctx.hydrate_idle_s > 15.0) {
-        ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Hydration has not advanced for %.1fs", ctx.hydrate_idle_s);
+    if (ctx.enabled_hydrated_now < ctx.enabled_layer_count && ctx.hydrate_idle_s > 15.0) {
+        ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Enabled-layer cache loading has not advanced for %.1fs", ctx.hydrate_idle_s);
     }
     if (ctx.triangulated_now < ctx.layer_count && ctx.tri_idle_s > 15.0) {
         ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Triangulation has not advanced for %.1fs", ctx.tri_idle_s);

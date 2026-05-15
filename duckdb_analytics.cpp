@@ -677,6 +677,47 @@ DuckDbQueryResult DuckDbAnalytics::queryParcelJurisdictions(
     return executeMapQuery(sql.str(), {}, {}, max_rows);
 }
 
+DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(
+    size_t parcel_layer_idx,
+    size_t parcel_feature_idx) const {
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT
+            parcel_layer_idx,
+            parcel_feature_idx,
+            blocklot,
+            parcel_source_file,
+            property_source_file,
+            parcel_has_geometry,
+            has_property_record,
+            owner,
+            owner_display,
+            address,
+            zipcode,
+            status,
+            current_land,
+            current_improvements,
+            tax_base,
+            sale_price,
+            current_value,
+            vacant_notice_count,
+            vacant_rehab_count,
+            tax_lien_count,
+            tax_sale_count,
+            tax_lien_amount,
+            tax_sale_amount,
+            min_lon,
+            min_lat,
+            max_lon,
+            max_lat
+        FROM unified_parcels
+        WHERE parcel_layer_idx = )SQL" << (uint64_t)parcel_layer_idx << R"SQL(
+          AND parcel_feature_idx = )SQL" << (uint64_t)parcel_feature_idx << R"SQL(
+        LIMIT 1
+    )SQL";
+    return executeMapQuery(sql.str(), {}, {}, 1);
+}
+
 std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& query, size_t max_rows) const {
     std::vector<DuckDbSearchHit> out;
     const std::string q = trimDisplayValue(query);

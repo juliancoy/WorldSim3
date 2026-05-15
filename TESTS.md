@@ -51,7 +51,6 @@ Limitations:
 
 - It reads source files directly.
 - It does not exercise the hydration binary cache, legacy hydration MsgPack fallback, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
-- It does not exercise persistent frame-to-frame projection-cache reuse.
 
 ## Hydration Cache Self-Test
 
@@ -139,6 +138,114 @@ Expected pass signal:
 
 - Command exits `0`.
 - JSON contains `"ok": true`.
+
+## Projection Cache Self-Test
+
+```bash
+./build/worldsim3 --projection-cache-selftest
+./build/worldsim3 --projection-fill-cache-selftest
+./build/worldsim3 --projection-color-cache-selftest
+```
+
+Purpose:
+
+- Verifies `MapProjectionCache` fills on first use.
+- Verifies world-ring/world-extent reuse when `math_zoom` is unchanged.
+- Verifies cache invalidation and rebuild when `math_zoom` changes.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+Additional fill-cache coverage:
+
+- `--projection-fill-cache-selftest` verifies retained world-space fill geometry is built on first use.
+- Verifies invalid triangle indices are discarded once during cache build.
+- Verifies the cached fill geometry is reused across frame-projection changes at stable `math_zoom`.
+- Verifies the fill cache is invalidated and rebuilt when `math_zoom` changes.
+
+Additional color-cache coverage:
+
+- `--projection-color-cache-selftest` verifies per-feature retained color storage is absent before first write.
+- Verifies style-key mismatch produces a cache miss.
+- Verifies overwriting the same parcel feature with a new style key replaces the retained feature color and subpolygon color vector.
+- Verifies color storage survives zoom/projection cache invalidation because it is independent from world-geometry caches.
+
+## Triangulation Apply Self-Test
+
+```bash
+./build/worldsim3 --triangulation-apply-selftest
+```
+
+Purpose:
+
+- Verifies `drainTriangulationResults()` leaves a large result partially applied after the first bounded drain.
+- Verifies the intermediate status phase is one of the explicit `applying_*` phases.
+- Verifies repeated drains complete the result and restore the final cache-hit phase.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+## Spatial Index Self-Test
+
+```bash
+./build/worldsim3 --spatial-index-selftest
+```
+
+Purpose:
+
+- Verifies completed spatial-index results are applied through the drain path.
+- Verifies the built index can answer a simple bounding-box query.
+- Verifies stale spatial-index results are discarded when the hydrated source signature has changed.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+## Layer Profile Self-Test
+
+```bash
+./build/worldsim3 --layer-profile-selftest
+```
+
+Purpose:
+
+- Verifies layer profile snapshots are built from maintained accumulators.
+- Verifies the snapshot copies feature, ring, point, triangle, property, and spatial-index counters.
+- Verifies the dirty bit is cleared after refresh.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
+
+## Render Fallback Note
+
+The bounded no-index render fallback currently has no dedicated CLI self-test.
+
+Current coverage comes from code inspection and the shared render-path build integration:
+
+- `render_layer_pass.cpp` uses a rolling bounded fallback scan for large no-index layers.
+- hydration replacement and cache-clear paths reset the per-layer fallback cursors.
+- heatmap recomputation is deferred for large no-index layers to avoid building aggregates from partial scans.
+
+The next appropriate automated coverage would be a focused render-pass harness that verifies cursor advancement and bounded work when `LayerSpatialIndex::built == false`.
+
+## Heat Normalization Cache Note
+
+The heat-normalization cache currently has no dedicated CLI self-test.
+
+Current coverage comes from code inspection and shared render-path integration:
+
+- `render_layer_pass.cpp` caches normalization state by heatmap data key plus layer index.
+- `heatmap_runtime.cpp` clears the normalization cache when the broader heatmap runtime cache is cleared.
+- cache retention is bounded to prevent unbounded growth from repeated filter changes.
+
+The next appropriate automated coverage would be a focused render-pass or heatmap harness that verifies a second render with the same heatmap data key reuses cached normalization state instead of rebuilding it.
 
 ## DuckDB Owner Dump Integration Check
 

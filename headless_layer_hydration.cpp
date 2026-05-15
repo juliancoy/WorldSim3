@@ -106,7 +106,11 @@ bool hydrateLocalLayersHeadless(
         &tri_mutex,
         &tri_cv,
         &tri_jobs,
-        &tri_results
+        &tri_results,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr
     };
     std::vector<std::thread> workers = startHydrationWorkers(worker_ctx, std::max(1u, options.worker_count));
     hydrate_req_cv.notify_all();

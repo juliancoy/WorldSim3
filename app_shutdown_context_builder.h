@@ -69,8 +69,10 @@ struct AppShutdownContextFactoryInput {
     std::thread* time_cube_ui_worker = nullptr;
     std::condition_variable* hydrate_req_cv = nullptr;
     std::condition_variable* tri_cv = nullptr;
+    std::condition_variable* spatial_cv = nullptr;
     std::vector<std::thread>* hydration_workers = nullptr;
     std::thread* triangulation_worker = nullptr;
+    std::thread* spatial_index_worker = nullptr;
     std::thread* status_api_worker = nullptr;
     std::thread* dataset_api_worker = nullptr;
     std::thread* lan_discovery_worker = nullptr;

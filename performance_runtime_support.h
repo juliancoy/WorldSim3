@@ -73,6 +73,8 @@ struct PerformanceRuntimeContext {
     const std::filesystem::path* cache_aggregate_dir = nullptr;
     std::vector<LayerDef>* layers = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
+    std::vector<LayerProfileAccumulator>* layer_profile_accumulators = nullptr;
     std::vector<bool>* layer_profile_dirty = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
     std::mutex* hydrated_mutex = nullptr;
@@ -81,6 +83,12 @@ struct PerformanceRuntimeContext {
     std::deque<TriJob>* tri_jobs = nullptr;
     std::deque<TriResult>* tri_results = nullptr;
     std::condition_variable* tri_cv = nullptr;
+    std::mutex* spatial_mutex = nullptr;
+    std::deque<SpatialIndexJob>* spatial_jobs = nullptr;
+    std::deque<SpatialIndexResult>* spatial_results = nullptr;
+    std::condition_variable* spatial_cv = nullptr;
+    std::vector<size_t>* spatial_index_requested_feature_count = nullptr;
+    std::vector<std::string>* spatial_index_requested_signature = nullptr;
     std::mutex* hydrate_req_mutex = nullptr;
     std::deque<size_t>* hydrate_requests = nullptr;
     std::vector<bool>* hydration_requested = nullptr;

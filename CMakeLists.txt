@@ -212,6 +212,8 @@ add_executable(worldsim3
   ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
+target_compile_definitions(worldsim3 PRIVATE WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp")
+
 target_include_directories(worldsim3 PRIVATE
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends
@@ -282,6 +284,7 @@ add_executable(worldsim3_gpu_aggregate_harness
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
 )
+target_compile_definitions(worldsim3_gpu_aggregate_harness PRIVATE WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp")
 
 target_include_directories(worldsim3_gpu_aggregate_harness PRIVATE
   ${imgui_SOURCE_DIR}
@@ -332,6 +335,7 @@ add_executable(worldsim3_duckdb_owner_dump
   geo.cpp
   headless_layer_hydration.cpp
   layer_geometry.cpp
+  layer_runtime.cpp
   layer_state_io.cpp
   layer_workers.cpp
   memory_utils.cpp

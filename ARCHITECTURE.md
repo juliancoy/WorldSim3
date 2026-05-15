@@ -277,7 +277,21 @@ The first implemented step is a binary hydration cache at `data/cache/hydration/
 
 The second implemented step is a binary triangulation cache at `data/cache/triangulation/<layer-file>.tri.bin`. That cache stores the per-feature triangle index vectors keyed by the same source signature. It removes the JSON triangulation decode cost and makes parcel fill readiness observable through explicit triangulation cache phases.
 
-The third implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when hydrated layer geometry is replaced. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work.
+The third implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when hydrated layer geometry is replaced. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work. A dedicated CLI self-test now verifies reuse at stable zoom and invalidation on zoom change.
+
+The fourth implemented step is budgeted triangulation-result apply on the main thread. Triangulation and cache decode still happen on workers, but the final move of triangle vectors into live `LayerDef::FeatureGeom` records no longer commits an entire large parcel layer in one frame. The drain path now applies bounded batches per frame, publishes explicit `applying_binary_cache`, `applying_json_cache`, or `applying_built_result` phases while work remains, and marks the layer `Ready` only after the final batch lands.
+
+The fifth implemented step is asynchronous spatial-index construction. Full-layer `LayerSpatialIndex` rebuilds no longer happen inline in the frame loop. Stable hydrated layers now publish extent snapshots into a background spatial-index job queue, the worker builds the index off-frame, and the main thread only drains completed results. Results are accepted only when their source signature and feature count still match the current hydrated layer; stale results are discarded explicitly.
+
+The sixth implemented step is maintained layer-profile accounting. The `/profile/layers` snapshot path no longer rescans every feature in dirty layers on the main thread just to recount rings, points, triangle indices, properties, and spatial-index stats. Those counters are now maintained at the actual mutation boundaries during hydration drain, triangulation apply, and spatial-index apply, and the snapshot builder only copies the already-maintained totals.
+
+The seventh implemented step is bounded no-index render fallback. When a large layer is hydrated but its spatial index is not ready yet, the render pass no longer falls back to scanning every feature in one frame. Large no-index layers now advance through a rolling bounded scan budget per frame using persistent cursors. This keeps raw parcel rendering responsive while the spatial index worker catches up. Heatmap recomputation for large no-index layers is deferred rather than generated from a partial feature scan.
+
+The eighth implemented step is cached heat normalization. Heat layers no longer rebuild percentile and grouped normalization distributions every frame when filter/domain state is unchanged. The render path now reuses normalization state keyed by the stable heatmap data key plus layer index, with bounded cache retention inside `HeatmapRuntimeState`.
+
+The ninth implemented step is retained CPU fill-geometry caching inside `MapProjectionCache`. For polygon features, the render path now caches a flattened world-space vertex stream and a prevalidated triangle-index stream per feature. Frame rendering still projects those cached world vertices to screen space and still submits through ImGui, so this is not yet a GPU-resident parcel mesh path. It does, however, remove repeated per-frame ring flattening and triangle-index validation from parcel fill rendering and establishes a cleaner separation between retained geometry data and per-frame color/style decisions.
+
+The tenth implemented step is independent retained parcel color storage. `MapProjectionCache` now stores a per-feature style record keyed by layer, feature index, and style generation, with a feature-wide color plus a subpolygon color vector. The current feature model still represents a parcel as one polygon-with-holes, so the subpolygon vector presently defaults to one entry for polygonal parcel features. The storage boundary is now explicit, though: geometry and color are retained separately, and color storage survives pan/zoom projection churn until a real source replacement resets the cache owner.
 
 Operationally, the supported migration path is:
 
@@ -290,6 +304,13 @@ Operationally, the supported migration path is:
 - `worldsim3 --warm-triangulation-cache <layer-file>` converts one legacy triangulation cache to binary
 - `worldsim3 --warm-triangulation-cache-all` converts all currently cacheable local triangulation artifacts and skips stale legacy caches
 - the map frame reuses a persistent world-ring/world-extent projection cache until `math_zoom` or hydrated source generation changes
+- large triangulation results are applied into live feature records incrementally across frames instead of a single unbounded main-thread commit
+- large spatial-index rebuilds are built asynchronously from extent snapshots and applied only when their source signature and feature count still match the current layer
+- layer profile snapshots now copy maintained counters instead of rescanning full layers on the frame thread
+- large no-index layers use a bounded rolling fallback scan instead of a full-layer render pass while waiting for async spatial-index completion
+- heat normalization distributions are cached by stable heatmap data key instead of rebuilt every frame
+- polygon fill rendering reuses retained world-space fill geometry and prevalidated triangle indices instead of rebuilding those CPU buffers every frame
+- parcel features now have independent retained color storage with room for per-subpolygon colors
 
 This keeps the architecture migration incremental. Teams can materialize the faster binary hydration layer without waiting for the later retained-GPU-buffer work.
 

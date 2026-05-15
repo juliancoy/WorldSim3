@@ -152,5 +152,5 @@ Most record/analysis tabs now have their own `.cpp`.
 
 - `tools/check_main_size.sh`: Guard that verifies `main.cpp` stays below the configured line limit.
 - `tools/check_file_sizes.sh`: Guard that verifies authored source/header files stay below 2000 lines, excluding build/data/vendor files.
-- `worldsim_regional_parcel_builder`: Normalizes Baltimore City, Baltimore County, Howard County, and future county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`.
-- `data/layers/regional_parcels.geojson`: Generated canonical regional parcel layer used by the app when present; rebuild from official source downloads rather than editing manually.
+- `worldsim_regional_parcel_builder`: Normalizes Baltimore City, Baltimore County, Howard County, and the remaining Maryland county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`. Missing county staging layers can be materialized from official Maryland Planning parcel downloads before the regional build runs.
+- `data/layers/regional_parcels.geojson`: Generated canonical Maryland parcel layer used by the app when present; rebuild from official source downloads rather than editing manually.

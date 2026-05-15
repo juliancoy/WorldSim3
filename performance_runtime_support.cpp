@@ -20,9 +20,11 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
         !ctx.clear_cache_tile_memory || !ctx.clear_cache_tile_disk_presence ||
         !ctx.last_cache_clear_msg || !ctx.cache_hydration_dir || !ctx.cache_triangulation_dir ||
         !ctx.cache_derived_dir || !ctx.cache_aggregate_dir || !ctx.layers || !ctx.layer_spatial ||
-        !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.hydrated_mutex ||
+        !ctx.layer_fallback_scan_cursor || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.hydrated_mutex ||
         !ctx.hydrated_queue || !ctx.tri_mutex || !ctx.tri_jobs || !ctx.tri_results ||
-        !ctx.tri_cv || !ctx.hydrate_req_mutex || !ctx.hydrate_requests ||
+        !ctx.tri_cv || !ctx.spatial_mutex || !ctx.spatial_jobs || !ctx.spatial_results ||
+        !ctx.spatial_cv || !ctx.spatial_index_requested_feature_count ||
+        !ctx.spatial_index_requested_signature || !ctx.hydrate_req_mutex || !ctx.hydrate_requests ||
         !ctx.hydration_requested || !ctx.hydration_required || !ctx.status_mutex ||
         !ctx.hydrated_count || !ctx.triangulated_count) {
         return;
@@ -45,6 +47,29 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
     cache_clear_ui.clear_cache_tile_memory = *ctx.clear_cache_tile_memory;
     cache_clear_ui.clear_cache_tile_disk_presence = *ctx.clear_cache_tile_disk_presence;
     cache_clear_ui.last_cache_clear_msg = *ctx.last_cache_clear_msg;
+
+    size_t enabled_layer_count = 0;
+    size_t enabled_hydrated_now = 0;
+    size_t enabled_ready_now = 0;
+    {
+        std::lock_guard<std::mutex> lk(*ctx.status_mutex);
+        const size_t count = std::min(ctx.layers->size(), ctx.layer_states->size());
+        for (size_t i = 0; i < count; ++i) {
+            if (!(*ctx.layers)[i].enabled) continue;
+            ++enabled_layer_count;
+            const auto status = (*ctx.layer_states)[i].status;
+            if (status != LayerPipelineStatus::Queued &&
+                status != LayerPipelineStatus::Hydrating &&
+                status != LayerPipelineStatus::Failed) {
+                ++enabled_hydrated_now;
+            }
+            if (status == LayerPipelineStatus::Ready) ++enabled_ready_now;
+        }
+    }
+    const float enabled_hydrated_frac =
+        enabled_layer_count == 0 ? 1.0f : (float)enabled_hydrated_now / (float)enabled_layer_count;
+    const float enabled_ready_frac =
+        enabled_layer_count == 0 ? 1.0f : (float)enabled_ready_now / (float)enabled_layer_count;
 
     auto connect_arkavo = [&]() {
         ArkavoRealtimeClient::Config cfg;
@@ -157,14 +182,30 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                 ctx.tri_results->clear();
             }
             {
+                std::lock_guard<std::mutex> lk(*ctx.spatial_mutex);
+                ctx.spatial_jobs->clear();
+                ctx.spatial_results->clear();
+            }
+            {
                 std::lock_guard<std::mutex> lk(*ctx.hydrate_req_mutex);
                 ctx.hydrate_requests->clear();
                 std::fill(ctx.hydration_requested->begin(), ctx.hydration_requested->end(), false);
                 std::fill(ctx.hydration_required->begin(), ctx.hydration_required->end(), false);
             }
+            std::fill(
+                ctx.spatial_index_requested_feature_count->begin(),
+                ctx.spatial_index_requested_feature_count->end(),
+                0);
+            for (auto& sig : *ctx.spatial_index_requested_signature) sig.clear();
             for (size_t i = 0; i < ctx.layers->size(); ++i) {
                 releaseContainerStorage((*ctx.layers)[i].features);
                 (*ctx.layer_spatial)[i] = LayerSpatialIndex{};
+                if (i < ctx.layer_fallback_scan_cursor->size()) {
+                    (*ctx.layer_fallback_scan_cursor)[i] = 0;
+                }
+                if (i < ctx.layer_profile_accumulators->size()) {
+                    (*ctx.layer_profile_accumulators)[i] = LayerProfileAccumulator{};
+                }
                 if (i < ctx.layer_profile_dirty->size()) (*ctx.layer_profile_dirty)[i] = true;
             }
             {
@@ -176,8 +217,10 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                         (*ctx.layer_states)[i].error.clear();
                         (*ctx.layer_states)[i].hydration_source_signature.clear();
                         (*ctx.layer_states)[i].triangulation_source_signature.clear();
+                        (*ctx.layer_states)[i].spatial_index_source_signature.clear();
                         (*ctx.layer_states)[i].hydration_phase.clear();
                         (*ctx.layer_states)[i].triangulation_phase.clear();
+                        (*ctx.layer_states)[i].spatial_index_phase.clear();
                         (*ctx.layer_states)[i].hydration_loaded_from_cache = false;
                         (*ctx.layer_states)[i].triangulation_loaded_from_cache = false;
                     }
@@ -245,12 +288,17 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
     perf_ui_ctx.layout_gap = ctx.layout_gap;
     perf_ui_ctx.left_panel_w = ctx.left_panel_w;
     perf_ui_ctx.layer_count = ctx.layer_count;
+    perf_ui_ctx.enabled_layer_count = enabled_layer_count;
     perf_ui_ctx.hydrated_now = ctx.hydrated_now;
     perf_ui_ctx.triangulated_now = ctx.triangulated_now;
+    perf_ui_ctx.enabled_hydrated_now = enabled_hydrated_now;
+    perf_ui_ctx.enabled_ready_now = enabled_ready_now;
     perf_ui_ctx.hydrated_pending = ctx.hydrated_pending;
     perf_ui_ctx.tri_pending = ctx.tri_pending;
     perf_ui_ctx.hydrated_frac = ctx.hydrated_frac;
     perf_ui_ctx.tri_frac = ctx.tri_frac;
+    perf_ui_ctx.enabled_hydrated_frac = enabled_hydrated_frac;
+    perf_ui_ctx.enabled_ready_frac = enabled_ready_frac;
     perf_ui_ctx.elapsed_s = ctx.elapsed_s;
     perf_ui_ctx.hydrate_idle_s = ctx.hydrate_idle_s;
     perf_ui_ctx.tri_idle_s = ctx.tri_idle_s;

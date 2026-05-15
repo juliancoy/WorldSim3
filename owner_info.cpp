@@ -37,6 +37,43 @@ void openElementPage(ElementInfoUiState& state, ElementInfoEntry entry) {
     if (currentEntry(state).kind == ElementInfoKind::Owner) clearOwnerPropertyQuery(state);
 }
 
+bool drawDuckDbParcelDetail(DuckDbAnalytics* duckdb_analytics, int parcel_layer_idx, size_t parcel_feature_idx) {
+    if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok) return false;
+    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail((size_t)parcel_layer_idx, parcel_feature_idx);
+    if (!detail.ok || detail.rows.empty()) return false;
+    const auto& row = detail.rows.front();
+    auto cell = [&](const char* column) -> std::string {
+        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
+            if (detail.columns[i] == column) return row[i];
+        }
+        return {};
+    };
+    auto text_prop = [&](const char* label, const char* column) {
+        const std::string value = cell(column);
+        if (!value.empty() && value != "NULL") ImGui::TextWrapped("%s: %s", label, value.c_str());
+    };
+    text_prop("Address", "address");
+    text_prop("Owner", "owner_display");
+    text_prop("BLOCKLOT", "blocklot");
+    text_prop("ZIP", "zipcode");
+    text_prop("Status", "status");
+    text_prop("Current Land", "current_land");
+    text_prop("Current Improvements", "current_improvements");
+    text_prop("Tax Base", "tax_base");
+    text_prop("Sale Price", "sale_price");
+    text_prop("Current Value", "current_value");
+    text_prop("Vacant Notices", "vacant_notice_count");
+    text_prop("Vacant Rehab Records", "vacant_rehab_count");
+    text_prop("Tax Lien Records", "tax_lien_count");
+    text_prop("Tax Sale Records", "tax_sale_count");
+    text_prop("Tax Lien Amount", "tax_lien_amount");
+    text_prop("Tax Sale Amount", "tax_sale_amount");
+    text_prop("Parcel Source", "parcel_source_file");
+    text_prop("Property Source", "property_source_file");
+    ImGui::TextDisabled("Source: DuckDB unified_parcels (harmonized)");
+    return true;
+}
+
 std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
     if (!rp) return "";
     std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
@@ -157,7 +194,9 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     std::string summary_owner = selected_unified ? selected_unified->owner : ownerNameFor(selected_rp);
     if (summary_owner.empty()) summary_owner = ownerNameFor(&selected);
     if (!summary_owner.empty() && ctx.state) drawOwnerInfoLink(*ctx.state, summary_owner, "open_owner_info_element_tab");
-    drawRealPropertySummary(selected_rp);
+    if (!drawDuckDbParcelDetail(ctx.duckdb_analytics, ctx.parcel_layer_idx, parcel_idx)) {
+        drawRealPropertySummary(selected_rp);
+    }
 
     std::vector<ParcelTimelineEvent> timeline = buildParcelTimeline(ParcelTimelineRequest{
         ctx.layers,

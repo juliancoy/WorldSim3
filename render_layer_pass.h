@@ -1,6 +1,7 @@
 #pragma once
 
 #include "heat_normalization.h"
+#include "heatmap_runtime.h"
 #include "heatmap_render.h"
 #include "imgui.h"
 #include "layer_runtime.h"
@@ -37,8 +38,10 @@ struct RenderLayerPassContext {
     bool high_quality_gpu_aggregate = false;
     bool smooth_only_heatmap = false;
     bool can_use_cached_heatmap = false;
+    uint64_t heatmap_data_key = 0;
     const std::vector<LayerDef>* layers = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<bool>* layer_heatmap_use_gradient = nullptr;
     const std::vector<float>* layer_choropleth_gamma = nullptr;
@@ -49,6 +52,7 @@ struct RenderLayerPassContext {
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     const std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
     const HeatmapLayerPolicyContext* heatmap_policy = nullptr;
+    HeatmapRuntimeState* heatmap_runtime = nullptr;
     const RenderPlan* render_plan = nullptr;
     RawSourceLayerPolicy raw_source_layer_policy;
     std::vector<HeatSample>* heat_samples = nullptr;

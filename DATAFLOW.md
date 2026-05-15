@@ -23,6 +23,8 @@ That does not mean every source GeoJSON is reparsed. The hydration worker first 
 
 Hydration always repopulates `layers[i].features` in RAM because render code, filters, hit testing, derived joins, and DuckDB rebuilds operate on runtime layer objects.
 
+For `regional_parcels.geojson`, the import path is now allowed to materialize missing official Maryland parcel staging layers before the regional builder runs. The builder prefers the Maryland Planning parcel catalog for statewide county coverage, while keeping Baltimore County and Howard County on their better county-native feeds.
+
 ## Hydration Cache
 
 Persistent path:

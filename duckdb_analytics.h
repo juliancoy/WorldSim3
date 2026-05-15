@@ -60,6 +60,9 @@ public:
         size_t parcel_layer_idx,
         const std::unordered_set<std::string>& jurisdictions,
         size_t max_rows = 1000) const;
+    DuckDbQueryResult queryUnifiedParcelDetail(
+        size_t parcel_layer_idx,
+        size_t parcel_feature_idx) const;
     std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
 
 private:

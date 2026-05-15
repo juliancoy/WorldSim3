@@ -109,6 +109,11 @@ static LayerDef::Category parseCategory(const json& v, const std::string& layer_
     return inferCategory(layer_name);
 }
 
+static bool isCountyParcelStagingRuntimeLayer(const std::string& file) {
+    return file.size() > std::strlen("_county_parcels.geojson") &&
+           file.ends_with("_county_parcels.geojson");
+}
+
 std::vector<LayerDef> loadManifest(const fs::path& root) {
     std::vector<LayerDef> layers;
     std::ifstream in(root / "layers_manifest.json");
@@ -118,10 +123,16 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
     if (!in) return layers;
     json arr;
     in >> arr;
+    const bool regional_parcels_available = fs::exists(root / "data" / "layers" / "regional_parcels.geojson");
     for (size_t i = 0; i < arr.size(); ++i) {
+        if (!arr[i].contains("file") || !arr[i]["file"].is_string()) continue;
+        const std::string file = arr[i]["file"].get<std::string>();
+        if (isCountyParcelStagingRuntimeLayer(file)) continue;
+        if (regional_parcels_available && file == "parcel.geojson") continue;
+
         LayerDef ld;
         ld.name = arr[i]["name"].get<std::string>();
-        ld.file = arr[i]["file"].get<std::string>();
+        ld.file = file;
         ld.source_url = arr[i].contains("url") ? arr[i]["url"].get<std::string>() : "";
         ld.reference_url = arr[i].contains("reference_url") ? arr[i]["reference_url"].get<std::string>() : "";
         if (arr[i].contains("source_urls") && arr[i]["source_urls"].is_array()) {

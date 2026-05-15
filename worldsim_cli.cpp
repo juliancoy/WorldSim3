@@ -1,7 +1,9 @@
 #include "worldsim_cli.h"
 
 #include "cache_io.h"
+#include "layer_pipeline_drain.h"
 #include "map_render_projection.h"
+#include "profiling_layer_snapshot.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
 #include "parcel_matched_layers.h"
@@ -177,6 +179,302 @@ int runProjectionCacheSelftest() {
     };
     std::cout << out.dump(2) << '\n';
     return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runProjectionFillCacheSelftest() {
+    LayerDef::FeatureGeom feature;
+    feature.extent.min_lon = -76.7f;
+    feature.extent.min_lat = 39.2f;
+    feature.extent.max_lon = -76.6f;
+    feature.extent.max_lat = 39.3f;
+    feature.rings.push_back({
+        ImVec2(-76.7f, 39.2f),
+        ImVec2(-76.6f, 39.2f),
+        ImVec2(-76.6f, 39.3f),
+        ImVec2(-76.7f, 39.3f)
+    });
+    feature.triangles = {0, 1, 2, 0, 2, 3, 9, 10, 11};
+
+    MapProjectionCache cache(12, 1, [](const ImVec2& p) { return ImVec2(p.x + 100.0f, p.y - 50.0f); });
+    const auto& fill_first = cache.getWorldFillGeometry(0, 0, feature);
+    const auto* fill_ptr_first = &fill_first;
+    const bool first_ok =
+        cache.cachedWorldFillEntries() == 1 &&
+        fill_first.vertices.size() == 4 &&
+        fill_first.triangle_indices == std::vector<uint32_t>({0, 1, 2, 0, 2, 3});
+
+    const auto& fill_second = cache.getWorldFillGeometry(0, 0, feature);
+    const bool reused_same_zoom =
+        fill_ptr_first == &fill_second &&
+        cache.cachedWorldFillEntries() == 1;
+
+    cache.updateFrameProjection(12, 1, [](const ImVec2& p) { return p; });
+    const auto& fill_same_zoom_projection_change = cache.getWorldFillGeometry(0, 0, feature);
+    const bool retained_across_projection_change =
+        &fill_same_zoom_projection_change == fill_ptr_first &&
+        cache.cachedWorldFillEntries() == 1;
+
+    cache.updateFrameProjection(13, 1, [](const ImVec2& p) { return p; });
+    const bool cleared_on_zoom_change = cache.cachedWorldFillEntries() == 0;
+    const auto& fill_third = cache.getWorldFillGeometry(0, 0, feature);
+    const bool rebuilt_after_zoom_change =
+        cache.cachedWorldFillEntries() == 1 &&
+        fill_third.vertices.size() == 4 &&
+        fill_third.triangle_indices == std::vector<uint32_t>({0, 1, 2, 0, 2, 3});
+
+    json out = {
+        {"mode", "projection-fill-cache-selftest"},
+        {"ok", first_ok && reused_same_zoom && retained_across_projection_change && cleared_on_zoom_change && rebuilt_after_zoom_change},
+        {"first_ok", first_ok},
+        {"reused_same_zoom", reused_same_zoom},
+        {"retained_across_projection_change", retained_across_projection_change},
+        {"cleared_on_zoom_change", cleared_on_zoom_change},
+        {"rebuilt_after_zoom_change", rebuilt_after_zoom_change}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runProjectionColorCacheSelftest() {
+    MapProjectionCache cache(12, 1, [](const ImVec2& p) { return p; });
+    const uint64_t style_key_a = 0xabc123ull;
+    const uint64_t style_key_b = 0xdef456ull;
+    const ImU32 color_a = IM_COL32(10, 20, 30, 255);
+    const ImU32 color_b = IM_COL32(200, 150, 100, 255);
+
+    const bool missing_before =
+        cache.findFeatureColorStorage(0, 0, style_key_a) == nullptr;
+    cache.storeFeatureColorStorage(0, 0, style_key_a, color_a, 1);
+    const CachedFeatureColorStorage* first = cache.findFeatureColorStorage(0, 0, style_key_a);
+    const bool first_ok =
+        first &&
+        first->feature_color == color_a &&
+        first->polygon_colors.size() == 1 &&
+        first->polygon_colors[0] == color_a &&
+        cache.cachedFeatureColorEntries() == 1;
+
+    const bool style_miss =
+        cache.findFeatureColorStorage(0, 0, style_key_b) == nullptr;
+    cache.storeFeatureColorStorage(0, 0, style_key_b, color_b, 3);
+    const CachedFeatureColorStorage* second = cache.findFeatureColorStorage(0, 0, style_key_b);
+    const bool overwrite_ok =
+        second &&
+        second->feature_color == color_b &&
+        second->polygon_colors.size() == 3 &&
+        second->polygon_colors[0] == color_b &&
+        second->polygon_colors[2] == color_b &&
+        cache.cachedFeatureColorEntries() == 1;
+
+    cache.updateFrameProjection(13, 1, [](const ImVec2& p) { return p; });
+    const CachedFeatureColorStorage* after_zoom = cache.findFeatureColorStorage(0, 0, style_key_b);
+    const bool retained_after_zoom =
+        after_zoom &&
+        after_zoom->feature_color == color_b &&
+        after_zoom->polygon_colors.size() == 3;
+
+    json out = {
+        {"mode", "projection-color-cache-selftest"},
+        {"ok", missing_before && first_ok && style_miss && overwrite_ok && retained_after_zoom},
+        {"missing_before", missing_before},
+        {"first_ok", first_ok},
+        {"style_miss", style_miss},
+        {"overwrite_ok", overwrite_ok},
+        {"retained_after_zoom", retained_after_zoom}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runTriangulationApplySelftest() {
+    std::vector<LayerDef> layers(1);
+    layers[0].file = "tri_apply_selftest.geojson";
+    layers[0].features.resize(10000);
+    std::vector<LayerRuntimeState> layer_states(1);
+    std::vector<bool> layer_profile_dirty(1, false);
+    std::deque<TriResult> tri_results;
+    std::mutex tri_mutex;
+    std::mutex status_mutex;
+    std::atomic<size_t> triangulated_count{0};
+
+    TriResult tr;
+    tr.index = 0;
+    tr.source_signature = "tri_apply_sig";
+    tr.loaded_from_cache = true;
+    tr.loaded_from_binary_cache = true;
+    tr.triangles_per_feature.resize(layers[0].features.size(), {0, 1, 2, 0, 2, 3});
+    tri_results.push_back(std::move(tr));
+
+    LayerPipelineDrainContext ctx;
+    ctx.layers = &layers;
+    ctx.tri_results = &tri_results;
+    ctx.tri_mutex = &tri_mutex;
+    ctx.layer_states = &layer_states;
+    ctx.status_mutex = &status_mutex;
+    ctx.layer_profile_dirty = &layer_profile_dirty;
+    ctx.triangulated_count = &triangulated_count;
+
+    drainTriangulationResults(ctx);
+    const bool first_pass_partial =
+        !tri_results.empty() &&
+        tri_results.front().apply_offset > 0 &&
+        tri_results.front().apply_offset < tri_results.front().triangles_per_feature.size() &&
+        layer_states[0].status == LayerPipelineStatus::Triangulating &&
+        layer_states[0].triangulation_phase == "applying_binary_cache" &&
+        triangulated_count.load(std::memory_order_relaxed) == 0;
+
+    size_t passes = 1;
+    while (!tri_results.empty() && passes < 16) {
+        drainTriangulationResults(ctx);
+        ++passes;
+    }
+
+    const std::vector<uint32_t> expected{0, 1, 2, 0, 2, 3};
+    const bool complete =
+        tri_results.empty() &&
+        layer_states[0].status == LayerPipelineStatus::Ready &&
+        layer_states[0].triangulation_phase == "binary_cache_hit" &&
+        layer_states[0].triangulation_loaded_from_cache &&
+        triangulated_count.load(std::memory_order_relaxed) == 1 &&
+        layer_profile_dirty[0] &&
+        layers[0].features[0].triangles == expected &&
+        layers[0].features.back().triangles == expected;
+
+    json out = {
+        {"mode", "triangulation-apply-selftest"},
+        {"ok", first_pass_partial && complete},
+        {"first_pass_partial", first_pass_partial},
+        {"passes", passes},
+        {"complete", complete}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runSpatialIndexSelftest() {
+    std::vector<LayerDef> layers(1);
+    layers[0].features.resize(3);
+    layers[0].features[0].extent = {-76.70f, 39.20f, -76.69f, 39.21f};
+    layers[0].features[1].extent = {-76.68f, 39.22f, -76.67f, 39.23f};
+    layers[0].features[2].extent = {-76.40f, 39.50f, -76.39f, 39.51f};
+
+    std::vector<LayerRuntimeState> layer_states(1);
+    layer_states[0].hydration_source_signature = "sig_1";
+    layer_states[0].spatial_index_phase = "queued";
+    std::vector<LayerSpatialIndex> layer_spatial(1);
+    std::vector<bool> layer_profile_dirty(1, false);
+    std::deque<SpatialIndexResult> spatial_results;
+    std::mutex spatial_mutex;
+    std::mutex status_mutex;
+
+    std::vector<LayerDef::FeatureExtent> extents;
+    for (const auto& fg : layers[0].features) extents.push_back(fg.extent);
+
+    SpatialIndexResult ok_result;
+    ok_result.index = 0;
+    ok_result.source_signature = "sig_1";
+    ok_result.feature_count = extents.size();
+    buildLayerSpatialIndexForExtents(extents, ok_result.spatial_index);
+    spatial_results.push_back(std::move(ok_result));
+
+    LayerPipelineDrainContext ctx;
+    ctx.layers = &layers;
+    ctx.spatial_results = &spatial_results;
+    ctx.spatial_mutex = &spatial_mutex;
+    ctx.layer_states = &layer_states;
+    ctx.layer_spatial = &layer_spatial;
+    ctx.status_mutex = &status_mutex;
+    ctx.layer_profile_dirty = &layer_profile_dirty;
+
+    drainSpatialIndexResults(ctx);
+    std::vector<uint32_t> hits;
+    const bool query_ok = queryLayerSpatialIndex(layer_spatial[0], -76.705f, 39.195f, -76.665f, 39.235f, hits);
+    const bool applied =
+        layer_spatial[0].built &&
+        layer_spatial[0].feature_count_built == extents.size() &&
+        layer_states[0].spatial_index_phase == "ready" &&
+        layer_states[0].spatial_index_source_signature == "sig_1" &&
+        layer_profile_dirty[0] &&
+        query_ok &&
+        hits.size() == 2;
+
+    layer_profile_dirty[0] = false;
+    layer_states[0].hydration_source_signature = "sig_2";
+    layer_states[0].spatial_index_phase = "queued";
+    SpatialIndexResult stale_result;
+    stale_result.index = 0;
+    stale_result.source_signature = "sig_1";
+    stale_result.feature_count = extents.size();
+    buildLayerSpatialIndexForExtents(extents, stale_result.spatial_index);
+    spatial_results.push_back(std::move(stale_result));
+    drainSpatialIndexResults(ctx);
+    const bool stale_discarded =
+        layer_states[0].spatial_index_phase == "stale_discarded" &&
+        !layer_profile_dirty[0] &&
+        layer_spatial[0].feature_count_built == extents.size();
+
+    json out = {
+        {"mode", "spatial-index-selftest"},
+        {"ok", applied && stale_discarded},
+        {"applied", applied},
+        {"stale_discarded", stale_discarded},
+        {"query_hits", hits.size()}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runLayerProfileSelftest() {
+    std::vector<LayerDef> layers(1);
+    layers[0].name = "Profile Layer";
+    layers[0].file = "profile_layer.geojson";
+    layers[0].enabled = true;
+
+    std::vector<LayerProfileAccumulator> accumulators(1);
+    accumulators[0].features = 7;
+    accumulators[0].rings = 5;
+    accumulators[0].ring_points = 21;
+    accumulators[0].triangle_indices = 18;
+    accumulators[0].properties = 11;
+    accumulators[0].spatial_index_built = true;
+    accumulators[0].spatial_index_cells = 64;
+    accumulators[0].spatial_index_marks = 7;
+
+    std::vector<bool> layer_profile_dirty(1, true);
+    std::vector<LayerProfileSnapshot> layer_profile_snapshot(1);
+    std::mutex layer_profile_mutex;
+
+    LayerProfileSnapshotRefreshContext ctx;
+    ctx.layers = &layers;
+    ctx.layer_profile_accumulators = &accumulators;
+    ctx.layer_profile_dirty = &layer_profile_dirty;
+    ctx.layer_profile_snapshot = &layer_profile_snapshot;
+    ctx.layer_profile_mutex = &layer_profile_mutex;
+    refreshLayerProfileSnapshot(ctx);
+
+    const auto& snap = layer_profile_snapshot[0];
+    const bool ok =
+        !layer_profile_dirty[0] &&
+        snap.name == "Profile Layer" &&
+        snap.file == "profile_layer.geojson" &&
+        snap.enabled &&
+        snap.features == 7 &&
+        snap.rings == 5 &&
+        snap.ring_points == 21 &&
+        snap.triangle_indices == 18 &&
+        snap.properties == 11 &&
+        snap.spatial_index_built &&
+        snap.spatial_index_cells == 64 &&
+        snap.spatial_index_marks == 7;
+
+    json out = {
+        {"mode", "layer-profile-selftest"},
+        {"ok", ok},
+        {"features", snap.features},
+        {"triangle_indices", snap.triangle_indices},
+        {"spatial_index_cells", snap.spatial_index_cells}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
 }
 
 bool isBareLayerFilename(const std::string& file) {
@@ -507,6 +805,26 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_projection_cache_selftest = true;
             continue;
         }
+        if (arg == "--projection-fill-cache-selftest") {
+            options.run_projection_fill_cache_selftest = true;
+            continue;
+        }
+        if (arg == "--projection-color-cache-selftest") {
+            options.run_projection_color_cache_selftest = true;
+            continue;
+        }
+        if (arg == "--triangulation-apply-selftest") {
+            options.run_triangulation_apply_selftest = true;
+            continue;
+        }
+        if (arg == "--spatial-index-selftest") {
+            options.run_spatial_index_selftest = true;
+            continue;
+        }
+        if (arg == "--layer-profile-selftest") {
+            options.run_layer_profile_selftest = true;
+            continue;
+        }
         if (arg == "--warm-hydration-cache") {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 options.run_warm_hydration_cache = true;
@@ -603,6 +921,11 @@ void printWorldsimUsage() {
         << "       worldsim3 --hydration-cache-selftest\n"
         << "       worldsim3 --triangulation-cache-selftest\n"
         << "       worldsim3 --projection-cache-selftest\n"
+        << "       worldsim3 --projection-fill-cache-selftest\n"
+        << "       worldsim3 --projection-color-cache-selftest\n"
+        << "       worldsim3 --triangulation-apply-selftest\n"
+        << "       worldsim3 --spatial-index-selftest\n"
+        << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
@@ -622,6 +945,21 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_projection_cache_selftest) {
         return runProjectionCacheSelftest();
+    }
+    if (options.run_projection_fill_cache_selftest) {
+        return runProjectionFillCacheSelftest();
+    }
+    if (options.run_projection_color_cache_selftest) {
+        return runProjectionColorCacheSelftest();
+    }
+    if (options.run_triangulation_apply_selftest) {
+        return runTriangulationApplySelftest();
+    }
+    if (options.run_spatial_index_selftest) {
+        return runSpatialIndexSelftest();
+    }
+    if (options.run_layer_profile_selftest) {
+        return runLayerProfileSelftest();
     }
     if (options.run_warm_hydration_cache) {
         return warmHydrationCache(root, options.warm_hydration_cache_file);

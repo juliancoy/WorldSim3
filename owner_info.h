@@ -1,5 +1,6 @@
 #pragma once
 
+#include "duckdb_analytics.h"
 #include "parcel_unified.h"
 #include "types.h"
 
@@ -33,6 +34,7 @@ using OwnerInfoUiState = ElementInfoUiState;
 
 struct OwnerInfoTabContext {
     ElementInfoUiState* state = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
     const std::vector<LayerDef>* layers = nullptr;
     int parcel_layer_idx = -1;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;

@@ -33,3 +33,14 @@ struct LayerProfileSnapshot {
     size_t spatial_index_cells = 0;
     size_t spatial_index_marks = 0;
 };
+
+struct LayerProfileAccumulator {
+    size_t features = 0;
+    size_t rings = 0;
+    size_t ring_points = 0;
+    size_t triangle_indices = 0;
+    size_t properties = 0;
+    bool spatial_index_built = false;
+    size_t spatial_index_cells = 0;
+    size_t spatial_index_marks = 0;
+};

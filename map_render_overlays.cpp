@@ -115,8 +115,12 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
                 const float t = applyPowerGamma(
                     std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f),
                     ctx.parcel_choropleth_gamma);
-                const auto& world_rings = ctx.projection->getWorldRings(ctx.parcel_layer_idx, (uint32_t)i, fg);
-                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, colorWithAlpha(heatColor(t), 150));
+                ctx.projection->drawTessellatedFill(
+                    ctx.draw,
+                    ctx.parcel_layer_idx,
+                    (uint32_t)i,
+                    fg,
+                    colorWithAlpha(heatColor(t), 150));
             }
         }
     }
@@ -142,7 +146,7 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const bool notice_fill = layerFillEnabled(ctx, ctx.vacant_notice_layer_idx);
             const bool rehab_fill = layerFillEnabled(ctx, ctx.vacant_rehab_layer_idx);
             if ((notice_fill || rehab_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
-                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, vac_fill);
+                ctx.projection->drawTessellatedFill(ctx.draw, ctx.parcel_layer_idx, (uint32_t)i, fg, vac_fill);
             }
             drawParcelOverlayRings(ctx, fg, world_rings, vac_outline);
         }
@@ -168,7 +172,12 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const bool sale_fill = ctx.tax_sale_enabled && layerFillEnabled(ctx, ctx.tax_sale_layer_idx);
             if ((lien_fill || sale_fill) && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
                 const int alpha = scaledOverlayAlpha(90, 10, 90, 210, weight);
-                ctx.projection->drawTessellatedFill(ctx.draw, fg, world_rings, colorWithAlpha(tax_base, alpha));
+                ctx.projection->drawTessellatedFill(
+                    ctx.draw,
+                    ctx.parcel_layer_idx,
+                    (uint32_t)i,
+                    fg,
+                    colorWithAlpha(tax_base, alpha));
             }
             const ImU32 tax_outline = colorWithAlpha(darkenColor(tax_base, 0.58f), 240);
             drawParcelOverlayRings(ctx, fg, world_rings, tax_outline);

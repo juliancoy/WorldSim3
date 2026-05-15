@@ -165,8 +165,10 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
     if (ctx.time_cube_ui_worker->joinable()) ctx.time_cube_ui_worker->join();
     ctx.hydrate_req_cv->notify_all();
     ctx.tri_cv->notify_all();
+    ctx.spatial_cv->notify_all();
     for (auto& t : *ctx.hydration_workers) if (t.joinable()) t.join();
     if (ctx.triangulation_worker->joinable()) ctx.triangulation_worker->join();
+    if (ctx.spatial_index_worker->joinable()) ctx.spatial_index_worker->join();
     if (ctx.status_api_worker->joinable()) ctx.status_api_worker->join();
     if (ctx.dataset_api_worker->joinable()) ctx.dataset_api_worker->join();
     if (ctx.lan_discovery_worker->joinable()) ctx.lan_discovery_worker->join();

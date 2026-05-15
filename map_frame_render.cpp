@@ -196,8 +196,10 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.high_quality_gpu_aggregate = high_quality_gpu_aggregate;
     layer_pass_ctx.smooth_only_heatmap = smooth_only_heatmap;
     layer_pass_ctx.can_use_cached_heatmap = can_use_cached_heatmap;
+    layer_pass_ctx.heatmap_data_key = heatmap_data_key;
     layer_pass_ctx.layers = ctx.layers;
     layer_pass_ctx.layer_spatial = ctx.layer_spatial;
+    layer_pass_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
     layer_pass_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     layer_pass_ctx.layer_heatmap_use_gradient = ctx.layer_heatmap_use_gradient;
     layer_pass_ctx.layer_choropleth_gamma = ctx.layer_choropleth_gamma;
@@ -208,6 +210,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
     layer_pass_ctx.zoning_zone_color = ctx.zoning_zone_color;
     layer_pass_ctx.heatmap_policy = &heatmap_policy;
+    layer_pass_ctx.heatmap_runtime = ctx.heatmap_runtime;
     layer_pass_ctx.render_plan = &render_plan;
     layer_pass_ctx.raw_source_layer_policy = raw_source_layer_policy;
     layer_pass_ctx.heat_samples = &heat_samples;

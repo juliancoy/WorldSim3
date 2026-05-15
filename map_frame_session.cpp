@@ -105,6 +105,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color;
     render_frame_ctx.layers = ctx.layers;
     render_frame_ctx.layer_spatial = ctx.layer_spatial;
+    render_frame_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
     render_frame_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     render_frame_ctx.layer_heatmap_enabled = ctx.layer_heatmap_enabled;
     render_frame_ctx.layer_heatmap_algo = ctx.layer_heatmap_algo;

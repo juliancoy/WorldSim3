@@ -11,6 +11,11 @@ struct WorldsimCliOptions {
     bool run_warm_hydration_cache_all = false;
     bool run_triangulation_cache_selftest = false;
     bool run_projection_cache_selftest = false;
+    bool run_projection_fill_cache_selftest = false;
+    bool run_projection_color_cache_selftest = false;
+    bool run_triangulation_apply_selftest = false;
+    bool run_spatial_index_selftest = false;
+    bool run_layer_profile_selftest = false;
     bool run_warm_triangulation_cache = false;
     bool run_warm_triangulation_cache_all = false;
     bool run_download_layers = false;

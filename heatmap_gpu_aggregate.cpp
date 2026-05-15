@@ -8,9 +8,17 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <mutex>
+#include <sstream>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -18,6 +26,12 @@ namespace {
 static const char* kShaderPath = WS3_GPU_SPLAT_SHADER_SPV;
 #else
 static const char* kShaderPath = nullptr;
+#endif
+
+#if defined(WS3_GPU_SPLAT_SHADER_SRC)
+static const char* kShaderSourcePath = WS3_GPU_SPLAT_SHADER_SRC;
+#else
+static const char* kShaderSourcePath = nullptr;
 #endif
 
 struct GpuSamplePacked {
@@ -93,6 +107,161 @@ std::vector<uint32_t> loadSpirv(const char* path) {
     in.read(reinterpret_cast<char*>(code.data()), sz);
     if (!in) return {};
     return code;
+}
+
+bool isExecutableFile(const std::filesystem::path& path) {
+#if defined(_WIN32)
+    return std::filesystem::exists(path);
+#else
+    return ::access(path.c_str(), X_OK) == 0;
+#endif
+}
+
+std::filesystem::path findExecutableOnPath(const char* name) {
+    if (!name || !*name) return {};
+    const char* path_env = std::getenv("PATH");
+    if (!path_env) return {};
+    std::stringstream ss(path_env);
+    std::string segment;
+    while (std::getline(ss, segment, ':')) {
+        if (segment.empty()) continue;
+        std::filesystem::path candidate = std::filesystem::path(segment) / name;
+        if (isExecutableFile(candidate)) return candidate;
+    }
+    return {};
+}
+
+bool runShaderCompiler(
+    const std::filesystem::path& compiler,
+    const std::filesystem::path& source_path,
+    const std::filesystem::path& output_path,
+    bool use_glslc,
+    std::string* error) {
+    if (compiler.empty()) {
+        if (error) *error = "compiler path missing";
+        return false;
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(output_path.parent_path(), ec);
+#if defined(_WIN32)
+    std::ostringstream cmd;
+    cmd << '"' << compiler.string() << "\" ";
+    if (use_glslc) cmd << "-fshader-stage=comp ";
+    else cmd << "-V ";
+    cmd << '"' << source_path.string() << "\" -o \"" << output_path.string() << '"';
+    const int rc = std::system(cmd.str().c_str());
+    if (rc != 0) {
+        if (error) *error = "compiler exited non-zero";
+        return false;
+    }
+    return true;
+#else
+    const std::string compiler_s = compiler.string();
+    const std::string source_s = source_path.string();
+    const std::string output_s = output_path.string();
+    const char* argv_glslang[] = {
+        compiler_s.c_str(),
+        "-V",
+        source_s.c_str(),
+        "-o",
+        output_s.c_str(),
+        nullptr
+    };
+    const char* argv_glslc[] = {
+        compiler_s.c_str(),
+        "-fshader-stage=comp",
+        source_s.c_str(),
+        "-o",
+        output_s.c_str(),
+        nullptr
+    };
+    pid_t pid = fork();
+    if (pid < 0) {
+        if (error) *error = "fork failed";
+        return false;
+    }
+    if (pid == 0) {
+        execvp(compiler_s.c_str(), const_cast<char* const*>(use_glslc ? argv_glslc : argv_glslang));
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        if (error) *error = "waitpid failed";
+        return false;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        if (error) *error = "compiler exited non-zero";
+        return false;
+    }
+    return true;
+#endif
+}
+
+std::filesystem::path runtimeShaderOutputPath() {
+    if (kShaderPath && *kShaderPath) return std::filesystem::path(kShaderPath);
+    const std::filesystem::path tmp_root = std::filesystem::temp_directory_path() / "worldsim3-generated-shaders";
+    return tmp_root / "heatmap_splat.comp.spv";
+}
+
+std::vector<uint32_t> loadOrBuildSpirv(std::string* error) {
+    const std::filesystem::path output_path = runtimeShaderOutputPath();
+    auto code = loadSpirv(output_path.c_str());
+    if (!code.empty()) return code;
+
+    if (!kShaderSourcePath || !*kShaderSourcePath) {
+        if (error) *error = "GPU splat shader source path unavailable";
+        std::cerr << "[worldsim3] GPU splat shader SPIR-V missing and no shader source path was compiled in.\n";
+        return {};
+    }
+
+    const std::filesystem::path source_path(kShaderSourcePath);
+    const std::filesystem::path glslang = findExecutableOnPath("glslangValidator");
+    const std::filesystem::path glslc = findExecutableOnPath("glslc");
+
+    std::cerr
+        << "[worldsim3] GPU splat shader SPIR-V missing at " << output_path << ".\n"
+        << "[worldsim3] Runtime shader compile fallback engaged for " << source_path << ".\n";
+    if (glslang.empty()) {
+        std::cerr << "[worldsim3] glslangValidator missing on PATH.\n";
+    }
+    if (glslc.empty()) {
+        std::cerr << "[worldsim3] glslc missing on PATH.\n";
+    }
+
+    struct CompilerCandidate {
+        std::filesystem::path path;
+        bool use_glslc = false;
+        const char* label = nullptr;
+    };
+    std::vector<CompilerCandidate> candidates;
+    if (!glslang.empty()) candidates.push_back({glslang, false, "glslangValidator"});
+    if (!glslc.empty()) candidates.push_back({glslc, true, "glslc"});
+    if (candidates.empty()) {
+        if (error) *error = "neither glslangValidator nor glslc is available on PATH";
+        std::cerr << "[worldsim3] No runtime shader compiler is available. Install glslangValidator or glslc.\n";
+        return {};
+    }
+
+    for (const auto& candidate : candidates) {
+        std::string compile_error;
+        std::cerr << "[worldsim3] Trying runtime shader compile with " << candidate.label << ".\n";
+        if (runShaderCompiler(candidate.path, source_path, output_path, candidate.use_glslc, &compile_error)) {
+            code = loadSpirv(output_path.c_str());
+            if (!code.empty()) {
+                std::cerr << "[worldsim3] Runtime shader compile succeeded with " << candidate.label
+                          << "; wrote " << output_path << ".\n";
+                return code;
+            }
+            std::cerr << "[worldsim3] " << candidate.label
+                      << " reported success, but SPIR-V could not be loaded from " << output_path << ".\n";
+        } else {
+            std::cerr << "[worldsim3] Runtime shader compile failed with " << candidate.label
+                      << ": " << compile_error << ".\n";
+        }
+    }
+
+    if (error) *error = "runtime shader compile failed with all available compilers";
+    return {};
 }
 
 void shutdownCtx() {
@@ -204,9 +373,9 @@ bool initCtx(std::string* error) {
         if (error) *error = "Vulkan device/queue unavailable";
         return false;
     }
-    auto spirv = loadSpirv(kShaderPath);
+    auto spirv = loadOrBuildSpirv(error);
     if (spirv.empty()) {
-        if (error) *error = "GPU splat shader SPIR-V unavailable";
+        if (error && error->empty()) *error = "GPU splat shader SPIR-V unavailable";
         return false;
     }
 

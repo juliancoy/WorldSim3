@@ -400,6 +400,10 @@ int runWorldSim3App(int argc, char** argv) {
     std::condition_variable tri_cv;
     std::deque<TriJob> tri_jobs;
     std::deque<TriResult> tri_results;
+    std::mutex spatial_mutex;
+    std::condition_variable spatial_cv;
+    std::deque<SpatialIndexJob> spatial_jobs;
+    std::deque<SpatialIndexResult> spatial_results;
     std::atomic<bool> hydration_stop{false};
     std::atomic<size_t> hydrated_count{0};
     std::atomic<size_t> triangulated_count{0};
@@ -435,6 +439,7 @@ int runWorldSim3App(int argc, char** argv) {
     uint64_t profile_reset_generation = 0;
     std::mutex layer_profile_mutex;
     std::vector<LayerProfileSnapshot> layer_profile_snapshot(layers.size());
+    std::vector<LayerProfileAccumulator> layer_profile_accumulators(layers.size());
     std::vector<bool> layer_profile_dirty(layers.size(), true);
     std::atomic<size_t> render_fill_attempts_last_frame{0};
     std::atomic<size_t> render_fill_success_last_frame{0};
@@ -560,6 +565,9 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
+    std::vector<size_t> layer_fallback_scan_cursor(layers.size(), 0);
+    std::vector<size_t> spatial_index_requested_feature_count(layers.size(), 0);
+    std::vector<std::string> spatial_index_requested_signature(layers.size());
     std::vector<OwnerAggregate> owner_aggregates;
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
@@ -699,10 +707,15 @@ int runWorldSim3App(int argc, char** argv) {
         &tri_mutex,
         &tri_cv,
         &tri_jobs,
-        &tri_results
+        &tri_results,
+        &spatial_mutex,
+        &spatial_cv,
+        &spatial_jobs,
+        &spatial_results
     };
     std::vector<std::thread> hydration_workers = startHydrationWorkers(layer_workers_ctx, hydration_worker_count);
     std::thread triangulation_worker = startTriangulationWorker(layer_workers_ctx);
+    std::thread spatial_index_worker = startSpatialIndexWorker(layer_workers_ctx);
 
     StatusApiContextFactoryInput status_api_input;
     status_api_input.app_version = kAppVersion;
@@ -1165,7 +1178,7 @@ int runWorldSim3App(int argc, char** argv) {
         FramePreludeResult frame_prelude = runFramePrelude(FramePreludeContext{
             &root,
             &layers,
-            &layer_spatial,
+            &layer_profile_accumulators,
             &layer_profile_dirty,
             &layer_profile_snapshot,
             &layer_profile_mutex,
@@ -1451,6 +1464,8 @@ int runWorldSim3App(int argc, char** argv) {
             &cache_aggregate_dir,
             &layers,
             &layer_spatial,
+            &layer_fallback_scan_cursor,
+            &layer_profile_accumulators,
             &layer_profile_dirty,
             &layer_states,
             &hydrated_mutex,
@@ -1459,6 +1474,12 @@ int runWorldSim3App(int argc, char** argv) {
             &tri_jobs,
             &tri_results,
             &tri_cv,
+            &spatial_mutex,
+            &spatial_jobs,
+            &spatial_results,
+            &spatial_cv,
+            &spatial_index_requested_feature_count,
+            &spatial_index_requested_signature,
             &hydrate_req_mutex,
             &hydrate_requests,
             &hydration_requested,
@@ -1562,8 +1583,14 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.tri_results = &tri_results;
         pipeline_drain_ctx.tri_mutex = &tri_mutex;
         pipeline_drain_ctx.tri_cv = &tri_cv;
+        pipeline_drain_ctx.spatial_results = &spatial_results;
+        pipeline_drain_ctx.spatial_mutex = &spatial_mutex;
         pipeline_drain_ctx.layer_states = &layer_states;
         pipeline_drain_ctx.layer_spatial = &layer_spatial;
+        pipeline_drain_ctx.layer_fallback_scan_cursor = &layer_fallback_scan_cursor;
+        pipeline_drain_ctx.layer_profile_accumulators = &layer_profile_accumulators;
+        pipeline_drain_ctx.spatial_index_requested_feature_count = &spatial_index_requested_feature_count;
+        pipeline_drain_ctx.spatial_index_requested_signature = &spatial_index_requested_signature;
         pipeline_drain_ctx.status_mutex = &status_mutex;
         pipeline_drain_ctx.hydration_requested = &hydration_requested;
         pipeline_drain_ctx.hydrate_req_mutex = &hydrate_req_mutex;
@@ -1577,6 +1604,7 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.trim_process_heap = [&]() { trimProcessHeap(); };
         drainHydratedLayerQueue(pipeline_drain_ctx);
         drainTriangulationResults(pipeline_drain_ctx);
+        drainSpatialIndexResults(pipeline_drain_ctx);
 
         DerivedLayerCachesContext derived_layer_caches_ctx;
         derived_layer_caches_ctx.root = &root;
@@ -1643,9 +1671,15 @@ int runWorldSim3App(int argc, char** argv) {
         refreshDerivedLayerCaches(derived_layer_caches_ctx);
         for (size_t li = 0; li < layers.size(); ++li) {
             LayerPipelineStatus st = LayerPipelineStatus::Queued;
+            std::string hydration_signature;
+            std::string spatial_index_signature;
             {
                 std::lock_guard<std::mutex> lk(status_mutex);
-                if (li < layer_states.size()) st = layer_states[li].status;
+                if (li < layer_states.size()) {
+                    st = layer_states[li].status;
+                    hydration_signature = layer_states[li].hydration_source_signature;
+                    spatial_index_signature = layer_states[li].spatial_index_source_signature;
+                }
             }
             const bool stable =
                 st == LayerPipelineStatus::Hydrated ||
@@ -1653,10 +1687,35 @@ int runWorldSim3App(int argc, char** argv) {
                 st == LayerPipelineStatus::Triangulating ||
                 st == LayerPipelineStatus::Ready;
             if (!stable) continue;
-            if (!layer_spatial[li].built || layer_spatial[li].feature_count_built != layers[li].features.size()) {
-                buildLayerSpatialIndex(layers[li], layer_spatial[li]);
-                if (li < layer_profile_dirty.size()) layer_profile_dirty[li] = true;
+            const size_t feature_count = layers[li].features.size();
+            const bool spatial_index_current =
+                layer_spatial[li].built &&
+                layer_spatial[li].feature_count_built == feature_count &&
+                spatial_index_signature == hydration_signature;
+            if (spatial_index_current) continue;
+            if (spatial_index_requested_feature_count[li] == feature_count &&
+                spatial_index_requested_signature[li] == hydration_signature) {
+                continue;
             }
+            SpatialIndexJob job;
+            job.index = li;
+            job.source_signature = hydration_signature;
+            job.feature_extents.reserve(feature_count);
+            for (const auto& fg : layers[li].features) job.feature_extents.push_back(fg.extent);
+            {
+                std::lock_guard<std::mutex> lk(spatial_mutex);
+                spatial_jobs.push_back(std::move(job));
+            }
+            spatial_index_requested_feature_count[li] = feature_count;
+            spatial_index_requested_signature[li] = hydration_signature;
+            {
+                std::lock_guard<std::mutex> lk(status_mutex);
+                if (li < layer_states.size()) {
+                    layer_states[li].spatial_index_source_signature = hydration_signature;
+                    layer_states[li].spatial_index_phase = "queued";
+                }
+            }
+            spatial_cv.notify_one();
         }
         refreshLayerProfileSnapshot(frame_prelude.layer_profile_snapshot);
 
@@ -1780,6 +1839,7 @@ int runWorldSim3App(int argc, char** argv) {
             kMaxInternalMathZoom,
             &layers,
             &layer_spatial,
+            &layer_fallback_scan_cursor,
             &map_filter_state,
             &query_layers,
             &real_property_by_blocklot,
@@ -2046,8 +2106,10 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_input.hydrate_req_cv = &hydrate_req_cv;
     shutdown_input.tri_cv = &tri_cv;
+    shutdown_input.spatial_cv = &spatial_cv;
     shutdown_input.hydration_workers = &hydration_workers;
     shutdown_input.triangulation_worker = &triangulation_worker;
+    shutdown_input.spatial_index_worker = &spatial_index_worker;
     shutdown_input.status_api_worker = &status_api_worker;
     shutdown_input.dataset_api_worker = &dataset_api_worker;
     shutdown_input.lan_discovery_worker = &lan_discovery_worker;

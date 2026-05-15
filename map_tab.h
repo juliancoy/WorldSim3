@@ -45,6 +45,7 @@ struct MapTabContext {
 
     std::vector<LayerDef>* layers = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;

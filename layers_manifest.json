@@ -12,6 +12,8 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer",
+      "https://www.dropbox.com/scl/fi/i08w46iye7mkeb15la9fk/February_2026_Parcels.zip?rlkey=r8y6lzyhj5sqf5mse62vonb4e&dl=1",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx",
       "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
       "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
@@ -136,7 +138,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/4grva91527p7dc7pk96zc/ANNEparcels0226.zip?dl=1&rlkey=3ev0osf81ryh65nc443juweju",
+      "shapefile": "ANNEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Calvert County Parcels",
@@ -155,7 +163,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/1d18z9vwbr8o9c329n7hb/CALVparcels0226.zip?dl=1&rlkey=wwjs2awg5nh88leik5upfin4u",
+      "shapefile": "CALVPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Caroline County Parcels",
@@ -174,7 +188,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/e6070aylp5n5oo4bohodt/CAROparcels0226.zip?dl=1&rlkey=4itc5bvhvrnzsbgsm9wp0v1vi",
+      "shapefile": "CAROPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Carroll County Parcels",
@@ -193,7 +213,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/g9voz3iu9yzourajhab3k/CARRparcels0226.zip?dl=1&rlkey=y5f6y65zcrh71k9jatb0y7ygz",
+      "shapefile": "CARRPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Cecil County Parcels",
@@ -212,7 +238,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/5k5lik3jh3ev05dyqxofo/CECIparcels0226.zip?dl=1&rlkey=afnszcr4yc27slnai6xfxp8fn",
+      "shapefile": "CECIPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Charles County Parcels",
@@ -231,7 +263,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/nplpj2vibo6mfij9yvosd/CHARparcels0226.zip?dl=1&rlkey=zj8b42mxepjs0043exlqyanfi",
+      "shapefile": "CHARPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Dorchester County Parcels",
@@ -250,7 +288,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/rq5dhlu0ian6x15xiaac7/DORCparcels0226.zip?dl=1&rlkey=b5z8b9de701rd493c21saqa0i",
+      "shapefile": "DORCPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Frederick County Parcels",
@@ -269,7 +313,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/9wt3rwqv0u23gebgl9tfa/FREDparcels0226.zip?dl=1&rlkey=p59y96s9k1neapw19tgxd7xen",
+      "shapefile": "FREDPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Garrett County Parcels",
@@ -288,7 +338,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/whplsq4nkd7lh8xbyv6dz/GARRparcels0226.zip?dl=1&rlkey=pb7m5jtmb1qkpvd1toqjj6ggd",
+      "shapefile": "GARRPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Harford County Parcels",
@@ -307,7 +363,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/h17fdtpi5rlfezmjvrwqa/HARFparcels0226.zip?dl=1&rlkey=bh763wr1s3tz5z6y3b2o7ne32",
+      "shapefile": "HARFPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Kent County Parcels",
@@ -326,7 +388,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/esnv0nzpk2o0uibmterif/KENTparcels0226.zip?dl=1&rlkey=f7eszhurib9rcaox4g57vghaf",
+      "shapefile": "KENTPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Montgomery County Parcels",
@@ -345,7 +413,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/cfz86bco1s8lxmqm9b2ux/MONTparcels0226.zip?dl=1&rlkey=7n5o9icvdy83a0b6qhyy68mz3",
+      "shapefile": "MONTPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Prince George's County Parcels",
@@ -364,7 +438,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/h74wrhh7e5m3o1rkx51jy/PRINparcels0226.zip?dl=1&rlkey=u5ly9afqgehr3tsp3rtc1fgja",
+      "shapefile": "PRINPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Queen Anne's County Parcels",
@@ -383,7 +463,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/k30hp5aaopaem6kf7kigi/QUEEparcels0226.zip?dl=1&rlkey=rc99o6igbr4ktx561deh0yazv",
+      "shapefile": "QUEEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "St. Mary's County Parcels",
@@ -402,7 +488,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/j7sxbgr2lm4kgpzp027im/STMAparcels0226.zip?dl=1&rlkey=4dl0u5qpjuj6ahrbz2qwq2bi1",
+      "shapefile": "STMAPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Somerset County Parcels",
@@ -421,7 +513,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/4x0x495lyd9buejgesdq9/SOMEparcels0226.zip?dl=1&rlkey=rus957682qasf063rpgjkchmv",
+      "shapefile": "SOMEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Talbot County Parcels",
@@ -440,7 +538,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/mfcan19ls76ftvfb4js6a/TALBparcels0226.zip?dl=1&rlkey=hec1eqadkui5rtj9w260rfjdd",
+      "shapefile": "TALBPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Washington County Parcels",
@@ -459,7 +563,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/xqp1pwc83o32rxh0tv3re/WASHparcels0226.zip?dl=1&rlkey=mcntcjujf63poxwa6cy610896",
+      "shapefile": "WASHPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Wicomico County Parcels",
@@ -478,7 +588,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/m38c63axnabt6uzrhl5wg/WICOparcels0226.zip?dl=1&rlkey=cwx7xits93t0batx6w0kngq13",
+      "shapefile": "WICOPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Worcester County Parcels",
@@ -497,7 +613,13 @@
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/2yxas503opb7bopi2svls/WORCparcels0226.zip?dl=1&rlkey=57mz9ovyuieorvzlw4gp0hsbq",
+      "shapefile": "WORCPOLY.shp",
+      "source_crs": "EPSG:26985"
+    }
   },
   {
     "name": "Howard County Real Property Assessments",

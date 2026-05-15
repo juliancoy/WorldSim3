@@ -618,16 +618,30 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"bad_indices_last_frame", render_fill_bad_indices_last_frame.load(std::memory_order_relaxed)}
                 };
                 json status_counts = json::object();
+                size_t enabled_layers_total = 0;
+                size_t enabled_layers_hydrated = 0;
+                size_t enabled_layers_ready = 0;
                 out["layers"] = json::array();
                 for (size_t i = 0; i < states_copy.size(); ++i) {
                     const auto& st = states_copy[i];
                     const char* s = statusToString(st.status);
                     status_counts[s] = status_counts.value(s, 0) + 1;
+                    const bool enabled = i < layers.size() ? layers[i].enabled : false;
+                    const bool hydrated =
+                        st.status != LayerPipelineStatus::Queued &&
+                        st.status != LayerPipelineStatus::Hydrating &&
+                        st.status != LayerPipelineStatus::Failed;
+                    const bool triangulated = st.status == LayerPipelineStatus::Ready;
+                    if (enabled) {
+                        ++enabled_layers_total;
+                        if (hydrated) ++enabled_layers_hydrated;
+                        if (triangulated) ++enabled_layers_ready;
+                    }
                     out["layers"].push_back({
                         {"index", i},
                         {"name", i < layers.size() ? layers[i].name : std::string()},
                         {"file", i < layers.size() ? layers[i].file : std::string()},
-                        {"enabled", i < layers.size() ? layers[i].enabled : false},
+                        {"enabled", enabled},
                         {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
                         {"status", s},
                         {"features", st.feature_count},
@@ -637,11 +651,21 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"triangulation_phase", st.triangulation_phase},
                         {"triangulation_loaded_from_cache", st.triangulation_loaded_from_cache},
                         {"triangulation_source_signature", st.triangulation_source_signature},
-                        {"hydrated", st.status != LayerPipelineStatus::Queued && st.status != LayerPipelineStatus::Hydrating && st.status != LayerPipelineStatus::Failed},
-                        {"triangulated", st.status == LayerPipelineStatus::Ready},
+                        {"spatial_index_phase", st.spatial_index_phase},
+                        {"spatial_index_source_signature", st.spatial_index_source_signature},
+                        {"hydrated", hydrated},
+                        {"triangulated", triangulated},
+                        {"spatial_indexed", i < layers.size() && i < states_copy.size() && st.spatial_index_phase == "ready"},
                         {"error", st.error}
                     });
                 }
+                out["enabled_layers_total"] = enabled_layers_total;
+                out["enabled_layers_hydrated"] = enabled_layers_hydrated;
+                out["enabled_layers_ready"] = enabled_layers_ready;
+                const double enabled_total = enabled_layers_total == 0 ? 1.0 : (double)enabled_layers_total;
+                out["enabled_hydration_pct"] = ((double)enabled_layers_hydrated / enabled_total) * 100.0;
+                out["enabled_ready_pct"] = ((double)enabled_layers_ready / enabled_total) * 100.0;
+                out["enabled_layers_all_ready"] = enabled_layers_total == enabled_layers_ready;
                 out["status_counts"] = status_counts;
                 std::string body = out.dump();
                 std::ostringstream os;
