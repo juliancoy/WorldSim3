@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "layer_import.h"
+#include "render_policy.h"
 #include "layer_ui_actions.h"
 #include "ui_primitives.h"
 #include "worldsim_app_internal.h"
@@ -106,14 +107,19 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         *shared.layer_heatmap_state_changed = true;
     }
     const bool aggregate_none = layer_algo_ui == 0;
-    const int resolved_layer_algo = aggregate_none ? shared.heatmap_algo : aggregateAlgoFromLayerUiIndex(layer_algo_ui);
-    const int aggregate_max_zoom = ctx.idx < shared.layer_heatmap_max_zoom->size() ? (*shared.layer_heatmap_max_zoom)[ctx.idx] : 13;
-    const int detail_min_zoom = ctx.idx < shared.layer_parcel_detail_min_zoom->size() ? (*shared.layer_parcel_detail_min_zoom)[ctx.idx] : kParcelChoroplethMinZoom;
-    const bool aggregate_active_now = !aggregate_none && ctx.zoom <= aggregate_max_zoom && !(is_value_parcel_layer && ctx.zoom >= detail_min_zoom);
+    HeatmapLayerPolicyContext policy_ctx;
+    policy_ctx.layers = shared.layers;
+    policy_ctx.layer_heatmap_enabled = shared.layer_heatmap_enabled;
+    policy_ctx.layer_heatmap_algo = shared.layer_heatmap_algo;
+    policy_ctx.layer_heatmap_max_zoom = shared.layer_heatmap_max_zoom;
+    policy_ctx.layer_parcel_detail_min_zoom = shared.layer_parcel_detail_min_zoom;
+    policy_ctx.zoom = ctx.zoom;
+    policy_ctx.heatmap_algo = shared.heatmap_algo;
+    const LayerDisplayPolicy display_policy = resolveLayerDisplayPolicy(policy_ctx, ctx.idx);
+    const int resolved_layer_algo = display_policy.aggregate_algo;
 
-    if (aggregate_none) ImGui::TextDisabled("Resolved display: per-feature fill");
-    else if (is_value_parcel_layer && ctx.zoom >= detail_min_zoom) ImGui::TextDisabled("Resolved display: parcel choropleth by %s", l.heatmap_field.c_str());
-    else if (aggregate_active_now) ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
+    if (display_policy.mode == LayerDisplayMode::ParcelChoroplethDetail) ImGui::TextDisabled("Resolved display: parcel choropleth by %s", l.heatmap_field.c_str());
+    else if (display_policy.mode == LayerDisplayMode::Aggregate || display_policy.mode == LayerDisplayMode::LodGeometry) ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
     else ImGui::TextDisabled("Resolved display: per-feature fill");
 
     if (!l.heatmap_field.empty()) {
@@ -126,8 +132,8 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         }
     }
 
-    ImGui::BeginDisabled(aggregate_none);
     if (is_value_parcel_layer) ImGui::TextDisabled("Parcel detail draws per-parcel value fill.");
+    ImGui::BeginDisabled(aggregate_none);
     ImGui::Indent();
     if (resolved_layer_algo == kAggregateKdeGaussian) {
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("KDE bandwidth", (*shared.layer_heatmap_bandwidth_px)[ctx.idx], 2.0f, 96.0f, "%.1f");
@@ -179,16 +185,21 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     }
     ImGui::Unindent();
 
-    int hz = aggregate_max_zoom;
+    int hz = display_policy.aggregate_max_zoom;
     if (ImGui::SliderInt("Aggregate max zoom", &hz, kMinZoom, kMaxZoom) && ctx.idx < shared.layer_heatmap_max_zoom->size()) {
         (*shared.layer_heatmap_max_zoom)[ctx.idx] = hz;
         *shared.layer_heatmap_state_changed = true;
     }
+    ImGui::EndDisabled();
     if (is_value_parcel_layer) {
-        int pz = ctx.idx < shared.layer_parcel_detail_min_zoom->size() ? (*shared.layer_parcel_detail_min_zoom)[ctx.idx] : kParcelChoroplethMinZoom;
+        int pz = display_policy.configured_parcel_detail_min_zoom;
         if (ImGui::SliderInt("Parcel detail min zoom", &pz, kMinZoom, kMaxZoom) && ctx.idx < shared.layer_parcel_detail_min_zoom->size()) {
             (*shared.layer_parcel_detail_min_zoom)[ctx.idx] = pz;
             *shared.layer_heatmap_state_changed = true;
+        }
+        if (display_policy.aggregate_configured &&
+            display_policy.effective_parcel_detail_min_zoom != display_policy.configured_parcel_detail_min_zoom) {
+            ImGui::TextDisabled("Effective parcel detail starts at zoom %d to avoid an aggregate/detail gap.", display_policy.effective_parcel_detail_min_zoom);
         }
     }
     bool use_gradient = (ctx.idx < shared.layer_heatmap_use_gradient->size()) ? (*shared.layer_heatmap_use_gradient)[ctx.idx] : true;
@@ -196,6 +207,5 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         (*shared.layer_heatmap_use_gradient)[ctx.idx] = use_gradient;
         *shared.layer_heatmap_state_changed = true;
     }
-    ImGui::EndDisabled();
     ImGui::EndPopup();
 }

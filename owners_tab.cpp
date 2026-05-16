@@ -28,6 +28,9 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
         ImGui::EndTabItem();
         return;
     }
+    if (ctx.sync_owner_aggregates) {
+        ctx.sync_owner_aggregates();
+    }
 
     auto& owner_aggregates = *ctx.owner_aggregates;
     auto& selected_owners = *ctx.selected_owners;

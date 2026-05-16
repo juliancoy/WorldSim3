@@ -21,7 +21,6 @@
 
 ## Heavy-data
 - 2021 Tax Sale List
-- Part 1 Crime Data (Legacy SRS)
 
 ## Next desirable additions (high value)
 - Building footprints and heights/floors

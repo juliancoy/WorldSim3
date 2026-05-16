@@ -120,7 +120,6 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
             map_frame_session_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
             map_frame_session_ctx.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
-            map_frame_session_ctx.crime_legacy_layer_idx = ctx.crime_legacy_layer_idx;
             map_frame_session_ctx.vacant_notice_layer_idx = ctx.vacant_notice_layer_idx;
             map_frame_session_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
             map_frame_session_ctx.tax_lien_layer_idx = ctx.tax_lien_layer_idx;

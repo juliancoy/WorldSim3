@@ -113,6 +113,7 @@ add_executable(worldsim3
   derived_layer_caches.cpp
   layer_workers.cpp
   layer_geometry.cpp
+  basemap_sources.cpp
   map_render_heatmap_pass.cpp
   map_render_hover.cpp
   map_render_basemap.cpp
@@ -147,6 +148,7 @@ add_executable(worldsim3
   model_tabs_panel.cpp
   layers_panel_ui.cpp
   ui_primitives.cpp
+  ui_theme.cpp
   layer_registry.cpp
   layer_ui_actions.cpp
   layer_ui_context_builders.cpp

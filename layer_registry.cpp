@@ -11,7 +11,9 @@ LayerRegistry::LayerRegistry(const fs::path& root, const std::vector<LayerDef>& 
 void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& layers) {
     layers_ = &layers;
     indices_ = {};
-    const bool regional_parcels_available = fs::exists(root / "data" / "layers" / "regional_parcels.geojson");
+    const bool regional_parcels_available =
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
     const bool regional_real_property_available = fs::exists(root / "data" / "layers" / "regional_real_property.geojson");
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices_.parcel_layer_idx = (int)i;
@@ -24,7 +26,6 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
         else if (layers[i].file == "tax_sale_list_2021.geojson") indices_.tax_sale_layer_idx = (int)i;
         else if (layers[i].file == "zoning.geojson") indices_.zoning_layer_idx = (int)i;
         else if (layers[i].file == "crime_nibrs_group_a_2022_present.geojson") indices_.crime_nibrs_layer_idx = (int)i;
-        else if (layers[i].file == "crime_part_1_legacy_srs.geojson") indices_.crime_legacy_layer_idx = (int)i;
     }
 }
 

@@ -50,7 +50,7 @@ Coverage:
 Limitations:
 
 - It reads source files directly.
-- It does not exercise the hydration binary cache, legacy hydration MsgPack fallback, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
+- It does not exercise the hydration binary cache, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
 
 ## Hydration Cache Self-Test
 
@@ -78,7 +78,6 @@ Coverage:
 Limitations:
 
 - It does not benchmark large-layer cache load speed.
-- It does not exercise the legacy MsgPack fallback conversion path.
 
 ## Hydration Cache Warmer
 
@@ -90,7 +89,7 @@ Limitations:
 Purpose:
 
 - Validates an existing binary hydration cache for one layer.
-- If only a matching legacy MsgPack hydration cache exists, converts it into the binary cache.
+- Rebuilds the binary cache from canonical parcel binary or source GeoJSON when needed.
 - Verifies the written binary cache can be read back with the same source signature.
 
 Expected pass signal:
@@ -100,9 +99,9 @@ Expected pass signal:
 
 Notes:
 
-- Large layers can require substantial RAM while converting from legacy MsgPack because the converter must load the legacy cache before writing binary.
+- Large layers can require substantial RAM while rebuilding binary caches from source or canonical parcel binary.
 - Prefer running this with the interactive app closed when converting `regional_parcels.geojson`.
-- `--warm-hydration-cache-all` only processes local layers that already have a binary or legacy hydration cache artifact.
+- `--warm-hydration-cache-all` only processes local layers that already have a binary hydration cache artifact.
 
 ## Triangulation Cache Self-Test
 
@@ -131,8 +130,8 @@ Expected pass signal:
 Purpose:
 
 - Validates an existing binary triangulation cache for one layer.
-- If only a matching legacy JSON triangulation cache exists, converts it into the binary cache.
-- Bulk mode converts all discovered triangulation cache artifacts and skips stale legacy caches whose signature or feature count no longer matches the source layer.
+- Rebuilds the binary triangulation cache from hydrated geometry when needed.
+- Bulk mode processes discovered binary triangulation cache artifacts and skips stale entries whose signature or feature count no longer matches the source layer.
 
 Expected pass signal:
 
@@ -271,6 +270,23 @@ Current coverage comes from code inspection and the shared render-path build int
 - heatmap recomputation is deferred for large no-index layers to avoid building aggregates from partial scans.
 
 The next appropriate automated coverage would be a focused render-pass harness that verifies cursor advancement and bounded work when `LayerSpatialIndex::built == false`.
+
+## Render Policy Self-Test
+
+```bash
+./build/worldsim3 --render-policy-selftest
+```
+
+Purpose:
+
+- Verifies value parcel layers cannot enter an aggregate/detail display gap when aggregate max zoom is lower than parcel detail min zoom.
+- Verifies a layer configured with aggregate max zoom 9 switches to parcel detail at zoom 10 rather than disappearing through zoom 12.
+- Verifies aggregate max zoom is ignored when aggregate mode is `None`.
+
+Expected pass signal:
+
+- Command exits `0`.
+- JSON contains `"ok": true`.
 
 ## Heat Normalization Cache Note
 

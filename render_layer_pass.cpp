@@ -16,6 +16,7 @@ namespace {
 
 constexpr size_t kMaxFallbackFullScanFeatures = 12000;
 constexpr size_t kFallbackScanBudgetPerFrame = 4096;
+constexpr size_t kMaxLargeParcelCpuFallbackFeatures = 100000;
 
 uint64_t heatNormalizationCacheKey(uint64_t heatmap_data_key, size_t layer_idx) {
     return (heatmap_data_key * 1099511628211ULL) ^ (uint64_t(layer_idx) + 0x9e3779b97f4a7c15ULL);
@@ -364,17 +365,42 @@ void renderFeature(
 
 } // namespace
 
+bool shouldBypassCpuParcelFeaturePass(
+    bool parcel_gpu_draw_active,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw,
+    bool should_recompute_heatmap) {
+    if (!parcel_gpu_draw_active) return false;
+    if (layer_uses_lod_for_draw) return false;
+    if (layer_uses_heatmap_for_cache && should_recompute_heatmap) return false;
+    return true;
+}
+
 void runRenderLayerPass(const RenderLayerPassContext& ctx) {
     std::vector<uint32_t> render_candidates;
     for (size_t layer_idx : ctx.render_plan->draw_layer_order) {
         auto& l = (*ctx.layers)[layer_idx];
         if (!l.enabled) continue;
-        if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
-            enqueueParcelGpuDraw(ctx.draw);
-        }
-
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
+        const bool use_gpu_parcel_draw = (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
+        if (use_gpu_parcel_draw) {
+            enqueueParcelGpuDraw(ctx.draw);
+        }
+        if ((int)layer_idx == ctx.parcel_layer_idx &&
+            shouldBypassCpuParcelFeaturePass(
+                use_gpu_parcel_draw,
+                layer_uses_heatmap_for_cache,
+                layer_uses_lod_for_draw,
+                ctx.should_recompute_heatmap)) {
+            continue;
+        }
+        if ((int)layer_idx == ctx.parcel_layer_idx &&
+            !use_gpu_parcel_draw &&
+            l.features.size() > kMaxLargeParcelCpuFallbackFeatures) {
+            continue;
+        }
+
         if (shouldSkipRawSourceLayer(layer_idx, ctx.raw_source_layer_policy) &&
             !layer_uses_heatmap_for_cache &&
             !layer_uses_lod_for_draw) {

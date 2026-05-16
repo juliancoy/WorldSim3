@@ -13,9 +13,9 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     ImGui::Render();
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data->DisplaySize.x > 0.0f && draw_data->DisplaySize.y > 0.0f) {
-        ctx.window_data->ClearValue.color.float32[0] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[1] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[2] = 0.96f;
+        ctx.window_data->ClearValue.color.float32[0] = ctx.dark_mode ? 0.020f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[1] = ctx.dark_mode ? 0.026f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[2] = ctx.dark_mode ? 0.034f : 0.96f;
         ctx.window_data->ClearValue.color.float32[3] = 1.00f;
         const auto present_prof_begin = std::chrono::steady_clock::now();
         FrameRender(ctx.window_data, draw_data);
@@ -69,6 +69,7 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         *ctx.layers,
         ctx.hover_inspector_enabled,
         ctx.hover_inspector_mode,
+        ctx.parcel_parameter_mode,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
         ctx.layer_hover_enabled,

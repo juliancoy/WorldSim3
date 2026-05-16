@@ -192,7 +192,11 @@ void drawParcelParameterPopup(LayersPanelUiContext& ctx) {
                 ? ctx.shared->layer_registry->isParcelHeatmapLayer(i)
                 : (layer.scale == "parcel" && !layer.heatmap_field.empty());
             if (!is_parameter_layer) continue;
-            bool selected = layer.enabled && (!ctx.shared->parcel_parameter_mode || *ctx.shared->parcel_parameter_mode == 0);
+            const int parameter_mode = ctx.shared->parcel_parameter_mode ? *ctx.shared->parcel_parameter_mode : 0;
+            bool selected =
+                layer.file == "property_value_parcels.geojson"
+                    ? parameter_mode == 2
+                    : layer.enabled && parameter_mode == 0;
             std::string label = layer.name + "##parcel_parameter_layer_" + std::to_string(i);
             if (ImGui::RadioButton(label.c_str(), selected)) activateParameterLayer(*ctx.shared, (int)i);
         }
@@ -281,7 +285,6 @@ void drawCrimeFilters(LayersPanelUiContext& ctx) {
             }
         };
         add_layer_counts(ctx.crime_nibrs_layer_idx);
-        add_layer_counts(ctx.crime_legacy_layer_idx);
         ctx.crime_breakdown->clear();
         ctx.crime_breakdown->reserve(counts.size());
         for (auto& kv : counts) ctx.crime_breakdown->push_back(kv);
@@ -426,10 +429,11 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             std::lock_guard<std::mutex> lk(*ctx.shared->status_mutex);
             if (idx < ctx.shared->layer_states->size()) st = (*ctx.shared->layer_states)[idx];
         }
+        const std::string display_status = layerRuntimeDisplayStatus(st, layer.file);
         if (st.status == LayerPipelineStatus::Failed) {
-            ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", statusToString(st.status));
+            ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", display_status.c_str());
         } else {
-            ImGui::TextDisabled("[%s | %zu]", statusToString(st.status), st.feature_count);
+            ImGui::TextDisabled("[%s | %zu]", display_status.c_str(), st.feature_count);
         }
         const bool status_hovered = ImGui::IsItemHovered();
         if (row_hovered || status_hovered) {
@@ -437,7 +441,10 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             ImGui::TextUnformatted(layer.name.c_str());
             ImGui::Separator();
             ImGui::Text("Category: %s", categoryToString(layer.category));
-            ImGui::Text("Status: %s", statusToString(st.status));
+            ImGui::Text("Status: %s", display_status.c_str());
+            ImGui::TextDisabled("Pipeline: %s", statusToString(st.status));
+            if (!st.hydration_phase.empty()) ImGui::TextDisabled("Hydration: %s", st.hydration_phase.c_str());
+            if (!st.triangulation_phase.empty()) ImGui::TextDisabled("Triangulation: %s", st.triangulation_phase.c_str());
             ImGui::Text("Features: %zu", st.feature_count);
             ImGui::Text("File: %s", layer.file.c_str());
             ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");

@@ -1,5 +1,6 @@
 #include "basemap_panel.h"
 
+#include "basemap_sources.h"
 #include "dataset_library.h"
 #include "imgui.h"
 
@@ -19,8 +20,9 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
     const bool topo_tiles_available = ctx.topo_tiles_available_cached;
     const bool topo_vector_available = ctx.topo_vector_available_cached;
     const bool topo_any_available = topo_tiles_available || topo_vector_available;
+    const BasemapSourceDef& osm_def = basemapSourceDef(BasemapSourceId::OpenStreetMap);
     bool osm_enabled_ui = ctx.app_settings->basemap_osm_enabled;
-    if (ImGui::Checkbox("OpenStreetMap", &osm_enabled_ui)) {
+    if (ImGui::Checkbox(osm_def.label, &osm_enabled_ui)) {
         ctx.app_settings->basemap_osm_enabled = osm_enabled_ui;
         saveAppSettings(*ctx.root, *ctx.app_settings);
     }
@@ -32,7 +34,7 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         ImGui::EndTooltip();
     }
     if (ImGui::BeginPopup("osm_display_settings")) {
-        ImGui::TextUnformatted("OpenStreetMap");
+        ImGui::TextUnformatted(osm_def.label);
         ImGui::Separator();
         if (ImGui::SliderFloat("Opacity##osm", &ctx.app_settings->basemap_osm_opacity, 0.0f, 1.0f, "%.2f")) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
@@ -40,12 +42,14 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         if (ImGui::Checkbox("Greyscale underlying map##osm", &ctx.app_settings->grayscale_basemap)) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
         }
-        ImGui::TextDisabled("Tile source: data/tiles");
+        ImGui::TextDisabled("Layer type: %s", basemapLayerTypeLabel(osm_def.layer_type));
+        ImGui::TextDisabled("Tile source: data/%s", osm_def.cache_dir);
         ImGui::TextDisabled("Visible tiles are fetched lazily and cached on disk.");
         ImGui::EndPopup();
     }
+    const BasemapSourceDef& topo_def = basemapSourceDef(BasemapSourceId::Topographic);
     bool topo_enabled_ui = ctx.app_settings->basemap_topographic_enabled;
-    if (ImGui::Checkbox("Topographic", &topo_enabled_ui)) {
+    if (ImGui::Checkbox(topo_def.label, &topo_enabled_ui)) {
         ctx.app_settings->basemap_topographic_enabled = topo_enabled_ui;
         saveAppSettings(*ctx.root, *ctx.app_settings);
     }
@@ -59,7 +63,7 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         ImGui::EndTooltip();
     }
     if (ImGui::BeginPopup("topo_display_settings")) {
-        ImGui::TextUnformatted("Topographic");
+        ImGui::TextUnformatted(topo_def.label);
         ImGui::Separator();
         if (ImGui::SliderFloat("Opacity##topo", &ctx.app_settings->basemap_topographic_opacity, 0.0f, 1.0f, "%.2f")) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
@@ -70,7 +74,8 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         if (ImGui::Checkbox("Greyscale underlying map##topo", &ctx.app_settings->grayscale_basemap)) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
         }
-        ImGui::TextDisabled("Tile source: data/tiles_topo");
+        ImGui::TextDisabled("Layer type: %s", basemapLayerTypeLabel(topo_def.layer_type));
+        ImGui::TextDisabled("Tile source: data/%s", preferredTopoTileDir(*ctx.root).c_str());
         ImGui::TextDisabled("Vector source: data/tiles_topo_vector.geojson");
         ImGui::TextDisabled("Raster tiles are fetched lazily and cached on disk.");
         if (!topo_vector_available) {
@@ -97,8 +102,9 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         }
         ImGui::EndPopup();
     }
+    const BasemapSourceDef& satellite_def = basemapSourceDef(BasemapSourceId::Satellite);
     bool satellite_enabled_ui = ctx.app_settings->basemap_satellite_enabled;
-    if (ImGui::Checkbox("Satellite", &satellite_enabled_ui)) {
+    if (ImGui::Checkbox(satellite_def.label, &satellite_enabled_ui)) {
         ctx.app_settings->basemap_satellite_enabled = satellite_enabled_ui;
         saveAppSettings(*ctx.root, *ctx.app_settings);
     }
@@ -110,7 +116,7 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         ImGui::EndTooltip();
     }
     if (ImGui::BeginPopup("satellite_display_settings")) {
-        ImGui::TextUnformatted("Satellite");
+        ImGui::TextUnformatted(satellite_def.label);
         ImGui::Separator();
         if (ImGui::SliderFloat("Opacity##satellite", &ctx.app_settings->basemap_satellite_opacity, 0.0f, 1.0f, "%.2f")) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
@@ -118,8 +124,62 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
         if (ImGui::Checkbox("Greyscale underlying map##satellite", &ctx.app_settings->grayscale_basemap)) {
             saveAppSettings(*ctx.root, *ctx.app_settings);
         }
-        ImGui::TextDisabled("Tile source: data/tiles_satellite");
-        ImGui::TextDisabled("Raster tiles are fetched lazily up to native z%d and cached on disk.", ctx.max_satellite_native_tile_zoom);
+        ImGui::TextDisabled("Layer type: %s", basemapLayerTypeLabel(satellite_def.layer_type));
+        ImGui::TextDisabled("Tile source: data/%s", satellite_def.cache_dir);
+        ImGui::TextDisabled("Raster tiles are fetched lazily up to native z%d and cached on disk.", satellite_def.native_max_zoom);
+        ImGui::EndPopup();
+    }
+    const BasemapSourceDef& dark_satellite_def = basemapSourceDef(BasemapSourceId::DarkSatellite);
+    bool dark_satellite_enabled_ui = ctx.app_settings->basemap_dark_satellite_enabled;
+    if (ImGui::Checkbox(dark_satellite_def.label, &dark_satellite_enabled_ui)) {
+        ctx.app_settings->basemap_dark_satellite_enabled = dark_satellite_enabled_ui;
+        saveAppSettings(*ctx.root, *ctx.app_settings);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("?##dark_satellite_display_settings")) ImGui::OpenPopup("dark_satellite_display_settings");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("Layer display settings");
+        ImGui::EndTooltip();
+    }
+    if (ImGui::BeginPopup("dark_satellite_display_settings")) {
+        ImGui::TextUnformatted(dark_satellite_def.label);
+        ImGui::Separator();
+        if (ImGui::SliderFloat("Opacity##dark_satellite", &ctx.app_settings->basemap_dark_satellite_opacity, 0.0f, 1.0f, "%.2f")) {
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        ImGui::TextDisabled("Layer type: %s", basemapLayerTypeLabel(dark_satellite_def.layer_type));
+        ImGui::TextDisabled("Tile source: data/%s", dark_satellite_def.cache_dir);
+        ImGui::TextDisabled("%s", dark_satellite_def.notes);
+        ImGui::EndPopup();
+    }
+    const BasemapSourceDef& night_def = basemapSourceDef(BasemapSourceId::NightLights);
+    bool night_satellite_enabled_ui = ctx.app_settings->basemap_night_satellite_enabled;
+    if (ImGui::Checkbox(night_def.label, &night_satellite_enabled_ui)) {
+        ctx.app_settings->basemap_night_satellite_enabled = night_satellite_enabled_ui;
+        saveAppSettings(*ctx.root, *ctx.app_settings);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("?##night_satellite_display_settings")) ImGui::OpenPopup("night_satellite_display_settings");
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("Layer display settings");
+        ImGui::EndTooltip();
+    }
+    if (ImGui::BeginPopup("night_satellite_display_settings")) {
+        ImGui::TextUnformatted(night_def.label);
+        ImGui::Separator();
+        if (ImGui::SliderFloat("Opacity##night_satellite", &ctx.app_settings->basemap_night_satellite_opacity, 0.0f, 1.0f, "%.2f")) {
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        if (ImGui::Checkbox("Greyscale underlying map##night_satellite", &ctx.app_settings->grayscale_basemap)) {
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        ImGui::TextDisabled("Layer type: %s", basemapLayerTypeLabel(night_def.layer_type));
+        ImGui::TextDisabled("Tile source: data/%s", night_def.cache_dir);
+        ImGui::TextDisabled("Night-lights tiles are fetched lazily up to native z%d and cached on disk.", night_def.native_max_zoom);
+        ImGui::TextDisabled("Displayed through z%d, then dark satellite detail takes over.", night_def.recommended_max_zoom);
+        ImGui::TextDisabled("Best used with dark mode; detail is contextual, not parcel-scale aerial imagery.");
         ImGui::EndPopup();
     }
     if (!topo_tiles_available && !topo_vector_available) {
@@ -134,7 +194,9 @@ void drawBasemapPanel(BasemapPanelContext& ctx) {
     }
     if (!ctx.app_settings->basemap_osm_enabled &&
         !ctx.app_settings->basemap_topographic_enabled &&
-        !ctx.app_settings->basemap_satellite_enabled) {
+        !ctx.app_settings->basemap_satellite_enabled &&
+        !ctx.app_settings->basemap_dark_satellite_enabled &&
+        !ctx.app_settings->basemap_night_satellite_enabled) {
         ImGui::TextDisabled("No basemap source enabled.");
     }
     if (osm_total > 0) {

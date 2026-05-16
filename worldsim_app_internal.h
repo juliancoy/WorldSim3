@@ -44,6 +44,7 @@ inline constexpr int kMinZoom = 8;
 inline constexpr int kMaxZoom = 24;
 inline constexpr int kMaxNativeTileZoom = 18;
 inline constexpr int kMaxSatelliteNativeTileZoom = 20;
+inline constexpr int kMaxNightSatelliteNativeTileZoom = 7;
 inline constexpr int kMaxInternalMathZoom = 24;
 inline constexpr size_t kMaxTileCache = 320;
 inline constexpr size_t kMaxSmoothHeatSamplesPerLayer = 50000;

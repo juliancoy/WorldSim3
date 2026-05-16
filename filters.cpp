@@ -44,8 +44,7 @@ const LayerDef::FeatureGeom* joinedRealProperty(const FeatureFilterContext& ctx,
 }
 
 bool isCrimeLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
-    return (ctx.crime_nibrs_layer_idx >= 0 && (int)layer_idx == ctx.crime_nibrs_layer_idx) ||
-           (ctx.crime_legacy_layer_idx >= 0 && (int)layer_idx == ctx.crime_legacy_layer_idx);
+    return ctx.crime_nibrs_layer_idx >= 0 && (int)layer_idx == ctx.crime_nibrs_layer_idx;
 }
 
 bool crimeFeatureMatches(const FeatureFilterContext& ctx, const LayerDef::FeatureGeom& fg) {

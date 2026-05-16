@@ -13,7 +13,6 @@ struct FeatureFilterContextFactoryInput {
     int real_property_layer_idx = -1;
     int parcel_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
 };
 
 FeatureFilterContext makeFeatureFilterContext(const FeatureFilterContextFactoryInput& input);

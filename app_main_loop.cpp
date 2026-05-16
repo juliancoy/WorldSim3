@@ -104,6 +104,7 @@
 #include "api_control_commands.h"
 #include "cpu_affinity.h"
 #include "thread_utils.h"
+#include "ui_theme.h"
 
 #include <nlohmann/json.hpp>
 #include <curl/curl.h>
@@ -164,9 +165,7 @@ bool loadHydratedFeaturesForParcelRender(
     const std::string& sig,
     std::vector<LayerDef::FeatureGeom>& out) {
     const fs::path hydration_bin = root / "data" / "cache" / "hydration" / (layer_file + ".bin");
-    if (loadBinaryHydrationCache(hydration_bin, sig, out)) return true;
-    const fs::path hydration_msgpack = root / "data" / "cache" / "hydration" / (layer_file + ".msgpack");
-    return loadHydrationCache(hydration_msgpack, sig, out);
+    return loadBinaryHydrationCache(hydration_bin, sig, out);
 }
 
 bool loadTrianglesForParcelRender(
@@ -176,16 +175,9 @@ bool loadTrianglesForParcelRender(
     size_t feature_count,
     std::vector<std::vector<uint32_t>>& out) {
     const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
-    if (loadBinaryTriCache(tri_bin, sig, feature_count, out)) return true;
-    const fs::path tri_json = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.json");
-    return loadTriCache(tri_json, sig, feature_count, out);
+    return loadBinaryTriCache(tri_bin, sig, feature_count, out);
 }
 }
-
-static void clearTileDiskPresenceCache() {
-    // Legacy hook: disk-presence memoization was removed during run-loop refactor.
-}
-
 
 int runWorldSim3App(int argc, char** argv) {
 
@@ -261,7 +253,7 @@ int runWorldSim3App(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiContext* main_imgui_context = ImGui::GetCurrentContext();
-    ImGui::StyleColorsLight();
+    applyWorldsimUiTheme(app_settings.dark_mode);
 
     ImGui_ImplGlfw_InitForVulkan(window, true);
     ImGui_ImplVulkan_InitInfo init_info{};
@@ -315,7 +307,7 @@ int runWorldSim3App(int argc, char** argv) {
 
     ImGuiContext* download_queue_imgui_context = ImGui::CreateContext();
     ImGui::SetCurrentContext(download_queue_imgui_context);
-    ImGui::StyleColorsLight();
+    applyWorldsimUiTheme(app_settings.dark_mode);
     ImGui_ImplGlfw_InitForVulkan(download_queue_window, false);
     glfwSetWindowUserPointer(download_queue_window, download_queue_imgui_context);
     glfwSetWindowFocusCallback(download_queue_window, [](GLFWwindow* cb_window, int focused) {
@@ -389,7 +381,6 @@ int runWorldSim3App(int argc, char** argv) {
     const int tax_sale_layer_idx = layer_indices.tax_sale_layer_idx;
     const int zoning_layer_idx = layer_indices.zoning_layer_idx;
     const int crime_nibrs_layer_idx = layer_indices.crime_nibrs_layer_idx;
-    const int crime_legacy_layer_idx = layer_indices.crime_legacy_layer_idx;
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
     std::vector<LayerDef::FeatureGeom> harmonized_real_property_features;
     std::vector<std::string> harmonized_real_property_source_files;
@@ -565,6 +556,7 @@ int runWorldSim3App(int argc, char** argv) {
         layers,
         hover_inspector_enabled,
         &hover_inspector_mode,
+        &parcel_parameter_mode,
         &zoning_zone_enabled,
         &layer_fill_enabled,
         &layer_hover_enabled,
@@ -612,12 +604,16 @@ int runWorldSim3App(int argc, char** argv) {
     }
     if (parcel_layer_idx >= 0) {
         for (size_t i = 0; i < layers.size(); ++i) {
+            if (layers[i].file == "property_value_parcels.geojson" && layers[i].enabled) {
+                parcel_parameter_mode = 2;
+                layers[i].enabled = false;
+                continue;
+            }
             if ((int)i != parcel_layer_idx && layers[i].scale == "parcel") layers[i].enabled = false;
         }
     }
     TimeCubeService time_cube_service(root);
     DuckDbAnalytics duckdb_analytics(root);
-    bool duckdb_auto_rebuild_checked = false;
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
@@ -1402,7 +1398,6 @@ int runWorldSim3App(int argc, char** argv) {
             &heatmap_controls_active,
             parcel_layer_idx,
             crime_nibrs_layer_idx,
-            crime_legacy_layer_idx,
             zoning_layer_idx,
             &crime_filter_enabled,
             &crime_filter_use_year,
@@ -1433,6 +1428,7 @@ int runWorldSim3App(int argc, char** argv) {
             topo_vector_available_cached,
             kMaxNativeTileZoom,
             kMaxSatelliteNativeTileZoom,
+            kMaxNightSatelliteNativeTileZoom,
             &zoning_zone_enabled,
             &zoning_zone_color,
             &zoning_zone_label,
@@ -1478,7 +1474,7 @@ int runWorldSim3App(int argc, char** argv) {
         const double hydrate_idle_s = pipeline_progress.hydrate_idle_s;
         const double tri_idle_s = pipeline_progress.tri_idle_s;
 
-        drawGearPanel(&show_sources_panel, root, bootstrap);
+        drawGearPanel(&show_sources_panel, root, &app_settings, main_imgui_context, download_queue_imgui_context, bootstrap);
         DataLibraryCoordinatorContext data_library_ctx;
         data_library_ctx.root = root;
         data_library_ctx.layers = &layers;
@@ -1604,7 +1600,7 @@ int runWorldSim3App(int argc, char** argv) {
             [&]() { clear_heatmap_runtime_cache(); },
             [&]() { reset_derived_cache_state(); },
             [&]() { trimProcessHeap(); },
-            [&]() { clearTileDiskPresenceCache(); }
+            []() {}
         });
         const LayerUiStateSyncResult ui_state_sync = syncLayerUiState(LayerUiStateSyncContext{
             &root,
@@ -1707,7 +1703,6 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.hydrated_count = &hydrated_count;
         pipeline_drain_ctx.triangulated_count = &triangulated_count;
         pipeline_drain_ctx.projection_cache_generation = &projection_generation;
-        pipeline_drain_ctx.duckdb_auto_rebuild_checked = &duckdb_auto_rebuild_checked;
         pipeline_drain_ctx.parcel_layer_idx = parcel_layer_idx;
         pipeline_drain_ctx.vacant_layer_active = vacant_layer_active;
         pipeline_drain_ctx.trim_process_heap = [&]() { trimProcessHeap(); };
@@ -1971,11 +1966,13 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                     uint64_t overlay_state_key = color_state_key;
                     hash_mix(overlay_state_key, (uint64_t)parcel_parameter_mode);
+                    hash_mix(color_state_key, (uint64_t)parcel_parameter_mode);
                     uint32_t gamma_bits = 0;
                     if ((size_t)parcel_layer_idx < layer_choropleth_gamma.size()) {
                         std::memcpy(&gamma_bits, &layer_choropleth_gamma[(size_t)parcel_layer_idx], sizeof(gamma_bits));
                     }
                     hash_mix(overlay_state_key, gamma_bits);
+                    hash_mix(color_state_key, gamma_bits);
                     hash_mix(overlay_state_key, (uint64_t)layer_fill_enabled.size());
                     hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_notice_layer_idx] : false));
                     hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_rehab_layer_idx] : false));
@@ -1987,10 +1984,6 @@ int runWorldSim3App(int argc, char** argv) {
                     hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size() ? layers[(size_t)tax_lien_layer_idx].enabled : false));
                     hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size() ? layers[(size_t)tax_sale_layer_idx].enabled : false));
                     uint64_t outline_state_key = overlay_state_key;
-                    hash_mix(outline_state_key, (uint64_t)selected_parcel_indices.size());
-                    for (size_t selected_idx : selected_parcel_indices) {
-                        hash_mix(outline_state_key, (uint64_t)selected_idx);
-                    }
 
                     FeatureFilterContextFactoryInput filter_input;
                     filter_input.layers = &layers;
@@ -2003,12 +1996,39 @@ int runWorldSim3App(int argc, char** argv) {
                     filter_input.real_property_layer_idx = real_property_layer_idx;
                     filter_input.parcel_layer_idx = parcel_layer_idx;
                     filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
-                    filter_input.crime_legacy_layer_idx = crime_legacy_layer_idx;
                     const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
 
                     if (color_state_key != parcel_gpu_filter_state_key) {
                         std::vector<ImU32> parcel_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
                         const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
+                        const bool value_choropleth_enabled = parcel_parameter_mode == 2 && layers[(size_t)parcel_layer_idx].enabled;
+                        const float parcel_gamma =
+                            (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
+                                ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
+                                : 1.0f;
+                        auto current_value_at = [&](size_t parcel_idx) -> double {
+                            const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
+                            return rec ? rec->current_value : 0.0;
+                        };
+                        double min_value = std::numeric_limits<double>::infinity();
+                        double max_value = -std::numeric_limits<double>::infinity();
+                        if (value_choropleth_enabled) {
+                            for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
+                                const uint32_t feature_idx = rec.feature_idx;
+                                if (feature_idx >= parcel_layer.features.size()) continue;
+                                const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
+                                if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                const double v = current_value_at(feature_idx);
+                                if (v <= 0.0 || !std::isfinite(v)) continue;
+                                min_value = std::min(min_value, v);
+                                max_value = std::max(max_value, v);
+                            }
+                        }
+                        const bool value_range_valid =
+                            value_choropleth_enabled &&
+                            std::isfinite(min_value) &&
+                            std::isfinite(max_value) &&
+                            max_value > min_value;
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
@@ -2016,6 +2036,16 @@ int runWorldSim3App(int argc, char** argv) {
                             if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
                                 parcel_colors[i] = IM_COL32(0, 0, 0, 0);
                                 continue;
+                            }
+                            if (value_range_valid) {
+                                const double v = current_value_at(feature_idx);
+                                if (v > 0.0 && std::isfinite(v)) {
+                                    const float t = applyPowerGamma(
+                                        std::clamp((float)((v - min_value) / (max_value - min_value)), 0.0f, 1.0f),
+                                        parcel_gamma);
+                                    parcel_colors[i] = ImGui::ColorConvertFloat4ToU32(heatColor(t));
+                                    continue;
+                                }
                             }
                             float query_color[4] = {0, 0, 0, 0};
                             if (queryMapColorForFeature(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg, query_color)) {
@@ -2075,7 +2105,7 @@ int runWorldSim3App(int argc, char** argv) {
                             }
                         };
                         std::vector<ImU32> overlay_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const bool parameter_fill_enabled = parcel_parameter_mode > 0 && layer_enabled_at(parcel_layer_idx);
+                        const bool parameter_fill_enabled = parcel_parameter_mode == 1 && layer_enabled_at(parcel_layer_idx);
                         const bool vacancy_fill_enabled =
                             (layer_enabled_at(vacant_notice_layer_idx) || layer_enabled_at(vacant_rehab_layer_idx)) &&
                             (layer_fill_enabled_at(vacant_notice_layer_idx) || layer_fill_enabled_at(vacant_rehab_layer_idx));
@@ -2196,8 +2226,6 @@ int runWorldSim3App(int argc, char** argv) {
                             if ((overlay_fill >> 24) != 0) {
                                 const ImVec4 overlay_v = ImGui::ColorConvertU32ToFloat4(overlay_fill);
                                 outline = colorWithAlpha(darkenColor(overlay_v, 0.60f), 235);
-                            } else if (selected_parcel_indices.end() != std::find(selected_parcel_indices.begin(), selected_parcel_indices.end(), (size_t)feature_idx)) {
-                                outline = IM_COL32(255, 230, 0, 255);
                             } else {
                                 ImVec4 base_v = ImGui::ColorConvertU32ToFloat4(outline);
                                 outline = colorWithAlpha(darkenColor(base_v, 0.72f), 220);
@@ -2251,7 +2279,6 @@ int runWorldSim3App(int argc, char** argv) {
             zoning_layer_idx,
             real_property_layer_idx,
             crime_nibrs_layer_idx,
-            crime_legacy_layer_idx,
             vacant_notice_layer_idx,
             vacant_rehab_layer_idx,
             tax_lien_layer_idx,
@@ -2308,12 +2335,6 @@ int runWorldSim3App(int argc, char** argv) {
             &vacant_rehab_rows_matched_total,
             &vacant_parcels_matched_total,
             &vacant_parcels_with_geometry_total,
-            &duckdb_auto_rebuild_checked,
-            &hydrate_req_mutex,
-            &hydrate_requests,
-            &hydration_requested,
-            &hydrated_mutex,
-            &hydrated_queue,
             real_property_for_parcel
         });
 
@@ -2349,7 +2370,6 @@ int runWorldSim3App(int argc, char** argv) {
             parcel_layer_idx,
             zoning_layer_idx,
             crime_nibrs_layer_idx,
-            crime_legacy_layer_idx,
             vacant_notice_layer_idx,
             vacant_rehab_layer_idx,
             tax_lien_layer_idx,
@@ -2494,7 +2514,8 @@ int runWorldSim3App(int argc, char** argv) {
             &profile_mutex,
             &profile_samples,
             &profile_sample_pos,
-            &profile_sample_count
+            &profile_sample_count,
+            app_settings.dark_mode
         });
 
         renderSecondaryDownloadQueueWindow(SecondaryDownloadQueueWindowContext{
@@ -2515,7 +2536,8 @@ int runWorldSim3App(int argc, char** argv) {
             layer_download_active_idx,
             &layers,
             &layer_download_queue,
-            &layer_download_last_event
+            &layer_download_last_event,
+            app_settings.dark_mode
         });
     }
     vkDeviceWaitIdle(g_Device);
@@ -2540,6 +2562,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.layers = &layers;
     shutdown_input.hover_inspector_enabled = hover_inspector_enabled;
     shutdown_input.hover_inspector_mode = &hover_inspector_mode;
+    shutdown_input.parcel_parameter_mode = &parcel_parameter_mode;
     shutdown_input.zoning_zone_enabled = &zoning_zone_enabled;
     shutdown_input.layer_fill_enabled = &layer_fill_enabled;
     shutdown_input.layer_hover_enabled = &layer_hover_enabled;

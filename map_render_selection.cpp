@@ -7,6 +7,7 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
     if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return;
     if (ctx.selected_parcel_indices->empty()) return;
 
+    const ImU32 selected_fill = IM_COL32(255, 230, 0, 58);
     const ImU32 selected_outline = IM_COL32(255, 230, 0, 255);
     const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
     if (!parcel_layer.enabled) return;
@@ -14,11 +15,19 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
         if (idx >= parcel_layer.features.size()) continue;
         const auto& fg = parcel_layer.features[idx];
         if (!fg.rings.empty()) {
+            if (!fg.triangles.empty()) {
+                ctx.projection->drawTessellatedFill(
+                    ctx.draw,
+                    (size_t)ctx.parcel_layer_idx,
+                    (uint32_t)idx,
+                    fg,
+                    selected_fill);
+            }
             const auto& world_rings = ctx.projection->getWorldRings((size_t)ctx.parcel_layer_idx, (uint32_t)idx, fg);
             for (const auto& r : world_rings) {
                 ctx.projection->appendWorldRingLine(r, 1);
                 const auto& line = ctx.projection->scratchLine();
-                ctx.draw->AddPolyline(line.data(), (int)line.size(), selected_outline, ImDrawFlags_Closed, 2.5f);
+                ctx.draw->AddPolyline(line.data(), (int)line.size(), selected_outline, ImDrawFlags_Closed, 3.0f);
             }
         } else {
             ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, ctx.math_zoom);

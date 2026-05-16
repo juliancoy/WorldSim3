@@ -42,6 +42,24 @@ constexpr char kCanonicalMagic[8] = {'W', 'S', '3', 'C', 'A', 'N', '1', '\0'};
 constexpr uint32_t kCanonicalVersion = 1;
 constexpr size_t kCanonicalSignatureBytes = 256;
 
+fs::path tempOutputPathFor(const fs::path& path) {
+    return fs::path(path.string() + ".tmp");
+}
+
+void replaceAtomically(const fs::path& tmp_path, const fs::path& final_path) {
+    std::error_code rename_ec;
+    fs::rename(tmp_path, final_path, rename_ec);
+    if (!rename_ec) return;
+    std::error_code remove_ec;
+    fs::remove(final_path, remove_ec);
+    rename_ec.clear();
+    fs::rename(tmp_path, final_path, rename_ec);
+    if (rename_ec) {
+        fs::remove(tmp_path, remove_ec);
+        throw std::runtime_error("failed to rename " + tmp_path.string() + " to " + final_path.string());
+    }
+}
+
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return s;
@@ -379,10 +397,16 @@ int main(int argc, char** argv) {
         for (const auto& [field, _] : kFieldAliases) fields.push_back(field);
 
         fs::create_directories(output.parent_path());
-        std::ofstream out_file(output);
-        if (!out_file) throw std::runtime_error("failed to open output " + output.string());
+        const fs::path output_tmp = tempOutputPathFor(output);
         const fs::path canonical_output = fs::path(output.string() + ".canonical.bin");
-        CanonicalBinaryWriter canonical_writer(canonical_output);
+        const fs::path canonical_tmp = tempOutputPathFor(canonical_output);
+        std::error_code cleanup_ec;
+        fs::remove(output_tmp, cleanup_ec);
+        fs::remove(canonical_tmp, cleanup_ec);
+
+        std::ofstream out_file(output_tmp);
+        if (!out_file) throw std::runtime_error("failed to open output " + output.string());
+        CanonicalBinaryWriter canonical_writer(canonical_tmp);
         if (!canonical_writer.begin()) {
             throw std::runtime_error("failed to open canonical binary output " + canonical_output.string());
         }
@@ -433,10 +457,12 @@ int main(int argc, char** argv) {
         out_file.flush();
         if (!out_file) throw std::runtime_error("failed to finish writing " + output.string());
         out_file.close();
-        const std::string output_sig = fileSignatureForPath(output);
+        const std::string output_sig = fileSignatureForPath(output_tmp);
         if (!canonical_writer.finalize(output_sig)) {
             throw std::runtime_error("failed to finalize canonical binary output " + canonical_output.string());
         }
+        replaceAtomically(output_tmp, output);
+        replaceAtomically(canonical_tmp, canonical_output);
         std::cout << "wrote " << output << " with " << feature_count << " features\n";
         return 0;
     } catch (const std::exception& e) {

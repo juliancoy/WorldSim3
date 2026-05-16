@@ -52,6 +52,7 @@ struct FrameFinalizationContext {
     std::vector<ProfileFrameSample>* profile_samples = nullptr;
     size_t* profile_sample_pos = nullptr;
     size_t* profile_sample_count = nullptr;
+    bool dark_mode = false;
 };
 
 struct AppShutdownContext {
@@ -61,6 +62,7 @@ struct AppShutdownContext {
     std::vector<LayerDef>* layers = nullptr;
     bool hover_inspector_enabled = true;
     int* hover_inspector_mode = nullptr;
+    int* parcel_parameter_mode = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
     std::vector<bool>* layer_hover_enabled = nullptr;

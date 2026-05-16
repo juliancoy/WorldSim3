@@ -123,7 +123,9 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
     if (!in) return layers;
     json arr;
     in >> arr;
-    const bool regional_parcels_available = fs::exists(root / "data" / "layers" / "regional_parcels.geojson");
+    const bool regional_parcels_available =
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
     for (size_t i = 0; i < arr.size(); ++i) {
         if (!arr[i].contains("file") || !arr[i]["file"].is_string()) continue;
         const std::string file = arr[i]["file"].get<std::string>();
@@ -168,6 +170,7 @@ void loadLayerUiState(
     std::vector<LayerDef>& layers,
     bool& hover_inspector_enabled,
     int* hover_inspector_mode,
+    int* parcel_parameter_mode,
     std::unordered_map<std::string, bool>* zoning_zone_enabled,
     std::vector<bool>* layer_fill_enabled,
     std::vector<bool>* layer_hover_enabled,
@@ -217,6 +220,9 @@ void loadLayerUiState(
             hover_inspector_enabled = j["parcel_hover_enabled"].get<bool>();
         }
         if (hover_inspector_mode) *hover_inspector_mode = hover_inspector_enabled ? 3 : 0;
+    }
+    if (parcel_parameter_mode && j.contains("parcel_parameter_mode") && j["parcel_parameter_mode"].is_number_integer()) {
+        *parcel_parameter_mode = std::clamp(j["parcel_parameter_mode"].get<int>(), 0, 2);
     }
     if (j.contains("layers") && j["layers"].is_object()) {
         const auto& obj = j["layers"];
@@ -281,6 +287,7 @@ void saveLayerUiState(
     const std::vector<LayerDef>& layers,
     bool hover_inspector_enabled,
     const int* hover_inspector_mode,
+    const int* parcel_parameter_mode,
     const std::unordered_map<std::string, bool>* zoning_zone_enabled,
     const std::vector<bool>* layer_fill_enabled,
     const std::vector<bool>* layer_hover_enabled,
@@ -313,6 +320,7 @@ void saveLayerUiState(
     json j;
     j["hover_inspector_enabled"] = hover_inspector_enabled;
     if (hover_inspector_mode) j["hover_inspector_mode"] = std::clamp(*hover_inspector_mode, 0, 3);
+    if (parcel_parameter_mode) j["parcel_parameter_mode"] = std::clamp(*parcel_parameter_mode, 0, 2);
     json flags = json::object();
     for (const auto& l : layers) flags[l.file] = l.enabled;
     j["layers"] = flags;

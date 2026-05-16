@@ -12,6 +12,5 @@ FeatureFilterContext makeFeatureFilterContext(const FeatureFilterContextFactoryI
     ctx.real_property_layer_idx = input.real_property_layer_idx;
     ctx.parcel_layer_idx = input.parcel_layer_idx;
     ctx.crime_nibrs_layer_idx = input.crime_nibrs_layer_idx;
-    ctx.crime_legacy_layer_idx = input.crime_legacy_layer_idx;
     return ctx;
 }

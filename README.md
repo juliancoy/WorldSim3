@@ -113,9 +113,7 @@ Dataset download/update workflows, generated dataset/model commands, and LAN dat
 
 Defined in `layers_manifest.json` and sourced from Open Baltimore official GeoJSON endpoints.
 
-Crime coverage now includes:
-- NIBRS Group A Crime Data (2022-present)
-- Part 1 Crime Data (Legacy SRS)
+Crime coverage now includes NIBRS Group A Crime Data (2022-present).
 
 ## Arkavo WebRTC Client (TypeScript)
 

@@ -41,7 +41,7 @@ MapViewportFrame beginMapViewportCanvas(const MapViewportContext& ctx) {
     frame.draw->AddRectFilled(
         frame.origin,
         ImVec2(frame.origin.x + frame.size.x, frame.origin.y + frame.size.y),
-        IM_COL32(242, 246, 250, 255));
+        ctx.dark_mode ? IM_COL32(8, 13, 18, 255) : IM_COL32(242, 246, 250, 255));
 
     frame.math_zoom = std::min(*ctx.zoom, ctx.max_internal_math_zoom);
     frame.zoom_scale = std::ldexp(1.0, *ctx.zoom - frame.math_zoom);

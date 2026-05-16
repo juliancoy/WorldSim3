@@ -30,7 +30,26 @@ struct HeatmapLayerPolicyContext {
     bool heatmap_allow_cpu_fallback = false;
 };
 
+enum class LayerDisplayMode {
+    PerFeature,
+    Aggregate,
+    LodGeometry,
+    ParcelChoroplethDetail
+};
+
+struct LayerDisplayPolicy {
+    LayerDisplayMode mode = LayerDisplayMode::PerFeature;
+    int aggregate_algo = 0;
+    int aggregate_max_zoom = 13;
+    int configured_parcel_detail_min_zoom = 14;
+    int effective_parcel_detail_min_zoom = 14;
+    bool aggregate_configured = false;
+    bool value_parcel_layer = false;
+};
+
 int resolveLayerAggregateAlgo(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
+LayerDisplayPolicy resolveLayerDisplayPolicy(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
+int resolveLayerParcelDetailMinZoom(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesParcelChoroplethDetail(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesLodGeometry(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);

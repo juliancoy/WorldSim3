@@ -59,6 +59,7 @@ struct LayerRuntimeState {
     std::string hydration_source_signature;
     std::string triangulation_source_signature;
     std::string spatial_index_source_signature;
+    std::string hydration_source_kind;
     std::string hydration_phase;
     std::string triangulation_phase;
     std::string spatial_index_phase;
@@ -90,6 +91,7 @@ struct SpatialIndexResult {
 };
 
 const char* statusToString(LayerPipelineStatus s);
+std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std::string& layer_file = {});
 void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si);
 void buildLayerSpatialIndexForExtents(
     const std::vector<LayerDef::FeatureExtent>& feature_extents,

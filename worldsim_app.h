@@ -14,7 +14,13 @@ struct ParcelGpuResidencyStatus {
     uint32_t render_features = 0;
     uint32_t vertices = 0;
     uint32_t indices = 0;
+    uint32_t line_indices = 0;
     uint32_t colors = 0;
+    uint32_t visible_chunks = 0;
+    uint32_t visible_line_chunks = 0;
+    bool draw_active = false;
+    bool overlay_active = false;
+    bool outline_active = false;
     std::string source_signature;
 };
 

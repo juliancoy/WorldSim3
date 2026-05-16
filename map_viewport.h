@@ -11,6 +11,7 @@ struct MapViewportContext {
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
+    bool dark_mode = false;
 };
 
 struct MapViewportFrame {

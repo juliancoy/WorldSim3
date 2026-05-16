@@ -10,12 +10,12 @@ namespace {
 
 const char* completedTriangulationPhase(const TriResult& tr) {
     if (!tr.loaded_from_cache) return "built_from_source";
-    return tr.loaded_from_binary_cache ? "binary_cache_hit" : "json_cache_hit";
+    return "binary_cache_hit";
 }
 
 const char* applyingTriangulationPhase(const TriResult& tr) {
     if (!tr.loaded_from_cache) return "applying_built_result";
-    return tr.loaded_from_binary_cache ? "applying_binary_cache" : "applying_json_cache";
+    return "applying_binary_cache";
 }
 
 }  // namespace
@@ -115,9 +115,6 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                 if (ready.index < ctx.hydration_requested->size()) (*ctx.hydration_requested)[ready.index] = false;
             }
             ctx.hydrated_count->fetch_add(1, std::memory_order_relaxed);
-            if (ctx.duckdb_auto_rebuild_checked && source_signature_changed) {
-                *ctx.duckdb_auto_rebuild_checked = false;
-            }
             {
                 std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
                 if (ready.index < ctx.layer_states->size()) {

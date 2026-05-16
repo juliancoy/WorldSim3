@@ -2,6 +2,7 @@
 
 #include "memory_utils.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -10,9 +11,6 @@
 #include <limits>
 #include <sstream>
 
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
@@ -46,6 +44,7 @@ constexpr uint32_t kMaxParcelRenderChunks = 100000u;
 constexpr std::array<char, 8> kCanonicalFeatureBinaryMagic{{'W', 'S', '3', 'C', 'A', 'N', '1', '\0'}};
 constexpr uint32_t kCanonicalFeatureBinaryVersion = 1;
 constexpr size_t kCanonicalFeatureSignatureBytes = 256;
+constexpr size_t kRegionalParcelCompactionPropertyThreshold = 24;
 
 bool hostIsLittleEndian() {
     const uint16_t v = 1;
@@ -138,6 +137,76 @@ bool writeString(std::ostream& out, const std::string& s) {
     return s.empty() || writeExact(out, s.data(), s.size());
 }
 
+bool isRegionalParcelHydrationCachePath(const fs::path& cache_path) {
+    return cache_path.filename().string() == "regional_parcels.geojson.bin";
+}
+
+bool keepRegionalParcelRuntimeProperty(const std::string& key) {
+    static const std::array<const char*, 31> keep_keys{{
+        "jurisdiction",
+        "source_file",
+        "regional_parcel_id",
+        "source_parcel_id",
+        "account_id",
+        "blocklot",
+        "BLOCKLOT",
+        "BLOCK_LOT",
+        "BlockLot",
+        "PIN",
+        "pin",
+        "BLOCK",
+        "LOT",
+        "block",
+        "lot",
+        "address",
+        "owner",
+        "owner_name",
+        "land_value",
+        "improvement_value",
+        "current_value",
+        "sale_price",
+        "sale_date",
+        "year_built",
+        "sdat_link",
+        "FULLADDR",
+        "PROPERTY_ADDRESS",
+        "OWNER_1",
+        "OWNERNME1",
+        "TAXBASE",
+        "SDATLINK"
+    }};
+    return std::find(keep_keys.begin(), keep_keys.end(), key) != keep_keys.end();
+}
+
+uint32_t hydrationPropertyWriteCount(
+    const fs::path& cache_path,
+    const std::vector<std::pair<std::string, std::string>>& properties) {
+    if (!isRegionalParcelHydrationCachePath(cache_path)) {
+        return static_cast<uint32_t>(properties.size());
+    }
+    uint32_t count = 0;
+    for (const auto& kv : properties) {
+        if (keepRegionalParcelRuntimeProperty(kv.first)) ++count;
+    }
+    return count;
+}
+
+bool writeHydrationProperties(
+    std::ostream& out,
+    const fs::path& cache_path,
+    const std::vector<std::pair<std::string, std::string>>& properties) {
+    if (properties.size() > std::numeric_limits<uint32_t>::max()) return false;
+    const bool slim_regional_parcels = isRegionalParcelHydrationCachePath(cache_path);
+    const uint32_t count = hydrationPropertyWriteCount(cache_path, properties);
+    bool ok = writeU32(out, count);
+    for (const auto& kv : properties) {
+        if (!ok) break;
+        if (slim_regional_parcels && !keepRegionalParcelRuntimeProperty(kv.first)) continue;
+        ok = writeString(out, kv.first) && writeString(out, kv.second);
+    }
+    return ok;
+}
+
 struct FlattenedParcelFeature {
     std::vector<ImVec2> vertices;
     std::vector<uint32_t> indices;
@@ -192,106 +261,44 @@ std::string fileSignature(const fs::path& p) {
     return std::to_string((unsigned long long)sz) + "_" + std::to_string((long long)ticks);
 }
 
-bool loadHydrationCache(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
+bool loadBinaryCanonicalMetadata(const fs::path& cache_path, CanonicalFeatureCollectionMetadata& out) {
     std::ifstream in(cache_path, std::ios::binary);
     if (!in) return false;
-    bool ok = false;
-    {
-        TrimHeapOnScopeExit trim_on_exit;
-        std::vector<uint8_t> buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        if (buf.empty()) return false;
-        json j;
-        try {
-            j = json::from_msgpack(buf);
-        } catch (...) {
-            return false;
-        }
-        if (!j.contains("version") || j["version"].get<int>() != 1) return false;
-        if (!j.contains("signature") || j["signature"].get<std::string>() != sig) return false;
-        if (!j.contains("features") || !j["features"].is_array()) return false;
 
-        out.clear();
-        out.reserve(j["features"].size());
-        for (const auto& jf : j["features"]) {
-            LayerDef::FeatureGeom fg{};
-            if (!jf.contains("extent") || !jf.contains("rings")) return false;
-            const auto& je = jf["extent"];
-            fg.extent.min_lon = je.value("min_lon", 0.0f);
-            fg.extent.min_lat = je.value("min_lat", 0.0f);
-            fg.extent.max_lon = je.value("max_lon", 0.0f);
-            fg.extent.max_lat = je.value("max_lat", 0.0f);
-            for (const auto& jr : jf["rings"]) {
-                std::vector<ImVec2> ring;
-                ring.reserve(jr.size());
-                for (const auto& jp : jr) {
-                    if (!jp.is_array() || jp.size() < 2) continue;
-                    ring.push_back(ImVec2(jp[0].get<float>(), jp[1].get<float>()));
-                }
-                if (!ring.empty()) fg.rings.push_back(std::move(ring));
-            }
-            if (jf.contains("properties") && jf["properties"].is_array()) {
-                fg.properties.reserve(jf["properties"].size());
-                for (const auto& kv : jf["properties"]) {
-                    if (!kv.is_array() || kv.size() < 2) continue;
-                    fg.properties.push_back({kv[0].get<std::string>(), kv[1].get<std::string>()});
-                }
-            }
-            out.push_back(std::move(fg));
-        }
-        ok = true;
-    }
-    return ok;
+    std::array<char, 8> magic{};
+    if (!readExact(in, magic.data(), magic.size()) || magic != kCanonicalFeatureBinaryMagic) return false;
+
+    CanonicalFeatureCollectionMetadata meta{};
+    if (!readU32(in, meta.version) || meta.version != kCanonicalFeatureBinaryVersion) return false;
+    if (!readU32(in, meta.endian_marker) || meta.endian_marker != 0x01020304u) return false;
+    if (!readU64(in, meta.feature_count) || meta.feature_count > kMaxBinaryHydrationFeatures) return false;
+
+    std::array<char, kCanonicalFeatureSignatureBytes> sig_buf{};
+    if (!readExact(in, sig_buf.data(), sig_buf.size())) return false;
+    meta.source_signature.assign(sig_buf.data(), std::find(sig_buf.begin(), sig_buf.end(), '\0'));
+
+    std::error_code size_ec;
+    meta.file_size_bytes = fs::file_size(cache_path, size_ec);
+    if (size_ec) meta.file_size_bytes = 0;
+
+    out = std::move(meta);
+    return true;
 }
 
-void saveHydrationCache(const fs::path& cache_path, const std::string& sig, const std::vector<LayerDef::FeatureGeom>& features) {
-    {
-        TrimHeapOnScopeExit trim_on_exit;
-        json j;
-        j["version"] = 1;
-        j["signature"] = sig;
-        j["features"] = json::array();
-        for (const auto& fg : features) {
-            json jf;
-            jf["extent"] = {
-                {"min_lon", fg.extent.min_lon},
-                {"min_lat", fg.extent.min_lat},
-                {"max_lon", fg.extent.max_lon},
-                {"max_lat", fg.extent.max_lat},
-            };
-            jf["rings"] = json::array();
-            for (const auto& r : fg.rings) {
-                json jr = json::array();
-                for (const auto& p : r) jr.push_back({p.x, p.y});
-                jf["rings"].push_back(std::move(jr));
-            }
-            jf["properties"] = json::array();
-            for (const auto& kv : fg.properties) jf["properties"].push_back({kv.first, kv.second});
-            j["features"].push_back(std::move(jf));
-        }
-        fs::create_directories(cache_path.parent_path());
-        std::vector<uint8_t> bin = json::to_msgpack(j);
-        const fs::path tmp_path = tempCachePathFor(cache_path);
-        {
-            std::ofstream out(tmp_path, std::ios::binary);
-            if (!out) return;
-            out.write((const char*)bin.data(), (std::streamsize)bin.size());
-            out.flush();
-            if (!out) {
-                std::error_code remove_ec;
-                fs::remove(tmp_path, remove_ec);
-                return;
-            }
-        }
-        std::error_code rename_ec;
-        fs::rename(tmp_path, cache_path, rename_ec);
-        if (rename_ec) {
-            std::error_code remove_ec;
-            fs::remove(cache_path, remove_ec);
-            rename_ec.clear();
-            fs::rename(tmp_path, cache_path, rename_ec);
-            if (rename_ec) fs::remove(tmp_path, remove_ec);
-        }
+bool resolveLayerSourceSignature(const fs::path& layer_path, std::string& out_sig, std::string* out_source_kind) {
+    std::error_code exists_ec;
+    if (fs::exists(layer_path, exists_ec) && !exists_ec) {
+        out_sig = fileSignature(layer_path);
+        if (out_source_kind) *out_source_kind = "geojson";
+        return true;
     }
+
+    const fs::path canonical_path = fs::path(layer_path.string() + ".canonical.bin");
+    CanonicalFeatureCollectionMetadata meta;
+    if (!loadBinaryCanonicalMetadata(canonical_path, meta) || meta.source_signature.empty()) return false;
+    out_sig = meta.source_signature;
+    if (out_source_kind) *out_source_kind = "canonical_binary";
+    return true;
 }
 
 bool loadBinaryHydrationCache(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
@@ -395,11 +402,7 @@ void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
                     ok = writeFloat(out, p.x) && writeFloat(out, p.y);
                 }
             }
-            ok = ok && writeU32(out, static_cast<uint32_t>(fg.properties.size()));
-            for (const auto& kv : fg.properties) {
-                if (!ok) break;
-                ok = writeString(out, kv.first) && writeString(out, kv.second);
-            }
+            ok = ok && writeHydrationProperties(out, cache_path, fg.properties);
         }
         out.flush();
         ok = ok && bool(out);
@@ -420,35 +423,14 @@ void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
     }
 }
 
-bool loadTriCache(const fs::path& cache_path, const std::string& sig, size_t count, std::vector<std::vector<uint32_t>>& out) {
-    std::ifstream in(cache_path);
-    if (!in) return false;
-    bool ok = false;
-    {
-        TrimHeapOnScopeExit trim_on_exit;
-        json j;
-        in >> j;
-        if (!j.contains("signature") || !j.contains("triangles")) return false;
-        if (j["signature"].get<std::string>() != sig) return false;
-        auto arr = j["triangles"];
-        if (!arr.is_array() || arr.size() != count) return false;
-        out.resize(count);
-        for (size_t i = 0; i < count; ++i) out[i] = arr[i].get<std::vector<uint32_t>>();
-        ok = true;
+bool binaryHydrationCacheShouldBeCompacted(
+    const fs::path& cache_path,
+    const std::vector<LayerDef::FeatureGeom>& features) {
+    if (!isRegionalParcelHydrationCachePath(cache_path)) return false;
+    for (const auto& fg : features) {
+        if (fg.properties.size() > kRegionalParcelCompactionPropertyThreshold) return true;
     }
-    return ok;
-}
-
-void saveTriCache(const fs::path& cache_path, const std::string& sig, const std::vector<std::vector<uint32_t>>& tris) {
-    fs::create_directories(cache_path.parent_path());
-    {
-        TrimHeapOnScopeExit trim_on_exit;
-        json j;
-        j["signature"] = sig;
-        j["triangles"] = tris;
-        std::ofstream out(cache_path);
-        if (out) out << j.dump();
-    }
+    return false;
 }
 
 bool loadBinaryTriCache(const fs::path& cache_path, const std::string& sig, size_t count, std::vector<std::vector<uint32_t>>& out) {
@@ -768,29 +750,90 @@ void saveBinaryParcelRenderCache(const fs::path& cache_path, const ParcelRenderC
     }
 }
 
+void saveBinaryCanonicalFeatureCollection(
+    const fs::path& cache_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureGeom>& features) {
+    if (!hostIsLittleEndian()) return;
+    fs::create_directories(cache_path.parent_path());
+    const fs::path tmp_path = tempCachePathFor(cache_path);
+    bool ok = false;
+    {
+        TrimHeapOnScopeExit trim_on_exit;
+        std::ofstream out(tmp_path, std::ios::binary);
+        if (!out) return;
+        ok = writeExact(out, kCanonicalFeatureBinaryMagic.data(), kCanonicalFeatureBinaryMagic.size()) &&
+             writeU32(out, kCanonicalFeatureBinaryVersion) &&
+             writeU32(out, 0x01020304u) &&
+             writeU64(out, static_cast<uint64_t>(features.size()));
+
+        std::array<char, kCanonicalFeatureSignatureBytes> sig_buf{};
+        const size_t sig_bytes = std::min(sig.size(), sig_buf.size() - 1);
+        std::memcpy(sig_buf.data(), sig.data(), sig_bytes);
+        ok = ok && writeExact(out, sig_buf.data(), sig_buf.size());
+
+        for (const auto& fg : features) {
+            if (!ok) break;
+            if (fg.rings.size() > std::numeric_limits<uint32_t>::max() ||
+                fg.properties.size() > std::numeric_limits<uint32_t>::max()) {
+                ok = false;
+                break;
+            }
+            ok = writeFloat(out, fg.extent.min_lon) &&
+                 writeFloat(out, fg.extent.min_lat) &&
+                 writeFloat(out, fg.extent.max_lon) &&
+                 writeFloat(out, fg.extent.max_lat) &&
+                 writeU32(out, static_cast<uint32_t>(fg.rings.size()));
+            for (const auto& ring : fg.rings) {
+                if (!ok) break;
+                if (ring.size() > std::numeric_limits<uint32_t>::max()) {
+                    ok = false;
+                    break;
+                }
+                ok = writeU32(out, static_cast<uint32_t>(ring.size()));
+                for (const ImVec2& p : ring) {
+                    if (!ok) break;
+                    ok = writeFloat(out, p.x) && writeFloat(out, p.y);
+                }
+            }
+            ok = ok && writeU32(out, static_cast<uint32_t>(fg.properties.size()));
+            for (const auto& kv : fg.properties) {
+                if (!ok) break;
+                ok = writeString(out, kv.first) && writeString(out, kv.second);
+            }
+        }
+        out.flush();
+        ok = ok && bool(out);
+    }
+    if (!ok) {
+        std::error_code remove_ec;
+        fs::remove(tmp_path, remove_ec);
+        return;
+    }
+    std::error_code rename_ec;
+    fs::rename(tmp_path, cache_path, rename_ec);
+    if (rename_ec) {
+        std::error_code remove_ec;
+        fs::remove(cache_path, remove_ec);
+        rename_ec.clear();
+        fs::rename(tmp_path, cache_path, rename_ec);
+        if (rename_ec) fs::remove(tmp_path, remove_ec);
+    }
+}
+
 bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
     std::ifstream in(cache_path, std::ios::binary);
     if (!in) return false;
-    std::array<char, 8> magic{};
-    if (!readExact(in, magic.data(), magic.size()) || magic != kCanonicalFeatureBinaryMagic) return false;
 
-    uint32_t version = 0;
-    if (!readU32(in, version) || version != kCanonicalFeatureBinaryVersion) return false;
-    uint32_t endian_marker = 0;
-    if (!readU32(in, endian_marker) || endian_marker != 0x01020304u) return false;
-
-    uint64_t feature_count = 0;
-    if (!readU64(in, feature_count) || feature_count > kMaxBinaryHydrationFeatures) return false;
-
-    std::array<char, kCanonicalFeatureSignatureBytes> sig_buf{};
-    if (!readExact(in, sig_buf.data(), sig_buf.size())) return false;
-    const std::string stored_sig(sig_buf.data(),
-                                 std::find(sig_buf.begin(), sig_buf.end(), '\0'));
-    if (stored_sig != sig) return false;
+    CanonicalFeatureCollectionMetadata meta;
+    if (!loadBinaryCanonicalMetadata(cache_path, meta) || meta.source_signature != sig) return false;
+    in.clear();
+    in.seekg(static_cast<std::streamoff>(8 + 4 + 4 + 8 + kCanonicalFeatureSignatureBytes), std::ios::beg);
+    if (!in) return false;
 
     out.clear();
-    out.reserve(static_cast<size_t>(feature_count));
-    for (uint64_t fi = 0; fi < feature_count; ++fi) {
+    out.reserve(static_cast<size_t>(meta.feature_count));
+    for (uint64_t fi = 0; fi < meta.feature_count; ++fi) {
         LayerDef::FeatureGeom fg{};
         if (!readFloat(in, fg.extent.min_lon) ||
             !readFloat(in, fg.extent.min_lat) ||

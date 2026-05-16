@@ -34,7 +34,8 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
         ctx.zoom,
         ctx.min_zoom,
         ctx.max_zoom,
-        ctx.max_internal_math_zoom
+        ctx.max_internal_math_zoom,
+        ctx.app_settings->dark_mode
     });
     session.draw = map_viewport.draw;
     session.origin = map_viewport.origin;
@@ -58,8 +59,10 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.zoning_hover_active = hover_zoning_enabled && layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
     session.zoning_inspect_active = layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
 
+    const bool suppress_hover_lookup =
+        session.map_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
     MapHoverQuery hover_query;
-    hover_query.map_hovered = session.map_hovered;
+    hover_query.map_hovered = session.map_hovered && !suppress_hover_lookup;
     hover_query.parcel_hover_active = session.parcel_hover_active;
     hover_query.parcel_inspect_active = session.parcel_inspect_active;
     hover_query.zoning_hover_active = session.zoning_hover_active;

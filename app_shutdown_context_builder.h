@@ -9,6 +9,7 @@ struct AppShutdownContextFactoryInput {
     std::vector<LayerDef>* layers = nullptr;
     bool hover_inspector_enabled = true;
     int* hover_inspector_mode = nullptr;
+    int* parcel_parameter_mode = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
     std::vector<bool>* layer_hover_enabled = nullptr;

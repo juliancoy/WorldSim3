@@ -151,7 +151,7 @@ bool implausibleHydrationCache(const std::string& file, size_t feature_count) {
     // These guards reject previously observed duplicated cache payloads. They are
     // intentionally loose so legitimate source updates still load from cache.
     if (file == "parcel.geojson") return feature_count > 300000;
-    if (file == "regional_parcels.geojson") return feature_count > 900000;
+    if (file == "regional_parcels.geojson") return feature_count > 5000000;
     if (file == "zoning.geojson") return feature_count > 10000;
     if (file == "vacant_building_notices.geojson") return feature_count > 20000;
     if (file == "vacant_building_rehabs.geojson") return feature_count > 20000;
@@ -365,4 +365,3 @@ void appendWorldRingScreenPointsLod(
     for (size_t i = 0; i < n; i += (size_t)step) out.push_back(worldToScreen(world_ring[i], center_world, origin, size, zoom_scale));
     if ((n - 1) % (size_t)step != 0) out.push_back(worldToScreen(world_ring.back(), center_world, origin, size, zoom_scale));
 }
-

@@ -1,5 +1,6 @@
 #include "map_render_basemap.h"
 
+#include "basemap_sources.h"
 #include "geo.h"
 #include "worldsim_app_internal.h"
 
@@ -17,23 +18,13 @@ namespace {
 struct BasemapSource {
     std::string label;
     std::string tile_root_dir;
+    std::string url_template;
     float opacity = 1.0f;
     bool topo_vector = false;
     int max_native_zoom = kMaxNativeTileZoom;
+    bool dark_transform = false;
+    int max_display_zoom = kMaxZoom;
 };
-
-std::string tileUrlTemplate(const std::string& tile_root_dir) {
-    if (tile_root_dir == "tiles") return "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-    if (tile_root_dir == "tiles_satellite") {
-        return "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
-    }
-    return "https://services.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}";
-}
-
-std::string preferredTopoTileDir(const fs::path& root) {
-    if (fs::exists(root / "data" / "tiles_topographic")) return "tiles_topographic";
-    return "tiles_topo";
-}
 
 static int wrapTileX(int x, int period) {
     if (period <= 0) return x;
@@ -50,8 +41,9 @@ static int tileXDelta(int a_wrapped, int b_wrapped, int period) {
     return d;
 }
 
-ImU32 imageTint(bool grayscale, float opacity) {
+ImU32 imageTint(bool grayscale, bool dark_transform, float opacity) {
     const int a = std::clamp((int)std::lround(opacity * 255.0f), 0, 255);
+    if (dark_transform) return IM_COL32(122, 138, 150, a);
     if (grayscale) return IM_COL32(178, 178, 178, a);
     return IM_COL32(255, 255, 255, a);
 }
@@ -83,7 +75,7 @@ void drawRasterSource(
     int period,
     int max_tile,
     MapBasemapRenderResult& result) {
-    const std::string tile_url_tmpl = tileUrlTemplate(source.tile_root_dir);
+    const std::string tile_url_tmpl = source.url_template;
     struct WorkTile {
         int tx;
         int ty;
@@ -122,7 +114,7 @@ void drawRasterSource(
     });
 
     for (const auto& tile : work_tiles) {
-        const int max_native_zoom = std::clamp(source.max_native_zoom, kMinZoom, kMaxInternalMathZoom);
+        const int max_native_zoom = std::clamp(source.max_native_zoom, 0, kMaxInternalMathZoom);
         int request_z = std::min(ctx.math_zoom, max_native_zoom);
         int request_x = tile.wrapped_x;
         int request_y = tile.ty;
@@ -146,7 +138,11 @@ void drawRasterSource(
             p1,
             sample.uv0,
             sample.uv1,
-            imageTint(ctx.app_settings->grayscale_basemap, source.opacity));
+            imageTint(ctx.app_settings->grayscale_basemap, source.dark_transform, source.opacity));
+        if (source.dark_transform) {
+            const int a = std::clamp((int)std::lround(source.opacity * 118.0f), 0, 255);
+            ctx.draw->AddRectFilled(p0, p1, IM_COL32(4, 9, 14, a));
+        }
         if (ctx.app_settings->grayscale_basemap) {
             const int a = std::clamp((int)std::lround(source.opacity * 78.0f), 0, 255);
             ctx.draw->AddRectFilled(p0, p1, IM_COL32(244, 244, 244, a));
@@ -182,44 +178,103 @@ MapBasemapRenderResult renderMapBasemap(const MapBasemapRenderContext& ctx) {
         *ctx.topo_tiles_available_cached = true;
         *ctx.topo_vector_available_cached = fs::exists(*ctx.root / "data" / "tiles_topo_vector.geojson");
         *ctx.basemap_source_has_any_files_cached = true;
-        *ctx.tile_root_dir_cached = ctx.app_settings->basemap_satellite_enabled
-            ? "tiles_satellite"
-            : (ctx.app_settings->basemap_topographic_enabled ? preferredTopoTileDir(*ctx.root) : "tiles");
+        *ctx.tile_root_dir_cached = ctx.app_settings->basemap_night_satellite_enabled
+            ? basemapSourceDef(BasemapSourceId::NightLights).cache_dir
+            : (ctx.app_settings->basemap_dark_satellite_enabled || ctx.app_settings->basemap_satellite_enabled
+            ? basemapSourceDef(BasemapSourceId::Satellite).cache_dir
+            : (ctx.app_settings->basemap_topographic_enabled ? preferredTopoTileDir(*ctx.root) : "tiles"));
     }
 
     std::vector<BasemapSource> sources;
-    if (ctx.app_settings->basemap_satellite_enabled) {
-        sources.push_back({
-            "Satellite",
-            "tiles_satellite",
-            std::clamp(ctx.app_settings->basemap_satellite_opacity, 0.0f, 1.0f),
-            false,
-            kMaxSatelliteNativeTileZoom
-        });
-    }
     if (ctx.app_settings->basemap_osm_enabled) {
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::OpenStreetMap);
         sources.push_back({
-            "OpenStreetMap",
-            "tiles",
+            def.label,
+            def.cache_dir,
+            def.url_template,
             std::clamp(ctx.app_settings->basemap_osm_opacity, 0.0f, 1.0f),
             false,
-            ctx.max_native_tile_zoom
+            ctx.max_native_tile_zoom,
+            false,
+            def.recommended_max_zoom
         });
     }
     if (ctx.app_settings->basemap_topographic_enabled) {
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::Topographic);
         const bool use_topo_vector = ctx.app_settings->topo_vector_enabled && *ctx.topo_vector_available_cached;
         sources.push_back({
-            "Topographic",
+            def.label,
             preferredTopoTileDir(*ctx.root),
+            def.url_template,
             std::clamp(ctx.app_settings->basemap_topographic_opacity, 0.0f, 1.0f),
             use_topo_vector,
-            ctx.max_native_tile_zoom
+            ctx.max_native_tile_zoom,
+            false,
+            def.recommended_max_zoom
+        });
+    }
+    if (ctx.app_settings->basemap_satellite_enabled) {
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::Satellite);
+        sources.push_back({
+            def.label,
+            def.cache_dir,
+            def.url_template,
+            std::clamp(ctx.app_settings->basemap_satellite_opacity, 0.0f, 1.0f),
+            false,
+            def.native_max_zoom,
+            false,
+            def.recommended_max_zoom
+        });
+    }
+    if (ctx.app_settings->basemap_dark_satellite_enabled) {
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::DarkSatellite);
+        sources.push_back({
+            def.label,
+            def.cache_dir,
+            def.url_template,
+            std::clamp(ctx.app_settings->basemap_dark_satellite_opacity, 0.0f, 1.0f),
+            false,
+            def.native_max_zoom,
+            true,
+            def.recommended_max_zoom
+        });
+    }
+    if (ctx.app_settings->basemap_night_satellite_enabled && !ctx.app_settings->basemap_dark_satellite_enabled) {
+        const BasemapSourceDef& night_def = basemapSourceDef(BasemapSourceId::NightLights);
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::DarkSatellite);
+        sources.push_back({
+            def.label,
+            def.cache_dir,
+            def.url_template,
+            std::clamp(ctx.app_settings->basemap_dark_satellite_opacity, 0.0f, 1.0f),
+            false,
+            def.native_max_zoom,
+            true,
+            def.recommended_max_zoom
+        });
+        sources.back().max_display_zoom = std::max(sources.back().max_display_zoom, kMaxZoom);
+        if (ctx.math_zoom <= night_def.recommended_max_zoom) {
+            sources.back().opacity = std::min(sources.back().opacity, 0.55f);
+        }
+    }
+    if (ctx.app_settings->basemap_night_satellite_enabled) {
+        const BasemapSourceDef& def = basemapSourceDef(BasemapSourceId::NightLights);
+        sources.push_back({
+            def.label,
+            def.cache_dir,
+            def.url_template,
+            std::clamp(ctx.app_settings->basemap_night_satellite_opacity, 0.0f, 1.0f),
+            false,
+            def.native_max_zoom,
+            false,
+            def.recommended_max_zoom
         });
     }
     if (sources.empty()) return result;
 
     for (const auto& source : sources) {
         if (source.opacity <= 0.0f) continue;
+        if (ctx.math_zoom > source.max_display_zoom) continue;
         if (source.topo_vector) {
             drawTopoVectorSource(ctx, source.opacity, result);
         } else {

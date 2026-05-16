@@ -13,45 +13,65 @@ int resolveLayerAggregateAlgo(const HeatmapLayerPolicyContext& ctx, size_t layer
         : ctx.heatmap_algo;
 }
 
-bool layerUsesParcelChoroplethDetail(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
-    if (!ctx.layers || layer_idx >= ctx.layers->size()) return false;
+LayerDisplayPolicy resolveLayerDisplayPolicy(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
+    LayerDisplayPolicy policy;
+    policy.aggregate_algo = resolveLayerAggregateAlgo(ctx, layer_idx);
+    if (ctx.layer_heatmap_max_zoom && layer_idx < ctx.layer_heatmap_max_zoom->size()) {
+        policy.aggregate_max_zoom = (*ctx.layer_heatmap_max_zoom)[layer_idx];
+    }
+    if (ctx.layer_parcel_detail_min_zoom && layer_idx < ctx.layer_parcel_detail_min_zoom->size()) {
+        policy.configured_parcel_detail_min_zoom = (*ctx.layer_parcel_detail_min_zoom)[layer_idx];
+        policy.effective_parcel_detail_min_zoom = policy.configured_parcel_detail_min_zoom;
+    }
+    if (!ctx.layers || layer_idx >= ctx.layers->size()) return policy;
+
     const auto& layer = (*ctx.layers)[layer_idx];
-    const int min_zoom =
-        ctx.layer_parcel_detail_min_zoom && layer_idx < ctx.layer_parcel_detail_min_zoom->size()
-            ? (*ctx.layer_parcel_detail_min_zoom)[layer_idx]
-            : kParcelChoroplethMinZoom;
-    return ctx.zoom >= min_zoom &&
-           layer.scale == "parcel" &&
-           !layer.heatmap_field.empty();
+    policy.value_parcel_layer = layer.scale == "parcel" && !layer.heatmap_field.empty();
+    policy.aggregate_configured =
+        ctx.layer_heatmap_enabled &&
+        ctx.layer_heatmap_max_zoom &&
+        layer_idx < ctx.layer_heatmap_enabled->size() &&
+        layer_idx < ctx.layer_heatmap_max_zoom->size() &&
+        (*ctx.layer_heatmap_enabled)[layer_idx] &&
+        (isHeatmapAggregateMethod(policy.aggregate_algo) || policy.aggregate_algo == kAggregateLodGeometry);
+
+    if (policy.value_parcel_layer && policy.aggregate_configured) {
+        policy.effective_parcel_detail_min_zoom =
+            std::min(policy.configured_parcel_detail_min_zoom, policy.aggregate_max_zoom + 1);
+    }
+
+    if (policy.value_parcel_layer && ctx.zoom >= policy.effective_parcel_detail_min_zoom) {
+        policy.mode = LayerDisplayMode::ParcelChoroplethDetail;
+        return policy;
+    }
+
+    if (!policy.aggregate_configured ||
+        !layer.enabled ||
+        ctx.zoom > policy.aggregate_max_zoom) {
+        policy.mode = LayerDisplayMode::PerFeature;
+        return policy;
+    }
+
+    policy.mode = policy.aggregate_algo == kAggregateLodGeometry
+        ? LayerDisplayMode::LodGeometry
+        : LayerDisplayMode::Aggregate;
+    return policy;
+}
+
+int resolveLayerParcelDetailMinZoom(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
+    return resolveLayerDisplayPolicy(ctx, layer_idx).effective_parcel_detail_min_zoom;
+}
+
+bool layerUsesParcelChoroplethDetail(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
+    return resolveLayerDisplayPolicy(ctx, layer_idx).mode == LayerDisplayMode::ParcelChoroplethDetail;
 }
 
 bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
-    if (!ctx.layers || !ctx.layer_heatmap_enabled || !ctx.layer_heatmap_max_zoom) return false;
-    if (layer_idx >= ctx.layer_heatmap_max_zoom->size()) return false;
-    if (layer_idx >= ctx.layers->size() ||
-        !(*ctx.layers)[layer_idx].enabled ||
-        layer_idx >= ctx.layer_heatmap_enabled->size() ||
-        !(*ctx.layer_heatmap_enabled)[layer_idx] ||
-        ctx.zoom > (*ctx.layer_heatmap_max_zoom)[layer_idx]) {
-        return false;
-    }
-    if (layerUsesParcelChoroplethDetail(ctx, layer_idx)) return false;
-    const int aggregate_algo = resolveLayerAggregateAlgo(ctx, layer_idx);
-    return aggregate_algo != kAggregateLodGeometry && isHeatmapAggregateMethod(aggregate_algo);
+    return resolveLayerDisplayPolicy(ctx, layer_idx).mode == LayerDisplayMode::Aggregate;
 }
 
 bool layerUsesLodGeometry(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
-    if (!ctx.layers || !ctx.layer_heatmap_enabled || !ctx.layer_heatmap_max_zoom) return false;
-    if (layer_idx >= ctx.layers->size() ||
-        !(*ctx.layers)[layer_idx].enabled ||
-        layer_idx >= ctx.layer_heatmap_enabled->size() ||
-        layer_idx >= ctx.layer_heatmap_max_zoom->size() ||
-        !(*ctx.layer_heatmap_enabled)[layer_idx] ||
-        ctx.zoom > (*ctx.layer_heatmap_max_zoom)[layer_idx]) {
-        return false;
-    }
-    if (layerUsesParcelChoroplethDetail(ctx, layer_idx)) return false;
-    return resolveLayerAggregateAlgo(ctx, layer_idx) == kAggregateLodGeometry;
+    return resolveLayerDisplayPolicy(ctx, layer_idx).mode == LayerDisplayMode::LodGeometry;
 }
 
 void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer_idx, HeatSample& hs) {

@@ -1,6 +1,6 @@
 # Run Loop Migration Notes
 
-The legacy include split is gone. The remaining frame orchestration now lives in `app_main_loop.cpp`, and the extracted subsystems below remain in normal C++ modules:
+The former include split is gone. The remaining frame orchestration now lives in `app_main_loop.cpp`, and the extracted subsystems below remain in normal C++ modules:
 
 - `profiling_layer_snapshot.h/.cpp`: refreshes `LayerProfileSnapshot` entries from layer geometry and spatial index state.
 - `basemap_coverage.h/.cpp`: counts cached Baltimore-area raster tile coverage for OSM/topographic basemaps.

@@ -93,6 +93,7 @@ struct FrameSupportFinalizationContext {
     std::vector<ProfileFrameSample>* profile_samples = nullptr;
     size_t* profile_sample_pos = nullptr;
     size_t* profile_sample_count = nullptr;
+    bool dark_mode = false;
 };
 
 void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx);
@@ -116,6 +117,7 @@ struct SecondaryDownloadQueueWindowContext {
     const std::vector<LayerDef>* layers = nullptr;
     const std::deque<size_t>* layer_download_queue = nullptr;
     const std::string* layer_download_last_event = nullptr;
+    bool dark_mode = false;
 };
 
 void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContext& ctx);

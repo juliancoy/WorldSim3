@@ -3,6 +3,13 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+std::string artifactReadStatus(const char* prefix, const std::string& layer_file, const char* suffix = "") {
+    if (layer_file.empty()) return prefix;
+    return std::string("reading ") + layer_file + suffix;
+}
+}
+
 const char* statusToString(LayerPipelineStatus s) {
     switch (s) {
         case LayerPipelineStatus::Queued: return "queued";
@@ -14,6 +21,44 @@ const char* statusToString(LayerPipelineStatus s) {
         case LayerPipelineStatus::Failed: return "failed";
     }
     return "unknown";
+}
+
+std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std::string& layer_file) {
+    if (state.status == LayerPipelineStatus::Hydrating) {
+        if (state.hydration_phase == "loading_binary_cache" ||
+            state.hydration_phase == "binary_cache_hit_queueing" ||
+            state.hydration_phase == "cache_hit") {
+            return artifactReadStatus("reading hydration cache", layer_file, ".bin");
+        }
+        if (state.hydration_phase == "loading_canonical_binary_source" ||
+            state.hydration_phase == "canonical_binary_queueing") {
+            return artifactReadStatus("reading canonical parcel binary", layer_file, ".canonical.bin");
+        }
+        if (state.hydration_phase == "parsing_source_cache_disabled" ||
+            state.hydration_phase == "parsing_source_cache_missing" ||
+            state.hydration_phase == "parsing_source_cache_miss_or_stale" ||
+            state.hydration_phase == "source_parse") {
+            return artifactReadStatus("reading source GeoJSON", layer_file);
+        }
+        if (state.hydration_phase == "parsing_source_cache_rejected") {
+            return "rebuilding from source GeoJSON";
+        }
+        if (state.hydration_phase == "loading_canonical_binary_source_failed") {
+            return "canonical binary read failed";
+        }
+    }
+    if (state.status == LayerPipelineStatus::Triangulating) {
+        if (state.triangulation_phase == "loading_binary_cache" ||
+            state.triangulation_phase == "binary_cache_hit") {
+            return artifactReadStatus("reading triangulation cache", layer_file, ".tri.bin");
+        }
+        if (state.triangulation_phase == "building_source_triangles" ||
+            state.triangulation_phase == "building_cache_missing") {
+            return "building triangulation cache";
+        }
+    }
+    if (state.status == LayerPipelineStatus::TriQueued) return "queued for triangulation";
+    return statusToString(state.status);
 }
 
 void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si) {

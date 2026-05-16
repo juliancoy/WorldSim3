@@ -42,6 +42,34 @@ bool drawDuckDbParcelDetail(DuckDbAnalytics* duckdb_analytics, int parcel_layer_
     return true;
 }
 
+void drawUnifiedParcelDetail(const UnifiedParcelRecord& rec) {
+    auto text_prop = [&](const char* label, const std::string& value) {
+        if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
+    };
+    auto numeric_prop = [&](const char* label, double value) {
+        if (value > 0.0) ImGui::TextWrapped("%s: %s", label, formatUsd(value, 2).c_str());
+    };
+    text_prop("Address", rec.address);
+    text_prop("Owner", rec.owner_display.empty() ? rec.owner : rec.owner_display);
+    text_prop("BLOCKLOT", rec.blocklot);
+    text_prop("ZIP", rec.zip);
+    text_prop("Status", rec.status);
+    numeric_prop("Current Land", rec.current_land);
+    numeric_prop("Current Improvements", rec.current_improvements);
+    numeric_prop("Tax Base", rec.tax_base);
+    numeric_prop("Sale Price", rec.sale_price);
+    numeric_prop("Current Value", rec.current_value);
+    ImGui::Text("Vacant Notices: %d", rec.vacant_notice_count);
+    ImGui::Text("Vacant Rehab Records: %d", rec.vacant_rehab_count);
+    ImGui::Text("Tax Lien Records: %d", rec.tax_lien_count);
+    ImGui::Text("Tax Sale Records: %d", rec.tax_sale_count);
+    numeric_prop("Tax Lien Amount", rec.tax_lien_amount);
+    numeric_prop("Tax Sale Amount", rec.tax_sale_amount);
+    text_prop("Parcel Source", rec.parcel_source_file);
+    text_prop("Property Source", rec.property_source_file);
+    ImGui::TextDisabled("Source: in-memory unified parcel record");
+}
+
 std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
     if (!rp) return "";
     std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
@@ -136,7 +164,9 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             if (!summary_owner.empty() && ctx.owner_info_state) {
                 drawOwnerInfoLink(*ctx.owner_info_state, summary_owner, "open_owner_info_parcel_tab");
             }
-            if (!drawDuckDbParcelDetail(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx)) {
+            if (selected_unified) {
+                drawUnifiedParcelDetail(*selected_unified);
+            } else if (!drawDuckDbParcelDetail(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx)) {
                 drawRealPropertySummary(selected_rp);
             }
         }

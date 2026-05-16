@@ -46,7 +46,11 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const LayerDef::FeatureGeom* hovered_zone = ctx.hover_state->hovered_zone;
     const size_t hovered_zone_idx = ctx.hover_state->hovered_zone_idx;
 
-    if (ctx.map_hovered && ctx.parcel_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_parcel != nullptr) {
+    const bool click_select =
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
+
+    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel != nullptr) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
         if (ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
             if (selectParcel(*ctx.parcel_selection, hovered_parcel_idx, (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size(), ctrl) &&
@@ -56,7 +60,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         }
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
-    } else if (ctx.map_hovered && ctx.zoning_inspect_active && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered_zone != nullptr) {
+    } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && hovered_zone != nullptr) {
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = true;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = hovered_zone_idx;
         clearParcelSelection(*ctx.parcel_selection);

@@ -8,6 +8,7 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.layers = input.layers;
     ctx.hover_inspector_enabled = input.hover_inspector_enabled;
     ctx.hover_inspector_mode = input.hover_inspector_mode;
+    ctx.parcel_parameter_mode = input.parcel_parameter_mode;
     ctx.zoning_zone_enabled = input.zoning_zone_enabled;
     ctx.layer_fill_enabled = input.layer_fill_enabled;
     ctx.layer_hover_enabled = input.layer_hover_enabled;

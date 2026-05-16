@@ -77,7 +77,6 @@ struct LayersPanelUiContext {
     bool* crime_filter_drug = nullptr;
     bool* crime_filter_shooting = nullptr;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
 
     std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;

@@ -11,39 +11,6 @@
 #include "sql_tab.h"
 #include "vacancy_parcel_tab.h"
 
-#include <algorithm>
-
-namespace {
-bool isHydrationIdle(const RightPanelContext& ctx) {
-    bool hydration_idle = false;
-    {
-        std::lock_guard<std::mutex> lk(*ctx.hydrate_req_mutex);
-        hydration_idle = ctx.hydrate_requests->empty() &&
-            std::none_of(ctx.hydration_requested->begin(), ctx.hydration_requested->end(), [](bool requested) {
-                return requested;
-            });
-    }
-    if (hydration_idle) {
-        std::lock_guard<std::mutex> lk(*ctx.hydrated_mutex);
-        hydration_idle = ctx.hydrated_queue->empty();
-    }
-    return hydration_idle;
-}
-
-void maybeAutoRebuildDuckDb(const RightPanelContext& ctx) {
-    if (!ctx.duckdb_auto_rebuild_checked || *ctx.duckdb_auto_rebuild_checked || !ctx.unified_parcels || ctx.unified_parcels->empty()) {
-        return;
-    }
-    if (!isHydrationIdle(ctx)) return;
-    *ctx.duckdb_auto_rebuild_checked = true;
-    if (ctx.duckdb_analytics->needsRebuild(*ctx.layers)) {
-        ctx.duckdb_analytics->rebuild(*ctx.layers, *ctx.unified_parcels);
-    } else if (!ctx.duckdb_analytics->validateExistingCache()) {
-        ctx.duckdb_analytics->rebuild(*ctx.layers, *ctx.unified_parcels);
-    }
-}
-}
-
 void drawRightPanelWindow(const RightPanelContext& ctx) {
     if (!ctx.root || !ctx.duckdb_analytics || !ctx.layers || !ctx.unified_parcels || !ctx.map_filter_state ||
         !ctx.query_layers || !ctx.zoning_metadata || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
@@ -64,31 +31,9 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         !ctx.record_year_nonzero_total || !ctx.selected_record_year || !ctx.selected_record_year_dirty ||
         !ctx.selected_record_year_total || !ctx.selected_record_year_samples || !ctx.vacant_notice_rows_matched_total ||
         !ctx.vacant_rehab_rows_matched_total || !ctx.vacant_parcels_matched_total ||
-        !ctx.vacant_parcels_with_geometry_total || !ctx.duckdb_auto_rebuild_checked || !ctx.hydrate_req_mutex ||
-        !ctx.hydrate_requests || !ctx.hydration_requested || !ctx.hydrated_mutex || !ctx.hydrated_queue) {
+        !ctx.vacant_parcels_with_geometry_total) {
         return;
     }
-
-    syncOwnerAggregates(OwnerAggregatesContext{
-        ctx.root,
-        ctx.layers,
-        ctx.unified_parcels,
-        ctx.parcel_layer_idx,
-        ctx.real_property_layer_idx,
-        ctx.parcel_vacancy_generation_applied,
-        ctx.parcel_tax_generation_applied,
-        ctx.selected_owners,
-        ctx.owner_class_overrides,
-        ctx.owner_class_overrides_loaded,
-        ctx.owner_class_overrides_dirty,
-        ctx.owner_aggregates,
-        ctx.filtered_aggregate_snapshot,
-        ctx.owner_aggregates_dirty,
-        ctx.owner_sorted_mode,
-        ctx.owner_cached_parcel_size,
-        ctx.owner_cached_real_property_size,
-        ctx.prof_owner_ms_last
-    });
 
     auto clear_parcel_selection = [&]() {
         clearParcelSelection(*ctx.parcel_selection);
@@ -109,7 +54,28 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         clear_parcel_selection();
     }
 
-    maybeAutoRebuildDuckDb(ctx);
+    auto sync_owner_aggregates_if_visible = [&]() {
+        syncOwnerAggregates(OwnerAggregatesContext{
+            ctx.root,
+            ctx.layers,
+            ctx.unified_parcels,
+            ctx.parcel_layer_idx,
+            ctx.real_property_layer_idx,
+            ctx.parcel_vacancy_generation_applied,
+            ctx.parcel_tax_generation_applied,
+            ctx.selected_owners,
+            ctx.owner_class_overrides,
+            ctx.owner_class_overrides_loaded,
+            ctx.owner_class_overrides_dirty,
+            ctx.owner_aggregates,
+            ctx.filtered_aggregate_snapshot,
+            ctx.owner_aggregates_dirty,
+            ctx.owner_sorted_mode,
+            ctx.owner_cached_parcel_size,
+            ctx.owner_cached_real_property_size,
+            ctx.prof_owner_ms_last
+        });
+    };
 
     ImGui::SetNextWindowPos(ImVec2(ctx.layout_w - ctx.right_panel_w - ctx.layout_margin, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.right_panel_w, ctx.main_panel_h), ImGuiCond_Always);
@@ -179,7 +145,6 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         gradient_filter_input.real_property_layer_idx = ctx.real_property_layer_idx;
         gradient_filter_input.parcel_layer_idx = ctx.parcel_layer_idx;
         gradient_filter_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
-        gradient_filter_input.crime_legacy_layer_idx = ctx.crime_legacy_layer_idx;
         gradient_filter_input.query_layers = ctx.query_layers;
         FeatureFilterContext gradient_filter_ctx = makeFeatureFilterContext(gradient_filter_input);
         auto gradient_feature_passes_filters = [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) -> bool {
@@ -240,7 +205,8 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.owner_aggregates_dirty,
             ctx.owner_search_query,
             ctx.owner_search_query_size,
-            &ownerClassItems()
+            &ownerClassItems(),
+            sync_owner_aggregates_if_visible
         });
         ImGui::EndTabBar();
     }

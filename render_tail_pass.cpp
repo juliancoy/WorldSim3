@@ -34,25 +34,29 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
     overlay_ctx.projection = ctx.projection;
 
-    const MapOverlayResult overlay_result = renderParcelSourceOverlays(overlay_ctx);
-    if (parcelGpuOverlayDrawActive()) {
+    MapOverlayResult overlay_result;
+    const bool gpu_overlay_active = parcelGpuOverlayDrawActive();
+    const bool gpu_outline_active = parcelGpuOutlineDrawActive();
+    if (!gpu_overlay_active && !gpu_outline_active) {
+        overlay_result = renderParcelSourceOverlays(overlay_ctx);
+    }
+    if (gpu_overlay_active) {
         enqueueParcelGpuOverlayDraw(ctx.draw);
     }
-    if (parcelGpuOutlineDrawActive()) {
+    if (gpu_outline_active) {
         enqueueParcelGpuOutlineDraw(ctx.draw);
-    } else {
-        renderSelectedParcelOutlines(MapSelectionRenderContext{
-            ctx.draw,
-            ctx.origin,
-            ctx.size,
-            ctx.layers,
-            ctx.parcel_layer_idx,
-            ctx.selected_parcel_indices,
-            ctx.math_zoom,
-            ctx.projection,
-            ctx.project_world
-        });
     }
+    renderSelectedParcelOutlines(MapSelectionRenderContext{
+        ctx.draw,
+        ctx.origin,
+        ctx.size,
+        ctx.layers,
+        ctx.parcel_layer_idx,
+        ctx.selected_parcel_indices,
+        ctx.math_zoom,
+        ctx.projection,
+        ctx.project_world
+    });
     drawMapZoomBadge(ctx.draw, ctx.origin, ctx.size, ctx.zoom);
 
     RenderTailPassResult result;

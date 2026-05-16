@@ -41,8 +41,11 @@ bool hydrateLocalLayersHeadless(
     local_indices.reserve(layers.size());
     for (size_t i = 0; i < layers.size(); ++i) {
         const fs::path layer_path = root / "data" / "layers" / layers[i].file;
+        const fs::path canonical_path = root / "data" / "layers" / (layers[i].file + ".canonical.bin");
         std::error_code exists_ec;
-        const bool exists = fs::exists(layer_path, exists_ec) && !exists_ec;
+        const bool exists =
+            (fs::exists(layer_path, exists_ec) && !exists_ec) ||
+            (layers[i].file == "regional_parcels.geojson" && fs::exists(canonical_path, exists_ec) && !exists_ec);
         if (!exists) {
             summary.skipped_missing_layer_count += 1;
             continue;

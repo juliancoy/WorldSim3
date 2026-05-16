@@ -85,6 +85,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         *ctx.layers,
         ctx.hover_inspector_enabled,
         &ctx.hover_inspector_mode,
+        nullptr,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
         ctx.layer_hover_enabled,

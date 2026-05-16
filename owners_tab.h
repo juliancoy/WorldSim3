@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -49,6 +50,7 @@ struct OwnersTabContext {
     char* owner_search_query = nullptr;
     size_t owner_search_query_size = 0;
     const std::vector<std::pair<std::string, std::string>>* owner_class_items = nullptr;
+    std::function<void()> sync_owner_aggregates;
 };
 
 void drawOwnersTab(const OwnersTabContext& ctx);

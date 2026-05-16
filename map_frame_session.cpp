@@ -46,7 +46,6 @@ FeatureFilterContext buildFrameFilterContext(const MapFrameSessionContext& ctx) 
     filter_input.real_property_layer_idx = ctx.real_property_layer_idx;
     filter_input.parcel_layer_idx = ctx.parcel_layer_idx;
     filter_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
-    filter_input.crime_legacy_layer_idx = ctx.crime_legacy_layer_idx;
     filter_input.query_layers = ctx.query_layers;
     return makeFeatureFilterContext(filter_input);
 }

@@ -66,3 +66,9 @@ struct RenderLayerPassContext {
 };
 
 void runRenderLayerPass(const RenderLayerPassContext& ctx);
+
+bool shouldBypassCpuParcelFeaturePass(
+    bool parcel_gpu_draw_active,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw,
+    bool should_recompute_heatmap);

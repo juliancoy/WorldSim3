@@ -83,7 +83,6 @@ struct LeftPanelContext {
 
     int parcel_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int zoning_layer_idx = -1;
 
     bool* crime_filter_enabled = nullptr;
@@ -117,6 +116,7 @@ struct LeftPanelContext {
     bool topo_vector_available_cached = false;
     int max_native_tile_zoom = 0;
     int max_satellite_native_tile_zoom = 0;
+    int max_night_satellite_native_tile_zoom = 0;
 
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;

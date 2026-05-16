@@ -188,6 +188,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     basemap_panel_ctx.min_zoom = ctx.min_zoom;
     basemap_panel_ctx.max_native_tile_zoom = ctx.max_native_tile_zoom;
     basemap_panel_ctx.max_satellite_native_tile_zoom = ctx.max_satellite_native_tile_zoom;
+    basemap_panel_ctx.max_night_satellite_native_tile_zoom = ctx.max_night_satellite_native_tile_zoom;
     drawBasemapPanel(basemap_panel_ctx);
 
     LayerUiContextFactoryInput layer_ui_input;
@@ -251,7 +252,6 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layers_panel_input.crime_filter_drug = ctx.crime_filter_drug;
     layers_panel_input.crime_filter_shooting = ctx.crime_filter_shooting;
     layers_panel_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
-    layers_panel_input.crime_legacy_layer_idx = ctx.crime_legacy_layer_idx;
     layers_panel_input.crime_breakdown = ctx.crime_breakdown;
     layers_panel_input.parcel_jurisdiction_filter = ctx.parcel_jurisdiction_filter;
     layers_panel_input.parcel_jurisdiction_filter_dirty = ctx.parcel_jurisdiction_filter_dirty;

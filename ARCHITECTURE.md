@@ -314,17 +314,17 @@ source file
 
 ### Render Binary Format
 
-The current hydration cache is a persistence cache for CPU feature records. It avoids reparsing GeoJSON, but it is still expensive for very large parcel layers because it decodes a large MsgPack object graph and recreates many CPU vectors and strings. It is not the ideal format for render startup.
+The current hydration cache is a persistence cache for CPU feature records. It avoids reparsing GeoJSON, but it is still expensive for very large parcel layers because it recreates many CPU vectors and strings. It is not the ideal format for render startup.
 
 The target architecture should add a separate render-binary cache. This cache is downstream of hydration and triangulation, and upstream of GPU upload.
 
-The first implemented step is a binary hydration cache at `data/cache/hydration/<layer-file>.bin`. That cache still stores CPU feature records, not final GPU buffers, but it removes the largest MsgPack decode cost and establishes explicit binary signatures, atomic writes, and status phases. The retained render-binary cache described below is the next downstream cache layer.
+The first implemented step is a binary hydration cache at `data/cache/hydration/<layer-file>.bin`. That cache still stores CPU feature records, not final GPU buffers, but it establishes explicit binary signatures, atomic writes, and status phases. The retained render-binary cache described below is the next downstream cache layer.
 
-The second implemented step is a binary triangulation cache at `data/cache/triangulation/<layer-file>.tri.bin`. That cache stores the per-feature triangle index vectors keyed by the same source signature. It removes the JSON triangulation decode cost and makes parcel fill readiness observable through explicit triangulation cache phases.
+The second implemented step is a binary triangulation cache at `data/cache/triangulation/<layer-file>.tri.bin`. That cache stores the per-feature triangle index vectors keyed by the same source signature and makes parcel fill readiness observable through explicit triangulation cache phases.
 
 The third implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when hydrated layer geometry is replaced. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work. A dedicated CLI self-test now verifies reuse at stable zoom and invalidation on zoom change.
 
-The fourth implemented step is budgeted triangulation-result apply on the main thread. Triangulation and cache decode still happen on workers, but the final move of triangle vectors into live `LayerDef::FeatureGeom` records no longer commits an entire large parcel layer in one frame. The drain path now applies bounded batches per frame, publishes explicit `applying_binary_cache`, `applying_json_cache`, or `applying_built_result` phases while work remains, and marks the layer `Ready` only after the final batch lands.
+The fourth implemented step is budgeted triangulation-result apply on the main thread. Triangulation and cache decode still happen on workers, but the final move of triangle vectors into live `LayerDef::FeatureGeom` records no longer commits an entire large parcel layer in one frame. The drain path now applies bounded batches per frame, publishes explicit `applying_binary_cache` or `applying_built_result` phases while work remains, and marks the layer `Ready` only after the final batch lands.
 
 The fifth implemented step is asynchronous spatial-index construction. Full-layer `LayerSpatialIndex` rebuilds no longer happen inline in the frame loop. Stable hydrated layers now publish extent snapshots into a background spatial-index job queue, the worker builds the index off-frame, and the main thread only drains completed results. Results are accepted only when their source signature and feature count still match the current hydrated layer; stale results are discarded explicitly.
 
@@ -411,14 +411,12 @@ The tenth implemented step is independent retained parcel color storage. `MapPro
 
 Operationally, the supported migration path is:
 
-- runtime hydration workers prefer `.bin`
-- legacy `.msgpack` is read only as a fallback
-- `worldsim3 --warm-hydration-cache <layer-file>` converts one legacy cache to binary
-- `worldsim3 --warm-hydration-cache-all` converts all currently cacheable local layers that already have a cache artifact
-- triangulation workers prefer `.tri.bin`
-- legacy `.tri.json` is read only as a fallback
-- `worldsim3 --warm-triangulation-cache <layer-file>` converts one legacy triangulation cache to binary
-- `worldsim3 --warm-triangulation-cache-all` converts all currently cacheable local triangulation artifacts and skips stale legacy caches
+- runtime hydration workers read `.bin` hydration caches, canonical parcel binaries, or source GeoJSON
+- `worldsim3 --warm-hydration-cache <layer-file>` validates or rebuilds one binary hydration cache
+- `worldsim3 --warm-hydration-cache-all` processes local layers that already have a binary hydration cache artifact
+- triangulation workers read `.tri.bin` caches or rebuild from hydrated geometry
+- `worldsim3 --warm-triangulation-cache <layer-file>` validates or rebuilds one binary triangulation cache
+- `worldsim3 --warm-triangulation-cache-all` processes local binary triangulation artifacts
 - the map frame reuses a persistent world-ring/world-extent projection cache until `math_zoom` or hydrated source generation changes
 - large triangulation results are applied into live feature records incrementally across frames instead of a single unbounded main-thread commit
 - large spatial-index rebuilds are built asynchronously from extent snapshots and applied only when their source signature and feature count still match the current layer
@@ -452,7 +450,7 @@ Binary format requirements:
 - cache writes must be atomic
 - GPU upload should happen on a worker or upload queue, not inside the UI frame
 
-A different binary format will be faster than the current MsgPack hydration cache for render startup if it avoids object reconstruction and stores data in the same contiguous layout the renderer needs. The expected win is not just smaller bytes on disk; it is fewer allocations, less pointer chasing, less JSON-shaped decoding, and less per-frame geometry preparation.
+A render-ready binary format will be faster than the current CPU-feature hydration cache for render startup if it avoids object reconstruction and stores data in the same contiguous layout the renderer needs. The expected win is not just smaller bytes on disk; it is fewer allocations, less pointer chasing, and less per-frame geometry preparation.
 
 Strict disk-to-GPU zero-copy is not the target. Vulkan normally uploads device-local buffers through staging memory or a dedicated transfer path. The professional target is direct enough for the frame loop: render-ready binary chunks are loaded, uploaded asynchronously into retained GPU buffers, and then reused without rebuilding or recopying during normal frames.
 

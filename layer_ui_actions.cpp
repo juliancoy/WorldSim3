@@ -54,9 +54,17 @@ bool hiddenParcelParameterLayer(const LayerUiSharedContext& ctx, int parcel_laye
 void setParcelParameterMode(LayerUiSharedContext& ctx, int mode) {
     if (ctx.parcel_parameter_mode) *ctx.parcel_parameter_mode = mode;
     clearParcelHeatmapLayers(ctx);
+    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
 }
 
 void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
+    if (ctx.layers &&
+        layer_idx >= 0 &&
+        (size_t)layer_idx < ctx.layers->size() &&
+        (*ctx.layers)[(size_t)layer_idx].file == "property_value_parcels.geojson") {
+        setParcelParameterMode(ctx, 2);
+        return;
+    }
     setParcelParameterMode(ctx, 0);
     if (!ctx.layers || layer_idx < 0 || (size_t)layer_idx >= ctx.layers->size()) return;
     (*ctx.layers)[(size_t)layer_idx].enabled = true;

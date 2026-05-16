@@ -47,17 +47,19 @@ struct ParcelRenderCacheBlob {
     std::vector<ParcelRenderChunkRecord> chunks;
 };
 
+struct CanonicalFeatureCollectionMetadata {
+    uint32_t version = 0;
+    uint32_t endian_marker = 0;
+    uint64_t feature_count = 0;
+    std::string source_signature;
+    uintmax_t file_size_bytes = 0;
+};
+
 std::string fileSignature(const std::filesystem::path& p);
-
-bool loadHydrationCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    std::vector<LayerDef::FeatureGeom>& out);
-
-void saveHydrationCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    const std::vector<LayerDef::FeatureGeom>& features);
+bool resolveLayerSourceSignature(
+    const std::filesystem::path& layer_path,
+    std::string& out_sig,
+    std::string* out_source_kind = nullptr);
 
 bool loadBinaryHydrationCache(
     const std::filesystem::path& cache_path,
@@ -69,16 +71,9 @@ void saveBinaryHydrationCache(
     const std::string& sig,
     const std::vector<LayerDef::FeatureGeom>& features);
 
-bool loadTriCache(
+bool binaryHydrationCacheShouldBeCompacted(
     const std::filesystem::path& cache_path,
-    const std::string& sig,
-    size_t count,
-    std::vector<std::vector<uint32_t>>& out);
-
-void saveTriCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    const std::vector<std::vector<uint32_t>>& tris);
+    const std::vector<LayerDef::FeatureGeom>& features);
 
 bool loadBinaryTriCache(
     const std::filesystem::path& cache_path,
@@ -105,6 +100,15 @@ bool loadBinaryParcelRenderCache(
 void saveBinaryParcelRenderCache(
     const std::filesystem::path& cache_path,
     const ParcelRenderCacheBlob& blob);
+
+bool loadBinaryCanonicalMetadata(
+    const std::filesystem::path& cache_path,
+    CanonicalFeatureCollectionMetadata& out);
+
+void saveBinaryCanonicalFeatureCollection(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureGeom>& features);
 
 bool loadBinaryCanonicalFeatureCollection(
     const std::filesystem::path& cache_path,

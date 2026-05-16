@@ -5,6 +5,7 @@
 #include "memory_utils.h"
 #include "net_http_utils.h"
 #include "thread_utils.h"
+#include "worldsim_app.h"
 
 #include <algorithm>
 #include <cctype>
@@ -25,6 +26,24 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+json buildParcelGpuStatusJson() {
+    const ParcelGpuResidencyStatus gpu = getParcelGpuResidencyStatus();
+    return {
+        {"resident", gpu.resident},
+        {"draw_active", gpu.draw_active},
+        {"overlay_active", gpu.overlay_active},
+        {"outline_active", gpu.outline_active},
+        {"render_features", gpu.render_features},
+        {"vertices", gpu.vertices},
+        {"indices", gpu.indices},
+        {"line_indices", gpu.line_indices},
+        {"colors", gpu.colors},
+        {"visible_chunks", gpu.visible_chunks},
+        {"visible_line_chunks", gpu.visible_line_chunks},
+        {"source_signature", gpu.source_signature}
+    };
+}
+
 struct ResourceUsageSnapshot {
     double user_cpu_seconds = 0.0;
     double system_cpu_seconds = 0.0;
@@ -617,6 +636,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"no_triangles_last_frame", render_fill_no_triangles_last_frame.load(std::memory_order_relaxed)},
                     {"bad_indices_last_frame", render_fill_bad_indices_last_frame.load(std::memory_order_relaxed)}
                 };
+                out["parcel_gpu"] = buildParcelGpuStatusJson();
                 json status_counts = json::object();
                 size_t enabled_layers_total = 0;
                 size_t enabled_layers_hydrated = 0;
@@ -625,6 +645,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 for (size_t i = 0; i < states_copy.size(); ++i) {
                     const auto& st = states_copy[i];
                     const char* s = statusToString(st.status);
+                    const std::string display_status = layerRuntimeDisplayStatus(
+                        st,
+                        i < layers.size() ? layers[i].file : std::string());
                     status_counts[s] = status_counts.value(s, 0) + 1;
                     const bool enabled = i < layers.size() ? layers[i].enabled : false;
                     const bool hydrated =
@@ -644,7 +667,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"enabled", enabled},
                         {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
                         {"status", s},
+                        {"display_status", display_status},
                         {"features", st.feature_count},
+                        {"hydration_source_kind", st.hydration_source_kind},
                         {"hydration_phase", st.hydration_phase},
                         {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
                         {"hydration_source_signature", st.hydration_source_signature},
@@ -803,6 +828,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"cache_key", ctx.prof_heatmap_cache_key ? ctx.prof_heatmap_cache_key->load(std::memory_order_relaxed) : 0},
                     {"texture_cache_entries", ctx.prof_heatmap_texture_cache_entries ? ctx.prof_heatmap_texture_cache_entries->load(std::memory_order_relaxed) : 0}
                 };
+                out["parcel_gpu"] = buildParcelGpuStatusJson();
                 json layer_profile = build_layer_profile();
                 out["layers"] = std::move(layer_profile["layers"]);
                 out["totals"] = std::move(layer_profile["totals"]);

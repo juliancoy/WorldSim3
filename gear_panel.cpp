@@ -1,18 +1,48 @@
 #include "gear_panel.h"
 
 #include "imgui.h"
+#include "ui_theme.h"
 
 #include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
 
-void drawGearPanel(bool* show_sources_panel, const std::filesystem::path& root, BootstrapProgress& bootstrap) {
+void drawGearPanel(
+    bool* show_sources_panel,
+    const std::filesystem::path& root,
+    AppSettings* app_settings,
+    ImGuiContext* main_imgui_context,
+    ImGuiContext* queue_imgui_context,
+    BootstrapProgress& bootstrap) {
     if (!show_sources_panel || !*show_sources_panel) return;
 
     ImGui::SetNextWindowSize(ImVec2(540, 420), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Gear Panel", show_sources_panel, ImGuiWindowFlags_NoCollapse)) {
         if (ImGui::BeginTabBar("gear_tabs")) {
+            if (ImGui::BeginTabItem("Interface")) {
+                if (app_settings) {
+                    bool dark_mode = app_settings->dark_mode;
+                    if (ImGui::Checkbox("Dark mode", &dark_mode)) {
+                        app_settings->dark_mode = dark_mode;
+                        ImGuiContext* previous_context = ImGui::GetCurrentContext();
+                        if (main_imgui_context) {
+                            ImGui::SetCurrentContext(main_imgui_context);
+                            applyWorldsimUiTheme(app_settings->dark_mode);
+                        }
+                        if (queue_imgui_context) {
+                            ImGui::SetCurrentContext(queue_imgui_context);
+                            applyWorldsimUiTheme(app_settings->dark_mode);
+                        }
+                        ImGui::SetCurrentContext(previous_context);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
+                } else {
+                    ImGui::TextDisabled("App settings unavailable.");
+                }
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Sources")) {
                 std::vector<std::string> past_work;
                 std::vector<std::string> future_work;

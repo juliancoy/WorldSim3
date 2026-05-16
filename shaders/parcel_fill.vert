@@ -36,7 +36,7 @@ void main() {
 
     vec2 clip;
     clip.x = (screen.x / pc.framebuffer_size.x) * 2.0 - 1.0;
-    clip.y = 1.0 - (screen.y / pc.framebuffer_size.y) * 2.0;
+    clip.y = (screen.y / pc.framebuffer_size.y) * 2.0 - 1.0;
     gl_Position = vec4(clip, 0.0, 1.0);
 
     outColor = unpackUnorm4x8(packed_colors[inFeatureRef]);

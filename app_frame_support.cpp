@@ -115,6 +115,7 @@ void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx) {
     frame_ctx.profile_samples = ctx.profile_samples;
     frame_ctx.profile_sample_pos = ctx.profile_sample_pos;
     frame_ctx.profile_sample_count = ctx.profile_sample_count;
+    frame_ctx.dark_mode = ctx.dark_mode;
     finalizeWorldSimFrame(frame_ctx);
 }
 
@@ -188,9 +189,9 @@ void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContex
     ImGui::Render();
     ImDrawData* queue_draw_data = ImGui::GetDrawData();
     if (queue_draw_data->DisplaySize.x > 0.0f && queue_draw_data->DisplaySize.y > 0.0f) {
-        ctx.window_data->ClearValue.color.float32[0] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[1] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[2] = 0.96f;
+        ctx.window_data->ClearValue.color.float32[0] = ctx.dark_mode ? 0.020f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[1] = ctx.dark_mode ? 0.026f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[2] = ctx.dark_mode ? 0.034f : 0.96f;
         ctx.window_data->ClearValue.color.float32[3] = 1.00f;
         FrameRenderSecondary(ctx.window_data, queue_draw_data, *ctx.swapchain_rebuild);
         FramePresentSecondary(ctx.window_data, *ctx.swapchain_rebuild);

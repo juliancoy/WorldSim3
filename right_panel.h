@@ -58,7 +58,6 @@ struct RightPanelContext {
     int zoning_layer_idx = -1;
     int real_property_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
@@ -120,13 +119,6 @@ struct RightPanelContext {
     std::atomic<size_t>* vacant_rehab_rows_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_with_geometry_total = nullptr;
-
-    bool* duckdb_auto_rebuild_checked = nullptr;
-    std::mutex* hydrate_req_mutex = nullptr;
-    std::deque<size_t>* hydrate_requests = nullptr;
-    std::vector<bool>* hydration_requested = nullptr;
-    std::mutex* hydrated_mutex = nullptr;
-    std::deque<HydratedLayer>* hydrated_queue = nullptr;
 
     std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };

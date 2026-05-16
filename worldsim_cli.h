@@ -19,6 +19,12 @@ struct WorldsimCliOptions {
     bool run_triangulation_apply_selftest = false;
     bool run_spatial_index_selftest = false;
     bool run_layer_profile_selftest = false;
+    bool run_layer_runtime_status_selftest = false;
+    bool run_parcel_gpu_cpu_bypass_selftest = false;
+    bool run_render_policy_selftest = false;
+    bool run_canonical_parcel_binary_selftest = false;
+    bool run_inspect_canonical_parcel_binary = false;
+    bool run_validate_canonical_parcel_binary = false;
     bool run_warm_triangulation_cache = false;
     bool run_warm_triangulation_cache_all = false;
     bool run_download_layers = false;
@@ -31,6 +37,7 @@ struct WorldsimCliOptions {
     std::string warm_hydration_cache_file;
     std::string warm_triangulation_cache_file;
     std::string warm_parcel_render_cache_file;
+    std::string canonical_parcel_binary_file;
 };
 
 WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv);

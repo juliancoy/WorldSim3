@@ -55,10 +55,24 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 }
 
                 const fs::path layer_path = root / "data" / "layers" / layers[i].file;
-                const fs::path cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".msgpack");
                 const fs::path binary_cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".bin");
                 const fs::path canonical_binary_path = root / "data" / "layers" / (layers[i].file + ".canonical.bin");
-                const std::string sig = fileSignature(layer_path);
+                std::string sig;
+                std::string source_kind;
+                if (!resolveLayerSourceSignature(layer_path, sig, &source_kind)) {
+                    std::lock_guard<std::mutex> lk(hydrated_mutex);
+                    hydrated_queue.push_back(HydratedLayer{
+                        i,
+                        {},
+                        true,
+                        true,
+                        true,
+                        false,
+                        "failed to resolve layer source signature",
+                        {}
+                    });
+                    continue;
+                }
                 std::error_code layer_size_ec;
                 const uintmax_t layer_size_bytes = fs::file_size(layer_path, layer_size_ec);
                 const bool disable_large_layer_cache =
@@ -68,44 +82,43 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 const bool build_hydration_cache = !disable_large_layer_cache;
                 std::vector<LayerDef::FeatureGeom> cached_features;
                 bool loaded_binary_cache = false;
-                bool loaded_msgpack_cache = false;
                 bool loaded_canonical_binary = false;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
                     if (i < layer_states.size()) {
                         layer_states[i].hydration_source_signature = sig;
+                        layer_states[i].hydration_source_kind.clear();
                         layer_states[i].hydration_loaded_from_cache = false;
                         if (disable_large_layer_cache) {
-                            layer_states[i].hydration_phase = "parsing_source_cache_disabled";
+                            layer_states[i].hydration_phase = source_kind == "canonical_binary"
+                                ? "loading_canonical_binary_source"
+                                : "parsing_source_cache_disabled";
                         } else if (fs::exists(binary_cache_path)) {
                             layer_states[i].hydration_phase = "loading_binary_cache";
-                        } else if (fs::exists(cache_path)) {
-                            layer_states[i].hydration_phase = "loading_msgpack_cache";
-                        } else if (fs::exists(canonical_binary_path)) {
+                        } else if (source_kind == "canonical_binary" && fs::exists(canonical_binary_path)) {
                             layer_states[i].hydration_phase = "loading_canonical_binary_source";
                         } else {
-                            layer_states[i].hydration_phase = "parsing_source_cache_missing";
+                            layer_states[i].hydration_phase = source_kind == "canonical_binary"
+                                ? "loading_canonical_binary_source"
+                                : "parsing_source_cache_missing";
                         }
                     }
                 }
                 if (!disable_large_layer_cache && fs::exists(binary_cache_path)) {
                     loaded_binary_cache = loadBinaryHydrationCache(binary_cache_path, sig, cached_features);
                 }
-                if (!loaded_binary_cache && !disable_large_layer_cache && fs::exists(cache_path)) {
+                if (!loaded_binary_cache && fs::exists(canonical_binary_path) &&
+                    loadBinaryCanonicalFeatureCollection(canonical_binary_path, sig, cached_features)) {
                     {
                         std::lock_guard<std::mutex> lk(status_mutex);
-                        if (i < layer_states.size()) layer_states[i].hydration_phase = "loading_msgpack_cache";
+                        if (i < layer_states.size()) {
+                            layer_states[i].hydration_phase = "loading_canonical_binary_source";
+                            layer_states[i].hydration_source_kind = "canonical_binary";
+                        }
                     }
-                    loaded_msgpack_cache = loadHydrationCache(cache_path, sig, cached_features);
+                    loaded_canonical_binary = true;
                 }
-                if (!loaded_binary_cache && !loaded_msgpack_cache && fs::exists(canonical_binary_path)) {
-                    {
-                        std::lock_guard<std::mutex> lk(status_mutex);
-                        if (i < layer_states.size()) layer_states[i].hydration_phase = "loading_canonical_binary_source";
-                    }
-                    loaded_canonical_binary = loadBinaryCanonicalFeatureCollection(canonical_binary_path, sig, cached_features);
-                }
-                if (loaded_binary_cache || loaded_msgpack_cache || loaded_canonical_binary) {
+                if (loaded_binary_cache || loaded_canonical_binary) {
                     const bool suspicious_cache =
                         cached_features.empty() ||
                         implausibleHydrationCache(layers[i].file, cached_features.size()) ||
@@ -116,13 +129,17 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         {
                             std::lock_guard<std::mutex> lk(status_mutex);
                             if (i < layer_states.size()) {
+                                layer_states[i].hydration_source_kind = loaded_binary_cache
+                                    ? "binary_cache"
+                                    : "canonical_binary";
                                 layer_states[i].hydration_phase = loaded_binary_cache
                                     ? "binary_cache_hit_queueing"
-                                    : (loaded_msgpack_cache ? "msgpack_cache_hit_queueing"
-                                                            : "canonical_binary_queueing");
+                                    : "canonical_binary_queueing";
                             }
                         }
-                        if ((loaded_msgpack_cache || loaded_canonical_binary) && build_hydration_cache) {
+                        if ((loaded_canonical_binary ||
+                             (loaded_binary_cache && binaryHydrationCacheShouldBeCompacted(binary_cache_path, cached_features))) &&
+                            build_hydration_cache) {
                             saveBinaryHydrationCache(binary_cache_path, sig, cached_features);
                         }
                         bool first_chunk = true;
@@ -166,7 +183,6 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         }
                         std::error_code ec;
                         if (loaded_binary_cache) fs::remove(binary_cache_path, ec);
-                        if (loaded_msgpack_cache) fs::remove(cache_path, ec);
                         releaseContainerStorage(cached_features);
                         trimProcessHeap();
                     }
@@ -174,15 +190,36 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     std::lock_guard<std::mutex> lk(status_mutex);
                     if (i < layer_states.size() &&
                         (layer_states[i].hydration_phase == "loading_binary_cache" ||
-                         layer_states[i].hydration_phase == "loading_msgpack_cache")) {
-                        layer_states[i].hydration_phase = "parsing_source_cache_miss_or_stale";
+                         layer_states[i].hydration_phase == "loading_canonical_binary_source")) {
+                        layer_states[i].hydration_phase = source_kind == "canonical_binary"
+                            ? "loading_canonical_binary_source_failed"
+                            : "parsing_source_cache_miss_or_stale";
                     }
+                }
+
+                if (!fs::exists(layer_path) && source_kind == "canonical_binary") {
+                    std::lock_guard<std::mutex> lk(hydrated_mutex);
+                    hydrated_queue.push_back(HydratedLayer{
+                        i,
+                        {},
+                        true,
+                        true,
+                        true,
+                        false,
+                        "canonical parcel binary was present but could not be loaded",
+                        sig
+                    });
+                    continue;
                 }
 
                 std::vector<LayerDef::FeatureGeom> cache_features;
                 bool hydrate_failed = false;
                 bool hydrate_done = false;
                 bool first_chunk = true;
+                {
+                    std::lock_guard<std::mutex> lk(status_mutex);
+                    if (i < layer_states.size()) layer_states[i].hydration_source_kind = "geojson";
+                }
                 hydrateLayerBatches(
                     layer_path, kHydrationBatchSize, hydration_stop,
                     [&]() { return i < layers.size() && (layers[i].enabled || required); },
@@ -257,7 +294,6 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
             }
 
             fs::path layer_path = root / "data" / "layers" / job.file;
-            fs::path cache_path = root / "data" / "cache" / "triangulation" / (job.file + ".tri.json");
             fs::path binary_cache_path = root / "data" / "cache" / "triangulation" / (job.file + ".tri.bin");
             std::string sig = job.source_signature.empty() ? fileSignature(layer_path) : job.source_signature;
             TriResult result;
@@ -265,7 +301,6 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
             result.source_signature = sig;
             try {
                 bool loaded_binary_cache = false;
-                bool loaded_json_cache = false;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
                     if (job.index < layer_states.size()) {
@@ -273,22 +308,13 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
                         layer_states[job.index].triangulation_loaded_from_cache = false;
                         if (fs::exists(binary_cache_path)) {
                             layer_states[job.index].triangulation_phase = "loading_binary_cache";
-                        } else if (fs::exists(cache_path)) {
-                            layer_states[job.index].triangulation_phase = "loading_json_cache";
                         } else {
                             layer_states[job.index].triangulation_phase = "building_cache_missing";
                         }
                     }
                 }
                 loaded_binary_cache = loadBinaryTriCache(binary_cache_path, sig, job.rings_per_feature.size(), result.triangles_per_feature);
-                if (!loaded_binary_cache && fs::exists(cache_path)) {
-                    {
-                        std::lock_guard<std::mutex> lk(status_mutex);
-                        if (job.index < layer_states.size()) layer_states[job.index].triangulation_phase = "loading_json_cache";
-                    }
-                    loaded_json_cache = loadTriCache(cache_path, sig, job.rings_per_feature.size(), result.triangles_per_feature);
-                }
-                if (!loaded_binary_cache && !loaded_json_cache) {
+                if (!loaded_binary_cache) {
                     {
                         std::lock_guard<std::mutex> lk(status_mutex);
                         if (job.index < layer_states.size()) {
@@ -308,13 +334,8 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
                     {
                         std::lock_guard<std::mutex> lk(status_mutex);
                         if (job.index < layer_states.size()) {
-                            layer_states[job.index].triangulation_phase = loaded_binary_cache
-                                ? "binary_cache_hit"
-                                : "json_cache_hit";
+                            layer_states[job.index].triangulation_phase = "binary_cache_hit";
                         }
-                    }
-                    if (loaded_json_cache) {
-                        saveBinaryTriCache(binary_cache_path, sig, result.triangles_per_feature);
                     }
                 }
                 result.ok = true;
