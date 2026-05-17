@@ -30,7 +30,10 @@
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Baltimore City Parcels",
@@ -42,7 +45,10 @@
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Baltimore County Parcels",
@@ -65,8 +71,12 @@
     ],
     "import": {
       "type": "arcgis_feature_layer",
-      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1"
-    }
+      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "normalizer": "baltimore_county_parcels"
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Howard County Parcels",
@@ -93,7 +103,10 @@
       "url": "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
       "shapefile": "Property.shp",
       "source_crs": "EPSG:2248"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Allegany County Parcels",
@@ -118,7 +131,10 @@
       "url": "https://www.dropbox.com/scl/fi/0vq8xyexfe2juqcoeclqn/ALLEparcels0226.zip?dl=1&rlkey=6dfrsl38xrpujh6ouczpwnikp",
       "shapefile": "ALLEPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Anne Arundel County Parcels",
@@ -143,7 +159,10 @@
       "url": "https://www.dropbox.com/scl/fi/4grva91527p7dc7pk96zc/ANNEparcels0226.zip?dl=1&rlkey=3ev0osf81ryh65nc443juweju",
       "shapefile": "ANNEPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Calvert County Parcels",
@@ -168,7 +187,10 @@
       "url": "https://www.dropbox.com/scl/fi/1d18z9vwbr8o9c329n7hb/CALVparcels0226.zip?dl=1&rlkey=wwjs2awg5nh88leik5upfin4u",
       "shapefile": "CALVPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Caroline County Parcels",
@@ -193,7 +215,10 @@
       "url": "https://www.dropbox.com/scl/fi/e6070aylp5n5oo4bohodt/CAROparcels0226.zip?dl=1&rlkey=4itc5bvhvrnzsbgsm9wp0v1vi",
       "shapefile": "CAROPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Carroll County Parcels",
@@ -218,7 +243,10 @@
       "url": "https://www.dropbox.com/scl/fi/g9voz3iu9yzourajhab3k/CARRparcels0226.zip?dl=1&rlkey=y5f6y65zcrh71k9jatb0y7ygz",
       "shapefile": "CARRPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Cecil County Parcels",
@@ -243,7 +271,10 @@
       "url": "https://www.dropbox.com/scl/fi/5k5lik3jh3ev05dyqxofo/CECIparcels0226.zip?dl=1&rlkey=afnszcr4yc27slnai6xfxp8fn",
       "shapefile": "CECIPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Charles County Parcels",
@@ -268,7 +299,10 @@
       "url": "https://www.dropbox.com/scl/fi/nplpj2vibo6mfij9yvosd/CHARparcels0226.zip?dl=1&rlkey=zj8b42mxepjs0043exlqyanfi",
       "shapefile": "CHARPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Dorchester County Parcels",
@@ -293,7 +327,10 @@
       "url": "https://www.dropbox.com/scl/fi/rq5dhlu0ian6x15xiaac7/DORCparcels0226.zip?dl=1&rlkey=b5z8b9de701rd493c21saqa0i",
       "shapefile": "DORCPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Frederick County Parcels",
@@ -318,7 +355,10 @@
       "url": "https://www.dropbox.com/scl/fi/9wt3rwqv0u23gebgl9tfa/FREDparcels0226.zip?dl=1&rlkey=p59y96s9k1neapw19tgxd7xen",
       "shapefile": "FREDPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Garrett County Parcels",
@@ -343,7 +383,10 @@
       "url": "https://www.dropbox.com/scl/fi/whplsq4nkd7lh8xbyv6dz/GARRparcels0226.zip?dl=1&rlkey=pb7m5jtmb1qkpvd1toqjj6ggd",
       "shapefile": "GARRPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Harford County Parcels",
@@ -368,7 +411,10 @@
       "url": "https://www.dropbox.com/scl/fi/h17fdtpi5rlfezmjvrwqa/HARFparcels0226.zip?dl=1&rlkey=bh763wr1s3tz5z6y3b2o7ne32",
       "shapefile": "HARFPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Kent County Parcels",
@@ -393,7 +439,10 @@
       "url": "https://www.dropbox.com/scl/fi/esnv0nzpk2o0uibmterif/KENTparcels0226.zip?dl=1&rlkey=f7eszhurib9rcaox4g57vghaf",
       "shapefile": "KENTPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Montgomery County Parcels",
@@ -418,7 +467,10 @@
       "url": "https://www.dropbox.com/scl/fi/cfz86bco1s8lxmqm9b2ux/MONTparcels0226.zip?dl=1&rlkey=7n5o9icvdy83a0b6qhyy68mz3",
       "shapefile": "MONTPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Prince George's County Parcels",
@@ -443,7 +495,10 @@
       "url": "https://www.dropbox.com/scl/fi/h74wrhh7e5m3o1rkx51jy/PRINparcels0226.zip?dl=1&rlkey=u5ly9afqgehr3tsp3rtc1fgja",
       "shapefile": "PRINPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Queen Anne's County Parcels",
@@ -468,7 +523,10 @@
       "url": "https://www.dropbox.com/scl/fi/k30hp5aaopaem6kf7kigi/QUEEparcels0226.zip?dl=1&rlkey=rc99o6igbr4ktx561deh0yazv",
       "shapefile": "QUEEPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "St. Mary's County Parcels",
@@ -493,7 +551,10 @@
       "url": "https://www.dropbox.com/scl/fi/j7sxbgr2lm4kgpzp027im/STMAparcels0226.zip?dl=1&rlkey=4dl0u5qpjuj6ahrbz2qwq2bi1",
       "shapefile": "STMAPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Somerset County Parcels",
@@ -518,7 +579,10 @@
       "url": "https://www.dropbox.com/scl/fi/4x0x495lyd9buejgesdq9/SOMEparcels0226.zip?dl=1&rlkey=rus957682qasf063rpgjkchmv",
       "shapefile": "SOMEPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Talbot County Parcels",
@@ -543,7 +607,10 @@
       "url": "https://www.dropbox.com/scl/fi/mfcan19ls76ftvfb4js6a/TALBparcels0226.zip?dl=1&rlkey=hec1eqadkui5rtj9w260rfjdd",
       "shapefile": "TALBPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Washington County Parcels",
@@ -568,7 +635,10 @@
       "url": "https://www.dropbox.com/scl/fi/xqp1pwc83o32rxh0tv3re/WASHparcels0226.zip?dl=1&rlkey=mcntcjujf63poxwa6cy610896",
       "shapefile": "WASHPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Wicomico County Parcels",
@@ -593,7 +663,10 @@
       "url": "https://www.dropbox.com/scl/fi/m38c63axnabt6uzrhl5wg/WICOparcels0226.zip?dl=1&rlkey=cwx7xits93t0batx6w0kngq13",
       "shapefile": "WICOPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Worcester County Parcels",
@@ -618,7 +691,10 @@
       "url": "https://www.dropbox.com/scl/fi/2yxas503opb7bopi2svls/WORCparcels0226.zip?dl=1&rlkey=57mz9ovyuieorvzlw4gp0hsbq",
       "shapefile": "WORCPOLY.shp",
       "source_crs": "EPSG:26985"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging"
   },
   {
     "name": "Howard County Real Property Assessments",
@@ -640,7 +716,10 @@
     "import": {
       "type": "socrata_csv_properties",
       "url": "https://opendata.maryland.gov/resource/ed4q-f8tm.csv?%24limit=500000&%24select=county_name_mdp_field_cntyname%2Caccount_id_mdp_field_acctid%2Crecord_key_account_number_sdat_field_3%2Cmdp_street_address_mdp_field_address%2Cmdp_street_address_city_mdp_field_city%2Cmdp_street_address_zip_code_mdp_field_zipcode%2Ccurrent_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164%2Ccurrent_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165%2Ccurrent_assessment_year_total_assessment_sdat_field_172%2Cc_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235%2Csales_segment_1_consideration_mdp_field_considr1_sdat_field_90%2Csales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89%2Creal_property_search_link%2Cfinder_online_link&%24where=county_name_mdp_field_cntyname%3D%22Howard%20County%22"
-    }
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Real Property Information",
@@ -651,7 +730,10 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Property Value (Parcels)",
@@ -666,7 +748,10 @@
     "source_urls": [
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context"
   },
   {
     "name": "Year Built (Parcels)",
@@ -683,7 +768,10 @@
     "source_urls": [
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context"
   },
   {
     "name": "Parcel Intelligence (Derived)",
@@ -702,7 +790,10 @@
       "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
       "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context"
   },
   {
     "name": "Vacant Building Notices",
@@ -713,7 +804,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Vacant Code",
@@ -726,7 +820,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Vacant Code Parcels",
@@ -740,7 +837,10 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Exterior Code",
@@ -753,7 +853,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Exterior Code Parcels",
@@ -767,7 +870,10 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Interior Code",
@@ -780,7 +886,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Interior Code Parcels",
@@ -794,7 +903,10 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Interior/Exterior Code",
@@ -807,7 +919,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Interior/Exterior Code Parcels",
@@ -821,7 +936,10 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Other Code",
@@ -834,7 +952,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Notices - Other Code Parcels",
@@ -848,7 +969,10 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Vacant Building Rehabs",
@@ -859,7 +983,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Buildings",
@@ -872,7 +999,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Building Parcels",
@@ -886,7 +1016,10 @@
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "CodeMap Recently Rehabbed VBN Parcels",
@@ -899,7 +1032,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/27"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
@@ -910,7 +1046,10 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "2021 Tax Sale List",
@@ -921,7 +1060,10 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Bid List - Vacants to Value",
@@ -932,7 +1074,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Completed City Demo",
@@ -943,7 +1088,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Housing and Building Permits 2019-Present",
@@ -954,7 +1102,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "MD DHCD Multifamily Sites",
@@ -970,7 +1121,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_MultifamilySites/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Targeted Areas",
@@ -985,7 +1139,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Qualified Census Tracts",
@@ -1000,7 +1157,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/1"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Communities of Opportunity",
@@ -1015,7 +1175,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/2"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Small Difficult Development Areas",
@@ -1030,7 +1193,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/3"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Rural Areas",
@@ -1045,7 +1211,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/5"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD BRHP Opportunity Designations",
@@ -1060,7 +1229,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/6"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Baltimore County Opportunity Areas",
@@ -1075,7 +1247,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/7"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "MD DHCD Just Communities",
@@ -1090,7 +1265,10 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/9"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Zoning",
@@ -1101,7 +1279,10 @@
     "category": "zoning",
     "subcategory": "Land Use",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context"
   },
   {
     "name": "Streets",
@@ -1112,7 +1293,10 @@
     "category": "infrastructure",
     "subcategory": "Transportation",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Major Drainage",
@@ -1123,7 +1307,10 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Water (Infrastructure Layer 19)",
@@ -1134,7 +1321,10 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Rate of Clogged Storm Drain Reports (CSA)",
@@ -1145,7 +1335,10 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Median Price of Homes Sold (CSA)",
@@ -1156,7 +1349,10 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "csa",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Total Number of Businesses (CSA)",
@@ -1167,7 +1363,10 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "csa",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Life Expectancy (CSA)",
@@ -1178,7 +1377,10 @@
     "category": "public_health",
     "subcategory": "Mortality",
     "scale": "csa",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Asthma (Baltimore Tracts)",
@@ -1190,7 +1392,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Diabetes (Baltimore Tracts)",
@@ -1202,7 +1407,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Obesity (Baltimore Tracts)",
@@ -1214,7 +1422,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Stroke (Baltimore Tracts)",
@@ -1226,7 +1437,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Depression (Baltimore Tracts)",
@@ -1238,7 +1452,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Total Population (Baltimore Tracts)",
@@ -1250,7 +1467,10 @@
     "category": "public_health",
     "subcategory": "Population & Denominator",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
@@ -1262,7 +1482,10 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
@@ -1274,7 +1497,10 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
@@ -1286,7 +1512,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
@@ -1298,7 +1527,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
@@ -1310,7 +1542,10 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
@@ -1322,7 +1557,10 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
@@ -1334,7 +1572,10 @@
     "category": "public_health",
     "subcategory": "Behavioral Health",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC SVI 2022 (Baltimore Tracts)",
@@ -1346,7 +1587,10 @@
     "category": "public_health",
     "subcategory": "Social Vulnerability",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
@@ -1365,7 +1609,10 @@
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=1",
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=3",
       "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "HUD Continuum of Care Boundaries (Maryland)",
@@ -1376,7 +1623,10 @@
     "category": "public_health",
     "subcategory": "Homelessness",
     "scale": "region",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "HUD Continuum of Care Boundary (Baltimore City CoC MD-503)",
@@ -1387,7 +1637,10 @@
     "category": "public_health",
     "subcategory": "Homelessness",
     "scale": "region",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "HUD PIT Homelessness Trends by CoC (2007-2024)",
@@ -1404,7 +1657,10 @@
     "source_urls": [
       "https://www.huduser.gov/portal/datasets/ahar.html",
       "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/CoC_Geo_Type/FeatureServer/0/query?where=ST_1%3D%27MD%27&outFields=ST_1,STATE_NAME,COCNUM,COCNAME,HudNum,Geo_Type&returnGeometry=true&f=geojson"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
@@ -1415,6 +1671,9 @@
     "category": "safety",
     "subcategory": "Crime",
     "scale": "point",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event"
   }
 ]

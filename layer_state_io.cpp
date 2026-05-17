@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstring>
 #include <fstream>
+#include <unordered_set>
 #include <type_traits>
 
 #include <nlohmann/json.hpp>
@@ -114,26 +115,33 @@ static bool isCountyParcelStagingRuntimeLayer(const std::string& file) {
            file.ends_with("_county_parcels.geojson");
 }
 
-std::vector<LayerDef> loadManifest(const fs::path& root) {
-    std::vector<LayerDef> layers;
-    std::ifstream in(root / "layers_manifest.json");
-    if (!in) {
-        in.open(root / "scripts" / "layers_manifest.json");
-    }
-    if (!in) return layers;
+static void appendManifestEntries(
+    const fs::path& manifest_path,
+    const fs::path& root,
+    bool regional_parcels_available,
+    std::unordered_set<std::string>& seen_files,
+    std::vector<LayerDef>& layers) {
+    std::ifstream in(manifest_path);
+    if (!in) return;
     json arr;
-    in >> arr;
-    const bool regional_parcels_available =
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
+    try {
+        in >> arr;
+    } catch (...) {
+        return;
+    }
+    if (!arr.is_array()) return;
     for (size_t i = 0; i < arr.size(); ++i) {
         if (!arr[i].contains("file") || !arr[i]["file"].is_string()) continue;
         const std::string file = arr[i]["file"].get<std::string>();
+        if (file.empty() || seen_files.count(file)) continue;
         if (isCountyParcelStagingRuntimeLayer(file)) continue;
         if (regional_parcels_available && file == "parcel.geojson") continue;
+        if (arr[i].contains("runtime_load") && arr[i]["runtime_load"].is_boolean() && !arr[i]["runtime_load"].get<bool>()) {
+            continue;
+        }
 
         LayerDef ld;
-        ld.name = arr[i]["name"].get<std::string>();
+        ld.name = arr[i].value("name", file);
         ld.file = file;
         ld.source_url = arr[i].contains("url") ? arr[i]["url"].get<std::string>() : "";
         ld.reference_url = arr[i].contains("reference_url") ? arr[i]["reference_url"].get<std::string>() : "";
@@ -149,18 +157,43 @@ std::vector<LayerDef> loadManifest(const fs::path& root) {
             ld.import_source_crs = import.value("source_crs", std::string());
             ld.import_shapefile = import.value("shapefile", std::string());
             ld.import_service_url = import.value("service_url", std::string());
+            ld.import_normalizer = import.value("normalizer", std::string());
         }
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
         ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
         ld.subcategory = arr[i].contains("subcategory") ? arr[i]["subcategory"].get<std::string>() : "";
         ld.region = arr[i].contains("region") ? arr[i]["region"].get<std::string>() : "";
         ld.scale = arr[i].contains("scale") ? arr[i]["scale"].get<std::string>() : "";
-        std::string c = arr[i]["color"].get<std::string>();
+        ld.duckdb_role = arr[i].contains("duckdb_role") ? arr[i]["duckdb_role"].get<std::string>() : "";
+        std::string c = arr[i].value("color", std::string("#999999"));
         auto hex = [&](int s) { return std::stoi(c.substr(s, 2), nullptr, 16) / 255.0f; };
         ld.color = ImVec4(hex(1), hex(3), hex(5), 1.0f);
         ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : false;
+        ld.runtime_load = arr[i].contains("runtime_load") ? arr[i]["runtime_load"].get<bool>() : true;
+        ld.duckdb_ingest = arr[i].contains("duckdb_ingest") ? arr[i]["duckdb_ingest"].get<bool>() : true;
         ld.category = parseCategory(arr[i], ld.name);
         layers.push_back(std::move(ld));
+        seen_files.insert(file);
+    }
+}
+
+std::vector<LayerDef> loadManifest(const fs::path& root) {
+    std::vector<LayerDef> layers;
+    const bool regional_parcels_available =
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
+        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
+    std::unordered_set<std::string> seen_files;
+
+    const std::vector<fs::path> manifest_paths = {
+        root / "layers_manifest.json",
+        root / "layers_manifest.must_have.json",
+        root / "layers_manifest.nice_to_have.json",
+        root / "layers_manifest.heavy_data.json",
+        root / "layers_manifest.extended_events.json",
+        root / "layers_manifest.historical_high_quality.json"
+    };
+    for (const auto& manifest_path : manifest_paths) {
+        appendManifestEntries(manifest_path, root, regional_parcels_available, seen_files, layers);
     }
     return layers;
 }

@@ -7,7 +7,10 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Parcel",
@@ -17,7 +20,10 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record"
   },
   {
     "name": "Zoning",
@@ -27,7 +33,10 @@
     "category": "zoning",
     "subcategory": "Land Use",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context"
   },
   {
     "name": "Housing and Building Permits 2019-Present",
@@ -37,7 +46,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Vacant Building Notices",
@@ -47,7 +59,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
@@ -57,7 +72,10 @@
     "category": "safety",
     "subcategory": "Crime",
     "scale": "point",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event"
   },
   {
     "name": "Life Expectancy (CSA)",
@@ -67,7 +85,10 @@
     "category": "public_health",
     "subcategory": "Mortality",
     "scale": "csa",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Asthma (Baltimore Tracts)",
@@ -78,7 +99,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Diabetes (Baltimore Tracts)",
@@ -89,7 +113,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Obesity (Baltimore Tracts)",
@@ -100,7 +127,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Stroke (Baltimore Tracts)",
@@ -111,7 +141,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Depression (Baltimore Tracts)",
@@ -122,7 +155,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Total Population (Baltimore Tracts)",
@@ -133,7 +169,10 @@
     "category": "public_health",
     "subcategory": "Population & Denominator",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
@@ -144,7 +183,10 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
@@ -155,7 +197,10 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
@@ -166,7 +211,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
@@ -177,7 +225,10 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
@@ -188,7 +239,10 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
@@ -199,7 +253,10 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
@@ -210,7 +267,10 @@
     "category": "public_health",
     "subcategory": "Behavioral Health",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "CDC SVI 2022 (Baltimore Tracts)",
@@ -221,7 +281,10 @@
     "category": "public_health",
     "subcategory": "Social Vulnerability",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
@@ -239,6 +302,9 @@
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=1",
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=3",
       "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   }
 ]

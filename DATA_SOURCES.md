@@ -6,6 +6,16 @@ This file is the practical inventory for data the app pulls or tracks. It is not
 
 These are the URLs currently referenced by the layer manifests.
 
+### Geometry MDP sources
+
+These are the Maryland Planning geometry sources that the regional parcel build prefers first.
+
+- `https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx` - Maryland Planning parcel download portal
+- `https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx` - Same portal, lowercase variant used in manifests
+- `https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx` - Maryland parcel documentation
+- `https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer` - Maryland parcel map service
+- `https://www.dropbox.com/scl/fi/i08w46iye7mkeb15la9fk/February_2026_Parcels.zip?rlkey=r8y6lzyhj5sqf5mse62vonb4e&dl=1` - Parcel ZIP referenced for Maryland parcel intake
+
 ### Core Baltimore operational layers
 
 - `https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0` - Real Property Information
@@ -22,6 +32,23 @@ These are the URLs currently referenced by the layer manifests.
 - `https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0` - 2021 tax sale list
 - `https://data.baltimorecity.gov/api/download/v1/items/1b844b06c28a45ca86cdfb586fdce3a7/geojson?layers=7` - Open Bid List / Vacants to Value
 - `https://data.baltimorecity.gov/api/download/v1/items/37f242ca93b244a998c31b6c0a3696a7/geojson?layers=0` - Completed City Demo
+
+### Next parcel-ready additions
+
+- `https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/ECB_OB/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Environmental citations
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/OpenGov_RegAndLicense/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Rental registration and licensing
+- `https://geodata.baltimorecity.gov/egis/rest/services/FIRE/Fire_Calls/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Fire calls, last 3 months
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/21/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Demolition permits since 2015
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/27/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Tree canopy
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/14/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - School zones
+- `https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Bus stops
+- `https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/2/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Bus routes
+- `https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/5/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - On-street bike facilities
+- `https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/10/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - CHAP district
+- `https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/11/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - National Register historic district
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxCityPrograms/MapServer/20/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Enterprise Zone
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/53/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - TOD Opportunity Zones
+- `https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/54/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - TOD Supportive Zones
 
 ### Baltimore context and infrastructure
 
@@ -55,11 +82,6 @@ These are the URLs currently referenced by the layer manifests.
 
 ### State and regional parcel / assessment sources
 
-- `https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx` - Maryland Planning parcel download portal
-- `https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx` - Same portal, lowercase variant used in manifests
-- `https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx` - Maryland parcel documentation
-- `https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer` - Maryland parcel map service
-- `https://www.dropbox.com/scl/fi/i08w46iye7mkeb15la9fk/February_2026_Parcels.zip?rlkey=r8y6lzyhj5sqf5mse62vonb4e&dl=1` - Parcel ZIP referenced for Maryland parcel intake
 - `https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1` - Baltimore County parcel service
 - `https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson` - Baltimore County parcel query
 - `https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/info/iteminfo` - Baltimore County parcel metadata
@@ -130,6 +152,13 @@ These are tracked because they matter for research, but they are not clean opera
 - `https://legislativereference.baltimorecity.gov/records-management` - Records management
 - `https://apps.mht.maryland.gov/mihp/MIHP.aspx?County=Baltimore+City&Search=County` - Maryland Inventory of Historic Properties search
 - `https://mdgeodata.md.gov/imap/rest/services/Historic/MD_InventoryHistoricProperties/MapServer` - Historic properties map service
+- `https://www.arcgis.com/home/item.html?id=de0ddaef68624e32a84e5197c5ac1829` - 311 customer service requests 2026 dataset page
+- `https://opendata.baltimorecity.gov/egis/rest/services/NonSpatialTables/Licenses/FeatureServer/0` - Baltimore liquor licenses table
+- `https://health.maryland.gov/phpa/OEHFP/OFPCHS/Pages/FoodLicensePermit.aspx` - Maryland food license and permit guidance
+- `https://www.courts.state.md.us/dashboards` - Maryland Courts dashboards
+- `https://www.courts.state.md.us/courts/courtrecords` - Maryland court records access
+- `https://pay.baltimorecity.gov/lien/announcement/index` - Baltimore lien certificate workflow
+- `https://health.baltimorecity.gov/sites/default/files/Lead_Paint_VNs.pdf` - Lead paint violation notices PDF
 
 ## What This Data Is For
 
@@ -152,11 +181,27 @@ Health, vulnerability, life expectancy, business counts, mortgage activity, and 
 
 ### Regional parcel coverage
 
-Maryland Planning, Baltimore County, Howard County, and Maryland assessment sources support cross-jurisdiction work. They are not equally clean, and some are better treated as reference feeds than default app layers.
+The Maryland Planning geometry feeds are the preferred statewide starting point. Baltimore County, Howard County, and Maryland assessment sources support cross-jurisdiction work where county-native data is materially better or fills attribute gaps.
 
 ### Extended event layers
 
 Foreclosure, receivership, work orders, impact investment areas, and CIP layers are event-style or program-style overlays. They are useful for identifying intervention patterns around parcels.
+
+### Missing but now tracked
+
+The repo now explicitly tracks several high-value parcel-map candidates that were previously just ideas:
+
+- 311 requests
+- rental licensing
+- fire calls
+- environmental citations
+- demolition permits
+- tree canopy
+- school zones
+- transit access layers
+- historic district overlays
+- enterprise zone and TOD policy overlays
+- liquor-license, food-license, lien, eviction, and lead-enforcement research sources
 
 ### Capital flows
 

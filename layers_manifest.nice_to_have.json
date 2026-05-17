@@ -52,5 +52,243 @@
     "file": "total_businesses_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/132ea1fbc8c84645b828a1a55406824d/geojson?layers=0",
     "color": "#fb9a99"
+  },
+  {
+    "name": "Environmental Citations",
+    "file": "environmental_citations.geojson",
+    "color": "#e31a1c",
+    "description": "Baltimore environmental citations for sanitation, health, safety, and other quality-of-life code issues.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/ECB_OB/FeatureServer/0"
+    }
+  },
+  {
+    "name": "Rental Registration and Licensing",
+    "file": "rental_registration_licensing.geojson",
+    "color": "#1b9e77",
+    "description": "Rental registration and licensing records updated from OpenGov daily.",
+    "category": "housing",
+    "subcategory": "Licensing",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/OpenGov_RegAndLicense/MapServer/0"
+    }
+  },
+  {
+    "name": "Fire Calls - Last 3 Months",
+    "file": "fire_calls_last_3_months.geojson",
+    "color": "#d95f02",
+    "description": "Baltimore Fire Department calls from the last three months.",
+    "category": "public-safety",
+    "subcategory": "Fire",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/FIRE/Fire_Calls/MapServer/0"
+    }
+  },
+  {
+    "name": "Demolition Permits Since 2015",
+    "file": "demolition_permits_since_2015.geojson",
+    "color": "#b15928",
+    "description": "Demolition permit records published in the CoDeMap land-planning service.",
+    "category": "housing",
+    "subcategory": "Permits",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/21"
+    }
+  },
+  {
+    "name": "Tree Canopy",
+    "file": "tree_canopy.geojson",
+    "color": "#33a02c",
+    "description": "Baltimore City tree canopy polygons.",
+    "category": "environment",
+    "subcategory": "Green Infrastructure",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/27"
+    }
+  },
+  {
+    "name": "School Zones",
+    "file": "school_zones.geojson",
+    "color": "#6a3d9a",
+    "description": "Baltimore City school zone polygons.",
+    "category": "education",
+    "subcategory": "Boundaries",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/14"
+    }
+  },
+  {
+    "name": "Bus Stops",
+    "file": "bus_stops.geojson",
+    "color": "#1f78b4",
+    "description": "Bus stop points from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Transit",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/1"
+    }
+  },
+  {
+    "name": "Bus Routes",
+    "file": "bus_routes.geojson",
+    "color": "#a6cee3",
+    "description": "Bus route lines from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Transit",
+    "scale": "corridor",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/2"
+    }
+  },
+  {
+    "name": "On Street Bike Facilities",
+    "file": "on_street_bike_facilities.geojson",
+    "color": "#66c2a5",
+    "description": "On-street bike facilities from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Bike",
+    "scale": "corridor",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/5"
+    }
+  },
+  {
+    "name": "CHAP District",
+    "file": "chap_district.geojson",
+    "color": "#ffed6f",
+    "description": "Commission for Historical and Architectural Preservation district boundaries.",
+    "category": "planning",
+    "subcategory": "Historic",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/10"
+    }
+  },
+  {
+    "name": "National Register Historic District",
+    "file": "national_register_historic_district.geojson",
+    "color": "#ffff99",
+    "description": "National Register historic district boundaries within Baltimore.",
+    "category": "planning",
+    "subcategory": "Historic",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/11"
+    }
+  },
+  {
+    "name": "Enterprise Zone",
+    "file": "enterprise_zone.geojson",
+    "color": "#80b1d3",
+    "description": "State Enterprise Zone boundaries for tax-credit and business-investment context.",
+    "category": "economy",
+    "subcategory": "Incentive Area",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxCityPrograms/MapServer/20"
+    }
+  },
+  {
+    "name": "TOD Opportunity Zones",
+    "file": "tod_opportunity_zones.geojson",
+    "color": "#8dd3c7",
+    "description": "Transit-oriented development opportunity zones from the 2024 comprehensive planning process.",
+    "category": "planning",
+    "subcategory": "Transit-Oriented Development",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/53"
+    }
+  },
+  {
+    "name": "TOD Supportive Zones",
+    "file": "tod_supportive_zones.geojson",
+    "color": "#bebada",
+    "description": "Transit-oriented development supportive zones from the 2024 comprehensive planning process.",
+    "category": "planning",
+    "subcategory": "Transit-Oriented Development",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/54"
+    }
   }
 ]

@@ -66,9 +66,13 @@ std::string isoNowUtc() {
 std::string analyticsBuildSignature(const fs::path& root, const std::vector<LayerDef>& layers) {
     std::ostringstream sig;
     for (const auto& layer : layers) {
+        sig << layer.file << ":runtime=" << (layer.runtime_load ? 1 : 0)
+            << ":duckdb=" << (layer.duckdb_ingest ? 1 : 0)
+            << ":role=" << layer.duckdb_role << "|";
+        if (!layer.duckdb_ingest) continue;
         const fs::path layer_path = root / "data" / "layers" / layer.file;
         if (!fs::exists(layer_path)) continue;
-        sig << layer.file << ":" << fileSignature(layer_path) << "|";
+        sig << "sig=" << fileSignature(layer_path) << "|";
     }
     return sig.str();
 }
@@ -178,6 +182,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 layer_idx UBIGINT,
                 layer_name VARCHAR,
                 layer_file VARCHAR,
+                duckdb_role VARCHAR,
                 feature_idx UBIGINT,
                 scale VARCHAR,
                 category VARCHAR,
@@ -201,9 +206,11 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         size_t layer_count = 0;
         for (size_t li = 0; li < layers.size(); ++li) {
             const auto& layer = layers[li];
+            if (!layer.duckdb_ingest) continue;
             if (layer.features.empty()) continue;
             layer_count++;
             const std::string category = categoryToString(layer.category);
+            const std::string duckdb_role = layer.duckdb_role.empty() ? "layer_feature" : layer.duckdb_role;
             for (size_t fi = 0; fi < layer.features.size(); ++fi) {
                 const auto& fg = layer.features[fi];
                 const std::string blocklot = featureBlockLotJoinKey(fg);
@@ -222,6 +229,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<uint64_t>((uint64_t)li);
                 appender.Append<const char*>(layer.name.c_str());
                 appender.Append<const char*>(layer.file.c_str());
+                appender.Append<const char*>(duckdb_role.c_str());
                 appender.Append<uint64_t>((uint64_t)fi);
                 appender.Append<const char*>(layer.scale.c_str());
                 appender.Append<const char*>(category.c_str());
@@ -399,6 +407,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     lf.status AS feature_status,
                     lf.layer_file,
                     lf.layer_name,
+                    lf.duckdb_role,
                     lf.feature_idx,
                     lf.category,
                     lf.value_usd,
@@ -426,7 +435,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                         try_strptime(json_extract_string(lf.properties_json, '$.RECORD_DATE'), '%Y-%m-%d')
                     ) AS parsed_event_ts
                 FROM layer_features lf
-                WHERE lf.scale = 'parcel' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
+                WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
             )
             SELECT
                 row_number() OVER () AS event_id,
@@ -444,7 +453,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     WHEN lower(category) = 'housing' THEN 'housing'
                     WHEN lower(category) = 'permits' THEN 'permit'
                     WHEN lower(category) = 'taxes' THEN 'tax'
-                    ELSE 'parcel_event'
+                    ELSE duckdb_role
                 END AS event_type,
                 coalesce(
                     nullif(json_extract_string(properties_json, '$.CASE_STATUS'), ''),
@@ -501,9 +510,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         )SQL");
         con.Query(R"SQL(
             CREATE OR REPLACE VIEW layer_counts AS
-            SELECT layer_file, layer_name, scale, category, count(*) AS feature_count
+            SELECT layer_file, layer_name, duckdb_role, scale, category, count(*) AS feature_count
             FROM layer_features
-            GROUP BY layer_file, layer_name, scale, category
+            GROUP BY layer_file, layer_name, duckdb_role, scale, category
             ORDER BY feature_count DESC
         )SQL");
         con.Query(R"SQL(

@@ -565,6 +565,7 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_source_crs = import.value("source_crs", std::string());
             layer.import_shapefile = import.value("shapefile", std::string());
             layer.import_service_url = import.value("service_url", std::string());
+            layer.import_normalizer = import.value("normalizer", std::string());
             res = downloadOrImportLayer(layer, out_path, root);
         }
         if (res.ok) {

@@ -25,6 +25,8 @@ struct LayerDef {
     std::string import_source_crs;
     std::string import_shapefile;
     std::string import_service_url;
+    std::string import_normalizer;
+    std::string duckdb_role;
     std::string description;
     std::string heatmap_field;
     std::string subcategory;
@@ -32,6 +34,8 @@ struct LayerDef {
     std::string scale;
     ImVec4 color;
     bool enabled = false;
+    bool runtime_load = true;
+    bool duckdb_ingest = true;
     Category category = Category::Housing;
     struct FeatureExtent {
         float min_lon = 0.0f;

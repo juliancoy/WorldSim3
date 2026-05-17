@@ -8,7 +8,10 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event"
   },
   {
     "name": "Foreclosure Filings",
@@ -19,7 +22,10 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Receivership - Filed and Open",
@@ -30,7 +36,10 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Receivership - Settled",
@@ -41,7 +50,10 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Open Work Orders",
@@ -52,7 +64,10 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "Impact Investment Areas",
@@ -63,6 +78,9 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "neighborhood",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   }
 ]

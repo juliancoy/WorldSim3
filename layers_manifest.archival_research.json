@@ -134,5 +134,86 @@
     "source": "Maryland iMAP / Maryland Historical Trust",
     "quality_tier": "official-api",
     "description": "Statewide MIHP map service candidate for future historic-property overlays."
+  },
+  {
+    "name": "Baltimore 311 Customer Service Requests 2026",
+    "file": "baltimore_311_customer_service_requests_2026.html",
+    "url": "https://www.arcgis.com/home/item.html?id=de0ddaef68624e32a84e5197c5ac1829",
+    "download": false,
+    "reason": "Official current-year dataset exists, but the city has shifted to year-specific hosted layers. We should confirm the stable download/API pattern before automating pulls.",
+    "category": "archival-research",
+    "source": "Open Baltimore",
+    "quality_tier": "official-api",
+    "temporal_coverage": "Current calendar year",
+    "description": "311 service requests with request type, status, and location. High-value parcel distress and service-response source.",
+    "join_strategy": "Spatial join to parcel or nearest parcel; preserve request category and status history."
+  },
+  {
+    "name": "Baltimore Liquor Licenses",
+    "file": "baltimore_liquor_licenses.html",
+    "url": "https://opendata.baltimorecity.gov/egis/rest/services/NonSpatialTables/Licenses/FeatureServer/0",
+    "download": false,
+    "reason": "Official queryable table exists, but it is non-spatial. Needs address cleaning and geocoding before it becomes a parcel-map layer.",
+    "category": "archival-research",
+    "source": "Open Baltimore / Baltimore City",
+    "quality_tier": "official-api",
+    "temporal_coverage": "Current license records",
+    "description": "Liquor license table with trade name, class, status, and address fields.",
+    "join_strategy": "Normalize and geocode AddrStreet plus ZIP to parcel; use license number as stable business key."
+  },
+  {
+    "name": "Maryland Food License and Permit Guidance",
+    "file": "maryland_food_license_permit_guidance.html",
+    "url": "https://health.maryland.gov/phpa/OEHFP/OFPCHS/Pages/FoodLicensePermit.aspx",
+    "download": false,
+    "reason": "Official licensing guidance exists, but no clean Baltimore parcel-ready dataset has been verified yet.",
+    "category": "archival-research",
+    "source": "Maryland Department of Health",
+    "quality_tier": "official-request-workflow",
+    "description": "Reference page for food facility permitting and licensing. Candidate starting point for restaurant and food-business permit data."
+  },
+  {
+    "name": "Maryland Courts Dashboards",
+    "file": "maryland_courts_dashboards.html",
+    "url": "https://www.courts.state.md.us/dashboards",
+    "download": false,
+    "reason": "Official dashboard source for court caseload and housing-related aggregate metrics, but not yet a parcel-address event feed.",
+    "category": "archival-research",
+    "source": "Maryland Judiciary",
+    "quality_tier": "official-api",
+    "description": "Official Maryland Courts dashboards, including high-level caseload and housing-related reporting."
+  },
+  {
+    "name": "Maryland Court Records Access",
+    "file": "maryland_court_records_access.html",
+    "url": "https://www.courts.state.md.us/courts/courtrecords",
+    "download": false,
+    "reason": "Court records are official but not open bulk parcel data. Any eviction or housing-court workflow needs access review and a compliant extraction path.",
+    "category": "archival-research",
+    "source": "Maryland Judiciary",
+    "quality_tier": "official-request-workflow",
+    "description": "Official court-record access page covering District Court civil judgment and satisfaction data and other record access methods."
+  },
+  {
+    "name": "Baltimore Lien Certificate Request Workflow",
+    "file": "baltimore_lien_certificate_request.html",
+    "url": "https://pay.baltimorecity.gov/lien/announcement/index",
+    "download": false,
+    "reason": "Useful for tax/liens workflow documentation, but not a bulk machine-readable delinquency dataset.",
+    "category": "archival-research",
+    "source": "City of Baltimore",
+    "quality_tier": "official-request-workflow",
+    "description": "Official lien certificate request workflow for Baltimore City. Relevant for tax-delinquency and title-risk research."
+  },
+  {
+    "name": "Lead Paint Violation Notices",
+    "file": "lead_paint_violation_notices.pdf",
+    "url": "https://health.baltimorecity.gov/sites/default/files/Lead_Paint_VNs.pdf",
+    "download": false,
+    "reason": "Human-readable PDF notices rather than a clean layer or API feed. Still useful as evidence that address-level lead enforcement data exists.",
+    "category": "archival-research",
+    "source": "Baltimore City Health Department",
+    "quality_tier": "official-document",
+    "description": "Lead paint violation notice document with address-level enforcement context."
   }
 ]

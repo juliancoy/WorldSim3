@@ -10,7 +10,10 @@
     "scale": "parcel",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "BLOCKLOT; fallback to address/geocoding if needed"
+    "join_strategy": "BLOCKLOT; fallback to address/geocoding if needed",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event"
   },
   {
     "name": "DPW Capital Improvement Projects - Storm MS4",
@@ -23,7 +26,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "DPW Capital Improvement Projects - Stormwater",
@@ -36,7 +42,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "DPW Capital Improvement Projects - Water",
@@ -49,7 +58,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "DPW Capital Improvement Projects - Wastewater",
@@ -62,7 +74,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Capital Improvements Dashboard - Wastewater",
@@ -75,7 +90,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Capital Improvements Dashboard - Water",
@@ -88,7 +106,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Capital Improvements Dashboard - Stormwater",
@@ -101,7 +122,10 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   },
   {
     "name": "Capital Improvements Dashboard - MS4",
@@ -114,6 +138,9 @@
     "scale": "project",
     "default_enabled": false,
     "quality_tier": "official-structured",
-    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood"
+    "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context"
   }
 ]

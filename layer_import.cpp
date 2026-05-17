@@ -581,7 +581,16 @@ void normalizeBaltimoreCountyArcgisFeature(json& feature) {
     props["sdat_link"] = jsonText(props, {"URL"});
 }
 
-void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path) {
+void maybeNormalizeArcgisFeature(const std::string& normalizer, json& feature) {
+    if (normalizer.empty()) return;
+    if (normalizer == "baltimore_county_parcels") {
+        normalizeBaltimoreCountyArcgisFeature(feature);
+        return;
+    }
+    throw std::runtime_error("unsupported ArcGIS feature normalizer: " + normalizer);
+}
+
+void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path, const std::string& normalizer) {
     if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
     json ids = json::parse(httpPostForm(service_url + "/query", {
         {"where", "1=1"},
@@ -619,7 +628,7 @@ void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::pa
         }).body);
         if (page.contains("error")) throw std::runtime_error("ArcGIS feature query failed: " + page["error"].dump());
         for (auto& feature : page.value("features", json::array())) {
-            normalizeBaltimoreCountyArcgisFeature(feature);
+            maybeNormalizeArcgisFeature(normalizer, feature);
             if (!first_feature) out << ',';
             first_feature = false;
             out << feature.dump();
@@ -689,6 +698,7 @@ bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer)
         layer.name = "Baltimore County Parcels";
         layer.import_type = "arcgis_feature_layer";
         layer.import_service_url = "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1";
+        layer.import_normalizer = "baltimore_county_parcels";
         return true;
     }
     if (file == "howard_county_parcels.geojson") {
@@ -853,7 +863,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
     }
     if (layer.import_type == "arcgis_feature_layer") {
         try {
-            writeArcgisFeatureLayerGeoJson(layer.import_service_url, out_path);
+            writeArcgisFeatureLayerGeoJson(layer.import_service_url, out_path, layer.import_normalizer);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
