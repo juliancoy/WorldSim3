@@ -111,10 +111,4 @@ void coordinateLayerHydrationDependencies(const LayerDependencyCoordinatorContex
         ctx.enqueue_hydration((size_t)ctx.parcel_layer_idx, true);
     }
 
-    if (ctx.zoning_layer_idx >= 0 &&
-        (size_t)ctx.zoning_layer_idx < ctx.layers->size() &&
-        (*ctx.layers)[(size_t)ctx.zoning_layer_idx].enabled &&
-        !layerRuntimeReady(*ctx.layer_states, *ctx.status_mutex, ctx.zoning_layer_idx)) {
-        ctx.enqueue_hydration((size_t)ctx.zoning_layer_idx, false);
-    }
 }

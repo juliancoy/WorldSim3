@@ -26,6 +26,7 @@ struct RenderLayerPassContext {
     int zoning_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
+    float map_polygon_fill_opacity = 170.0f / 255.0f;
     const ImVec4* vacancy_notice_color = nullptr;
     const ImVec4* vacancy_rehab_color = nullptr;
     bool vacant_notice_overlay_enabled = false;

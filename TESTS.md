@@ -177,6 +177,8 @@ Additional color-cache coverage:
 ./build/worldsim3 --parcel-render-cache-selftest
 ./build/worldsim3 --warm-parcel-render-cache regional_parcels.geojson
 ./build/worldsim3 --warm-parcel-render-cache-all
+./build/worldsim3 --warm-parcel-runtime-stack regional_parcels.geojson
+./build/worldsim3 --parcel-artifact-health regional_parcels.geojson
 ```
 
 Purpose:
@@ -194,6 +196,8 @@ Additional warmer coverage:
 
 - `--warm-parcel-render-cache <layer>` verifies a real layer can be loaded from binary hydration + binary triangulation caches and converted into a binary parcel render sidecar.
 - `--warm-parcel-render-cache-all` attempts the same conversion for every layer with a binary triangulation cache.
+- `--warm-parcel-runtime-stack <layer>` runs the hydration, triangulation, and parcel render cache warmers in dependency order while leaving canonical source artifacts and DuckDB rebuilds explicit.
+- `--parcel-artifact-health <layer>` performs a lightweight header/size/signature audit of the canonical binary, hydration cache, triangulation cache, parcel render sidecar, and DuckDB artifact without loading full feature bodies.
 - The parcel render self-test also verifies vertex-to-parcel-slot references and line-index topology round-trip, which are the lookups used by the GPU-side parcel fill and outline paths.
 
 Current additional verification:

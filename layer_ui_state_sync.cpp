@@ -70,7 +70,6 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     dependency_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
     dependency_ctx.tax_lien_layer_idx = ctx.tax_lien_layer_idx;
     dependency_ctx.tax_sale_layer_idx = ctx.tax_sale_layer_idx;
-    dependency_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     dependency_ctx.filter_enabled = ctx.filter_enabled;
     dependency_ctx.filter_owner = ctx.filter_owner;
     dependency_ctx.filter_address = ctx.filter_address;

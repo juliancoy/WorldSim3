@@ -60,6 +60,7 @@ struct FilterResultSet {
     // For filters that are produced outside the immediate UI, e.g. SQL query
     // results. These sets are canonical render-domain outputs, not UI state.
     bool active = false;
+    std::unordered_set<size_t> layers;
     std::unordered_set<FeatureKey, FeatureKeyHash> features;
     std::unordered_set<std::string> blocklots;
     std::unordered_set<std::string> owners;
@@ -73,6 +74,13 @@ struct QueryMapLayer {
     FilterResultSet result_set;
     size_t row_count = 0;
     std::string status;
+};
+
+struct ParcelJurisdictionFilterState {
+    std::unordered_set<std::string> selected_jurisdictions;
+    bool dirty = true;
+    FilterResultSet result_set;
+    std::string status = "All Maryland parcels";
 };
 
 struct FeatureFilterContext {

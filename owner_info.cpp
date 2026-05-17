@@ -3,6 +3,7 @@
 #include "app_utils.h"
 #include "feature_props.h"
 #include "imgui.h"
+#include "parcel_value_ui.h"
 #include "parcel_timeline.h"
 
 #include <algorithm>
@@ -90,7 +91,7 @@ void drawUnifiedParcelDetail(const UnifiedParcelRecord& rec) {
     numeric_prop("Current Improvements", rec.current_improvements);
     numeric_prop("Tax Base", rec.tax_base);
     numeric_prop("Sale Price", rec.sale_price);
-    numeric_prop("Current Value", rec.current_value);
+    drawParcelCurrentValueDetail(rec);
     ImGui::Text("Vacant Notices: %d", rec.vacant_notice_count);
     ImGui::Text("Vacant Rehab Records: %d", rec.vacant_rehab_count);
     ImGui::Text("Tax Lien Records: %d", rec.tax_lien_count);
@@ -217,7 +218,7 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     if (tax_lien > 0) ImGui::Text("Tax Lien Total Amount: %s", formatUsd(tax_lien_amount, 2).c_str());
     ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
     if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
-    if (current_value_total > 0.0) ImGui::Text("Current Parcel Value (Total): %s", formatUsd(current_value_total, 2).c_str());
+    drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
     std::string summary_owner = selected_unified ? selected_unified->owner : ownerNameFor(selected_rp);
     if (summary_owner.empty()) summary_owner = ownerNameFor(&selected);

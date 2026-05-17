@@ -21,7 +21,7 @@ void drawMapZoomBadge(ImDrawList* draw, ImVec2 origin, ImVec2 size, int zoom) {
     const ImVec2 text_size = ImGui::CalcTextSize(zoom_label);
     const float pad_x = 10.0f;
     const float pad_y = 6.0f;
-    const ImVec2 box_max(origin.x + size.x - 12.0f, origin.y + size.y - 12.0f);
+    const ImVec2 box_max(origin.x + size.x - 102.0f, origin.y + size.y - 12.0f);
     const ImVec2 box_min(box_max.x - text_size.x - pad_x * 2.0f, box_max.y - text_size.y - pad_y * 2.0f);
     draw->AddRectFilled(box_min, box_max, IM_COL32(17, 24, 32, 205), 7.0f);
     draw->AddRect(box_min, box_max, IM_COL32(255, 255, 255, 70), 7.0f);

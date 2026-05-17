@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -44,6 +45,7 @@ public:
         const LayerDef::FeatureGeom& fg);
 
     void reserveWorldRings(size_t count);
+    void setLowZoomDenseFillLayers(const std::vector<size_t>& layer_indices);
 
     void appendWorldRingLine(const std::vector<ImVec2>& world_ring);
     void appendWorldRingLine(const std::vector<ImVec2>& world_ring, int ring_step);
@@ -90,6 +92,7 @@ private:
     std::unordered_map<uint64_t, std::pair<ImVec2, ImVec2>> world_extent_cache_;
     std::unordered_map<uint64_t, CachedWorldFillGeometry> world_fill_cache_;
     std::unordered_map<uint64_t, CachedFeatureColorStorage> feature_color_cache_;
+    std::unordered_set<size_t> low_zoom_dense_fill_layers_;
     std::pair<ImVec2, ImVec2> last_world_extent_;
     std::vector<ImVec2> scratch_fill_verts_;
     std::vector<ImVec2> scratch_line_;

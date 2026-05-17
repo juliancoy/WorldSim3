@@ -14,9 +14,8 @@
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
       "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer",
       "https://www.dropbox.com/scl/fi/i08w46iye7mkeb15la9fk/February_2026_Parcels.zip?rlkey=r8y6lzyhj5sqf5mse62vonb4e&dl=1",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
       "https://data.howardcountymd.gov/",
@@ -25,7 +24,7 @@
       "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AProperty_Public_NoName&outputFormat=application/json",
       "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
       "https://opendata.maryland.gov/resource/ed4q-f8tm.csv",
-      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download"
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/info/iteminfo"
     ],
     "category": "housing",
     "subcategory": "Parcels & Ownership",
@@ -52,21 +51,21 @@
     "description": "Normalized Baltimore County parcel geometry staging layer. Source is Baltimore County ArcGIS REST Tax parcel (MapServer/1), which supports geoJSON queries and includes owner/value/year-built fields. Convert and normalize before inclusion in regional_parcels.geojson.",
     "download": false,
     "reason": "Baltimore County publishes a machine-readable ArcGIS REST tax parcel layer; keep this staging layer generated/normalized before inclusion in regional_parcels.geojson.",
-    "reference_url": "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+    "reference_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/info/iteminfo",
       "https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx"
     ],
     "import": {
       "type": "arcgis_feature_layer",
-      "service_url": "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1"
+      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1"
     }
   },
   {
@@ -112,7 +111,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -137,7 +136,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -162,7 +161,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -187,7 +186,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -212,7 +211,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -237,7 +236,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -262,7 +261,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -287,7 +286,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -312,7 +311,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -337,7 +336,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -362,7 +361,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -387,7 +386,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -412,7 +411,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -437,7 +436,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -462,7 +461,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -487,7 +486,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -512,7 +511,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -537,7 +536,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -562,7 +561,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -587,7 +586,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
@@ -612,7 +611,7 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",

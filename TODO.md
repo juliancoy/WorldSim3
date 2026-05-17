@@ -1,122 +1,194 @@
 # TODO
 
+## Current State
+
+The statewide parcel stack has been materialized, but the canonical parcel binary is not yet the sole primary runtime artifact.
+
+Present artifacts:
+
+- `data/layers/regional_parcels.geojson`
+- `data/layers/regional_parcels.geojson.canonical.bin`
+- `data/cache/hydration/regional_parcels.geojson.bin`
+- `data/cache/triangulation/regional_parcels.geojson.tri.bin`
+- `data/cache/render/regional_parcels.geojson.parcel-render.bin`
+- `data/worldsim.duckdb`
+
+Implemented support:
+
+- Hydration can read the binary hydration cache.
+- `regional_parcels.geojson.canonical.bin` is now the authoritative source-signature provider for statewide parcels.
+- Hydration can read the canonical parcel binary when the hydration cache is missing or stale.
+- Parcel render sidecar can be warmed from binary hydration and triangulation caches.
+- Hydration, triangulation, and parcel render cache warming operate under the canonical statewide parcel signature.
+- `--warm-parcel-runtime-stack [regional_parcels.geojson]` warms hydration, triangulation, and parcel render caches in order without implicitly rebuilding canonical source artifacts or DuckDB.
+- `--parcel-artifact-health` reports parcel artifact presence, signatures, counts, sizes, and recommended rebuild steps.
+- DuckDB is treated as analytics/search/detail cache, not render geometry.
+- Runtime status text identifies which hydration/triangulation artifact is being read.
+- CLI/self-test coverage exists for hydration cache, triangulation cache, parcel render sidecar, canonical parcel binary, render policy, spatial index, and parcel GPU CPU-bypass behavior.
+
 ## Highest Priority
 
-- Make `regional_parcels.geojson.canonical.bin` the primary statewide parcel artifact.
-  - Stop requiring `regional_parcels.geojson` for the normal parcel build/runtime path.
-  - Keep GeoJSON as optional export/debug output only.
-- Refresh downstream parcel artifacts from the completed statewide Maryland layer.
-  - Warm hydration cache for `regional_parcels.geojson`.
-  - Warm triangulation cache for `regional_parcels.geojson`.
-  - Warm parcel render sidecar for `regional_parcels.geojson`.
-  - Rebuild DuckDB from the new statewide parcel layer.
-  - Record the new statewide parcel count in docs/status tooling.
+- Remove remaining operational reliance on `regional_parcels.geojson` outside explicit GeoJSON validation/export flows.
+- Keep `regional_parcels.geojson` as optional export/debug interchange only.
+- Add explicit source/analytics rebuild commands that can be safely composed with `--warm-parcel-runtime-stack` for full parcel-stack refreshes:
+  - canonical parcel binary
+  - optional GeoJSON export
+  - DuckDB analytics cache
+- Keep runtime-cache refreshes non-destructive by default: hydration, triangulation, and parcel render sidecar are rebuildable performance artifacts; canonical binary and DuckDB require explicit rebuild intent.
+- Update docs/status output with final statewide parcel count, jurisdiction counts, and artifact sizes.
 
 ## Parcel Build Pipeline
 
-- Refactor `worldsim_regional_parcel_builder` into a two-stage pipeline.
-  - Stage 1: parallel county/state source normalization into per-jurisdiction shards.
-  - Stage 2: deterministic merge/finalize into canonical statewide parcel outputs.
-- Remove whole-file DOM parsing from the parcel builder where practical.
-  - Prefer streaming readers over full `nlohmann::json` materialization for large county inputs.
-- Add explicit temp-file plus atomic-rename behavior for statewide parcel outputs.
-  - Do not leave partially written `regional_parcels.geojson` or `.canonical.bin` in place after interruption.
-- Add a dedicated shard/merge CLI mode.
-  - Example: build shards, merge shards, export GeoJSON on demand.
+- Refactor `worldsim_regional_parcel_builder` into explicit stages:
+  - normalize county/state inputs into per-jurisdiction shards
+  - merge shards deterministically into canonical statewide output
+  - export GeoJSON only when requested
+- Remove whole-file DOM parsing where practical.
+- Prefer streaming readers/writers for large county inputs and statewide outputs.
+- Use temp-file plus atomic-rename behavior for every statewide output.
+- Do not leave partially written `.geojson`, `.canonical.bin`, or shard files in accepted paths after interruption.
+- Add dedicated CLI modes:
+  - build shards
+  - merge shards
+  - export GeoJSON from canonical binary
+  - rebuild full parcel stack
 
 ## Canonical Parcel Binary
 
-- Add a dedicated self-test for `regional_parcels.geojson.canonical.bin`.
-  - Validate header/magic/version.
-  - Validate stored source signature.
-  - Validate feature count round-trip.
-  - Validate representative geometry/property decoding.
-- Add a CLI inspection tool for canonical parcel binary metadata.
-  - Print source signature, feature count, and basic size/layout stats.
-- Consider chunking the canonical binary.
-  - Current canonical binary is dense but still monolithic.
-  - Add chunk tables if runtime random access or partial rebuilds become necessary.
-- Evaluate reducing canonical property payload size.
-  - Current canonical binary stores full hydrated properties.
-  - Consider property dictionary/string-table encoding if this becomes the primary persisted artifact.
+- Keep canonical binary read paths primary for statewide parcels.
+- Keep and extend canonical binary self-test coverage:
+  - header/magic/version
+  - source signature
+  - feature count round trip
+  - representative geometry decode
+  - representative property decode
+- Keep and extend canonical binary inspection:
+  - source signature
+  - feature count
+  - bounds
+  - size/layout stats
+  - string/property payload stats
+- Consider chunking the canonical binary if random access or partial rebuilds become necessary.
+- Consider dictionary/string-table encoding for repeated property keys and values.
+- Keep full raw county property bags out of runtime geometry caches unless a concrete runtime use requires them.
 
 ## Runtime Hydration
 
-- Make hydration prefer canonical parcel binary before source GeoJSON for statewide parcels as the primary source path, not just a fallback when hydration cache is missing.
-- Add `/status` visibility for canonical-binary source use.
-  - Example phases already added in worker code should be surfaced and verified in live status/UI.
-- Add a headless validation path that compares:
-  - hydrated feature count from GeoJSON
-  - hydrated feature count from canonical binary
-  - mismatch detection by signature and count
+- Prefer canonical parcel binary before source GeoJSON for `regional_parcels.geojson` cache rebuilds.
+- Avoid parsing 7 GB GeoJSON during normal interactive startup.
+- Make `/status` clearly report canonical-binary source use, cache source use, and fallback source use.
+- Add a headless validation command that compares:
+  - GeoJSON feature count, when GeoJSON exists
+  - canonical binary feature count
+  - hydration cache feature count
+  - source signatures
+  - representative geometry/property samples
+- Ensure missing GeoJSON is a supported normal condition when canonical binary and required caches exist.
 
 ## Render Pipeline
 
-- Move parcel startup residency to load from canonical parcel binary -> hydration/triangulation/render sidecar path without reparsing GeoJSON.
-- Add dirty-range updates for parcel RGBA buffers.
-  - Current model is long-lived geometry plus mutable color buffers.
-  - Reduce full-buffer rewrites when only a subset of parcels changes color.
-- Add parcel GPU residency diagnostics.
-  - live feature count
-  - buffer sizes
+- Keep statewide parcel drawing on the retained Vulkan parcel path.
+- Do not regress into full CPU parcel scans when the statewide render sidecar is missing or loading.
+- Move parcel startup residency toward:
+  - canonical binary
+  - hydration cache
+  - triangulation cache
+  - render sidecar
+  - async GPU upload
+- Add dirty-range updates for parcel color buffers.
+- Avoid full color-buffer rewrites when only a subset of parcels changes state.
+- Expand parcel GPU diagnostics:
+  - resident feature count
+  - vertex/index/color buffer sizes
   - upload time
+  - visible chunk count
   - locked source signature
   - restart-required state
-- Add a dedicated validation mode for GPU parcel rendering.
-  - Assert fill, overlay, outline, and selected-emphasis paths all render against the retained parcel buffers.
+- Add a validation mode for retained parcel rendering:
+  - fill path
+  - overlay path
+  - outline path
+  - selected parcel emphasis
+  - property-value choropleth colors
 
 ## DuckDB / Analytics
 
-- Rebuild `unified_parcels` from the full statewide parcel layer and report:
+- Rebuild `unified_parcels` from the finalized statewide parcel layer after any canonical parcel refresh.
+- Report:
   - total unified parcels
-  - with geometry
-  - with property record
-  - by jurisdiction counts
-- Verify Maryland parcel detail lookups still work correctly against the larger statewide dataset.
+  - parcels with geometry
+  - parcels with property record
+  - counts by jurisdiction
+- Verify Maryland parcel detail lookups against the statewide dataset.
 - Keep DuckDB geometry-free for render purposes.
-  - DuckDB remains parcel facts/joins/analytics only.
-  - Do not regress into using DuckDB as a geometry draw source.
+- Keep DuckDB rebuild explicit/user-initiated, not automatic startup work.
+- Add stale/missing DuckDB messaging that distinguishes analytics unavailability from render readiness.
 
 ## Data Quality
 
-- Validate all 24 Maryland jurisdictions are present in the rebuilt statewide parcel layer.
+- Validate all 24 Maryland jurisdictions are present.
 - Add a jurisdiction-count audit command.
-  - Count parcels by `jurisdiction`.
-  - Detect missing or unexpectedly tiny counties.
-- Validate normalization quality across counties.
+- Detect missing or unexpectedly tiny county/jurisdiction contributions.
+- Validate normalized parcel fields by jurisdiction:
+  - `jurisdiction`
+  - `source_file`
   - `source_parcel_id`
   - `account_id`
   - `blocklot`
   - `address`
   - `owner`
 - Add mismatch diagnostics for parcel/property joins at statewide scale.
+- Track join rates by jurisdiction and source.
+
+## Basemaps / Dark Mode
+
+- Keep night-lights imagery as low/mid-zoom context only.
+- Use dark satellite transform for high-zoom dark-mode detail.
+- Treat basemaps as typed sources:
+  - raster tiles
+  - raster transforms
+  - vector overlays
+  - night-lights context layers
+  - local preprocessed raster pyramids
+- Add a preprocessing path for NASA Black Marble if better night-lights context is required.
+- Do not present low-resolution night-lights as parcel-scale satellite imagery.
 
 ## Observability / Operations
 
-- Add a progress/status surface for statewide parcel builds.
-  - current source jurisdiction
+- Add progress/status for statewide parcel builds:
+  - active source jurisdiction
   - completed jurisdictions
   - features written
   - output bytes written
-- Add an operational command that rebuilds the full statewide parcel stack end to end.
-  - canonical parcel binary
-  - optional GeoJSON export
-  - hydration cache
-  - triangulation cache
-  - parcel render sidecar
-  - DuckDB
-- Add disk-usage reporting for the parcel artifact stack.
-  - GeoJSON
+  - current output artifact
+- Keep disk-usage reporting current for the parcel artifact stack:
+  - optional GeoJSON
   - canonical binary
   - hydration cache
   - triangulation cache
   - render sidecar
+  - DuckDB
+- Extend `--parcel-artifact-health` with jurisdiction coverage and join-rate summaries.
 
 ## Documentation
 
-- Update docs after the first full statewide refresh is complete with final counts and artifact sizes.
-- Document the new primary artifact contract clearly:
-  - canonical binary is primary
-  - GeoJSON is optional/dev/export
-  - render sidecar is GPU-oriented
-  - DuckDB is analytics-oriented
+- Document the primary parcel artifact contract:
+  - canonical binary is the primary parcel source
+  - GeoJSON is optional export/debug interchange
+  - hydration cache is CPU runtime geometry
+  - triangulation cache is CPU fill geometry acceleration
+  - render sidecar is GPU-oriented retained parcel geometry
+  - DuckDB is analytics/search/detail only
+- Document expected startup behavior when all caches are warm.
+- Document expected startup behavior when each cache is missing.
+- Document how to rebuild the full parcel stack safely.
+- Keep `DATAFLOW.md`, `TESTS.md`, and this file aligned after each artifact-contract change.
+
+## Deferred
+
+- Chunked canonical binary random access.
+- Partial jurisdiction rebuilds.
+- Background DuckDB rebuild job.
+- Multi-source basemap registry loaded from external JSON.
+- Offline NASA Black Marble tile pyramid builder.
+- GPU-side parcel color derivation for large choropleth changes.

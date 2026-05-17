@@ -61,11 +61,15 @@ The main artifacts are:
 
 Files under `data/cache/` are rebuildable and should be treated as performance artifacts. Files under `data/layers/`, `data/imports/`, and `data/inbox/` are source or source-adjacent artifacts and should not be cleared as routine cache cleanup unless the intended result is to force reimport or redownload.
 
+Use `./build/worldsim3 --parcel-artifact-health regional_parcels.geojson` for a non-mutating parcel artifact audit. It reads cache headers and file sizes, reports signature/count compatibility, and recommends the next rebuild step without loading full statewide feature bodies.
+
+Use `./build/worldsim3 --warm-parcel-runtime-stack regional_parcels.geojson` to refresh the runtime geometry stack in dependency order: hydration cache, triangulation cache, then parcel render sidecar. This command intentionally does not rebuild the canonical parcel binary, optional GeoJSON export, or `data/worldsim.duckdb`; those source and analytics artifacts require explicit rebuild commands.
+
 ## Startup Layer Scheduling
 
 On startup, `app_main_loop.cpp` enqueues every enabled layer for hydration.
 
-That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`. For `regional_parcels.geojson`, it can also load `data/layers/regional_parcels.geojson.canonical.bin`, which is a compact canonical parcel binary companion emitted by the regional parcel builder. If one of these binary sources exists, matches the source signature, and passes sanity checks, the worker streams structured features into runtime memory. If not, it parses the source layer and writes a new hydration cache when the layer is cacheable.
+That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`. For `regional_parcels.geojson`, `data/layers/regional_parcels.geojson.canonical.bin` is the authoritative source-signature provider and the preferred source rebuild path when the hydration cache is missing or stale. If one of these binary sources exists, matches the source signature, and passes sanity checks, the worker streams structured features into runtime memory. If not, non-canonical layers parse their source layer and write a new hydration cache when the layer is cacheable.
 
 Hydration always repopulates `layers[i].features` in RAM because filters, hit testing, derived joins, spatial indexing, and optional analytics rebuilds operate on runtime layer objects.
 

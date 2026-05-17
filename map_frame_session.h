@@ -64,6 +64,7 @@ struct MapFrameSessionContext {
     bool heatmap_allow_cpu_fallback = false;
     bool heatmap_controls_active = false;
     int parcel_parameter_mode = 0;
+    float map_polygon_fill_opacity = 170.0f / 255.0f;
 
     bool map_hovered = false;
     bool parcel_hover_active = false;
@@ -112,11 +113,8 @@ struct MapFrameSessionContext {
     const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 
     HeatmapRuntimeState* heatmap_runtime = nullptr;
     MapProjectionCache* projection = nullptr;

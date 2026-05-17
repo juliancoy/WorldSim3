@@ -78,7 +78,7 @@
   {
     "name": "FFIEC CRA Flat Files",
     "file": "ffiec_cra_flat_files.zip",
-    "url": "https://www.ffiec.gov/data/cra/data-products",
+    "url": "https://www.ffiec.gov/data/cra/flat-files",
     "category": "capital-flows",
     "source": "FFIEC CRA",
     "download": false,

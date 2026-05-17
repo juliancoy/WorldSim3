@@ -199,7 +199,12 @@ void drawFeatureGeometry(
         const bool use_gpu_parcel_fill =
             (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
         if (!use_gpu_parcel_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
-            ImU32 fill = (feature_c & 0x00FFFFFF) | (170u << 24);
+            const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
+            const uint32_t fill_alpha = (uint32_t)std::clamp(
+                (int)std::lround((float)src_alpha * std::clamp(ctx.map_polygon_fill_opacity, 0.0f, 1.0f)),
+                0,
+                255);
+            ImU32 fill = (feature_c & 0x00FFFFFF) | (fill_alpha << 24);
             ctx.projection->drawTessellatedFill(ctx.draw, layer_idx, (uint32_t)feature_idx, fg, fill);
         }
 

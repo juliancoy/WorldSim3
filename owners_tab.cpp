@@ -13,6 +13,34 @@ std::string ownerClassLabel(const std::vector<std::pair<std::string, std::string
     }
     return "Unknown";
 }
+
+void toggleOwnerVisibility(
+    const std::vector<OwnerAggregate>& owner_aggregates,
+    const std::vector<size_t>& owner_visible_indices,
+    size_t visible_idx,
+    std::unordered_set<std::string>& selected_owners,
+    int& selected_owner_anchor) {
+    if (visible_idx >= owner_visible_indices.size()) return;
+    const size_t agg_idx = owner_visible_indices[visible_idx];
+    if (agg_idx >= owner_aggregates.size()) return;
+
+    const bool shift = ImGui::GetIO().KeyShift;
+    const bool ctrl = ImGui::GetIO().KeyCtrl;
+    const std::string& owner = owner_aggregates[agg_idx].owner;
+    const bool visible = selected_owners.find(owner) != selected_owners.end();
+    if (shift && selected_owner_anchor >= 0 && (size_t)selected_owner_anchor < owner_visible_indices.size()) {
+        if (!ctrl) selected_owners.clear();
+        const size_t begin = std::min((size_t)selected_owner_anchor, visible_idx);
+        const size_t end = std::max((size_t)selected_owner_anchor, visible_idx);
+        for (size_t j = begin; j <= end; ++j) {
+            selected_owners.insert(owner_aggregates[owner_visible_indices[j]].owner);
+        }
+    } else {
+        if (visible) selected_owners.erase(owner);
+        else selected_owners.insert(owner);
+        selected_owner_anchor = (int)visible_idx;
+    }
+}
 }
 
 void drawOwnersTab(const OwnersTabContext& ctx) {
@@ -57,9 +85,9 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
     }
 
     ImGui::Text("Owners: %zu", owner_aggregates.size());
-    ImGui::Text("Selected: %zu", selected_owners.size());
+    ImGui::Text("Visible: %zu", selected_owners.size());
     ImGui::SameLine();
-    if (ImGui::Button("Clear Selection")) {
+    if (ImGui::Button("Hide All")) {
         selected_owners.clear();
         *ctx.selected_owner_anchor = -1;
     }
@@ -90,14 +118,14 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
     *ctx.owner_class_assign_mode = assign_idx + 1;
 
     ImGui::SameLine();
-    if (ImGui::Button("Apply To Selected") && !selected_owners.empty()) {
+    if (ImGui::Button("Apply To Visible") && !selected_owners.empty()) {
         const std::string class_key = owner_class_items[(size_t)*ctx.owner_class_assign_mode].first;
         for (const auto& owner : selected_owners) (*ctx.owner_class_overrides)[owner] = class_key;
         *ctx.owner_class_overrides_dirty = true;
         *ctx.owner_aggregates_dirty = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear Class Override") && !selected_owners.empty()) {
+    if (ImGui::Button("Clear Visible Overrides") && !selected_owners.empty()) {
         for (const auto& owner : selected_owners) ctx.owner_class_overrides->erase(owner);
         *ctx.owner_class_overrides_dirty = true;
         *ctx.owner_aggregates_dirty = true;
@@ -157,29 +185,23 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
             const size_t visible_idx = (size_t)row;
             const size_t agg_idx = owner_visible_indices[visible_idx];
             const auto& r = owner_aggregates[agg_idx];
-            const bool row_selected = selected_owners.find(r.owner) != selected_owners.end();
+            const bool owner_visible = selected_owners.find(r.owner) != selected_owners.end();
             ImGui::PushID((int)agg_idx);
-            if (ImGui::Selectable(r.owner.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                const bool shift = ImGui::GetIO().KeyShift;
-                const bool ctrl = ImGui::GetIO().KeyCtrl;
-                if (shift && *ctx.selected_owner_anchor >= 0 && (size_t)*ctx.selected_owner_anchor < visible_rows) {
-                    if (!ctrl) selected_owners.clear();
-                    const size_t begin = std::min((size_t)*ctx.selected_owner_anchor, visible_idx);
-                    const size_t end = std::max((size_t)*ctx.selected_owner_anchor, visible_idx);
-                    for (size_t j = begin; j <= end; ++j) {
-                        selected_owners.insert(owner_aggregates[owner_visible_indices[j]].owner);
-                    }
-                } else if (ctrl) {
-                    if (row_selected) selected_owners.erase(r.owner);
-                    else selected_owners.insert(r.owner);
-                    *ctx.selected_owner_anchor = (int)visible_idx;
-                } else {
-                    selected_owners.clear();
-                    selected_owners.insert(r.owner);
-                    *ctx.selected_owner_anchor = (int)visible_idx;
-                }
-                openOwnerInfoPage(*ctx.owner_info_state, r.owner);
+            if (owner_visible) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.42f, 0.54f, 1.0f));
+            if (ImGui::SmallButton("V")) {
+                toggleOwnerVisibility(
+                    owner_aggregates,
+                    owner_visible_indices,
+                    visible_idx,
+                    selected_owners,
+                    *ctx.selected_owner_anchor);
             }
+            if (owner_visible) ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s owner visibility. Shift-click applies a visible range.", owner_visible ? "Hide" : "Show");
+            }
+            ImGui::SameLine();
+            ImGui::TextUnformatted(r.owner.c_str());
             ImGui::PopID();
             ImGui::SameLine();
             ImGui::PushID((int)agg_idx + 1000000);

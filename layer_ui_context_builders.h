@@ -64,9 +64,7 @@ struct LayersPanelContextFactoryInput {
     bool* crime_filter_shooting = nullptr;
     int crime_nibrs_layer_idx = -1;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 };
 
 LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& input);

@@ -104,6 +104,7 @@
 #include "api_control_commands.h"
 #include "cpu_affinity.h"
 #include "thread_utils.h"
+#include "ui_fonts.h"
 #include "ui_theme.h"
 
 #include <nlohmann/json.hpp>
@@ -146,6 +147,16 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+ImU32 mapPolygonFillColor(ImU32 color, float opacity) {
+    const uint32_t src_alpha = (color >> 24) & 0xFFu;
+    if (src_alpha == 0) return color;
+    const uint32_t alpha = (uint32_t)std::clamp(
+        (int)std::lround((float)src_alpha * std::clamp(opacity, 0.0f, 1.0f)),
+        0,
+        255);
+    return (color & 0x00FFFFFFu) | (alpha << 24);
+}
+
 struct ParcelRenderCacheRequest {
     std::string layer_file;
     std::string source_signature;
@@ -253,6 +264,7 @@ int runWorldSim3App(int argc, char** argv) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiContext* main_imgui_context = ImGui::GetCurrentContext();
+    configureWorldsimFonts();
     applyWorldsimUiTheme(app_settings.dark_mode);
 
     ImGui_ImplGlfw_InitForVulkan(window, true);
@@ -284,8 +296,11 @@ int runWorldSim3App(int argc, char** argv) {
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command_buffer;
-        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
-        check_vk_result(vkDeviceWaitIdle(g_Device));
+        {
+            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+            check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+            check_vk_result(vkDeviceWaitIdle(g_Device));
+        }
         ImGui_ImplVulkan_DestroyFontsTexture();
     }
 
@@ -307,6 +322,7 @@ int runWorldSim3App(int argc, char** argv) {
 
     ImGuiContext* download_queue_imgui_context = ImGui::CreateContext();
     ImGui::SetCurrentContext(download_queue_imgui_context);
+    configureWorldsimFonts();
     applyWorldsimUiTheme(app_settings.dark_mode);
     ImGui_ImplGlfw_InitForVulkan(download_queue_window, false);
     glfwSetWindowUserPointer(download_queue_window, download_queue_imgui_context);
@@ -356,8 +372,11 @@ int runWorldSim3App(int argc, char** argv) {
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &command_buffer;
-        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
-        check_vk_result(vkDeviceWaitIdle(g_Device));
+        {
+            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+            check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+            check_vk_result(vkDeviceWaitIdle(g_Device));
+        }
         ImGui_ImplVulkan_DestroyFontsTexture();
     }
     ImGui::SetCurrentContext(main_imgui_context);
@@ -624,6 +643,9 @@ int runWorldSim3App(int argc, char** argv) {
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
     std::vector<QueryMapLayer> query_layers;
+    std::mutex api_control_mutex;
+    ApiFilterControlCommand api_filter_control_cmd;
+    std::vector<ApiQueryControlCommand> api_query_control_cmds;
     const std::array<const char*, 24> parcel_jurisdiction_options = {
         "Allegany County",
         "Anne Arundel County",
@@ -650,11 +672,10 @@ int runWorldSim3App(int argc, char** argv) {
         "Wicomico County",
         "Worcester County"
     };
-    std::unordered_set<std::string> parcel_jurisdiction_filter;
-    for (const char* jurisdiction : parcel_jurisdiction_options) parcel_jurisdiction_filter.insert(jurisdiction);
-    bool parcel_jurisdiction_filter_dirty = true;
-    FilterResultSet parcel_jurisdiction_result_set;
-    std::string parcel_jurisdiction_filter_status = "All Maryland parcels";
+    ParcelJurisdictionFilterState parcel_jurisdiction_filter_state;
+    for (const char* jurisdiction : parcel_jurisdiction_options) {
+        parcel_jurisdiction_filter_state.selected_jurisdictions.insert(jurisdiction);
+    }
     std::unordered_map<std::string, std::string> owner_class_overrides;
     bool owner_class_overrides_loaded = false;
     bool owner_class_overrides_dirty = false;
@@ -827,6 +848,12 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.tile_cache_max = kMaxTileCache;
     status_api_input.stop = &hydration_stop;
     status_api_input.layers = &layers;
+    status_api_input.duckdb_analytics = &duckdb_analytics;
+    status_api_input.unified_parcels = &unified_parcels;
+    status_api_input.map_filter_state = &map_filter_state;
+    status_api_input.active_filter_result_set = &parcel_jurisdiction_filter_state.result_set;
+    status_api_input.query_layers = &query_layers;
+    status_api_input.active_filter_status = &parcel_jurisdiction_filter_state.status;
     status_api_input.time_cube_service = &time_cube_service;
     status_api_input.screenshot = &g_ScreenshotState;
     status_api_input.status_mutex = &status_mutex;
@@ -869,6 +896,9 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.api_ui_cmd_y = &api_ui_cmd_y;
     status_api_input.api_ui_cmd_button = &api_ui_cmd_button;
     status_api_input.api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y;
+    status_api_input.api_control_mutex = &api_control_mutex;
+    status_api_input.api_filter_control_cmd = &api_filter_control_cmd;
+    status_api_input.api_query_control_cmds = &api_query_control_cmds;
     status_api_input.layer_profile_mutex = &layer_profile_mutex;
     status_api_input.layer_profile_snapshot = &layer_profile_snapshot;
     status_api_input.profile_mutex = &profile_mutex;
@@ -1223,6 +1253,52 @@ int runWorldSim3App(int argc, char** argv) {
     std::unique_ptr<ArkavoRtcSessionManager> arkavo_rtc;
     char arkavo_send_peer[160] = "";
     char arkavo_send_path[512] = "";
+    bool map_window_fullscreen = false;
+    int map_windowed_x = 0;
+    int map_windowed_y = 0;
+    int map_windowed_w = initial_window_w;
+    int map_windowed_h = initial_window_h;
+    auto toggle_map_fullscreen = [&]() {
+        if (!map_window_fullscreen) {
+            glfwGetWindowPos(window, &map_windowed_x, &map_windowed_y);
+            glfwGetWindowSize(window, &map_windowed_w, &map_windowed_h);
+            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+            const GLFWvidmode* mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+            if (monitor && mode) {
+                glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+                map_window_fullscreen = true;
+                g_SwapChainRebuild = true;
+            }
+        } else {
+            glfwSetWindowMonitor(
+                window,
+                nullptr,
+                map_windowed_x,
+                map_windowed_y,
+                std::max(640, map_windowed_w),
+                std::max(420, map_windowed_h),
+                0);
+            map_window_fullscreen = false;
+            g_SwapChainRebuild = true;
+        }
+    };
+    auto request_map_snapshot = [&]() {
+        std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
+        g_ScreenshotState.req_id += 1;
+        g_ScreenshotState.pending = true;
+        g_ScreenshotState.request_native = false;
+        g_ScreenshotState.ok = false;
+        g_ScreenshotState.path.clear();
+        g_ScreenshotState.error.clear();
+        g_ScreenshotState.native_width = 0;
+        g_ScreenshotState.native_height = 0;
+        g_ScreenshotState.logical_width = 0;
+        g_ScreenshotState.logical_height = 0;
+        g_ScreenshotState.output_width = 0;
+        g_ScreenshotState.output_height = 0;
+        g_ScreenshotState.framebuffer_scale_x = 1.0f;
+        g_ScreenshotState.framebuffer_scale_y = 1.0f;
+    };
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -1239,6 +1315,8 @@ int runWorldSim3App(int argc, char** argv) {
         if (g_SwapChainRebuild) {
             glfwGetFramebufferSize(window, &w, &h);
             if (w > 0 && h > 0) {
+                std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+                check_vk_result(vkDeviceWaitIdle(g_Device));
                 ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
                 ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData, g_QueueFamily, g_Allocator, w, h, g_MinImageCount);
                 g_MainWindowData.FrameIndex = 0;
@@ -1258,13 +1336,20 @@ int runWorldSim3App(int argc, char** argv) {
             ui_text_scale);
         const float layout_w = frame_layout.layout_w;
         const float layout_h = frame_layout.layout_h;
-        const float layout_margin = frame_layout.layout_margin;
+        float layout_margin = frame_layout.layout_margin;
         const float layout_gap = frame_layout.layout_gap;
-        const float left_panel_w = frame_layout.left_panel_w;
-        const float right_panel_w = frame_layout.right_panel_w;
-        const float map_w = frame_layout.map_w;
-        const float map_x = frame_layout.map_x;
-        const float main_panel_h = frame_layout.main_panel_h;
+        float left_panel_w = frame_layout.left_panel_w;
+        float right_panel_w = frame_layout.right_panel_w;
+        float map_w = frame_layout.map_w;
+        float map_x = frame_layout.map_x;
+        float main_panel_h = frame_layout.main_panel_h;
+        if (map_window_fullscreen) {
+            left_panel_w = 0.0f;
+            right_panel_w = 0.0f;
+            map_x = layout_margin;
+            map_w = std::max(1.0f, layout_w - layout_margin * 2.0f);
+            main_panel_h = std::max(0.0f, layout_h - layout_margin * 2.0f);
+        }
         drainRetiredTextures();
         drainRetiredParcelGpuResources();
         const auto prof_frame_begin = std::chrono::steady_clock::now();
@@ -1324,6 +1409,14 @@ int runWorldSim3App(int argc, char** argv) {
             &api_ui_cmd_y,
             &api_ui_cmd_button,
             &api_ui_cmd_scroll_y,
+            &map_filter_state,
+            &parcel_jurisdiction_filter_state.result_set,
+            &query_layers,
+            &parcel_jurisdiction_filter_state.status,
+            &api_control_mutex,
+            &api_filter_control_cmd,
+            &api_query_control_cmds,
+            &parcel_gpu_filter_state_key,
             &api_ui_cmd_last_seq,
             &api_ui_mouse_release_pending,
             &api_ui_mouse_release_button,
@@ -1347,102 +1440,103 @@ int runWorldSim3App(int argc, char** argv) {
             [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
             [&]() { refresh_local_layer_exists_cache(); }
         });
-        const LeftPanelResult left_panel = drawLeftPanelWindow(LeftPanelContext{
-            layout_margin,
-            left_panel_w,
-            main_panel_h,
-            &root,
-            &app_settings,
-            &layers,
-            &layer_registry,
-            &local_layer_exists_cache,
-            &data_freshness_state,
-            &data_freshness_msg,
-            &data_library_status_msg,
-            &zoom,
-            kMinZoom,
-            kMaxZoom,
-            &center_lon,
-            &center_lat,
-            &hover_inspector_mode,
-            &hover_inspector_enabled,
-            &show_sources_panel,
-            &show_data_library,
-            &parcel_parameter_mode,
-            &layer_spatial,
-            &layer_states,
-            &status_mutex,
-            &layer_fill_enabled,
-            &layer_hover_enabled,
-            &layer_inspect_enabled,
-            &layer_heatmap_enabled,
-            &layer_heatmap_algo,
-            &layer_heatmap_max_zoom,
-            &layer_parcel_detail_min_zoom,
-            &layer_normalize_mode,
-            &layer_heatmap_cell_px,
-            &layer_heatmap_bandwidth_px,
-            &layer_heatmap_blur_sigma_px,
-            &layer_heatmap_percentile_clip,
-            &layer_heatmap_multires_blend,
-            &layer_heatmap_zoom_adaptive_bandwidth,
-            &layer_heatmap_multires_enabled,
-            &layer_heatmap_use_gradient,
-            heatmap_algo,
-            &heatmap_allow_cpu_fallback,
-            &layer_fill_mutex,
-            &layer_fill_state_changed,
-            &layer_hover_state_changed,
-            &layer_inspect_state_changed,
-            &layer_heatmap_state_changed,
-            &heatmap_controls_active,
-            parcel_layer_idx,
-            crime_nibrs_layer_idx,
-            zoning_layer_idx,
-            &crime_filter_enabled,
-            &crime_filter_use_year,
-            &crime_year_min,
-            &crime_year_max,
-            &crime_filter_homicide,
-            &crime_filter_robbery,
-            &crime_filter_assault,
-            &crime_filter_burglary,
-            &crime_filter_theft,
-            &crime_filter_auto_theft,
-            &crime_filter_drug,
-            &crime_filter_shooting,
-            &crime_breakdown,
-            &parcel_jurisdiction_filter,
-            &parcel_jurisdiction_filter_dirty,
-            &parcel_jurisdiction_filter_status,
-            parcel_jurisdiction_options.data(),
-            parcel_jurisdiction_options.size(),
-            &basemap_download,
-            &lazy_tile_download,
-            &basemap_coverage_dirty,
-            osm_missing_tiles_cached,
-            osm_total_tiles_cached,
-            topo_missing_tiles_cached,
-            topo_total_tiles_cached,
-            topo_tiles_available_cached,
-            topo_vector_available_cached,
-            kMaxNativeTileZoom,
-            kMaxSatelliteNativeTileZoom,
-            kMaxNightSatelliteNativeTileZoom,
-            &zoning_zone_enabled,
-            &zoning_zone_color,
-            &zoning_zone_label,
-            &zoning_metadata,
-            &zoning_zone_order,
-            &zoning_zone_counts,
-            &zoning_group_zones,
-            &zoning_group_order,
-            [&](size_t i) { return enqueueLayerDownloadRequest(frame_prelude.layer_download, i); },
-            [&](size_t i) { return layerDownloadPending(frame_prelude.layer_download, i); },
-            [&]() { return frame_prelude.queue_all_missing_layer_downloads(); },
-            [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
-            [&](size_t i, bool required) { enqueue_hydration(i, required); }
-        });
+        LeftPanelResult left_panel;
+        if (!map_window_fullscreen) {
+            left_panel = drawLeftPanelWindow(LeftPanelContext{
+                layout_margin,
+                left_panel_w,
+                main_panel_h,
+                &root,
+                &app_settings,
+                &layers,
+                &layer_registry,
+                &local_layer_exists_cache,
+                &data_freshness_state,
+                &data_freshness_msg,
+                &data_library_status_msg,
+                &zoom,
+                kMinZoom,
+                kMaxZoom,
+                &center_lon,
+                &center_lat,
+                &hover_inspector_mode,
+                &hover_inspector_enabled,
+                &show_sources_panel,
+                &show_data_library,
+                &parcel_parameter_mode,
+                &layer_spatial,
+                &layer_states,
+                &status_mutex,
+                &layer_fill_enabled,
+                &layer_hover_enabled,
+                &layer_inspect_enabled,
+                &layer_heatmap_enabled,
+                &layer_heatmap_algo,
+                &layer_heatmap_max_zoom,
+                &layer_parcel_detail_min_zoom,
+                &layer_normalize_mode,
+                &layer_heatmap_cell_px,
+                &layer_heatmap_bandwidth_px,
+                &layer_heatmap_blur_sigma_px,
+                &layer_heatmap_percentile_clip,
+                &layer_heatmap_multires_blend,
+                &layer_heatmap_zoom_adaptive_bandwidth,
+                &layer_heatmap_multires_enabled,
+                &layer_heatmap_use_gradient,
+                heatmap_algo,
+                &heatmap_allow_cpu_fallback,
+                &layer_fill_mutex,
+                &layer_fill_state_changed,
+                &layer_hover_state_changed,
+                &layer_inspect_state_changed,
+                &layer_heatmap_state_changed,
+                &heatmap_controls_active,
+                parcel_layer_idx,
+                crime_nibrs_layer_idx,
+                zoning_layer_idx,
+                &crime_filter_enabled,
+                &crime_filter_use_year,
+                &crime_year_min,
+                &crime_year_max,
+                &crime_filter_homicide,
+                &crime_filter_robbery,
+                &crime_filter_assault,
+                &crime_filter_burglary,
+                &crime_filter_theft,
+                &crime_filter_auto_theft,
+                &crime_filter_drug,
+                &crime_filter_shooting,
+                &crime_breakdown,
+                &parcel_jurisdiction_filter_state,
+                parcel_jurisdiction_options.data(),
+                parcel_jurisdiction_options.size(),
+                &basemap_download,
+                &lazy_tile_download,
+                &basemap_coverage_dirty,
+                osm_missing_tiles_cached,
+                osm_total_tiles_cached,
+                topo_missing_tiles_cached,
+                topo_total_tiles_cached,
+                topo_tiles_available_cached,
+                topo_vector_available_cached,
+                kMaxNativeTileZoom,
+                kMaxSatelliteNativeTileZoom,
+                kMaxNightSatelliteNativeTileZoom,
+                &zoning_zone_enabled,
+                &zoning_zone_color,
+                &zoning_zone_label,
+                &zoning_metadata,
+                &zoning_zone_order,
+                &zoning_zone_counts,
+                &zoning_group_zones,
+                &zoning_group_order,
+                [&](size_t i) { return enqueueLayerDownloadRequest(frame_prelude.layer_download, i); },
+                [&](size_t i) { return layerDownloadPending(frame_prelude.layer_download, i); },
+                [&]() { return frame_prelude.queue_all_missing_layer_downloads(); },
+                [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
+                [&](size_t i, bool required) { enqueue_hydration(i, required); }
+            });
+        }
         bool zoning_filters_changed = left_panel.zoning_filters_changed;
         const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
         const size_t queueable_missing_layer_count = left_panel.queueable_missing_layer_count;
@@ -1946,10 +2040,10 @@ int runWorldSim3App(int argc, char** argv) {
                     for (const auto& owner : map_filter_state.selected_owners) {
                         for (unsigned char ch : owner) hash_mix(color_state_key, ch);
                     }
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.active);
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.features.size());
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.blocklots.size());
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_result_set.owners.size());
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.active);
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.features.size());
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.blocklots.size());
+                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.owners.size());
                     hash_mix(color_state_key, (uint64_t)query_layers.size());
                     for (const auto& ql : query_layers) {
                         hash_mix(color_state_key, (uint64_t)ql.enabled);
@@ -1971,8 +2065,14 @@ int runWorldSim3App(int argc, char** argv) {
                     if ((size_t)parcel_layer_idx < layer_choropleth_gamma.size()) {
                         std::memcpy(&gamma_bits, &layer_choropleth_gamma[(size_t)parcel_layer_idx], sizeof(gamma_bits));
                     }
+                    uint32_t polygon_fill_opacity_bits = 0;
+                    std::memcpy(
+                        &polygon_fill_opacity_bits,
+                        &app_settings.map_polygon_fill_opacity,
+                        sizeof(polygon_fill_opacity_bits));
                     hash_mix(overlay_state_key, gamma_bits);
                     hash_mix(color_state_key, gamma_bits);
+                    hash_mix(color_state_key, polygon_fill_opacity_bits);
                     hash_mix(overlay_state_key, (uint64_t)layer_fill_enabled.size());
                     hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_notice_layer_idx] : false));
                     hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_rehab_layer_idx] : false));
@@ -1988,7 +2088,9 @@ int runWorldSim3App(int argc, char** argv) {
                     FeatureFilterContextFactoryInput filter_input;
                     filter_input.layers = &layers;
                     filter_input.map_filters = &map_filter_state;
-                    filter_input.result_set = parcel_jurisdiction_result_set.active ? &parcel_jurisdiction_result_set : nullptr;
+                    filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
+                        ? &parcel_jurisdiction_filter_state.result_set
+                        : nullptr;
                     filter_input.query_layers = &query_layers;
                     filter_input.real_property_by_blocklot = &real_property_by_blocklot;
                     filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
@@ -2043,16 +2145,20 @@ int runWorldSim3App(int argc, char** argv) {
                                     const float t = applyPowerGamma(
                                         std::clamp((float)((v - min_value) / (max_value - min_value)), 0.0f, 1.0f),
                                         parcel_gamma);
-                                    parcel_colors[i] = ImGui::ColorConvertFloat4ToU32(heatColor(t));
+                                    parcel_colors[i] = mapPolygonFillColor(
+                                        ImGui::ColorConvertFloat4ToU32(heatColor(t)),
+                                        app_settings.map_polygon_fill_opacity);
                                     continue;
                                 }
                             }
                             float query_color[4] = {0, 0, 0, 0};
                             if (queryMapColorForFeature(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg, query_color)) {
-                                parcel_colors[i] = ImGui::ColorConvertFloat4ToU32(
-                                    ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                                parcel_colors[i] = mapPolygonFillColor(
+                                    ImGui::ColorConvertFloat4ToU32(
+                                        ImVec4(query_color[0], query_color[1], query_color[2], query_color[3])),
+                                    app_settings.map_polygon_fill_opacity);
                             } else {
-                                parcel_colors[i] = base_color;
+                                parcel_colors[i] = mapPolygonFillColor(base_color, app_settings.map_polygon_fill_opacity);
                             }
                         }
                         std::string color_error;
@@ -2251,92 +2357,96 @@ int runWorldSim3App(int argc, char** argv) {
             if (itrp->second >= rp_layer.features.size()) return nullptr;
             return &rp_layer.features[itrp->second];
         };
-        drawRightPanelWindow(RightPanelContext{
-            &root,
-            &duckdb_analytics,
-            layout_w,
-            right_panel_w,
-            layout_margin,
-            main_panel_h,
-            &layers,
-            &unified_parcels,
-            &map_filter_state,
-            &query_layers,
-            &zoning_metadata,
-            &real_property_by_blocklot,
-            &selected_owners,
-            &selected_parcel_index_set,
-            &selected_parcel_indices,
-            &parcel_selection,
-            &element_info_state,
-            &show_selected_parcel_details,
-            &show_selected_zone_details,
-            &selected_zone_idx,
-            &center_lon,
-            &center_lat,
-            &zoom,
-            parcel_layer_idx,
-            zoning_layer_idx,
-            real_property_layer_idx,
-            crime_nibrs_layer_idx,
-            vacant_notice_layer_idx,
-            vacant_rehab_layer_idx,
-            tax_lien_layer_idx,
-            tax_sale_layer_idx,
-            parcel_parameter_mode,
-            heatmap_algo,
-            &layer_heatmap_enabled,
-            &layer_heatmap_max_zoom,
-            &layer_parcel_detail_min_zoom,
-            &layer_heatmap_algo,
-            &layer_heatmap_percentile_clip,
-            &layer_choropleth_gamma,
-            &layer_heatmap_state_changed,
-            heatmap_percentile_clip,
-            &parcel_vac_notice_by_feature,
-            &parcel_vac_rehab_by_feature,
-            &parcel_jurisdiction_result_set,
-            &owner_class_overrides,
-            &owner_class_overrides_loaded,
-            &owner_class_overrides_dirty,
-            &owner_aggregates,
-            &filtered_aggregate_snapshot,
-            &owner_aggregates_dirty,
-            &owner_sort_mode,
-            &owner_sorted_mode,
-            &owner_class_filter_mode,
-            &owner_class_assign_mode,
-            &selected_owner_anchor,
-            &owner_cached_parcel_size,
-            &owner_cached_real_property_size,
-            parcel_vacancy_generation_applied,
-            parcel_tax_generation_applied,
-            &prof_owner_ms_last,
-            owner_search_query,
-            sizeof(owner_search_query),
-            &address_locate_status,
-            &address_locate_matches,
-            &record_year_hist,
-            &record_year_hist_plot,
-            &hist_feature_counts,
-            &hist_enabled,
-            &hist_dirty,
-            &record_year_hist_max_bin,
-            &record_year_nonzero_min,
-            &record_year_nonzero_max,
-            &record_year_nonzero_total,
-            &selected_record_year,
-            &selected_record_year_dirty,
-            &selected_record_year_total,
-            &selected_record_year_samples,
-            (size_t)cached_vac_notice_size,
-            (size_t)cached_vac_rehab_size,
-            &vacant_notice_rows_matched_total,
-            &vacant_rehab_rows_matched_total,
-            &vacant_parcels_matched_total,
-            &vacant_parcels_with_geometry_total,
-            real_property_for_parcel
-        });
+        if (!map_window_fullscreen) {
+            drawRightPanelWindow(RightPanelContext{
+                &root,
+                &duckdb_analytics,
+                layout_w,
+                right_panel_w,
+                layout_margin,
+                main_panel_h,
+                &layers,
+                &unified_parcels,
+                &map_filter_state,
+                &query_layers,
+                &zoning_metadata,
+                &zoning_zone_enabled,
+                &real_property_by_blocklot,
+                &selected_owners,
+                &selected_parcel_index_set,
+                &selected_parcel_indices,
+                &parcel_selection,
+                &element_info_state,
+                &show_selected_parcel_details,
+                &show_selected_zone_details,
+                &selected_zone_idx,
+                &center_lon,
+                &center_lat,
+                &zoom,
+                parcel_layer_idx,
+                zoning_layer_idx,
+                real_property_layer_idx,
+                crime_nibrs_layer_idx,
+                vacant_notice_layer_idx,
+                vacant_rehab_layer_idx,
+                tax_lien_layer_idx,
+                tax_sale_layer_idx,
+                parcel_parameter_mode,
+                heatmap_algo,
+                &layer_heatmap_enabled,
+                &layer_heatmap_max_zoom,
+                &layer_parcel_detail_min_zoom,
+                &layer_heatmap_algo,
+                &layer_heatmap_percentile_clip,
+                &layer_choropleth_gamma,
+                &layer_fill_enabled,
+                &layer_heatmap_state_changed,
+                heatmap_percentile_clip,
+                &parcel_vac_notice_by_feature,
+                &parcel_vac_rehab_by_feature,
+                &parcel_jurisdiction_filter_state,
+                &owner_class_overrides,
+                &owner_class_overrides_loaded,
+                &owner_class_overrides_dirty,
+                &owner_aggregates,
+                &filtered_aggregate_snapshot,
+                &owner_aggregates_dirty,
+                &owner_sort_mode,
+                &owner_sorted_mode,
+                &owner_class_filter_mode,
+                &owner_class_assign_mode,
+                &selected_owner_anchor,
+                &owner_cached_parcel_size,
+                &owner_cached_real_property_size,
+                parcel_vacancy_generation_applied,
+                parcel_tax_generation_applied,
+                &prof_owner_ms_last,
+                owner_search_query,
+                sizeof(owner_search_query),
+                &address_locate_status,
+                &address_locate_matches,
+                &record_year_hist,
+                &record_year_hist_plot,
+                &hist_feature_counts,
+                &hist_enabled,
+                &hist_dirty,
+                &record_year_hist_max_bin,
+                &record_year_nonzero_min,
+                &record_year_nonzero_max,
+                &record_year_nonzero_total,
+                &selected_record_year,
+                &selected_record_year_dirty,
+                &selected_record_year_total,
+                &selected_record_year_samples,
+                (size_t)cached_vac_notice_size,
+                (size_t)cached_vac_rehab_size,
+                &vacant_notice_rows_matched_total,
+                &vacant_rehab_rows_matched_total,
+                &vacant_parcels_matched_total,
+                &vacant_parcels_with_geometry_total,
+                real_property_for_parcel
+            });
+        }
 
         drawMapTabWindow(MapTabContext{
             map_x,
@@ -2392,11 +2502,8 @@ int runWorldSim3App(int argc, char** argv) {
             &layer_heatmap_use_gradient,
             &layer_choropleth_gamma,
             &layer_normalize_mode,
-            &parcel_jurisdiction_filter,
             parcel_jurisdiction_options.size(),
-            &parcel_jurisdiction_filter_dirty,
-            &parcel_jurisdiction_result_set,
-            &parcel_jurisdiction_filter_status,
+            &parcel_jurisdiction_filter_state,
             &parcel_vac_notice_by_feature,
             &parcel_vac_rehab_by_feature,
             &parcel_tax_lien_by_feature,
@@ -2484,7 +2591,10 @@ int runWorldSim3App(int argc, char** argv) {
             &policy_viz_metric,
             &policy_viz_cache_rebuilds,
             &policy_viz_node_count,
-            real_property_for_parcel
+            real_property_for_parcel,
+            toggle_map_fullscreen,
+            request_map_snapshot,
+            map_window_fullscreen
         });
         finalizeFrameSupport(FrameSupportFinalizationContext{
             wd,

@@ -5,6 +5,7 @@
 #include "screenshot_state.h"
 #include "time_cube.h"
 #include "types.h"
+#include "duckdb_analytics.h"
 
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,26 @@
 #include <unordered_map>
 #include <vector>
 
+struct ApiFilterControlCommand {
+    bool pending = false;
+    bool clear_fields = false;
+    bool clear_selected_owners = false;
+    bool clear_query_layers = false;
+    std::unordered_map<std::string, std::string> values;
+};
+
+struct ApiQueryControlCommand {
+    enum class ApplyMode {
+        None,
+        Filter,
+        Layer,
+        FilterLayer
+    };
+
+    ApplyMode apply_mode = ApplyMode::None;
+    QueryMapLayer layer;
+};
+
 struct StatusApiContext {
     const char* app_version = nullptr;
     int protocol_version = 0;
@@ -23,6 +44,12 @@ struct StatusApiContext {
 
     std::atomic<bool>* stop = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
+    std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    MapFilterState* map_filter_state = nullptr;
+    FilterResultSet* active_filter_result_set = nullptr;
+    std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::string* active_filter_status = nullptr;
     TimeCubeService* time_cube_service = nullptr;
     ScreenshotRequestState* screenshot = nullptr;
 
@@ -69,6 +96,9 @@ struct StatusApiContext {
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
+    std::mutex* api_control_mutex = nullptr;
+    ApiFilterControlCommand* api_filter_control_cmd = nullptr;
+    std::vector<ApiQueryControlCommand>* api_query_control_cmds = nullptr;
 
     std::mutex* layer_profile_mutex = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;

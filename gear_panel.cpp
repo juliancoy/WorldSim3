@@ -37,6 +37,9 @@ void drawGearPanel(
                         ImGui::SetCurrentContext(previous_context);
                         saveAppSettings(root, *app_settings);
                     }
+                    if (ImGui::SliderFloat("Map polygon fill opacity", &app_settings->map_polygon_fill_opacity, 0.0f, 1.0f, "%.2f")) {
+                        saveAppSettings(root, *app_settings);
+                    }
                     ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
                 } else {
                     ImGui::TextDisabled("App settings unavailable.");

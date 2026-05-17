@@ -68,6 +68,11 @@ void MapProjectionCache::reserveWorldRings(size_t count) {
     world_rings_cache_.reserve(count);
 }
 
+void MapProjectionCache::setLowZoomDenseFillLayers(const std::vector<size_t>& layer_indices) {
+    low_zoom_dense_fill_layers_.clear();
+    low_zoom_dense_fill_layers_.insert(layer_indices.begin(), layer_indices.end());
+}
+
 const CachedWorldFillGeometry& MapProjectionCache::getWorldFillGeometry(
     size_t layer_idx,
     uint32_t feature_idx,
@@ -152,8 +157,9 @@ bool MapProjectionCache::drawTessellatedFill(
         fill_stats_.no_triangles++;
         return false;
     }
-    // Very dense polygons dominate CPU at low zoom; outline-only is acceptable there.
-    if (math_zoom_ <= 12 && fg.triangles.size() > 6000) return false;
+    // Very dense parcel polygons dominate CPU at low zoom, but zoning is a semantic
+    // area layer and must keep filled class color at every zoom.
+    if (math_zoom_ <= 12 && fg.triangles.size() > 6000 && !low_zoom_dense_fill_layers_.count(layer_idx)) return false;
     const auto& cached = getWorldFillGeometry(layer_idx, feature_idx, fg);
     const size_t vcount = projectWorldVerticesForFill(cached.vertices);
     if (vcount < 3) return false;

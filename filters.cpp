@@ -95,12 +95,19 @@ bool resultSetMatches(const FeatureFilterContext& ctx, const FilterResultSet& re
 bool resultSetAllows(const FeatureFilterContext& ctx, size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) {
     const FilterResultSet* result_set = ctx.result_set;
     if (!result_set || !result_set->active) return true;
+    const bool layer_targeted =
+        result_set->layers.empty() ||
+        result_set->layers.find(layer_idx) != result_set->layers.end();
+    if (!layer_targeted && !isParcelRelatedLayer(ctx, layer_idx)) return true;
     return resultSetMatches(ctx, *result_set, layer_idx, feature_idx, fg);
 }
 }
 
 bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
-    return ctx.layers && layer_idx < ctx.layers->size() && (*ctx.layers)[layer_idx].scale == "parcel";
+    return ctx.layers &&
+        layer_idx < ctx.layers->size() &&
+        (*ctx.layers)[layer_idx].scale == "parcel" &&
+        (*ctx.layers)[layer_idx].category != LayerDef::Category::Zoning;
 }
 
 bool featurePassesFilters(

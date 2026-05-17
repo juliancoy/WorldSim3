@@ -68,14 +68,14 @@ bool drawBranchVisibilityToggle(const char* id, bool visible, const char* toolti
 }
 
 void setParcelJurisdictionSelected(LayersPanelUiContext& ctx, const char* jurisdiction, bool selected) {
-    if (!ctx.parcel_jurisdiction_filter || !jurisdiction || jurisdiction[0] == '\0') return;
-    if (selected) ctx.parcel_jurisdiction_filter->insert(jurisdiction);
-    else ctx.parcel_jurisdiction_filter->erase(jurisdiction);
-    if (ctx.parcel_jurisdiction_filter_dirty) *ctx.parcel_jurisdiction_filter_dirty = true;
+    if (!ctx.parcel_jurisdiction_filter_state || !jurisdiction || jurisdiction[0] == '\0') return;
+    if (selected) ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.insert(jurisdiction);
+    else ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.erase(jurisdiction);
+    ctx.parcel_jurisdiction_filter_state->dirty = true;
 }
 
 bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer) {
-    if (!ctx.parcel_jurisdiction_filter || layer.region != "Maryland" || layer.scale != "parcel" || (int)idx == ctx.parcel_layer_idx) {
+    if (!ctx.parcel_jurisdiction_filter_state || layer.region != "Maryland" || layer.scale != "parcel" || (int)idx == ctx.parcel_layer_idx) {
         return false;
     }
     const char* jurisdiction = parcelJurisdictionForLayer(layer);
@@ -123,7 +123,8 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         }
         ImGui::SameLine();
     }
-    bool selected = ctx.parcel_jurisdiction_filter->find(jurisdiction) != ctx.parcel_jurisdiction_filter->end();
+    bool selected = ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.find(jurisdiction) !=
+        ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.end();
     if (drawIconToggleButton("show_jurisdiction", "V", selected, "Show jurisdiction in active parcel filter")) {
         setParcelJurisdictionSelected(ctx, jurisdiction, selected);
     }
@@ -150,8 +151,8 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         if (active_parcel_layer_exists) {
             ImGui::TextDisabled("Download hidden because the Maryland parcel layer is already available locally.");
         }
-        if (ctx.parcel_jurisdiction_filter_status && !ctx.parcel_jurisdiction_filter_status->empty()) {
-            ImGui::TextDisabled("%s", ctx.parcel_jurisdiction_filter_status->c_str());
+        if (!ctx.parcel_jurisdiction_filter_state->status.empty()) {
+            ImGui::TextDisabled("%s", ctx.parcel_jurisdiction_filter_state->status.c_str());
         }
         ImGui::EndTooltip();
     }

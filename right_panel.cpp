@@ -1,3 +1,4 @@
+#include "active_queries_tab.h"
 #include "right_panel.h"
 
 #include "filter_context_builder.h"
@@ -13,13 +14,13 @@
 
 void drawRightPanelWindow(const RightPanelContext& ctx) {
     if (!ctx.root || !ctx.duckdb_analytics || !ctx.layers || !ctx.unified_parcels || !ctx.map_filter_state ||
-        !ctx.query_layers || !ctx.zoning_metadata || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
+        !ctx.query_layers || !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
         !ctx.selected_parcel_index_set || !ctx.selected_parcel_indices || !ctx.parcel_selection ||
         !ctx.element_info_state || !ctx.show_selected_parcel_details || !ctx.show_selected_zone_details ||
         !ctx.selected_zone_idx || !ctx.center_lon || !ctx.center_lat || !ctx.zoom || !ctx.layer_heatmap_enabled ||
         !ctx.layer_heatmap_max_zoom || !ctx.layer_parcel_detail_min_zoom || !ctx.layer_heatmap_algo ||
-        !ctx.layer_heatmap_percentile_clip || !ctx.layer_choropleth_gamma || !ctx.layer_heatmap_state_changed ||
-        !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature || !ctx.parcel_jurisdiction_result_set ||
+        !ctx.layer_heatmap_percentile_clip || !ctx.layer_choropleth_gamma || !ctx.layer_fill_enabled || !ctx.layer_heatmap_state_changed ||
+        !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature || !ctx.parcel_jurisdiction_filter_state ||
         !ctx.owner_class_overrides || !ctx.owner_class_overrides_loaded || !ctx.owner_class_overrides_dirty ||
         !ctx.owner_aggregates || !ctx.filtered_aggregate_snapshot || !ctx.owner_aggregates_dirty ||
         !ctx.owner_sort_mode || !ctx.owner_sorted_mode || !ctx.owner_class_filter_mode ||
@@ -124,6 +125,18 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.parcel_layer_idx,
             ctx.parcel_selection->active_idx,
             *ctx.query_layers);
+        drawActiveQueriesTab(ActiveQueriesTabContext{
+            ctx.map_filter_state,
+            ctx.query_layers,
+            &ctx.parcel_jurisdiction_filter_state->result_set,
+            &ctx.parcel_jurisdiction_filter_state->status,
+            ctx.layers,
+            ctx.zoning_metadata,
+            ctx.zoning_zone_enabled,
+            ctx.layer_fill_enabled,
+            ctx.zoning_layer_idx,
+            ctx.crime_nibrs_layer_idx
+        });
         drawVacancyParcelTab(VacancyParcelTabContext{
             ctx.cached_vac_notice_size,
             ctx.cached_vac_rehab_size,
@@ -138,7 +151,9 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         FeatureFilterContextFactoryInput gradient_filter_input;
         gradient_filter_input.layers = ctx.layers;
         gradient_filter_input.map_filters = ctx.map_filter_state;
-        gradient_filter_input.result_set = ctx.parcel_jurisdiction_result_set->active ? ctx.parcel_jurisdiction_result_set : nullptr;
+        gradient_filter_input.result_set = ctx.parcel_jurisdiction_filter_state->result_set.active
+            ? &ctx.parcel_jurisdiction_filter_state->result_set
+            : nullptr;
         gradient_filter_input.real_property_by_blocklot = ctx.real_property_by_blocklot;
         gradient_filter_input.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
         gradient_filter_input.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;

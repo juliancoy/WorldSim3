@@ -164,7 +164,7 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         }
         *shared.heatmap_controls_active |= ImGui::IsItemActive();
     } else if (resolved_layer_algo == kAggregateLodGeometry) {
-        ImGui::TextWrapped("LOD Geometry draws simplified parcel/polygon geometry directly instead of generating heatmap cells.");
+        ImGui::TextWrapped("LOD Geometry no longer skips parcel/polygon vertices by default; it draws exact outlines instead of generating heatmap cells.");
     } else if (resolved_layer_algo == kAggregateHexBinning) {
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Hex size", (*shared.layer_heatmap_cell_px)[ctx.idx], 2.0f, 80.0f, "%.0f");
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Hex clip", (*shared.layer_heatmap_percentile_clip)[ctx.idx], 50.0f, 100.0f, "%.0f");

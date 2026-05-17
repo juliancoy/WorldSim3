@@ -6,28 +6,29 @@
 
 namespace {
 void refreshParcelJurisdictionFilter(const MapFrameSessionContext& ctx) {
-    if (!ctx.parcel_jurisdiction_filter_dirty || !ctx.parcel_jurisdiction_result_set || !ctx.parcel_jurisdiction_filter_status) return;
-    if (!*ctx.parcel_jurisdiction_filter_dirty) return;
+    if (!ctx.parcel_jurisdiction_filter_state) return;
+    ParcelJurisdictionFilterState& state = *ctx.parcel_jurisdiction_filter_state;
+    if (!state.dirty) return;
 
-    if (ctx.parcel_jurisdiction_filter->size() == ctx.parcel_jurisdiction_option_count) {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
-        *ctx.parcel_jurisdiction_result_set = FilterResultSet{};
-        *ctx.parcel_jurisdiction_filter_status = "All Maryland parcels";
+    if (state.selected_jurisdictions.size() == ctx.parcel_jurisdiction_option_count) {
+        state.dirty = false;
+        state.result_set = FilterResultSet{};
+        state.status = "All Maryland parcels";
     } else if (ctx.parcel_layer_idx < 0) {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
-        *ctx.parcel_jurisdiction_result_set = FilterResultSet{};
-        *ctx.parcel_jurisdiction_filter_status = "No active parcel layer";
+        state.dirty = false;
+        state.result_set = FilterResultSet{};
+        state.status = "No active parcel layer";
     } else if (!ctx.duckdb_analytics->status().last_rebuild_ok) {
-        *ctx.parcel_jurisdiction_filter_status = "DuckDB parcel cache is not ready";
+        state.status = "DuckDB parcel cache is not ready";
     } else {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
+        state.dirty = false;
         DuckDbQueryResult jurisdiction_query =
-            ctx.duckdb_analytics->queryParcelJurisdictions((size_t)ctx.parcel_layer_idx, *ctx.parcel_jurisdiction_filter, 32);
+            ctx.duckdb_analytics->queryParcelJurisdictions((size_t)ctx.parcel_layer_idx, state.selected_jurisdictions, 32);
         if (jurisdiction_query.ok) {
-            *ctx.parcel_jurisdiction_result_set = std::move(jurisdiction_query.result_set);
-            *ctx.parcel_jurisdiction_filter_status = jurisdiction_query.message;
+            state.result_set = std::move(jurisdiction_query.result_set);
+            state.status = jurisdiction_query.message;
         } else {
-            *ctx.parcel_jurisdiction_filter_status = jurisdiction_query.message;
+            state.status = jurisdiction_query.message;
         }
     }
 }
@@ -37,8 +38,8 @@ FeatureFilterContext buildFrameFilterContext(const MapFrameSessionContext& ctx) 
     filter_input.layers = ctx.layers;
     filter_input.map_filters = ctx.map_filter_state;
     filter_input.result_set =
-        ctx.parcel_jurisdiction_result_set && ctx.parcel_jurisdiction_result_set->active
-            ? ctx.parcel_jurisdiction_result_set
+        ctx.parcel_jurisdiction_filter_state && ctx.parcel_jurisdiction_filter_state->result_set.active
+            ? &ctx.parcel_jurisdiction_filter_state->result_set
             : nullptr;
     filter_input.real_property_by_blocklot = ctx.real_property_by_blocklot;
     filter_input.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
@@ -100,6 +101,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
     render_frame_ctx.heatmap_controls_active = ctx.heatmap_controls_active;
     render_frame_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
+    render_frame_ctx.map_polygon_fill_opacity = ctx.map_polygon_fill_opacity;
     render_frame_ctx.vacancy_notice_color = ctx.vacancy_notice_color;
     render_frame_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color;
     render_frame_ctx.layers = ctx.layers;

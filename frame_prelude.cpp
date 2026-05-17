@@ -103,6 +103,14 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     api_control_ctx.api_ui_cmd_y = ctx.api_ui_cmd_y;
     api_control_ctx.api_ui_cmd_button = ctx.api_ui_cmd_button;
     api_control_ctx.api_ui_cmd_scroll_y = ctx.api_ui_cmd_scroll_y;
+    api_control_ctx.map_filter_state = ctx.map_filter_state;
+    api_control_ctx.active_filter_result_set = ctx.active_filter_result_set;
+    api_control_ctx.query_layers = ctx.query_layers;
+    api_control_ctx.active_filter_status = ctx.active_filter_status;
+    api_control_ctx.api_control_mutex = ctx.api_control_mutex;
+    api_control_ctx.api_filter_control_cmd = ctx.api_filter_control_cmd;
+    api_control_ctx.api_query_control_cmds = ctx.api_query_control_cmds;
+    api_control_ctx.filter_state_key = ctx.filter_state_key;
     api_control_ctx.api_ui_cmd_last_seq = ctx.api_ui_cmd_last_seq;
     api_control_ctx.api_ui_mouse_release_pending = ctx.api_ui_mouse_release_pending;
     api_control_ctx.api_ui_mouse_release_button = ctx.api_ui_mouse_release_button;

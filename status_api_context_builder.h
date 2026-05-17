@@ -9,6 +9,12 @@ struct StatusApiContextFactoryInput {
 
     std::atomic<bool>* stop = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
+    std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    MapFilterState* map_filter_state = nullptr;
+    FilterResultSet* active_filter_result_set = nullptr;
+    std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::string* active_filter_status = nullptr;
     TimeCubeService* time_cube_service = nullptr;
     ScreenshotRequestState* screenshot = nullptr;
 
@@ -55,6 +61,9 @@ struct StatusApiContextFactoryInput {
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
+    std::mutex* api_control_mutex = nullptr;
+    ApiFilterControlCommand* api_filter_control_cmd = nullptr;
+    std::vector<ApiQueryControlCommand>* api_query_control_cmds = nullptr;
 
     std::mutex* layer_profile_mutex = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;

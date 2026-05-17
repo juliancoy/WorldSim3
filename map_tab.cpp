@@ -4,6 +4,112 @@
 #include "owner_info.h"
 #include "worldsim_app.h"
 
+namespace {
+struct MapCornerControlState {
+    bool hovered = false;
+    bool fullscreen_hovered = false;
+    bool snapshot_hovered = false;
+};
+
+void mapCornerControlPositions(const MapCanvasSession& session, ImVec2& fullscreen_min, ImVec2& camera_min) {
+    constexpr float button = 34.0f;
+    constexpr float gap = 8.0f;
+    camera_min = ImVec2(
+        session.origin.x + session.size.x - 12.0f - button,
+        session.origin.y + session.size.y - 12.0f - button);
+    fullscreen_min = ImVec2(camera_min.x - gap - button, camera_min.y);
+}
+
+void drawMapIconFrame(
+    ImDrawList* draw,
+    const ImVec2& min,
+    const ImVec2& size,
+    bool hovered) {
+    const ImVec2 max(min.x + size.x, min.y + size.y);
+    const ImU32 fill = hovered ? IM_COL32(32, 48, 60, 235) : IM_COL32(17, 24, 32, 215);
+    draw->AddRectFilled(min, max, fill, 8.0f);
+    draw->AddRect(min, max, hovered ? IM_COL32(125, 220, 255, 180) : IM_COL32(255, 255, 255, 80), 8.0f);
+}
+
+void drawMapFullscreenIcon(ImDrawList* draw, const ImVec2& min, bool hovered) {
+    constexpr float button = 34.0f;
+    drawMapIconFrame(draw, min, ImVec2(button, button), hovered);
+    const ImU32 c = IM_COL32(245, 248, 250, 240);
+    const float x0 = min.x + 10.0f;
+    const float y0 = min.y + 10.0f;
+    const float x1 = min.x + button - 10.0f;
+    const float y1 = min.y + button - 10.0f;
+    const float arm = 6.0f;
+    draw->AddLine(ImVec2(x0, y0), ImVec2(x0 + arm, y0), c, 1.8f);
+    draw->AddLine(ImVec2(x0, y0), ImVec2(x0, y0 + arm), c, 1.8f);
+    draw->AddLine(ImVec2(x1, y0), ImVec2(x1 - arm, y0), c, 1.8f);
+    draw->AddLine(ImVec2(x1, y0), ImVec2(x1, y0 + arm), c, 1.8f);
+    draw->AddLine(ImVec2(x0, y1), ImVec2(x0 + arm, y1), c, 1.8f);
+    draw->AddLine(ImVec2(x0, y1), ImVec2(x0, y1 - arm), c, 1.8f);
+    draw->AddLine(ImVec2(x1, y1), ImVec2(x1 - arm, y1), c, 1.8f);
+    draw->AddLine(ImVec2(x1, y1), ImVec2(x1, y1 - arm), c, 1.8f);
+}
+
+void drawMapCameraIcon(ImDrawList* draw, const ImVec2& min, bool hovered) {
+    constexpr float button = 34.0f;
+    drawMapIconFrame(draw, min, ImVec2(button, button), hovered);
+    const ImU32 c = IM_COL32(245, 248, 250, 240);
+    const ImVec2 body_min(min.x + 8.0f, min.y + 12.0f);
+    const ImVec2 body_max(min.x + button - 7.0f, min.y + button - 9.0f);
+    draw->AddRect(body_min, body_max, c, 3.0f, 0, 1.8f);
+    draw->AddRectFilled(ImVec2(min.x + 12.0f, min.y + 9.0f), ImVec2(min.x + 21.0f, min.y + 13.0f), c, 2.0f);
+    draw->AddCircle(ImVec2(min.x + 17.5f, min.y + 20.5f), 4.6f, c, 18, 1.8f);
+    draw->AddCircleFilled(ImVec2(min.x + 26.0f, min.y + 15.0f), 1.4f, c, 8);
+}
+
+void drawMapFpsOverlay(const MapCanvasSession& session) {
+    if (!session.draw) return;
+    const float fps = ImGui::GetIO().Framerate;
+    char label[32];
+    std::snprintf(label, sizeof(label), "FPS %.1f", fps);
+
+    const ImVec2 text_size = ImGui::CalcTextSize(label);
+    const ImVec2 pad(10.0f, 6.0f);
+    const ImVec2 min(session.origin.x + 12.0f, session.origin.y + 12.0f);
+    const ImVec2 max(min.x + text_size.x + pad.x * 2.0f, min.y + text_size.y + pad.y * 2.0f);
+    session.draw->AddRectFilled(min, max, IM_COL32(17, 24, 32, 215), 8.0f);
+    session.draw->AddRect(min, max, IM_COL32(255, 255, 255, 80), 8.0f);
+    session.draw->AddText(ImVec2(min.x + pad.x, min.y + pad.y), IM_COL32(245, 248, 250, 240), label);
+}
+
+MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const MapCanvasSession& session) {
+    MapCornerControlState state;
+    constexpr float button = 34.0f;
+    ImVec2 fullscreen_min;
+    ImVec2 camera_min;
+    mapCornerControlPositions(session, fullscreen_min, camera_min);
+
+    ImGui::SetCursorScreenPos(fullscreen_min);
+    ImGui::InvisibleButton("##map_fullscreen", ImVec2(button, button));
+    state.fullscreen_hovered = ImGui::IsItemHovered();
+    if (state.fullscreen_hovered) ImGui::SetTooltip("%s", ctx.map_fullscreen ? "Exit fullscreen" : "Fullscreen map");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ctx.toggle_map_fullscreen) ctx.toggle_map_fullscreen();
+
+    ImGui::SetCursorScreenPos(camera_min);
+    ImGui::InvisibleButton("##map_snapshot", ImVec2(button, button));
+    state.snapshot_hovered = ImGui::IsItemHovered();
+    if (state.snapshot_hovered) ImGui::SetTooltip("Snapshot");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ctx.request_snapshot) ctx.request_snapshot();
+
+    state.hovered = state.fullscreen_hovered || state.snapshot_hovered;
+    return state;
+}
+
+void drawMapCornerControlsVisual(const MapTabContext& ctx, const MapCanvasSession& session, const MapCornerControlState& state) {
+    if (!session.draw) return;
+    ImVec2 fullscreen_min;
+    ImVec2 camera_min;
+    mapCornerControlPositions(session, fullscreen_min, camera_min);
+    drawMapFullscreenIcon(session.draw, fullscreen_min, state.fullscreen_hovered);
+    drawMapCameraIcon(session.draw, camera_min, state.snapshot_hovered);
+}
+}
+
 void drawMapTabWindow(const MapTabContext& ctx) {
     if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.center_lon || !ctx.center_lat || !ctx.zoom ||
         !ctx.layers || !ctx.layer_spatial || !ctx.layer_fallback_scan_cursor || !ctx.map_filter_state || !ctx.query_layers || !ctx.real_property_by_blocklot ||
@@ -14,8 +120,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
         !ctx.layer_heatmap_bandwidth_px || !ctx.layer_heatmap_blur_sigma_px || !ctx.layer_heatmap_percentile_clip ||
         !ctx.layer_heatmap_zoom_adaptive_bandwidth || !ctx.layer_heatmap_multires_enabled || !ctx.layer_heatmap_multires_blend ||
         !ctx.layer_heatmap_use_gradient || !ctx.layer_choropleth_gamma || !ctx.layer_normalize_mode ||
-        !ctx.parcel_jurisdiction_filter || !ctx.parcel_jurisdiction_filter_dirty || !ctx.parcel_jurisdiction_result_set ||
-        !ctx.parcel_jurisdiction_filter_status || !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature ||
+        !ctx.parcel_jurisdiction_filter_state || !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature ||
         !ctx.parcel_tax_lien_by_feature || !ctx.parcel_tax_sale_by_feature || !ctx.parcel_tax_lien_amount_by_feature ||
         !ctx.parcel_tax_sale_amount_by_feature || !ctx.unified_parcels || !ctx.heatmap_runtime || !ctx.hover_inspector_enabled ||
         !ctx.lazy_tile_download || !ctx.topo_tiles_available_cached || !ctx.topo_vector_available_cached ||
@@ -82,6 +187,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.prof_projection_world_extent_cache_entries,
                 ctx.prof_projection_cache_generation
             });
+            const MapCornerControlState map_corner_controls = hitTestMapCornerControls(ctx, map_canvas_session);
+            drawMapFpsOverlay(map_canvas_session);
 
             if (ctx.parcel_layer_idx >= 0 &&
                 (size_t)ctx.parcel_layer_idx < ctx.layers->size() &&
@@ -144,7 +251,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
             map_frame_session_ctx.heatmap_controls_active = ctx.heatmap_controls_active;
             map_frame_session_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
-            map_frame_session_ctx.map_hovered = map_canvas_session.map_hovered;
+            map_frame_session_ctx.map_polygon_fill_opacity =
+                ctx.app_settings ? ctx.app_settings->map_polygon_fill_opacity : 170.0f / 255.0f;
+            map_frame_session_ctx.map_hovered = map_canvas_session.map_hovered && !map_corner_controls.hovered;
             map_frame_session_ctx.parcel_hover_active = map_canvas_session.parcel_hover_active;
             map_frame_session_ctx.parcel_inspect_active = map_canvas_session.parcel_inspect_active;
             map_frame_session_ctx.zoning_hover_active = map_canvas_session.zoning_hover_active;
@@ -187,11 +296,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.layer_heatmap_use_gradient = ctx.layer_heatmap_use_gradient;
             map_frame_session_ctx.layer_choropleth_gamma = ctx.layer_choropleth_gamma;
             map_frame_session_ctx.layer_normalize_mode = ctx.layer_normalize_mode;
-            map_frame_session_ctx.parcel_jurisdiction_filter = ctx.parcel_jurisdiction_filter;
             map_frame_session_ctx.parcel_jurisdiction_option_count = ctx.parcel_jurisdiction_option_count;
-            map_frame_session_ctx.parcel_jurisdiction_filter_dirty = ctx.parcel_jurisdiction_filter_dirty;
-            map_frame_session_ctx.parcel_jurisdiction_result_set = ctx.parcel_jurisdiction_result_set;
-            map_frame_session_ctx.parcel_jurisdiction_filter_status = ctx.parcel_jurisdiction_filter_status;
+            map_frame_session_ctx.parcel_jurisdiction_filter_state = ctx.parcel_jurisdiction_filter_state;
             map_frame_session_ctx.heatmap_runtime = ctx.heatmap_runtime;
             map_frame_session_ctx.projection = map_canvas_session.projection_cache;
             map_frame_session_ctx.should_fill_layer_polygon = map_canvas_session.should_fill_layer_polygon;
@@ -220,6 +326,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.prof_features_considered_frame = ctx.prof_features_considered_frame;
             map_frame_session_ctx.prof_features_drawn_frame = ctx.prof_features_drawn_frame;
             runMapFrameSession(map_frame_session_ctx);
+            drawMapCornerControlsVisual(ctx, map_canvas_session, map_corner_controls);
 
             TimeCubePanelContext time_cube_panel_ctx;
             time_cube_panel_ctx.service = ctx.time_cube_service;

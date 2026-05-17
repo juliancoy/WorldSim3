@@ -87,11 +87,8 @@ struct MapTabContext {
     const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
@@ -188,6 +185,9 @@ struct MapTabContext {
     size_t* policy_viz_node_count = nullptr;
 
     std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
+    std::function<void()> toggle_map_fullscreen;
+    std::function<void()> request_snapshot;
+    bool map_fullscreen = false;
 };
 
 void drawMapTabWindow(const MapTabContext& ctx);

@@ -593,6 +593,7 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
                     try {
                         const uint64_t layer_idx = std::stoull(display_row[(size_t)layer_col]);
                         const uint64_t feature_idx = std::stoull(display_row[(size_t)feature_col]);
+                        out.result_set.layers.insert((size_t)layer_idx);
                         out.result_set.features.insert(FeatureKey{(size_t)layer_idx, (size_t)feature_idx});
                     } catch (...) {
                     }

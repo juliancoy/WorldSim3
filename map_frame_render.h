@@ -57,6 +57,7 @@ struct RenderFrameOrchestrationContext {
     bool heatmap_controls_active = false;
 
     int parcel_parameter_mode = 0;
+    float map_polygon_fill_opacity = 170.0f / 255.0f;
 
     const ImVec4* vacancy_notice_color = nullptr;
     const ImVec4* vacancy_rehab_color = nullptr;

@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "data_library_panel.h"
 #include "download_queue.h"
+#include "filters.h"
 #include "layer_registry.h"
 #include "layer_runtime.h"
 #include "tiles.h"
@@ -99,9 +100,7 @@ struct LeftPanelContext {
     bool* crime_filter_shooting = nullptr;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
     const char* const* parcel_jurisdiction_options = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
 

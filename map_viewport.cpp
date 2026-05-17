@@ -34,6 +34,7 @@ MapViewportFrame beginMapViewportCanvas(const MapViewportContext& ctx) {
     frame.origin = ImGui::GetCursorScreenPos();
     frame.size = ImGui::GetContentRegionAvail();
     frame.draw = ImGui::GetWindowDrawList();
+    ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("map_canvas_input", frame.size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     frame.hovered = ImGui::IsItemHovered();
     frame.active = ImGui::IsItemActive();

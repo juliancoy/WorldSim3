@@ -40,7 +40,7 @@ struct TileSample {
 
 inline constexpr const char* kAppVersion = "0.1.0";
 inline constexpr int kProtocolVersion = 1;
-inline constexpr int kMinZoom = 8;
+inline constexpr int kMinZoom = 6;
 inline constexpr int kMaxZoom = 24;
 inline constexpr int kMaxNativeTileZoom = 18;
 inline constexpr int kMaxSatelliteNativeTileZoom = 20;

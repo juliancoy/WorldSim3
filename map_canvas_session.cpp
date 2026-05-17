@@ -128,7 +128,10 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.lod_ring_step = lodRingStepForZoom(session.math_zoom);
     const bool allow_parcel_scale_fill = session.math_zoom >= 14;
     session.should_fill_layer_polygon = [layers = ctx.layers, allow_parcel_scale_fill](size_t layer_idx) {
-        return !(layer_idx < layers->size() && (*layers)[layer_idx].scale == "parcel") || allow_parcel_scale_fill;
+        if (!layers || layer_idx >= layers->size()) return false;
+        const LayerDef& layer = (*layers)[layer_idx];
+        if (layer.category == LayerDef::Category::Zoning) return true;
+        return layer.scale != "parcel" || allow_parcel_scale_fill;
     };
     if (*ctx.persistent_projection_generation != ctx.projection_generation) {
         ctx.persistent_projection_cache->reset();
@@ -140,6 +143,11 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     } else {
         (*ctx.persistent_projection_cache)->updateFrameProjection(session.math_zoom, 1, session.project_world);
     }
+    std::vector<size_t> low_zoom_dense_fill_layers;
+    for (size_t i = 0; i < ctx.layers->size(); ++i) {
+        if ((*ctx.layers)[i].category == LayerDef::Category::Zoning) low_zoom_dense_fill_layers.push_back(i);
+    }
+    (*ctx.persistent_projection_cache)->setLowZoomDenseFillLayers(low_zoom_dense_fill_layers);
     ctx.prof_projection_cache_generation->store(*ctx.persistent_projection_generation, std::memory_order_relaxed);
     session.projection_cache = ctx.persistent_projection_cache->get();
     return session;

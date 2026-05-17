@@ -140,10 +140,7 @@ bool pointInFeature(const LayerDef::FeatureGeom& fg, float lon, float lat) {
 }
 
 int lodRingStepForZoom(int zoom) {
-    if (zoom <= 10) return 8;
-    if (zoom == 11) return 6;
-    if (zoom == 12) return 4;
-    if (zoom == 13) return 2;
+    (void)zoom;
     return 1;
 }
 

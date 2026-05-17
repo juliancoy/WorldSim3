@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_utils.h"
+#include "active_queries_tab.h"
 #include "duckdb_analytics.h"
 #include "filters.h"
 #include "filters_tab.h"
@@ -39,6 +40,7 @@ struct RightPanelContext {
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
+    std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
 
     std::unordered_set<std::string>* selected_owners = nullptr;
@@ -71,12 +73,13 @@ struct RightPanelContext {
     std::vector<int>* layer_heatmap_algo = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     std::vector<float>* layer_choropleth_gamma = nullptr;
+    std::vector<bool>* layer_fill_enabled = nullptr;
     bool* layer_heatmap_state_changed = nullptr;
     float heatmap_percentile_clip = 0.0f;
 
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 
     std::unordered_map<std::string, std::string>* owner_class_overrides = nullptr;
     bool* owner_class_overrides_loaded = nullptr;

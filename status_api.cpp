@@ -44,6 +44,214 @@ json buildParcelGpuStatusJson() {
     };
 }
 
+json filterResultSetSummary(const FilterResultSet& result_set) {
+    return {
+        {"active", result_set.active},
+        {"layers", result_set.layers.size()},
+        {"features", result_set.features.size()},
+        {"blocklots", result_set.blocklots.size()},
+        {"owners", result_set.owners.size()}
+    };
+}
+
+json mapFilterStateJson(const MapFilterState& filters) {
+    json owners = json::array();
+    for (const auto& owner : filters.selected_owners) owners.push_back(owner);
+    return {
+        {"enabled", filters.enabled},
+        {"use_date", filters.use_date},
+        {"year_min", filters.year_min},
+        {"year_max", filters.year_max},
+        {"blocklot", filters.blocklot},
+        {"status", filters.status},
+        {"address", filters.address},
+        {"owner", filters.owner},
+        {"zip", filters.zip},
+        {"selected_owners", std::move(owners)},
+        {"crime", {
+            {"enabled", filters.crime.enabled},
+            {"homicide", filters.crime.homicide},
+            {"robbery", filters.crime.robbery},
+            {"assault", filters.crime.assault},
+            {"burglary", filters.crime.burglary},
+            {"theft", filters.crime.theft},
+            {"auto_theft", filters.crime.auto_theft},
+            {"drug", filters.crime.drug},
+            {"shooting", filters.crime.shooting},
+            {"use_year", filters.crime.use_year},
+            {"year_min", filters.crime.year_min},
+            {"year_max", filters.crime.year_max}
+        }}
+    };
+}
+
+std::string controlsPresetSql(const std::string& preset) {
+    if (preset == "unavailable_value" || preset == "missing_value" || preset == "no_value") {
+        return R"SQL(
+            SELECT
+                parcel_layer_idx AS layer_idx,
+                parcel_feature_idx AS feature_idx,
+                blocklot,
+                owner,
+                owner_display,
+                address,
+                current_value,
+                has_property_record,
+                parcel_source_file,
+                property_source_file
+            FROM unified_parcels
+            WHERE current_value <= 0 OR current_value IS NULL
+            ORDER BY has_property_record DESC, owner_display, address, parcel_feature_idx
+        )SQL";
+    }
+    if (preset == "valued_parcels") {
+        return R"SQL(
+            SELECT
+                parcel_layer_idx AS layer_idx,
+                parcel_feature_idx AS feature_idx,
+                blocklot,
+                owner,
+                owner_display,
+                address,
+                current_value,
+                has_property_record,
+                parcel_source_file,
+                property_source_file
+            FROM unified_parcels
+            WHERE current_value > 0
+            ORDER BY current_value DESC, parcel_feature_idx
+        )SQL";
+    }
+    return {};
+}
+
+DuckDbQueryResult controlsPresetInMemory(
+    const std::string& preset,
+    const std::vector<UnifiedParcelRecord>& parcels,
+    size_t max_rows) {
+    DuckDbQueryResult out;
+    out.ok = true;
+    out.columns = {
+        "layer_idx",
+        "feature_idx",
+        "blocklot",
+        "owner",
+        "owner_display",
+        "address",
+        "current_value",
+        "has_property_record",
+        "parcel_source_file",
+        "property_source_file"
+    };
+    const bool unavailable =
+        preset == "unavailable_value" || preset == "missing_value" || preset == "no_value";
+    const bool valued = preset == "valued_parcels";
+    if (!unavailable && !valued) {
+        out.ok = false;
+        out.message = "Unknown in-memory controls preset.";
+        return out;
+    }
+
+    size_t matched = 0;
+    for (const auto& rec : parcels) {
+        const bool keep = unavailable ? rec.current_value <= 0.0 : rec.current_value > 0.0;
+        if (!keep) continue;
+        ++matched;
+        out.result_set.layers.insert(rec.parcel_layer_idx);
+        out.result_set.features.insert(FeatureKey{rec.parcel_layer_idx, rec.parcel_feature_idx});
+        if (!rec.blocklot.empty()) out.result_set.blocklots.insert(rec.blocklot);
+        if (!rec.owner.empty()) out.result_set.owners.insert(rec.owner);
+        if (out.rows.size() < max_rows) {
+            out.rows.push_back({
+                std::to_string((uint64_t)rec.parcel_layer_idx),
+                std::to_string((uint64_t)rec.parcel_feature_idx),
+                rec.blocklot,
+                rec.owner,
+                rec.owner_display,
+                rec.address,
+                std::to_string(rec.current_value),
+                rec.has_property_record ? "true" : "false",
+                rec.parcel_source_file,
+                rec.property_source_file
+            });
+        }
+    }
+    out.result_set.active = true;
+    std::ostringstream msg;
+    msg << "Preset returned " << matched << " rows";
+    if (out.rows.size() < matched) msg << " (" << out.rows.size() << " shown)";
+    msg << ". Map identities: "
+        << out.result_set.features.size() << " features, "
+        << out.result_set.blocklots.size() << " blocklots, "
+        << out.result_set.owners.size() << " owners.";
+    out.message = msg.str();
+    return out;
+}
+
+ApiQueryControlCommand::ApplyMode parseControlApplyMode(const std::string& raw) {
+    const std::string v = toLowerAscii(urlDecode(raw));
+    if (v == "filter" || v == "active_filter") return ApiQueryControlCommand::ApplyMode::Filter;
+    if (v == "layer" || v == "map_layer" || v == "overlay") return ApiQueryControlCommand::ApplyMode::Layer;
+    if (v == "filter_layer" || v == "both" || v == "filter+layer") return ApiQueryControlCommand::ApplyMode::FilterLayer;
+    return ApiQueryControlCommand::ApplyMode::None;
+}
+
+std::string controlApplyModeName(ApiQueryControlCommand::ApplyMode mode) {
+    switch (mode) {
+        case ApiQueryControlCommand::ApplyMode::Filter: return "filter";
+        case ApiQueryControlCommand::ApplyMode::Layer: return "layer";
+        case ApiQueryControlCommand::ApplyMode::FilterLayer: return "filter_layer";
+        case ApiQueryControlCommand::ApplyMode::None: break;
+    }
+    return "none";
+}
+
+bool parseControlFloat(const std::string& raw, float& out) {
+    if (raw.empty()) return false;
+    try {
+        out = std::stof(raw);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+void applyControlColor(
+    QueryMapLayer& layer,
+    const std::string& color_raw,
+    const std::string& r_raw,
+    const std::string& g_raw,
+    const std::string& b_raw,
+    const std::string& a_raw) {
+    auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
+    std::string color = trimDisplayValue(color_raw);
+    if (!color.empty()) {
+        if (color[0] == '#') color.erase(color.begin());
+        if (color.size() == 6 || color.size() == 8) {
+            try {
+                const unsigned int rgba = (unsigned int)std::stoul(color, nullptr, 16);
+                if (color.size() == 6) {
+                    layer.color[0] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
+                    layer.color[1] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
+                    layer.color[2] = (float)(rgba & 0xFFu) / 255.0f;
+                } else {
+                    layer.color[0] = (float)((rgba >> 24) & 0xFFu) / 255.0f;
+                    layer.color[1] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
+                    layer.color[2] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
+                    layer.color[3] = (float)(rgba & 0xFFu) / 255.0f;
+                }
+            } catch (...) {
+            }
+        }
+    }
+
+    float v = 0.0f;
+    if (parseControlFloat(r_raw, v)) layer.color[0] = clamp01(v > 1.0f ? v / 255.0f : v);
+    if (parseControlFloat(g_raw, v)) layer.color[1] = clamp01(v > 1.0f ? v / 255.0f : v);
+    if (parseControlFloat(b_raw, v)) layer.color[2] = clamp01(v > 1.0f ? v / 255.0f : v);
+    if (parseControlFloat(a_raw, v)) layer.color[3] = clamp01(v > 1.0f ? v / 255.0f : v);
+}
+
 struct ResourceUsageSnapshot {
     double user_cpu_seconds = 0.0;
     double system_cpu_seconds = 0.0;
@@ -140,6 +348,12 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
 
         auto& hydration_stop = *ctx.stop;
         auto& layers = *ctx.layers;
+        auto& duckdb_analytics = *ctx.duckdb_analytics;
+        auto& unified_parcels = *ctx.unified_parcels;
+        auto& map_filter_state = *ctx.map_filter_state;
+        auto& active_filter_result_set = *ctx.active_filter_result_set;
+        auto& query_layers = *ctx.query_layers;
+        auto& active_filter_status = *ctx.active_filter_status;
         auto& time_cube_service = *ctx.time_cube_service;
         auto& g_ScreenshotState = *ctx.screenshot;
         auto& status_mutex = *ctx.status_mutex;
@@ -182,6 +396,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& api_ui_cmd_y = *ctx.api_ui_cmd_y;
         auto& api_ui_cmd_button = *ctx.api_ui_cmd_button;
         auto& api_ui_cmd_scroll_y = *ctx.api_ui_cmd_scroll_y;
+        auto& api_control_mutex = *ctx.api_control_mutex;
+        auto& api_filter_control_cmd = *ctx.api_filter_control_cmd;
+        auto& api_query_control_cmds = *ctx.api_query_control_cmds;
         auto& layer_profile_mutex = *ctx.layer_profile_mutex;
         auto& layer_profile_snapshot = *ctx.layer_profile_snapshot;
         auto& profile_mutex = *ctx.profile_mutex;
@@ -841,6 +1058,168 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/controls" || path == "/controls/filter" || path == "/controls/query") {
+                if (path == "/controls") {
+                    json layer_summaries = json::array();
+                    for (size_t i = 0; i < query_layers.size(); ++i) {
+                        const auto& layer = query_layers[i];
+                        layer_summaries.push_back({
+                            {"index", i},
+                            {"name", layer.name},
+                            {"enabled", layer.enabled},
+                            {"row_count", layer.row_count},
+                            {"status", layer.status},
+                            {"result_set", filterResultSetSummary(layer.result_set)}
+                        });
+                    }
+                    send_json(200, "OK", {
+                        {"ok", true},
+                        {"endpoints", {
+                            {"filter", "/controls/filter?enabled=1&owner=...&address=..."},
+                            {"query", "/controls/query?preset=unavailable_value&apply=filter&limit=100"},
+                            {"query_sql", "/controls/query?sql=SELECT...&apply=layer&name=..."},
+                            {"query_filter_color", "/controls/query?preset=unavailable_value&apply=filter_layer&color=%2300d4ffcc"},
+                            {"query_color", "/controls/query?preset=unavailable_value&apply=layer&color=%23ff5533cc"}
+                        }},
+                        {"filter", mapFilterStateJson(map_filter_state)},
+                        {"active_filter", {
+                            {"status", active_filter_status},
+                            {"result_set", filterResultSetSummary(active_filter_result_set)}
+                        }},
+                        {"query_layers", std::move(layer_summaries)},
+                        {"presets", json::array({"unavailable_value", "valued_parcels"})}
+                    });
+                } else if (path == "/controls/filter") {
+                    ApiFilterControlCommand cmd;
+                    cmd.pending = true;
+                    const std::string action = toLowerAscii(get_q("action"));
+                    cmd.clear_fields = action == "clear" || get_q("clear") == "1" || get_q("clear") == "true";
+                    cmd.clear_selected_owners = action == "clear_owners" || get_q("clear_selected_owners") == "1" || get_q("clear_selected_owners") == "true";
+                    cmd.clear_query_layers = action == "clear_query_layers" || action == "clear" ||
+                        get_q("clear_query_layers") == "1" || get_q("clear_query_layers") == "true";
+                    for (const char* key : {
+                        "enabled", "use_date", "year_min", "year_max",
+                        "blocklot", "status", "address", "owner", "zip",
+                        "crime_enabled", "crime_use_year", "crime_year_min", "crime_year_max",
+                        "crime_homicide", "crime_robbery", "crime_assault", "crime_burglary",
+                        "crime_theft", "crime_auto_theft", "crime_drug", "crime_shooting"
+                    }) {
+                        const std::string value = get_q(key);
+                        if (!value.empty()) cmd.values[key] = value;
+                    }
+                    {
+                        std::lock_guard<std::mutex> lk(api_control_mutex);
+                        api_filter_control_cmd = std::move(cmd);
+                    }
+                    send_json(200, "OK", {
+                        {"ok", true},
+                        {"queued", "filter"},
+                        {"note", "Filter changes are applied on the render thread next frame."}
+                    });
+                } else {
+                    const std::string preset = toLowerAscii(get_q("preset"));
+                    std::string sql = get_q("sql");
+                    if (sql.empty() && !preset.empty()) sql = controlsPresetSql(preset);
+                    if (sql.empty()) {
+                        send_json(400, "Bad Request", {
+                            {"ok", false},
+                            {"error", "controls query requires sql=... or preset=unavailable_value"}
+                        });
+                    } else {
+                        size_t max_rows = 100;
+                        const std::string limit_raw = get_q("limit");
+                        if (!limit_raw.empty()) {
+                            try {
+                                max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 5000);
+                            } catch (...) {
+                                max_rows = 100;
+                            }
+                        }
+                        const ApiQueryControlCommand::ApplyMode apply_mode = parseControlApplyMode(get_q("apply"));
+                        const std::string name = get_q("name").empty()
+                            ? (preset.empty() ? "REST Query" : ("REST " + preset))
+                            : get_q("name");
+                        DuckDbQueryResult result;
+                        const bool can_use_memory_preset =
+                            !preset.empty() &&
+                            (preset == "unavailable_value" || preset == "missing_value" ||
+                             preset == "no_value" || preset == "valued_parcels") &&
+                            !unified_parcels.empty();
+                        if (can_use_memory_preset) {
+                            result = controlsPresetInMemory(preset, unified_parcels, max_rows);
+                        } else if (!duckdb_analytics.status().last_rebuild_ok && !duckdb_analytics.validateExistingCache()) {
+                            result.ok = false;
+                            result.message = duckdb_analytics.status().message;
+                        } else {
+                            result = duckdb_analytics.executeMapQuery(
+                                sql,
+                                map_filter_state.selected_owners,
+                                {},
+                                max_rows);
+                        }
+                        json rows = json::array();
+                        for (const auto& row : result.rows) {
+                            json row_json = json::object();
+                            for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+                                row_json[result.columns[i]] = row[i];
+                            }
+                            rows.push_back(std::move(row_json));
+                        }
+                        const json result_set_summary = filterResultSetSummary(result.result_set);
+                        float response_color[4] = {
+                            1.0f,
+                            apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
+                                    apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.16f : 0.48f,
+                            apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
+                                    apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.12f : 0.08f,
+                            1.0f
+                        };
+                        if (result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None) {
+                            ApiQueryControlCommand cmd;
+                            cmd.apply_mode = apply_mode;
+                            cmd.layer.enabled = true;
+                            cmd.layer.name = name;
+                            cmd.layer.sql = sql;
+                            cmd.layer.color[0] = 1.0f;
+                            cmd.layer.color[1] = apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
+                                    apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.16f : 0.48f;
+                            cmd.layer.color[2] = apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
+                                    apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.12f : 0.08f;
+                            cmd.layer.color[3] = 1.0f;
+                            applyControlColor(
+                                cmd.layer,
+                                get_q("color"),
+                                get_q("r"),
+                                get_q("g"),
+                                get_q("b"),
+                                get_q("a"));
+                            for (int i = 0; i < 4; ++i) response_color[i] = cmd.layer.color[i];
+                            cmd.layer.result_set = std::move(result.result_set);
+                            cmd.layer.row_count = result.rows.size();
+                            cmd.layer.status = result.message;
+                            {
+                                std::lock_guard<std::mutex> lk(api_control_mutex);
+                                api_query_control_cmds.push_back(std::move(cmd));
+                            }
+                        }
+                        send_json(result.ok ? 200 : 400, result.ok ? "OK" : "Bad Request", {
+                            {"ok", result.ok},
+                            {"message", result.message},
+                            {"preset", preset},
+                            {"apply", controlApplyModeName(apply_mode)},
+                            {"queued", result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None},
+                            {"color", {
+                                {"r", response_color[0]},
+                                {"g", response_color[1]},
+                                {"b", response_color[2]},
+                                {"a", response_color[3]}
+                            }},
+                            {"columns", result.columns},
+                            {"rows", std::move(rows)},
+                            {"result_set", result_set_summary}
+                        });
+                    }
+                }
             } else if (path == "/ui") {
                 json out;
                 out["ok"] = true;
@@ -1013,7 +1392,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 {"categories", std::move(cats)},
                                 {"row_controls", json::array({"D", "V", "⚙"})}
                             }},
-                            {"record_filters_tabs", json::array({"Filters", "Vacancy-Parcel", "Gradient", "Owners"})}
+                            {"record_filters_tabs", json::array({"Filters", "SQL", "Active Queries", "Vacancy-Parcel", "Gradient", "Owners"})}
                         };
                         const std::string md = readTextFileIfExists("UI_HIERARCHY.md");
                         if (!md.empty()) out["ui_hierarchy_markdown"] = md;

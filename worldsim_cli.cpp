@@ -6,6 +6,7 @@
 #include "map_render_projection.h"
 #include "profiling_layer_snapshot.h"
 #include "render_layer_pass.h"
+#include "render_plan_builder.h"
 #include "render_policy.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
@@ -812,6 +813,51 @@ int runRenderPolicySelftest() {
     return ok ? 0 : 1;
 }
 
+int runRenderPlanSelftest() {
+    std::vector<LayerDef> layers(4);
+    layers[0].file = "basemap_context.geojson";
+    layers[1].file = "regional_parcels.geojson";
+    layers[1].scale = "parcel";
+    layers[2].file = "zoning.geojson";
+    layers[2].category = LayerDef::Category::Zoning;
+    layers[2].scale = "parcel";
+    layers[3].file = "parcel_query_overlay.geojson";
+    layers[3].scale = "parcel";
+
+    RenderPlanBuilderContext ctx;
+    ctx.layers = &layers;
+    ctx.zoning_layer_idx = 2;
+    ctx.is_parcel_related_layer = [](size_t layer_idx) {
+        return layer_idx == 1 || layer_idx == 3;
+    };
+    ctx.layer_uses_heatmap_aggregate = [](size_t) { return false; };
+    ctx.layer_uses_lod_geometry = [](size_t) { return false; };
+
+    const RenderPlan plan = buildRenderPlan(ctx);
+    auto order_pos = [&](size_t layer_idx) {
+        auto it = std::find(plan.draw_layer_order.begin(), plan.draw_layer_order.end(), layer_idx);
+        return it == plan.draw_layer_order.end()
+            ? plan.draw_layer_order.size()
+            : (size_t)std::distance(plan.draw_layer_order.begin(), it);
+    };
+    const size_t zoning_pos = order_pos(2);
+    const size_t parcel_pos = order_pos(1);
+    const size_t query_pos = order_pos(3);
+    const bool zoning_before_parcel_infill = zoning_pos < parcel_pos && zoning_pos < query_pos;
+    const bool all_layers_present = plan.draw_layer_order.size() == layers.size();
+    const bool ok = all_layers_present && zoning_before_parcel_infill;
+
+    json out = {
+        {"mode", "render-plan-selftest"},
+        {"ok", ok},
+        {"draw_layer_order", plan.draw_layer_order},
+        {"zoning_before_parcel_infill", zoning_before_parcel_infill},
+        {"all_layers_present", all_layers_present}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 std::optional<size_t> readBinaryTriCacheCount(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return std::nullopt;
@@ -850,6 +896,256 @@ std::optional<size_t> readBinaryTriCacheCount(const fs::path& path) {
     return static_cast<size_t>(count);
 }
 
+struct BinaryCacheHeader {
+    bool ok = false;
+    uint32_t version = 0;
+    std::string source_signature;
+    uint64_t count = 0;
+    uint32_t vertices = 0;
+    uint32_t indices = 0;
+    uint32_t line_indices = 0;
+    uint32_t features = 0;
+    uint32_t chunks = 0;
+    uintmax_t file_size_bytes = 0;
+    std::string error;
+};
+
+bool readCliU32(std::istream& in, uint32_t& out) {
+    unsigned char b[4];
+    if (!in.read(reinterpret_cast<char*>(b), sizeof(b))) return false;
+    out = uint32_t(b[0]) | (uint32_t(b[1]) << 8) | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
+    return true;
+}
+
+bool readCliU64(std::istream& in, uint64_t& out) {
+    unsigned char b[8];
+    if (!in.read(reinterpret_cast<char*>(b), sizeof(b))) return false;
+    out = uint64_t(b[0]) |
+          (uint64_t(b[1]) << 8) |
+          (uint64_t(b[2]) << 16) |
+          (uint64_t(b[3]) << 24) |
+          (uint64_t(b[4]) << 32) |
+          (uint64_t(b[5]) << 40) |
+          (uint64_t(b[6]) << 48) |
+          (uint64_t(b[7]) << 56);
+    return true;
+}
+
+bool readCliString(std::istream& in, std::string& out) {
+    uint32_t n = 0;
+    if (!readCliU32(in, n) || n > 64u * 1024u * 1024u) return false;
+    out.resize(n);
+    return n == 0 || bool(in.read(out.data(), static_cast<std::streamsize>(n)));
+}
+
+uintmax_t fileSizeOrZero(const fs::path& path) {
+    std::error_code ec;
+    const uintmax_t size = fs::file_size(path, ec);
+    return ec ? 0 : size;
+}
+
+BinaryCacheHeader readHydrationCacheHeader(const fs::path& path) {
+    BinaryCacheHeader out;
+    out.file_size_bytes = fileSizeOrZero(path);
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        out.error = "missing";
+        return out;
+    }
+    char magic[8];
+    if (!in.read(magic, sizeof(magic)) || std::string(magic, magic + 7) != "WS3HYD2") {
+        out.error = "bad_magic";
+        return out;
+    }
+    uint32_t endian = 0;
+    if (!readCliU32(in, out.version) || !readCliU32(in, endian) || out.version != 1 || endian != 0x01020304u) {
+        out.error = "bad_header";
+        return out;
+    }
+    if (!readCliString(in, out.source_signature) || !readCliU64(in, out.count)) {
+        out.error = "bad_metadata";
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+BinaryCacheHeader readTriCacheHeader(const fs::path& path) {
+    BinaryCacheHeader out;
+    out.file_size_bytes = fileSizeOrZero(path);
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        out.error = "missing";
+        return out;
+    }
+    char magic[8];
+    if (!in.read(magic, sizeof(magic)) || std::string(magic, magic + 7) != "WS3TRI2") {
+        out.error = "bad_magic";
+        return out;
+    }
+    uint32_t endian = 0;
+    if (!readCliU32(in, out.version) || !readCliU32(in, endian) || out.version != 1 || endian != 0x01020304u) {
+        out.error = "bad_header";
+        return out;
+    }
+    if (!readCliString(in, out.source_signature) || !readCliU64(in, out.count)) {
+        out.error = "bad_metadata";
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+BinaryCacheHeader readParcelRenderCacheHeader(const fs::path& path) {
+    BinaryCacheHeader out;
+    out.file_size_bytes = fileSizeOrZero(path);
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        out.error = "missing";
+        return out;
+    }
+    char magic[8];
+    if (!in.read(magic, sizeof(magic)) || std::string(magic, magic + 7) != "WS3PRD1") {
+        out.error = "bad_magic";
+        return out;
+    }
+    uint32_t endian = 0;
+    if (!readCliU32(in, out.version) || !readCliU32(in, endian) || out.version != 2 || endian != 0x01020304u) {
+        out.error = "bad_header";
+        return out;
+    }
+    if (!readCliString(in, out.source_signature) ||
+        !readCliU32(in, out.vertices) ||
+        !readCliU32(in, out.indices) ||
+        !readCliU32(in, out.line_indices) ||
+        !readCliU32(in, out.features) ||
+        !readCliU32(in, out.chunks)) {
+        out.error = "bad_metadata";
+        return out;
+    }
+    out.count = out.features;
+    out.ok = true;
+    return out;
+}
+
+json binaryHeaderJson(const BinaryCacheHeader& h, const std::string& expected_sig, uint64_t expected_count) {
+    const bool signature_match = h.ok && h.source_signature == expected_sig;
+    const bool count_match = h.ok && (expected_count == 0 || h.count == expected_count);
+    json out = {
+        {"ok", h.ok},
+        {"file_size_bytes", h.file_size_bytes},
+        {"source_signature", h.source_signature},
+        {"signature_match", signature_match},
+        {"count", h.count},
+        {"count_match", count_match}
+    };
+    if (h.version != 0) out["version"] = h.version;
+    if (!h.error.empty()) out["error"] = h.error;
+    if (h.vertices != 0 || h.indices != 0 || h.features != 0 || h.chunks != 0) {
+        out["vertices"] = h.vertices;
+        out["indices"] = h.indices;
+        out["line_indices"] = h.line_indices;
+        out["features"] = h.features;
+        out["chunks"] = h.chunks;
+    }
+    return out;
+}
+
+int parcelArtifactHealth(const fs::path& root, std::string file) {
+    if (file.empty()) file = "regional_parcels.geojson";
+    if (!isBareLayerFilename(file)) {
+        std::cout << json{
+            {"mode", "parcel-artifact-health"},
+            {"file", file},
+            {"ok", false},
+            {"error", "requires a layer filename, not a path"}
+        }.dump(2) << '\n';
+        return 2;
+    }
+
+    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path canonical_path = root / "data" / "layers" / canonicalBinaryPathForLayerFile(file);
+    const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
+    const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
+    const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
+    const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
+
+    std::string resolved_sig;
+    std::string resolved_kind;
+    const bool resolved = resolveLayerSourceSignature(layer_path, resolved_sig, &resolved_kind);
+
+    CanonicalFeatureCollectionMetadata canonical_meta;
+    const bool canonical_ok = loadBinaryCanonicalMetadata(canonical_path, canonical_meta);
+    const uint64_t expected_count = canonical_ok ? canonical_meta.feature_count : 0;
+    const std::string expected_sig = resolved ? resolved_sig : canonical_meta.source_signature;
+
+    const BinaryCacheHeader hydration = readHydrationCacheHeader(hydration_path);
+    const BinaryCacheHeader tri = readTriCacheHeader(tri_path);
+    const BinaryCacheHeader render = readParcelRenderCacheHeader(render_path);
+
+    std::error_code geojson_ec;
+    const bool geojson_present = fs::exists(layer_path, geojson_ec) && !geojson_ec;
+    const uintmax_t geojson_size = geojson_present ? fileSizeOrZero(layer_path) : 0;
+    const bool duckdb_present = fs::exists(duckdb_path, geojson_ec) && !geojson_ec;
+    const uintmax_t duckdb_size = duckdb_present ? fileSizeOrZero(duckdb_path) : 0;
+
+    json recommendations = json::array();
+    if (!canonical_ok) recommendations.push_back("build canonical parcel binary");
+    if (!hydration.ok || hydration.source_signature != expected_sig || (expected_count != 0 && hydration.count != expected_count)) {
+        recommendations.push_back("run --warm-hydration-cache " + file);
+    }
+    if (!tri.ok || tri.source_signature != expected_sig || (expected_count != 0 && tri.count != expected_count)) {
+        recommendations.push_back("run --warm-triangulation-cache " + file);
+    }
+    if (!render.ok || render.source_signature != expected_sig) {
+        recommendations.push_back("run --warm-parcel-render-cache " + file);
+    }
+    if (!duckdb_present) recommendations.push_back("rebuild DuckDB analytics cache");
+    if (geojson_present && resolved_kind == "canonical_binary") {
+        recommendations.push_back("GeoJSON is optional/debug for this layer; normal runtime uses canonical binary signature");
+    }
+
+    const bool ok =
+        resolved &&
+        canonical_ok &&
+        hydration.ok && hydration.source_signature == expected_sig && (expected_count == 0 || hydration.count == expected_count) &&
+        tri.ok && tri.source_signature == expected_sig && (expected_count == 0 || tri.count == expected_count) &&
+        render.ok && render.source_signature == expected_sig &&
+        duckdb_present;
+
+    json out = {
+        {"mode", "parcel-artifact-health"},
+        {"file", file},
+        {"ok", ok},
+        {"resolved_source_signature", expected_sig},
+        {"resolved_source_kind", resolved_kind},
+        {"geojson", {
+            {"present", geojson_present},
+            {"optional_when_canonical_present", canonical_ok && file == "regional_parcels.geojson"},
+            {"file_size_bytes", geojson_size}
+        }},
+        {"canonical_binary", {
+            {"ok", canonical_ok},
+            {"path", canonical_path.string()},
+            {"file_size_bytes", canonical_ok ? canonical_meta.file_size_bytes : fileSizeOrZero(canonical_path)},
+            {"source_signature", canonical_meta.source_signature},
+            {"signature_match", canonical_ok && canonical_meta.source_signature == expected_sig},
+            {"feature_count", canonical_meta.feature_count}
+        }},
+        {"hydration_cache", binaryHeaderJson(hydration, expected_sig, expected_count)},
+        {"triangulation_cache", binaryHeaderJson(tri, expected_sig, expected_count)},
+        {"parcel_render_cache", binaryHeaderJson(render, expected_sig, 0)},
+        {"duckdb", {
+            {"present", duckdb_present},
+            {"path", duckdb_path.string()},
+            {"file_size_bytes", duckdb_size}
+        }},
+        {"recommendations", std::move(recommendations)}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 int runCanonicalParcelBinarySelftest(const fs::path& root) {
     std::vector<LayerDef::FeatureGeom> features;
     LayerDef::FeatureGeom polygon;
@@ -869,6 +1165,8 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
 
     const fs::path test_dir = root / "data" / "cache" / "selftest";
     const fs::path cache_path = test_dir / "regional_parcels.geojson.canonical.bin";
+    const fs::path resolver_geojson_path = test_dir / "regional_parcels.geojson";
+    const fs::path resolver_canonical_path = test_dir / "regional_parcels.geojson.canonical.bin";
     const std::string sig = "canonical_selftest_sig";
     saveBinaryCanonicalFeatureCollection(cache_path, sig, features);
 
@@ -878,6 +1176,18 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
     std::vector<LayerDef::FeatureGeom> loaded;
     const bool loaded_ok = loadBinaryCanonicalFeatureCollection(cache_path, sig, loaded);
     const bool stale_rejected = !loadBinaryCanonicalFeatureCollection(cache_path, "wrong_signature", loaded);
+
+    {
+        fs::create_directories(test_dir);
+        std::ofstream geojson_out(resolver_geojson_path);
+        geojson_out << "{\"type\":\"FeatureCollection\",\"features\":[]}";
+    }
+    std::string resolved_sig;
+    std::string resolved_kind;
+    const bool resolver_prefers_canonical =
+        resolveLayerSourceSignature(resolver_geojson_path, resolved_sig, &resolved_kind) &&
+        resolved_sig == sig &&
+        resolved_kind == "canonical_binary";
 
     const bool roundtrip_ok =
         loaded_ok &&
@@ -891,6 +1201,8 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
 
     std::error_code ec;
     fs::remove(cache_path, ec);
+    fs::remove(resolver_geojson_path, ec);
+    fs::remove(resolver_canonical_path, ec);
     fs::remove(test_dir, ec);
 
     const bool ok =
@@ -900,7 +1212,8 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         meta.feature_count == 1 &&
         meta.source_signature == sig &&
         roundtrip_ok &&
-        stale_rejected;
+        stale_rejected &&
+        resolver_prefers_canonical;
 
     json out = {
         {"mode", "canonical-parcel-binary-selftest"},
@@ -909,7 +1222,8 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         {"feature_count", meta.feature_count},
         {"source_signature", meta.source_signature},
         {"roundtrip_ok", roundtrip_ok},
-        {"stale_signature_rejected", stale_rejected}
+        {"stale_signature_rejected", stale_rejected},
+        {"resolver_prefers_canonical", resolver_prefers_canonical}
     };
     std::cout << out.dump(2) << '\n';
     return ok ? 0 : 1;
@@ -1114,11 +1428,19 @@ int warmHydrationCacheAll(const fs::path& root) {
         if (ec) break;
         if (!entry.is_regular_file()) continue;
         const std::string name = entry.path().filename().string();
-        if (entry.path().extension() != ".geojson") continue;
-        const fs::path binary_path = root / "data" / "cache" / "hydration" / (name + ".bin");
-        if (fs::exists(binary_path)) candidates.push_back(name);
+        std::string layer_file;
+        if (entry.path().extension() == ".geojson") {
+            layer_file = name;
+        } else if (name.ends_with(".geojson.canonical.bin")) {
+            layer_file = name.substr(0, name.size() - std::strlen(".canonical.bin"));
+        } else {
+            continue;
+        }
+        const fs::path binary_path = root / "data" / "cache" / "hydration" / (layer_file + ".bin");
+        if (fs::exists(binary_path)) candidates.push_back(layer_file);
     }
     std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
 
     json results = json::array();
     size_t ok_count = 0;
@@ -1427,6 +1749,70 @@ int warmParcelRenderCacheAll(const fs::path& root) {
     std::cout << out.dump(2) << '\n';
     return failed_count == 0 ? 0 : 1;
 }
+
+json skippedWarmStep(const std::string& mode, const std::string& file, const std::string& reason) {
+    return {
+        {"mode", mode},
+        {"file", file},
+        {"ok", false},
+        {"skipped", true},
+        {"reason", reason}
+    };
+}
+
+json warmParcelRuntimeStackOne(const fs::path& root, std::string file, int& exit_code) {
+    if (file.empty()) file = "regional_parcels.geojson";
+    exit_code = 0;
+    if (!isBareLayerFilename(file)) {
+        exit_code = 2;
+        return {
+            {"mode", "warm-parcel-runtime-stack"},
+            {"file", file},
+            {"ok", false},
+            {"error", "requires a layer filename, not a path"}
+        };
+    }
+
+    int hydration_exit = 0;
+    json hydration = warmHydrationCacheOne(root, file, hydration_exit);
+
+    int tri_exit = 0;
+    json triangulation = hydration_exit == 0
+        ? warmTriangulationCacheOne(root, file, tri_exit)
+        : skippedWarmStep("warm-triangulation-cache", file, "hydration cache warm failed");
+
+    int render_exit = 0;
+    json render = (hydration_exit == 0 && tri_exit == 0)
+        ? warmParcelRenderCacheOne(root, file, render_exit)
+        : skippedWarmStep("warm-parcel-render-cache", file, "upstream cache warm failed");
+
+    const bool ok = hydration_exit == 0 && tri_exit == 0 && render_exit == 0;
+    exit_code = ok ? 0 : 1;
+    return {
+        {"mode", "warm-parcel-runtime-stack"},
+        {"file", file},
+        {"ok", ok},
+        {"hydration_cache", std::move(hydration)},
+        {"triangulation_cache", std::move(triangulation)},
+        {"parcel_render_cache", std::move(render)},
+        {"canonical_binary", {
+            {"rebuilt", false},
+            {"reason", "canonical binary rebuild/export remains explicit"}
+        }},
+        {"duckdb", {
+            {"rebuilt", false},
+            {"reason", "DuckDB analytics rebuild remains explicit and is not required for parcel geometry rendering"}
+        }},
+        {"health_check", "run --parcel-artifact-health " + file}
+    };
+}
+
+int warmParcelRuntimeStack(const fs::path& root, const std::string& file) {
+    int exit_code = 0;
+    const json out = warmParcelRuntimeStackOne(root, file, exit_code);
+    std::cout << out.dump(2) << '\n';
+    return exit_code;
+}
 }
 
 WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
@@ -1485,6 +1871,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_render_policy_selftest = true;
             continue;
         }
+        if (arg == "--render-plan-selftest") {
+            options.run_render_plan_selftest = true;
+            continue;
+        }
         if (arg == "--canonical-parcel-binary-selftest") {
             options.run_canonical_parcel_binary_selftest = true;
             continue;
@@ -1497,6 +1887,16 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg == "--validate-canonical-parcel-binary") {
             options.run_validate_canonical_parcel_binary = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') options.canonical_parcel_binary_file = argv[++i];
+            continue;
+        }
+        if (arg == "--parcel-artifact-health") {
+            options.run_parcel_artifact_health = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.canonical_parcel_binary_file = argv[++i];
+            continue;
+        }
+        if (arg == "--warm-parcel-runtime-stack") {
+            options.run_warm_parcel_runtime_stack = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.warm_parcel_runtime_stack_file = argv[++i];
             continue;
         }
         if (arg == "--warm-hydration-cache") {
@@ -1547,6 +1947,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.warm_parcel_render_cache_file = arg.substr(std::strlen("--warm-parcel-render-cache="));
             continue;
         }
+        if (arg.rfind("--warm-parcel-runtime-stack=", 0) == 0) {
+            options.run_warm_parcel_runtime_stack = true;
+            options.warm_parcel_runtime_stack_file = arg.substr(std::strlen("--warm-parcel-runtime-stack="));
+            continue;
+        }
         if (arg.rfind("--inspect-canonical-parcel-binary=", 0) == 0) {
             options.run_inspect_canonical_parcel_binary = true;
             options.canonical_parcel_binary_file = arg.substr(std::strlen("--inspect-canonical-parcel-binary="));
@@ -1555,6 +1960,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--validate-canonical-parcel-binary=", 0) == 0) {
             options.run_validate_canonical_parcel_binary = true;
             options.canonical_parcel_binary_file = arg.substr(std::strlen("--validate-canonical-parcel-binary="));
+            continue;
+        }
+        if (arg.rfind("--parcel-artifact-health=", 0) == 0) {
+            options.run_parcel_artifact_health = true;
+            options.canonical_parcel_binary_file = arg.substr(std::strlen("--parcel-artifact-health="));
             continue;
         }
         if (arg == "--download-layers") {
@@ -1620,9 +2030,11 @@ void printWorldsimUsage() {
         << "       worldsim3 --warm-triangulation-cache-all\n"
         << "       worldsim3 --warm-parcel-render-cache LAYER_FILE\n"
         << "       worldsim3 --warm-parcel-render-cache-all\n"
+        << "       worldsim3 --warm-parcel-runtime-stack [LAYER_FILE]\n"
         << "       worldsim3 --canonical-parcel-binary-selftest\n"
         << "       worldsim3 --inspect-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --validate-canonical-parcel-binary [LAYER_FILE]\n"
+        << "       worldsim3 --parcel-artifact-health [LAYER_FILE]\n"
         << "       worldsim3 --hydration-cache-selftest\n"
         << "       worldsim3 --triangulation-cache-selftest\n"
         << "       worldsim3 --projection-cache-selftest\n"
@@ -1635,6 +2047,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --layer-runtime-status-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
         << "       worldsim3 --render-policy-selftest\n"
+        << "       worldsim3 --render-plan-selftest\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
@@ -1682,6 +2095,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_render_policy_selftest) {
         return runRenderPolicySelftest();
     }
+    if (options.run_render_plan_selftest) {
+        return runRenderPlanSelftest();
+    }
     if (options.run_canonical_parcel_binary_selftest) {
         return runCanonicalParcelBinarySelftest(root);
     }
@@ -1690,6 +2106,12 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_validate_canonical_parcel_binary) {
         return validateCanonicalParcelBinary(root, options.canonical_parcel_binary_file);
+    }
+    if (options.run_parcel_artifact_health) {
+        return parcelArtifactHealth(root, options.canonical_parcel_binary_file);
+    }
+    if (options.run_warm_parcel_runtime_stack) {
+        return warmParcelRuntimeStack(root, options.warm_parcel_runtime_stack_file);
     }
     if (options.run_warm_hydration_cache) {
         return warmHydrationCache(root, options.warm_hydration_cache_file);

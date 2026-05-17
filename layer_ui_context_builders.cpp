@@ -63,8 +63,6 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     ctx.crime_filter_shooting = input.crime_filter_shooting;
     ctx.crime_nibrs_layer_idx = input.crime_nibrs_layer_idx;
     ctx.crime_breakdown = input.crime_breakdown;
-    ctx.parcel_jurisdiction_filter = input.parcel_jurisdiction_filter;
-    ctx.parcel_jurisdiction_filter_dirty = input.parcel_jurisdiction_filter_dirty;
-    ctx.parcel_jurisdiction_filter_status = input.parcel_jurisdiction_filter_status;
+    ctx.parcel_jurisdiction_filter_state = input.parcel_jurisdiction_filter_state;
     return ctx;
 }

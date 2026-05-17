@@ -7,6 +7,12 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.tile_cache_max = input.tile_cache_max;
     ctx.stop = input.stop;
     ctx.layers = input.layers;
+    ctx.duckdb_analytics = input.duckdb_analytics;
+    ctx.unified_parcels = input.unified_parcels;
+    ctx.map_filter_state = input.map_filter_state;
+    ctx.active_filter_result_set = input.active_filter_result_set;
+    ctx.query_layers = input.query_layers;
+    ctx.active_filter_status = input.active_filter_status;
     ctx.time_cube_service = input.time_cube_service;
     ctx.screenshot = input.screenshot;
     ctx.status_mutex = input.status_mutex;
@@ -49,6 +55,9 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.api_ui_cmd_y = input.api_ui_cmd_y;
     ctx.api_ui_cmd_button = input.api_ui_cmd_button;
     ctx.api_ui_cmd_scroll_y = input.api_ui_cmd_scroll_y;
+    ctx.api_control_mutex = input.api_control_mutex;
+    ctx.api_filter_control_cmd = input.api_filter_control_cmd;
+    ctx.api_query_control_cmds = input.api_query_control_cmds;
     ctx.layer_profile_mutex = input.layer_profile_mutex;
     ctx.layer_profile_snapshot = input.layer_profile_snapshot;
     ctx.profile_mutex = input.profile_mutex;

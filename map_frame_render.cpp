@@ -184,6 +184,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     layer_pass_ctx.vacant_notice_layer_idx = ctx.vacant_notice_layer_idx;
     layer_pass_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
+    layer_pass_ctx.map_polygon_fill_opacity = ctx.map_polygon_fill_opacity;
     layer_pass_ctx.vacancy_notice_color = ctx.vacancy_notice_color;
     layer_pass_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color;
     layer_pass_ctx.vacant_notice_overlay_enabled = render_plan.overlays.vacant_notice_overlay_enabled;

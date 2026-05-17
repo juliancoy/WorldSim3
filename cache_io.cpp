@@ -286,6 +286,18 @@ bool loadBinaryCanonicalMetadata(const fs::path& cache_path, CanonicalFeatureCol
 }
 
 bool resolveLayerSourceSignature(const fs::path& layer_path, std::string& out_sig, std::string* out_source_kind) {
+    const fs::path canonical_path = fs::path(layer_path.string() + ".canonical.bin");
+    const bool prefer_canonical =
+        layer_path.filename().string() == "regional_parcels.geojson";
+    if (prefer_canonical) {
+        CanonicalFeatureCollectionMetadata meta;
+        if (loadBinaryCanonicalMetadata(canonical_path, meta) && !meta.source_signature.empty()) {
+            out_sig = meta.source_signature;
+            if (out_source_kind) *out_source_kind = "canonical_binary";
+            return true;
+        }
+    }
+
     std::error_code exists_ec;
     if (fs::exists(layer_path, exists_ec) && !exists_ec) {
         out_sig = fileSignature(layer_path);
@@ -293,7 +305,6 @@ bool resolveLayerSourceSignature(const fs::path& layer_path, std::string& out_si
         return true;
     }
 
-    const fs::path canonical_path = fs::path(layer_path.string() + ".canonical.bin");
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(canonical_path, meta) || meta.source_signature.empty()) return false;
     out_sig = meta.source_signature;

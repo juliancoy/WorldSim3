@@ -2,6 +2,7 @@
 
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
+#include "worldsim_app_internal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -132,6 +133,8 @@ void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContex
         glfwGetFramebufferSize(ctx.window, ctx.framebuffer_w, ctx.framebuffer_h);
         if (*ctx.framebuffer_w > 0 && *ctx.framebuffer_h > 0) {
             ImGui::SetCurrentContext(ctx.queue_imgui_context);
+            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+            check_vk_result(vkDeviceWaitIdle(g_Device));
             ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
             ImGui_ImplVulkanH_CreateOrResizeWindow(
                 g_Instance,

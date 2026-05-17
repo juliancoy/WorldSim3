@@ -148,6 +148,7 @@ add_executable(worldsim3
   model_tabs_panel.cpp
   layers_panel_ui.cpp
   ui_primitives.cpp
+  ui_fonts.cpp
   ui_theme.cpp
   layer_registry.cpp
   layer_ui_actions.cpp
@@ -179,6 +180,7 @@ add_executable(worldsim3
   tiles.cpp
   owner_info.cpp
   owner_aggregates.cpp
+  active_queries_tab.cpp
   owners_tab.cpp
   gradient_tab.cpp
   vacancy_parcel_tab.cpp

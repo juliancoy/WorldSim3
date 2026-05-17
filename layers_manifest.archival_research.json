@@ -27,7 +27,7 @@
   {
     "name": "Maryland SDAT Real Property Data Search",
     "file": "sdat_real_property_search.html",
-    "url": "https://sdat.dat.maryland.gov/RealProperty/Pages/default.aspx",
+    "url": "https://dat.maryland.gov/realproperty/pages/finding-your-property-information-online.aspx",
     "download": false,
     "reason": "Official lookup/search application, not a bulk app layer. Use as a current assessment, ownership, and recent-sale verification source until a compliant bulk workflow exists.",
     "category": "archival-research",
@@ -105,7 +105,7 @@
   {
     "name": "Baltimore City Records Management",
     "file": "baltimore_records_management_page.html",
-    "url": "https://beta.baltimorecity.gov.ifsight.net/legislative-reference/records-management",
+    "url": "https://legislativereference.baltimorecity.gov/records-management",
     "download": false,
     "reason": "Records management reference; used to locate archival record transfer and inventory workflows.",
     "category": "archival-research",

@@ -61,8 +61,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
         ctx.crime_year_min && ctx.crime_year_max && ctx.crime_filter_homicide &&
         ctx.crime_filter_robbery && ctx.crime_filter_assault && ctx.crime_filter_burglary &&
         ctx.crime_filter_theft && ctx.crime_filter_auto_theft && ctx.crime_filter_drug &&
-        ctx.crime_filter_shooting && ctx.crime_breakdown && ctx.parcel_jurisdiction_filter &&
-        ctx.parcel_jurisdiction_filter_dirty && ctx.parcel_jurisdiction_filter_status &&
+        ctx.crime_filter_shooting && ctx.crime_breakdown && ctx.parcel_jurisdiction_filter_state &&
         ctx.parcel_jurisdiction_options && ctx.basemap_download && ctx.lazy_tile_download &&
         ctx.basemap_coverage_dirty && ctx.zoning_zone_enabled && ctx.zoning_zone_color &&
         ctx.zoning_zone_label && ctx.zoning_metadata && ctx.zoning_zone_order &&
@@ -71,17 +70,17 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
 
 void selectAllLayersAndFilters(const LeftPanelContext& ctx) {
     for (auto& layer : *ctx.layers) layer.enabled = true;
-    ctx.parcel_jurisdiction_filter->clear();
+    ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.clear();
     for (size_t i = 0; i < ctx.parcel_jurisdiction_option_count; ++i) {
-        ctx.parcel_jurisdiction_filter->insert(ctx.parcel_jurisdiction_options[i]);
+        ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.insert(ctx.parcel_jurisdiction_options[i]);
     }
-    *ctx.parcel_jurisdiction_filter_dirty = true;
+    ctx.parcel_jurisdiction_filter_state->dirty = true;
 }
 
 void deselectAllLayersAndFilters(const LeftPanelContext& ctx) {
     for (auto& layer : *ctx.layers) layer.enabled = false;
-    ctx.parcel_jurisdiction_filter->clear();
-    *ctx.parcel_jurisdiction_filter_dirty = true;
+    ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.clear();
+    ctx.parcel_jurisdiction_filter_state->dirty = true;
 }
 }
 
@@ -253,9 +252,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layers_panel_input.crime_filter_shooting = ctx.crime_filter_shooting;
     layers_panel_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
     layers_panel_input.crime_breakdown = ctx.crime_breakdown;
-    layers_panel_input.parcel_jurisdiction_filter = ctx.parcel_jurisdiction_filter;
-    layers_panel_input.parcel_jurisdiction_filter_dirty = ctx.parcel_jurisdiction_filter_dirty;
-    layers_panel_input.parcel_jurisdiction_filter_status = ctx.parcel_jurisdiction_filter_status;
+    layers_panel_input.parcel_jurisdiction_filter_state = ctx.parcel_jurisdiction_filter_state;
     LayersPanelUiContext layers_panel_ctx = makeLayersPanelUiContext(layers_panel_input);
     drawLayerCategoriesPanel(layers_panel_ctx);
 
