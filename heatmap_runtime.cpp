@@ -2,6 +2,7 @@
 
 #include "heatmap_render.h"
 #include "map_render_hud.h"
+#include "worldsim_app.h"
 
 #include <algorithm>
 #include <cmath>
@@ -80,6 +81,7 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
                 (uint32_t)done.second.raster.w,
                 (uint32_t)done.second.raster.h,
                 aggregate_entry.texture);
+            if (aggregate_has_texture) recordGpuProfilerEvent("heatmap raster upload");
         }
         const bool aggregate_has_content = aggregate_has_texture || !aggregate_entry.cells.empty();
         if (aggregate_has_content || !any_active_heatmap) {
@@ -140,6 +142,7 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
                     (uint32_t)disk_entry.raster.w,
                     (uint32_t)disk_entry.raster.h,
                     disk_entry.texture)) {
+                recordGpuProfilerEvent("heatmap raster cache upload");
                 state.texture_cache.emplace(heatmap_key, std::move(disk_entry));
                 pruneHeatmapTextureCache(state);
                 auto current = state.texture_cache.find(heatmap_key);

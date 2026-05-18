@@ -27,7 +27,7 @@ struct CachedHeatNormalization {
 
 struct HeatmapRuntimeState {
     float global_heat_cell_px = 24.0f;
-    int heatmap_algo = kAggregateGpuSplatBlur;
+    int heatmap_algo = kAggregateNone;
     int heatmap_quality_preset = 1;
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;
@@ -71,7 +71,7 @@ struct HeatmapFramePassContext {
     float view_max_lat = 0.0f;
     int zoom = 0;
     int math_zoom = 0;
-    int heatmap_algo = 0;
+    int heatmap_algo = kAggregateNone;
     float global_heat_cell = 24.0f;
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;

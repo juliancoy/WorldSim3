@@ -6,7 +6,46 @@
 #include "parcel_value_ui.h"
 
 namespace {
-bool drawDuckDbParcelDetail(DuckDbAnalytics* duckdb_analytics, int parcel_layer_idx, size_t parcel_feature_idx) {
+struct DuckDbParcelDetailSnapshot {
+    bool ok = false;
+    std::string blocklot;
+    int vacant_notice_count = 0;
+    int vacant_rehab_count = 0;
+    int tax_lien_count = 0;
+    int tax_sale_count = 0;
+    double tax_lien_amount = 0.0;
+    double tax_sale_amount = 0.0;
+    double current_value = 0.0;
+};
+
+DuckDbParcelDetailSnapshot loadDuckDbParcelDetailSnapshot(
+    DuckDbAnalytics* duckdb_analytics,
+    int parcel_layer_idx,
+    size_t parcel_feature_idx) {
+    DuckDbParcelDetailSnapshot out;
+    if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok) return out;
+    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail((size_t)parcel_layer_idx, parcel_feature_idx);
+    if (!detail.ok || detail.rows.empty()) return out;
+    const auto& row = detail.rows.front();
+    auto cell = [&](const char* column) -> std::string {
+        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
+            if (detail.columns[i] == column) return row[i];
+        }
+        return {};
+    };
+    out.ok = true;
+    out.blocklot = cell("blocklot");
+    out.vacant_notice_count = (int)parseNumericField(cell("vacant_notice_count"));
+    out.vacant_rehab_count = (int)parseNumericField(cell("vacant_rehab_count"));
+    out.tax_lien_count = (int)parseNumericField(cell("tax_lien_count"));
+    out.tax_sale_count = (int)parseNumericField(cell("tax_sale_count"));
+    out.tax_lien_amount = parseNumericField(cell("tax_lien_amount"));
+    out.tax_sale_amount = parseNumericField(cell("tax_sale_amount"));
+    out.current_value = parseNumericField(cell("current_value"));
+    return out;
+}
+
+bool drawDuckDbParcelDetail(OwnerInfoUiState* owner_info_state, DuckDbAnalytics* duckdb_analytics, int parcel_layer_idx, size_t parcel_feature_idx) {
     if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok) return false;
     const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail((size_t)parcel_layer_idx, parcel_feature_idx);
     if (!detail.ok || detail.rows.empty()) return false;
@@ -37,13 +76,18 @@ bool drawDuckDbParcelDetail(DuckDbAnalytics* duckdb_analytics, int parcel_layer_
     text_prop("Tax Sale Records", "tax_sale_count");
     text_prop("Tax Lien Amount", "tax_lien_amount");
     text_prop("Tax Sale Amount", "tax_sale_amount");
-    text_prop("Parcel Source", "parcel_source_file");
-    text_prop("Property Source", "property_source_file");
+    if (owner_info_state) {
+        drawSourceInfoLink(*owner_info_state, "Parcel Source:", cell("parcel_source_file"), false, "parcel_info_duckdb_parcel_source");
+        drawSourceInfoLink(*owner_info_state, "Property Source:", cell("property_source_file"), true, "parcel_info_duckdb_property_source");
+    } else {
+        text_prop("Parcel Source", "parcel_source_file");
+        text_prop("Property Source", "property_source_file");
+    }
     ImGui::TextDisabled("Source: DuckDB unified_parcels (harmonized)");
     return true;
 }
 
-void drawUnifiedParcelDetail(const UnifiedParcelRecord& rec) {
+void drawUnifiedParcelDetail(OwnerInfoUiState* owner_info_state, const UnifiedParcelRecord& rec) {
     auto text_prop = [&](const char* label, const std::string& value) {
         if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
     };
@@ -66,8 +110,13 @@ void drawUnifiedParcelDetail(const UnifiedParcelRecord& rec) {
     ImGui::Text("Tax Sale Records: %d", rec.tax_sale_count);
     numeric_prop("Tax Lien Amount", rec.tax_lien_amount);
     numeric_prop("Tax Sale Amount", rec.tax_sale_amount);
-    text_prop("Parcel Source", rec.parcel_source_file);
-    text_prop("Property Source", rec.property_source_file);
+    if (owner_info_state) {
+        drawSourceInfoLink(*owner_info_state, "Parcel Source:", rec.parcel_source_file, false, "parcel_info_unified_parcel_source");
+        drawSourceInfoLink(*owner_info_state, "Property Source:", rec.property_source_file, true, "parcel_info_unified_property_source");
+    } else {
+        text_prop("Parcel Source", rec.parcel_source_file);
+        text_prop("Property Source", rec.property_source_file);
+    }
     ImGui::TextDisabled("Source: in-memory unified parcel record");
 }
 
@@ -125,6 +174,8 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             const UnifiedParcelRecord* selected_unified = ctx.unified_parcels
                 ? unifiedParcelAt(*ctx.unified_parcels, ctx.selected_parcel_idx)
                 : nullptr;
+            const DuckDbParcelDetailSnapshot duckdb_detail =
+                loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx);
             std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
             int vac_notice = 0;
             int vac_rehab = 0;
@@ -146,6 +197,16 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                     current_value_total += u->current_value;
                 }
             }
+            if (ctx.selected_parcel_indices->size() == 1 && duckdb_detail.ok) {
+                blocklot_raw = duckdb_detail.blocklot.empty() ? blocklot_raw : duckdb_detail.blocklot;
+                vac_notice = duckdb_detail.vacant_notice_count;
+                vac_rehab = duckdb_detail.vacant_rehab_count;
+                tax_lien = duckdb_detail.tax_lien_count;
+                tax_sale = duckdb_detail.tax_sale_count;
+                tax_lien_amount = duckdb_detail.tax_lien_amount;
+                tax_sale_amount = duckdb_detail.tax_sale_amount;
+                current_value_total = duckdb_detail.current_value;
+            }
             const LayerDef::FeatureGeom* selected_rp = selected_unified ? selected_unified->real_property : nullptr;
             if (!selected_rp && ctx.real_property_for_parcel) selected_rp = ctx.real_property_for_parcel(selected);
 
@@ -165,9 +226,11 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             if (!summary_owner.empty() && ctx.owner_info_state) {
                 drawOwnerInfoLink(*ctx.owner_info_state, summary_owner, "open_owner_info_parcel_tab");
             }
-            if (selected_unified) {
-                drawUnifiedParcelDetail(*selected_unified);
-            } else if (!drawDuckDbParcelDetail(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx)) {
+            if (duckdb_detail.ok) {
+                drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx);
+            } else if (selected_unified) {
+                drawUnifiedParcelDetail(ctx.owner_info_state, *selected_unified);
+            } else if (!drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx)) {
                 drawRealPropertySummary(selected_rp);
             }
         }

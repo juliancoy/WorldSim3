@@ -445,6 +445,7 @@ int runWorldSim3App(int argc, char** argv) {
     size_t cached_tax_sale_size = 0;
     std::string cached_tax_sale_signature;
     std::string unified_parcel_cached_signature;
+    std::string derived_layer_refresh_inputs_signature;
     std::mutex hydrated_mutex;
     std::deque<HydratedLayer> hydrated_queue;
     std::mutex hydrate_req_mutex;
@@ -526,6 +527,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<int> current_zoom_state{12};
     std::atomic<double> current_lon_state{-76.6122};
     std::atomic<double> current_lat_state{39.2904};
+    bool gpu_profiler_tab_requested = false;
+    bool gpu_profiler_reload_requested = false;
     std::atomic<int> api_zoom_cmd{-1};
     std::atomic<double> api_lon_cmd{std::numeric_limits<double>::quiet_NaN()};
     std::atomic<double> api_lat_cmd{std::numeric_limits<double>::quiet_NaN()};
@@ -568,7 +571,7 @@ int runWorldSim3App(int argc, char** argv) {
     auto& heatmap_multires_enabled = heatmap_runtime.heatmap_multires_enabled;
     auto& heatmap_multires_blend = heatmap_runtime.heatmap_multires_blend;
     auto& heatmap_allow_cpu_fallback = heatmap_runtime.heatmap_allow_cpu_fallback;
-    int hover_inspector_mode = 3; // 0=None, 1=Parcels, 2=Zoning, 3=Both
+    int hover_inspector_mode = 3; // 0=None, 1=Parcels, 2=Zoning, 3=All supported
     bool hover_inspector_enabled = true;
     loadLayerUiState(
         root,
@@ -604,23 +607,8 @@ int runWorldSim3App(int argc, char** argv) {
         &heatmap_multires_enabled,
         &heatmap_multires_blend,
         &heatmap_allow_cpu_fallback);
-    if (heatmap_algo == kAggregateGridBinning) heatmap_algo = kAggregateHexBinning;
-    if (heatmap_algo == kAggregateGpuSplatBlur) heatmap_quality_preset = 2;
+    heatmap_algo = kAggregateNone;
     heatmap_quality_preset = std::clamp(heatmap_quality_preset, 0, 2);
-    for (size_t i = 0; i < layers.size() && i < layer_heatmap_algo.size(); ++i) {
-        std::string field = layers[i].heatmap_field;
-        std::transform(field.begin(), field.end(), field.begin(), [](unsigned char c) {
-            return (char)std::tolower(c);
-        });
-        if (layers[i].scale == "parcel" &&
-            (field == "value_usd" || field == "property_value_usd") &&
-            (layer_heatmap_algo[i] < 0 || layer_heatmap_algo[i] == kAggregateGridBinning)) {
-            layer_heatmap_algo[i] = kAggregateMedianChoropleth;
-            if (i < layer_normalize_mode.size()) layer_normalize_mode[i] = 0;
-        } else if (layer_heatmap_algo[i] == kAggregateGridBinning) {
-            layer_heatmap_algo[i] = kAggregateHexBinning;
-        }
-    }
     if (parcel_layer_idx >= 0) {
         for (size_t i = 0; i < layers.size(); ++i) {
             if (layers[i].file == "property_value_parcels.geojson" && layers[i].enabled) {
@@ -745,6 +733,7 @@ int runWorldSim3App(int argc, char** argv) {
     };
     auto enqueue_hydration = [&](size_t idx, bool required = false) {
         if (idx >= layers.size()) return;
+        if (!layerMatchesSelectedGeography(layers[idx], map_filter_state)) return;
         std::lock_guard<std::mutex> lk(hydrate_req_mutex);
         if (required) hydration_required[idx] = true;
         bool retry_failed = false;
@@ -1038,6 +1027,7 @@ int runWorldSim3App(int argc, char** argv) {
         root,
         &map_filter_state.selected_nation_state,
         &map_filter_state.selected_state_region,
+        &map_filter_state.selected_county_city,
         &filter_enabled,
         &filter_use_date,
         &filter_year_min,
@@ -1141,6 +1131,7 @@ int runWorldSim3App(int argc, char** argv) {
         unified_parcel_cached_size = (size_t)-1;
         unified_real_property_cached_size = (size_t)-1;
         unified_parcel_cached_signature.clear();
+        derived_layer_refresh_inputs_signature.clear();
         unified_vacancy_generation_applied = -1;
         unified_tax_generation_applied = -1;
         vacancy_maps_generation = 0;
@@ -1456,13 +1447,14 @@ int runWorldSim3App(int argc, char** argv) {
                 &data_freshness_state,
                 &data_freshness_msg,
                 &data_library_status_msg,
-                &zoom,
-                kMinZoom,
-                kMaxZoom,
-                &center_lon,
-                &center_lat,
-                &hover_inspector_mode,
-                &hover_inspector_enabled,
+	                &zoom,
+	                kMinZoom,
+	                kMaxZoom,
+	                &center_lon,
+	                &center_lat,
+	                &map_filter_state,
+	                &hover_inspector_mode,
+	                &hover_inspector_enabled,
                 &show_sources_panel,
                 &show_data_library,
                 &parcel_parameter_mode,
@@ -1726,6 +1718,7 @@ int runWorldSim3App(int argc, char** argv) {
             filter_enabled,
             &map_filter_state.selected_nation_state,
             &map_filter_state.selected_state_region,
+            &map_filter_state.selected_county_city,
             filter_owner,
             filter_address,
             filter_zip,
@@ -1866,6 +1859,7 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.unified_parcels = &unified_parcels;
         derived_layer_caches_ctx.unified_parcel_cached_size = &unified_parcel_cached_size;
         derived_layer_caches_ctx.unified_parcel_cached_signature = &unified_parcel_cached_signature;
+        derived_layer_caches_ctx.last_refresh_inputs_signature = &derived_layer_refresh_inputs_signature;
         derived_layer_caches_ctx.unified_real_property_cached_size = &unified_real_property_cached_size;
         derived_layer_caches_ctx.unified_vacancy_generation_applied = &unified_vacancy_generation_applied;
         derived_layer_caches_ctx.unified_tax_generation_applied = &unified_tax_generation_applied;
@@ -1920,11 +1914,28 @@ int runWorldSim3App(int argc, char** argv) {
             spatial_cv.notify_one();
         }
         refreshLayerProfileSnapshot(frame_prelude.layer_profile_snapshot);
+        if (consumeGpuProfilerTabSelectionRequest()) {
+            gpu_profiler_tab_requested = true;
+        }
 
         if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size() &&
             (size_t)parcel_layer_idx < layer_states.size()) {
             const LayerDef& parcel_layer = layers[(size_t)parcel_layer_idx];
             const LayerRuntimeState& parcel_state = layer_states[(size_t)parcel_layer_idx];
+            if (gpu_profiler_reload_requested) {
+                clearGpuProfilerAlertState();
+                clearParcelGpuBuffers();
+                parcel_gpu_uploaded_signature.clear();
+                parcel_render_requested_signature.clear();
+                parcel_gpu_upload_requested_signature.clear();
+                parcel_gpu_filter_state_key = 0;
+                parcel_gpu_overlay_state_key = 0;
+                parcel_gpu_outline_state_key = 0;
+                parcel_gpu_last_base_colors.clear();
+                parcel_gpu_last_overlay_colors.clear();
+                parcel_gpu_last_outline_colors.clear();
+                gpu_profiler_reload_requested = false;
+            }
             const bool parcel_ready =
                 parcel_state.status == LayerPipelineStatus::Ready &&
                 !parcel_state.hydration_source_signature.empty() &&
@@ -1986,9 +1997,11 @@ int runWorldSim3App(int argc, char** argv) {
                             if (parcel_gpu_upload_requested_signature != sig) {
                                 std::string gpu_error;
                                 if (requestParcelGpuUpload(parcel_gpu_render_blob, &gpu_error)) {
+                                    recordGpuProfilerEvent("parcel GPU upload requested");
                                     parcel_gpu_upload_requested_signature = sig;
                                 } else {
                                     std::fprintf(stderr, "[worldsim3] Parcel GPU upload request failed: %s\n", gpu_error.c_str());
+                                    recordGpuProfilerEvent("parcel GPU upload request failed");
                                 }
                             }
                         }
@@ -2014,6 +2027,7 @@ int runWorldSim3App(int argc, char** argv) {
                         }
                     } else if (!upload_error.empty()) {
                         std::fprintf(stderr, "[worldsim3] Parcel GPU upload failed: %s\n", upload_error.c_str());
+                        recordGpuProfilerEvent("parcel GPU upload failed");
                         parcel_gpu_upload_requested_signature.clear();
                     }
                 }
@@ -2444,12 +2458,23 @@ int runWorldSim3App(int argc, char** argv) {
                 &selected_record_year_samples,
                 (size_t)cached_vac_notice_size,
                 (size_t)cached_vac_rehab_size,
-                &vacant_notice_rows_matched_total,
-                &vacant_rehab_rows_matched_total,
-                &vacant_parcels_matched_total,
-                &vacant_parcels_with_geometry_total,
-                real_property_for_parcel
-            });
+	                &vacant_notice_rows_matched_total,
+	                &vacant_rehab_rows_matched_total,
+	                &vacant_parcels_matched_total,
+	                &vacant_parcels_with_geometry_total,
+	                &profile_mutex,
+	                &profile_samples,
+	                &profile_sample_pos,
+	                &profile_sample_count,
+	                &prof_heatmap_gpu_splat_active,
+	                &prof_heatmap_high_quality,
+	                &prof_heatmap_texture_resident,
+	                &prof_heatmap_async_inflight,
+	                &prof_heatmap_texture_cache_entries,
+	                &gpu_profiler_tab_requested,
+	                &gpu_profiler_reload_requested,
+	                real_property_for_parcel
+	            });
         }
 
         drawMapTabWindow(MapTabContext{
@@ -2708,6 +2733,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.filter_enabled = &filter_enabled;
     shutdown_input.selected_nation_state = &map_filter_state.selected_nation_state;
     shutdown_input.selected_state_region = &map_filter_state.selected_state_region;
+    shutdown_input.selected_county_city = &map_filter_state.selected_county_city;
     shutdown_input.filter_use_date = &filter_use_date;
     shutdown_input.filter_year_min = &filter_year_min;
     shutdown_input.filter_year_max = &filter_year_max;

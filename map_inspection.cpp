@@ -37,6 +37,40 @@ void drawRealPropertySummary(const LayerDef::FeatureGeom* rp) {
     text_prop("SDAT Link", firstDisplayProperty(*rp, {"SDATLINK"}));
     ImGui::TextDisabled("Source: Local property records when available");
 }
+
+std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg) {
+    return firstDisplayProperty(
+        fg,
+        {"name", "Name", "NAME", "facility_name", "facility_n", "school_name", "school_nam",
+         "market_name", "market_nam", "settlement_name", "settlement", "church_name",
+         "industry_name", "station_name", "waterpoint_name"});
+}
+
+void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
+    const std::string title = pointFeatureTitle(fg);
+    const std::string lga = firstDisplayProperty(fg, {"lga_name", "LGA_NAME", "lga", "LGA"});
+    const std::string ward = firstDisplayProperty(fg, {"ward_name", "WARD_NAME", "ward", "WARD"});
+    const std::string address = firstDisplayProperty(fg, {"address", "Address", "ADDRESS", "addr", "ADDR"});
+    const std::string feature_type = firstDisplayProperty(
+        fg, {"type", "Type", "TYPE", "category", "Category", "CATEGORY", "subtype", "SUBTYPE"});
+
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+    ImGui::BeginTooltip();
+    ImGui::PushTextWrapPos(440.0f);
+    ImGui::SetWindowFontScale(1.35f);
+    ImGui::TextWrapped("%s", title.empty() ? layer.name.c_str() : title.c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    if (!title.empty()) ImGui::TextDisabled("%s", layer.name.c_str());
+    if (!feature_type.empty()) ImGui::TextWrapped("Type: %s", feature_type.c_str());
+    if (!lga.empty()) ImGui::TextWrapped("LGA: %s", lga.c_str());
+    if (!ward.empty()) ImGui::TextWrapped("Ward: %s", ward.c_str());
+    if (!address.empty()) ImGui::TextWrapped("Address: %s", address.c_str());
+    ImGui::TextWrapped("Location: %.6f, %.6f", fg.extent.min_lat, fg.extent.min_lon);
+    ImGui::Separator();
+    drawFeatureProperties("All Feature Fields", fg);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+}
 }
 
 void handleMapInspection(const MapInspectionContext& ctx) {
@@ -45,6 +79,8 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const size_t hovered_parcel_idx = ctx.hover_state->hovered_parcel_idx;
     const LayerDef::FeatureGeom* hovered_zone = ctx.hover_state->hovered_zone;
     const size_t hovered_zone_idx = ctx.hover_state->hovered_zone_idx;
+    const LayerDef::FeatureGeom* hovered_point = ctx.hover_state->hovered_point;
+    const int hovered_point_layer_idx = ctx.hover_state->hovered_point_layer_idx;
 
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
@@ -147,5 +183,8 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     }
     if (ctx.zoning_hover_active && ctx.map_hovered && !(ctx.parcel_hover_active && hovered_parcel) && hovered_zone && ctx.zoning_metadata) {
         drawZoningHoverTooltip(*hovered_zone, *ctx.zoning_metadata);
+    } else if (ctx.map_hovered && hovered_point && hovered_point_layer_idx >= 0 &&
+               (size_t)hovered_point_layer_idx < ctx.layers->size()) {
+        drawPointFeatureSummary((*ctx.layers)[(size_t)hovered_point_layer_idx], *hovered_point);
     }
 }

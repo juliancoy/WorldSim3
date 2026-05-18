@@ -79,6 +79,7 @@ struct DerivedLayerCachesContext {
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     size_t* unified_parcel_cached_size = nullptr;
     std::string* unified_parcel_cached_signature = nullptr;
+    std::string* last_refresh_inputs_signature = nullptr;
     size_t* unified_real_property_cached_size = nullptr;
     int* unified_vacancy_generation_applied = nullptr;
     int* unified_tax_generation_applied = nullptr;

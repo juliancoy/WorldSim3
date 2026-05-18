@@ -24,6 +24,46 @@ std::string hydratedLayerSignature(
              << layers[(size_t)layer_idx].features.size();
     return fallback.str();
 }
+
+void appendLayerInputsSignature(
+    std::string& out,
+    const std::vector<LayerDef>& layers,
+    const std::vector<LayerRuntimeState>* layer_states,
+    int layer_idx) {
+    out += "|";
+    out += std::to_string(layer_idx);
+    out += ":";
+    if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) {
+        out += "missing";
+        return;
+    }
+    out += hydratedLayerSignature(layers, layer_states, layer_idx);
+    out += ":";
+    out += std::to_string(layers[(size_t)layer_idx].features.size());
+}
+
+std::string derivedLayerRefreshInputsSignature(const DerivedLayerCachesContext& ctx) {
+    std::string sig;
+    sig.reserve(512);
+    const auto& layers = *ctx.layers;
+    sig += "parcel:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.parcel_layer_idx);
+    sig += "|rp:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.real_property_layer_idx);
+    sig += "|z:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.zoning_layer_idx);
+    sig += "|vn:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.vacant_notice_layer_idx);
+    sig += "|vr:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.vacant_rehab_layer_idx);
+    sig += "|tl:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.tax_lien_layer_idx);
+    sig += "|ts:";
+    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.tax_sale_layer_idx);
+    sig += "|zsim:";
+    sig += ctx.app_settings->zoning_use_simcity_colors ? "1" : "0";
+    return sig;
+}
 }
 
 void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
@@ -49,6 +89,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.vacant_parcels_matched_total || !ctx.vacant_parcels_with_geometry_total ||
         !ctx.vacant_parcels_triangulated_renderable_total || !ctx.unified_parcels ||
         !ctx.unified_parcel_cached_size || !ctx.unified_parcel_cached_signature ||
+        !ctx.last_refresh_inputs_signature ||
         !ctx.unified_real_property_cached_size ||
         !ctx.unified_vacancy_generation_applied || !ctx.unified_tax_generation_applied ||
         !ctx.owner_aggregates_dirty) {
@@ -56,6 +97,9 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     }
 
     auto& layers = *ctx.layers;
+    const std::string refresh_inputs_signature = derivedLayerRefreshInputsSignature(ctx);
+    if (*ctx.last_refresh_inputs_signature == refresh_inputs_signature) return;
+    *ctx.last_refresh_inputs_signature = refresh_inputs_signature;
 
     if (ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < layers.size()) {
         const auto& zfeats = layers[(size_t)ctx.zoning_layer_idx].features;

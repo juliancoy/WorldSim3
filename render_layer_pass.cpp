@@ -17,6 +17,46 @@ namespace {
 constexpr size_t kMaxFallbackFullScanFeatures = 12000;
 constexpr size_t kFallbackScanBudgetPerFrame = 4096;
 constexpr size_t kMaxLargeParcelCpuFallbackFeatures = 100000;
+constexpr float kPointMarkerRadiusPx = 5.0f;
+constexpr float kPointMarkerOutlinePx = 1.6f;
+constexpr int kPointClusterMaxMathZoom = 15;
+constexpr float kPointClusterCellPx = 28.0f;
+constexpr float kPointClusterRadiusPx = 12.0f;
+
+enum class PointMarkerGlyph {
+    Circle,
+    Square,
+    Diamond,
+    Triangle,
+    Plus,
+    Cross,
+    Droplet
+};
+
+struct PointClusterCellKey {
+    int x = 0;
+    int y = 0;
+    bool operator==(const PointClusterCellKey& other) const {
+        return x == other.x && y == other.y;
+    }
+};
+
+struct PointClusterCellKeyHash {
+    size_t operator()(const PointClusterCellKey& key) const {
+        return (uint64_t(uint32_t(key.x)) << 32) ^ uint32_t(key.y);
+    }
+};
+
+struct PointClusterBucket {
+    ImVec2 center_sum = ImVec2(0.0f, 0.0f);
+    ImU32 color = 0;
+    PointMarkerGlyph glyph = PointMarkerGlyph::Circle;
+    size_t count = 0;
+    float min_lon = 0.0f;
+    float max_lon = 0.0f;
+    float min_lat = 0.0f;
+    float max_lat = 0.0f;
+};
 
 uint64_t heatNormalizationCacheKey(uint64_t heatmap_data_key, size_t layer_idx) {
     return (heatmap_data_key * 1099511628211ULL) ^ (uint64_t(layer_idx) + 0x9e3779b97f4a7c15ULL);
@@ -126,6 +166,338 @@ bool pointInWorldRings(const std::vector<std::vector<ImVec2>>& rings, float x, f
     return true;
 }
 
+bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
+    if (!needle || !*needle) return false;
+    std::string hs = haystack;
+    std::string nd = needle;
+    std::transform(hs.begin(), hs.end(), hs.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    std::transform(nd.begin(), nd.end(), nd.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return hs.find(nd) != std::string::npos;
+}
+
+PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer) {
+    if (containsCaseInsensitive(layer.name, "water")) return PointMarkerGlyph::Droplet;
+    if (containsCaseInsensitive(layer.name, "health")) return PointMarkerGlyph::Cross;
+    if (containsCaseInsensitive(layer.name, "school")) return PointMarkerGlyph::Triangle;
+    if (containsCaseInsensitive(layer.name, "market")) return PointMarkerGlyph::Diamond;
+    if (containsCaseInsensitive(layer.name, "police")) return PointMarkerGlyph::Diamond;
+    if (containsCaseInsensitive(layer.name, "church")) return PointMarkerGlyph::Plus;
+    if (containsCaseInsensitive(layer.name, "industry")) return PointMarkerGlyph::Square;
+    if (containsCaseInsensitive(layer.name, "filling")) return PointMarkerGlyph::Square;
+    switch (layer.category) {
+        case LayerDef::Category::PublicHealth: return PointMarkerGlyph::Cross;
+        case LayerDef::Category::Infrastructure: return PointMarkerGlyph::Square;
+        case LayerDef::Category::Safety: return PointMarkerGlyph::Diamond;
+        case LayerDef::Category::Zoning: return PointMarkerGlyph::Triangle;
+        case LayerDef::Category::Housing:
+        default: return PointMarkerGlyph::Circle;
+    }
+}
+
+void drawPointMarker(
+    ImDrawList* draw,
+    const ImVec2& center,
+    ImU32 fill_color,
+    PointMarkerGlyph glyph,
+    float radius_px) {
+    const ImU32 outline = IM_COL32(18, 22, 26, 235);
+    const float r = radius_px;
+    const float ro = r + kPointMarkerOutlinePx;
+    switch (glyph) {
+        case PointMarkerGlyph::Square: {
+            draw->AddRectFilled(ImVec2(center.x - ro, center.y - ro), ImVec2(center.x + ro, center.y + ro), outline, 2.0f);
+            draw->AddRectFilled(ImVec2(center.x - r, center.y - r), ImVec2(center.x + r, center.y + r), fill_color, 1.6f);
+            break;
+        }
+        case PointMarkerGlyph::Diamond: {
+            ImVec2 o[4] = {
+                ImVec2(center.x, center.y - ro),
+                ImVec2(center.x + ro, center.y),
+                ImVec2(center.x, center.y + ro),
+                ImVec2(center.x - ro, center.y)
+            };
+            ImVec2 i[4] = {
+                ImVec2(center.x, center.y - r),
+                ImVec2(center.x + r, center.y),
+                ImVec2(center.x, center.y + r),
+                ImVec2(center.x - r, center.y)
+            };
+            draw->AddConvexPolyFilled(o, 4, outline);
+            draw->AddConvexPolyFilled(i, 4, fill_color);
+            break;
+        }
+        case PointMarkerGlyph::Triangle: {
+            ImVec2 o[3] = {
+                ImVec2(center.x, center.y - ro),
+                ImVec2(center.x + ro * 0.92f, center.y + ro * 0.82f),
+                ImVec2(center.x - ro * 0.92f, center.y + ro * 0.82f)
+            };
+            ImVec2 i[3] = {
+                ImVec2(center.x, center.y - r),
+                ImVec2(center.x + r * 0.92f, center.y + r * 0.82f),
+                ImVec2(center.x - r * 0.92f, center.y + r * 0.82f)
+            };
+            draw->AddConvexPolyFilled(o, 3, outline);
+            draw->AddConvexPolyFilled(i, 3, fill_color);
+            break;
+        }
+        case PointMarkerGlyph::Plus: {
+            draw->AddCircleFilled(center, ro, outline, 18);
+            draw->AddCircleFilled(center, r, fill_color, 18);
+            const float arm_o = ro * 0.72f;
+            const float arm_i = r * 0.72f;
+            draw->AddLine(ImVec2(center.x - arm_o, center.y), ImVec2(center.x + arm_o, center.y), outline, 2.8f);
+            draw->AddLine(ImVec2(center.x, center.y - arm_o), ImVec2(center.x, center.y + arm_o), outline, 2.8f);
+            draw->AddLine(ImVec2(center.x - arm_i, center.y), ImVec2(center.x + arm_i, center.y), IM_COL32(245, 248, 250, 235), 1.6f);
+            draw->AddLine(ImVec2(center.x, center.y - arm_i), ImVec2(center.x, center.y + arm_i), IM_COL32(245, 248, 250, 235), 1.6f);
+            break;
+        }
+        case PointMarkerGlyph::Cross: {
+            draw->AddCircleFilled(center, ro, outline, 18);
+            draw->AddCircleFilled(center, r, fill_color, 18);
+            const float arm_o = ro * 0.62f;
+            const float arm_i = r * 0.62f;
+            draw->AddLine(ImVec2(center.x - arm_o, center.y - arm_o), ImVec2(center.x + arm_o, center.y + arm_o), outline, 2.8f);
+            draw->AddLine(ImVec2(center.x - arm_o, center.y + arm_o), ImVec2(center.x + arm_o, center.y - arm_o), outline, 2.8f);
+            draw->AddLine(ImVec2(center.x - arm_i, center.y - arm_i), ImVec2(center.x + arm_i, center.y + arm_i), IM_COL32(245, 248, 250, 235), 1.6f);
+            draw->AddLine(ImVec2(center.x - arm_i, center.y + arm_i), ImVec2(center.x + arm_i, center.y - arm_i), IM_COL32(245, 248, 250, 235), 1.6f);
+            break;
+        }
+        case PointMarkerGlyph::Droplet: {
+            ImVec2 o[3] = {
+                ImVec2(center.x, center.y - ro - 1.0f),
+                ImVec2(center.x + ro * 0.72f, center.y),
+                ImVec2(center.x - ro * 0.72f, center.y)
+            };
+            ImVec2 i[3] = {
+                ImVec2(center.x, center.y - r - 1.0f),
+                ImVec2(center.x + r * 0.72f, center.y),
+                ImVec2(center.x - r * 0.72f, center.y)
+            };
+            draw->AddConvexPolyFilled(o, 3, outline);
+            draw->AddCircleFilled(ImVec2(center.x, center.y + ro * 0.28f), ro * 0.86f, outline, 18);
+            draw->AddConvexPolyFilled(i, 3, fill_color);
+            draw->AddCircleFilled(ImVec2(center.x, center.y + r * 0.28f), r * 0.86f, fill_color, 18);
+            break;
+        }
+        case PointMarkerGlyph::Circle:
+        default:
+            draw->AddCircleFilled(center, ro, outline, 18);
+            draw->AddCircleFilled(center, r, fill_color, 18);
+            break;
+    }
+}
+
+void drawPointClusterBadge(
+    ImDrawList* draw,
+    const ImVec2& center,
+    ImU32 fill_color,
+    size_t count) {
+    const ImU32 outline = IM_COL32(18, 22, 26, 235);
+    draw->AddCircleFilled(center, kPointClusterRadiusPx + 2.0f, outline, 24);
+    draw->AddCircleFilled(center, kPointClusterRadiusPx, fill_color, 24);
+    const std::string label = std::to_string(count);
+    const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    draw->AddText(
+        ImVec2(center.x - ts.x * 0.5f, center.y - ts.y * 0.5f - 0.5f),
+        IM_COL32(245, 248, 250, 245),
+        label.c_str());
+}
+
+bool pointInsideCircle(const ImVec2& p, const ImVec2& center, float radius) {
+    const float dx = p.x - center.x;
+    const float dy = p.y - center.y;
+    return dx * dx + dy * dy <= radius * radius;
+}
+
+bool shouldClusterPointLayer(
+    const RenderLayerPassContext& ctx,
+    const LayerDef& layer,
+    bool layer_uses_heatmap,
+    bool layer_uses_lod_for_draw) {
+    if (layer_uses_heatmap || layer_uses_lod_for_draw) return false;
+    if (ctx.math_zoom > kPointClusterMaxMathZoom) return false;
+    return layer.scale == "point";
+}
+
+bool resolveFeatureRenderStyle(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef& layer,
+    const LayerDef::FeatureGeom& fg,
+    ImU32 base_color,
+    bool is_heat_layer,
+    bool is_zoning_layer,
+    const HeatNormalizationState& heat_normalization,
+    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key,
+    ImU32& feature_c,
+    float& feature_heat_value,
+    float& feature_normalized_value,
+    bool& feature_heat_value_valid) {
+    if (!ctx.feature_passes_filters(layer_idx, feature_idx, fg)) return false;
+    if (is_zoning_layer) {
+        const std::string zkey = zoningClassKey(fg);
+        auto it_en = ctx.zoning_zone_enabled->find(zkey);
+        if (it_en != ctx.zoning_zone_enabled->end() && !it_en->second) return false;
+    }
+    const uint64_t style_key = featureStyleKey(ctx, layer_idx, base_color, is_heat_layer, is_zoning_layer);
+    const CachedFeatureColorStorage* cached_colors =
+        ctx.projection->findFeatureColorStorage(layer_idx, (uint32_t)feature_idx, style_key);
+    if (cached_colors) {
+        feature_c = cached_colors->feature_color;
+        feature_heat_value = 0.0f;
+        feature_normalized_value = 0.0f;
+        feature_heat_value_valid = false;
+        if (is_heat_layer) {
+            feature_heat_value_valid = tryGetFeaturePropertyFloat(fg, layer.heatmap_field, feature_heat_value);
+            if (feature_heat_value_valid &&
+                heat_normalization.normalizedValue(fg, feature_heat_value, normalization_group_key, feature_normalized_value)) {
+                const float gamma =
+                    ctx.layer_choropleth_gamma && layer_idx < ctx.layer_choropleth_gamma->size()
+                        ? (*ctx.layer_choropleth_gamma)[layer_idx]
+                        : 1.0f;
+                feature_normalized_value = applyPowerGamma(feature_normalized_value, gamma);
+            }
+        }
+        return true;
+    }
+
+    feature_c = computeFeatureColor(
+        ctx,
+        layer_idx,
+        feature_idx,
+        layer,
+        fg,
+        base_color,
+        is_heat_layer,
+        is_zoning_layer,
+        heat_normalization,
+        normalization_group_key,
+        feature_heat_value,
+        feature_normalized_value,
+        feature_heat_value_valid);
+    ctx.projection->storeFeatureColorStorage(
+        layer_idx,
+        (uint32_t)feature_idx,
+        style_key,
+        feature_c,
+        fg.rings.empty() ? 0 : 1);
+    return true;
+}
+
+bool projectFeatureScreenBounds(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg,
+    ImVec2& p0w,
+    ImVec2& p1w,
+    ImVec2& p0,
+    ImVec2& p1) {
+    const auto& pww = ctx.projection->getWorldExtent(layer_idx, (uint32_t)feature_idx, fg);
+    p0w = pww.first;
+    p1w = pww.second;
+    ImVec2 a = ctx.project_world(p0w);
+    ImVec2 b = ctx.project_world(p1w);
+    p0 = ImVec2(std::min(a.x, b.x), std::min(a.y, b.y));
+    p1 = ImVec2(std::max(a.x, b.x), std::max(a.y, b.y));
+    return !(p1.x < ctx.origin.x || p0.x > ctx.origin.x + ctx.size.x || p1.y < ctx.origin.y || p0.y > ctx.origin.y + ctx.size.y);
+}
+
+void renderClusteredPointCandidates(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    const LayerDef& layer,
+    const std::vector<uint32_t>& feature_indices,
+    ImU32 base_color,
+    bool is_heat_layer,
+    bool is_zoning_layer,
+    const HeatNormalizationState& heat_normalization,
+    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key) {
+    std::unordered_map<PointClusterCellKey, PointClusterBucket, PointClusterCellKeyHash> buckets;
+    buckets.reserve(feature_indices.size());
+    for (uint32_t fidx : feature_indices) {
+        if ((size_t)fidx >= layer.features.size()) continue;
+        const auto& fg = layer.features[(size_t)fidx];
+        if (!fg.rings.empty()) continue;
+        ImU32 feature_c = base_color;
+        float feature_heat_value = 0.0f;
+        float feature_normalized_value = 0.0f;
+        bool feature_heat_value_valid = false;
+        if (!resolveFeatureRenderStyle(
+                ctx,
+                layer_idx,
+                (size_t)fidx,
+                layer,
+                fg,
+                base_color,
+                is_heat_layer,
+                is_zoning_layer,
+                heat_normalization,
+                normalization_group_key,
+                feature_c,
+                feature_heat_value,
+                feature_normalized_value,
+                feature_heat_value_valid)) {
+            continue;
+        }
+        ImVec2 p0w, p1w, p0, p1;
+        if (!projectFeatureScreenBounds(ctx, layer_idx, (size_t)fidx, fg, p0w, p1w, p0, p1)) continue;
+        ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, ctx.math_zoom);
+        ImVec2 ps = ctx.project_world(pw);
+        const PointClusterCellKey key{
+            (int)std::floor((ps.x - ctx.origin.x) / kPointClusterCellPx),
+            (int)std::floor((ps.y - ctx.origin.y) / kPointClusterCellPx)
+        };
+        auto& bucket = buckets[key];
+        bucket.center_sum.x += ps.x;
+        bucket.center_sum.y += ps.y;
+        if (bucket.count == 0) {
+            bucket.color = feature_c;
+            bucket.glyph = pointMarkerGlyphForLayer(layer);
+            bucket.min_lon = fg.extent.min_lon;
+            bucket.max_lon = fg.extent.max_lon;
+            bucket.min_lat = fg.extent.min_lat;
+            bucket.max_lat = fg.extent.max_lat;
+        } else {
+            bucket.min_lon = std::min(bucket.min_lon, fg.extent.min_lon);
+            bucket.max_lon = std::max(bucket.max_lon, fg.extent.max_lon);
+            bucket.min_lat = std::min(bucket.min_lat, fg.extent.min_lat);
+            bucket.max_lat = std::max(bucket.max_lat, fg.extent.max_lat);
+        }
+        ++bucket.count;
+    }
+
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    for (const auto& kv : buckets) {
+        const PointClusterBucket& bucket = kv.second;
+        if (bucket.count == 0) continue;
+        const ImVec2 center(bucket.center_sum.x / (float)bucket.count, bucket.center_sum.y / (float)bucket.count);
+        if (bucket.count == 1) {
+            drawPointMarker(ctx.draw, center, bucket.color, bucket.glyph, kPointMarkerRadiusPx);
+        } else {
+            drawPointClusterBadge(ctx.draw, center, bucket.color, bucket.count);
+            if (pointInsideCircle(mouse, center, kPointClusterRadiusPx + 3.0f)) {
+                ImGui::BeginTooltip();
+                ImGui::Text("%s", layer.name.c_str());
+                ImGui::Separator();
+                ImGui::Text("%zu locations", bucket.count);
+                ImGui::TextDisabled("Click to zoom in");
+                ImGui::EndTooltip();
+                if (ctx.center_lon && ctx.center_lat && ctx.zoom && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    *ctx.center_lon = 0.5 * ((double)bucket.min_lon + (double)bucket.max_lon);
+                    *ctx.center_lat = 0.5 * ((double)bucket.min_lat + (double)bucket.max_lat);
+                    *ctx.zoom = std::min(ctx.max_zoom, std::max(*ctx.zoom + 2, ctx.math_zoom + 1));
+                }
+            }
+        }
+        if (ctx.prof_features_drawn_frame) {
+            ++(*ctx.prof_features_drawn_frame);
+        }
+    }
+}
+
 void addHeatSamplesForFeature(
     const RenderLayerPassContext& ctx,
     size_t sample_layer_idx,
@@ -189,6 +561,7 @@ void drawFeatureGeometry(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
+    const LayerDef& layer,
     const LayerDef::FeatureGeom& fg,
     ImU32 feature_c,
     bool layer_uses_lod_for_draw) {
@@ -258,8 +631,7 @@ void drawFeatureGeometry(
     ImVec2 ps = ctx.project_world(pw);
     if (ps.x >= ctx.origin.x && ps.x <= ctx.origin.x + ctx.size.x &&
         ps.y >= ctx.origin.y && ps.y <= ctx.origin.y + ctx.size.y) {
-        float r = std::clamp((float)(2.0 * ctx.zoom_scale + 1.5), 2.0f, 6.0f);
-        ctx.draw->AddCircleFilled(ps, r, feature_c);
+        drawPointMarker(ctx.draw, ps, feature_c, pointMarkerGlyphForLayer(layer), kPointMarkerRadiusPx);
         if (ctx.prof_features_drawn_frame) {
             ++(*ctx.prof_features_drawn_frame);
         }
@@ -284,36 +656,11 @@ void renderFeature(
     if (ctx.prof_features_considered_frame) {
         ++(*ctx.prof_features_considered_frame);
     }
-    if (!ctx.feature_passes_filters(layer_idx, feature_idx, fg)) return;
-
-    if (is_zoning_layer) {
-        const std::string zkey = zoningClassKey(fg);
-        auto it_en = ctx.zoning_zone_enabled->find(zkey);
-        if (it_en != ctx.zoning_zone_enabled->end() && !it_en->second) return;
-    }
-    const uint64_t style_key = featureStyleKey(ctx, layer_idx, base_color, is_heat_layer, is_zoning_layer);
     ImU32 feature_c = base_color;
     float feature_heat_value = 0.0f;
     float feature_normalized_value = 0.0f;
     bool feature_heat_value_valid = false;
-    const CachedFeatureColorStorage* cached_colors =
-        ctx.projection->findFeatureColorStorage(layer_idx, (uint32_t)feature_idx, style_key);
-    if (cached_colors) {
-        feature_c = cached_colors->feature_color;
-        if (is_heat_layer) {
-            feature_heat_value_valid = tryGetFeaturePropertyFloat(fg, layer.heatmap_field, feature_heat_value);
-            if (feature_heat_value_valid) {
-                if (heat_normalization.normalizedValue(fg, feature_heat_value, normalization_group_key, feature_normalized_value)) {
-                    const float gamma =
-                        ctx.layer_choropleth_gamma && layer_idx < ctx.layer_choropleth_gamma->size()
-                            ? (*ctx.layer_choropleth_gamma)[layer_idx]
-                            : 1.0f;
-                    feature_normalized_value = applyPowerGamma(feature_normalized_value, gamma);
-                }
-            }
-        }
-    } else {
-        feature_c = computeFeatureColor(
+    if (!resolveFeatureRenderStyle(
             ctx,
             layer_idx,
             feature_idx,
@@ -324,28 +671,16 @@ void renderFeature(
             is_zoning_layer,
             heat_normalization,
             normalization_group_key,
+            feature_c,
             feature_heat_value,
             feature_normalized_value,
-            feature_heat_value_valid);
-        ctx.projection->storeFeatureColorStorage(
-            layer_idx,
-            (uint32_t)feature_idx,
-            style_key,
-            feature_c,
-            fg.rings.empty() ? 0 : 1);
-    }
-
-    const auto& pww = ctx.projection->getWorldExtent(layer_idx, (uint32_t)feature_idx, fg);
-    ImVec2 p0w = pww.first;
-    ImVec2 p1w = pww.second;
-    ImVec2 a = ctx.project_world(p0w);
-    ImVec2 b = ctx.project_world(p1w);
-    ImVec2 p0(std::min(a.x, b.x), std::min(a.y, b.y));
-    ImVec2 p1(std::max(a.x, b.x), std::max(a.y, b.y));
-    if (!layer_uses_heatmap &&
-        (p1.x < ctx.origin.x || p0.x > ctx.origin.x + ctx.size.x || p1.y < ctx.origin.y || p0.y > ctx.origin.y + ctx.size.y)) {
+            feature_heat_value_valid)) {
         return;
     }
+
+    ImVec2 p0w, p1w, p0, p1;
+    const bool on_screen = projectFeatureScreenBounds(ctx, layer_idx, feature_idx, fg, p0w, p1w, p0, p1);
+    if (!layer_uses_heatmap && !on_screen) return;
     if (layer_uses_heatmap) {
         if (ctx.can_use_cached_heatmap) return;
         if (apply_smooth_stride && smooth_sample_stride > 1 && (feature_idx % smooth_sample_stride) != 0) return;
@@ -362,10 +697,7 @@ void renderFeature(
         return;
     }
 
-    if (p1.x < ctx.origin.x || p0.x > ctx.origin.x + ctx.size.x || p1.y < ctx.origin.y || p0.y > ctx.origin.y + ctx.size.y) {
-        return;
-    }
-    drawFeatureGeometry(ctx, layer_idx, feature_idx, fg, feature_c, layer_uses_lod_for_draw);
+    drawFeatureGeometry(ctx, layer_idx, feature_idx, layer, fg, feature_c, layer_uses_lod_for_draw);
 }
 
 } // namespace
@@ -468,6 +800,8 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         }
 
         ImU32 base_color = ImGui::ColorConvertFloat4ToU32(l.color);
+        const bool should_cluster_point_layer =
+            shouldClusterPointLayer(ctx, l, is_heat_layer, layer_uses_lod_for_draw);
         bool have_candidates = !ctx.should_recompute_heatmap || !layer_uses_heatmap_for_cache;
         if (ctx.high_quality_gpu_aggregate && ctx.should_recompute_heatmap && layer_uses_heatmap_for_cache) {
             have_candidates = false;
@@ -482,6 +816,19 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                 render_candidates);
         }
         if (have_candidates) {
+            if (should_cluster_point_layer) {
+                renderClusteredPointCandidates(
+                    ctx,
+                    layer_idx,
+                    l,
+                    render_candidates,
+                    base_color,
+                    is_heat_layer,
+                    is_zoning_layer,
+                    heat_normalization,
+                    normalization_group_key);
+                continue;
+            }
             for (uint32_t fidx : render_candidates) {
                 const bool layer_uses_heatmap = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
                 if (!ctx.high_quality_gpu_aggregate &&
@@ -552,6 +899,22 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                     smooth_sample_stride);
             }
             (*ctx.layer_fallback_scan_cursor)[layer_idx] = (cursor + budget) % total;
+            continue;
+        }
+        if (should_cluster_point_layer) {
+            render_candidates.clear();
+            render_candidates.reserve(l.features.size());
+            for (size_t fi = 0; fi < l.features.size(); ++fi) render_candidates.push_back((uint32_t)fi);
+            renderClusteredPointCandidates(
+                ctx,
+                layer_idx,
+                l,
+                render_candidates,
+                base_color,
+                is_heat_layer,
+                is_zoning_layer,
+                heat_normalization,
+                normalization_group_key);
             continue;
         }
         for (size_t fi = 0; fi < l.features.size(); ++fi) {

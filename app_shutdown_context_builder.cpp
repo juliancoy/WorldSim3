@@ -40,6 +40,7 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.filter_enabled = input.filter_enabled;
     ctx.selected_nation_state = input.selected_nation_state;
     ctx.selected_state_region = input.selected_state_region;
+    ctx.selected_county_city = input.selected_county_city;
     ctx.filter_use_date = input.filter_use_date;
     ctx.filter_year_min = input.filter_year_min;
     ctx.filter_year_max = input.filter_year_max;

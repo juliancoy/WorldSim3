@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aggregate_visualization_strategies.h"
 #include "heatmap_render.h"
 #include "types.h"
 
@@ -19,7 +20,7 @@ struct HeatmapLayerPolicyContext {
     const std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
     const std::vector<float>* layer_heatmap_multires_blend = nullptr;
     int zoom = 0;
-    int heatmap_algo = 0;
+    int heatmap_algo = kAggregateNone;
     float global_heat_cell_px = 24.0f;
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;
@@ -39,7 +40,7 @@ enum class LayerDisplayMode {
 
 struct LayerDisplayPolicy {
     LayerDisplayMode mode = LayerDisplayMode::PerFeature;
-    int aggregate_algo = 0;
+    int aggregate_algo = kAggregateNone;
     int aggregate_max_zoom = 13;
     int configured_parcel_detail_min_zoom = 14;
     int effective_parcel_detail_min_zoom = 14;

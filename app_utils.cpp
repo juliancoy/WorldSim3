@@ -41,6 +41,17 @@ const LayerDef* findManifestLayerByFile(const fs::path& root, const std::string&
     }
     return nullptr;
 }
+
+fs::path wellKnownStoredLayerPathForFile(const fs::path& root, const std::string& file) {
+    if (file == "parcel.geojson") {
+        return root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "county_city" /
+               "baltimore_city" / "layers" / file;
+    }
+    if (file == "regional_parcels.geojson") {
+        return root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / file;
+    }
+    return {};
+}
 }
 
 const char* categoryToString(LayerDef::Category c) {
@@ -64,8 +75,14 @@ std::pair<int, int> deg2num(double lat_deg, double lon_deg, int zoom) {
 
 std::filesystem::path resolveAppRoot(const fs::path& start, const char* argv0) {
     auto has_manifest = [](const fs::path& p) {
-        return fs::exists(
-            p / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers_manifest.json");
+        std::error_code ec;
+        if (!fs::exists(p / "sources" / "world", ec) || ec) return false;
+        for (fs::recursive_directory_iterator it(p / "sources" / "world", ec), end; it != end && !ec; it.increment(ec)) {
+            if (!it->is_regular_file()) continue;
+            const std::string name = it->path().filename().string();
+            if (name.starts_with("layers_manifest") && name.ends_with(".json")) return true;
+        }
+        return false;
     };
     auto climb = [&](fs::path p) -> fs::path {
         std::error_code ec;
@@ -367,6 +384,10 @@ std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const 
         std::error_code ec;
         if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
         return root / "data" / "layers" / file;
+    }
+    if (const fs::path known_path = wellKnownStoredLayerPathForFile(root, file); !known_path.empty()) {
+        std::error_code ec;
+        if (fs::exists(known_path, ec) && !ec) return known_path;
     }
     return root / "data" / "layers" / file;
 }

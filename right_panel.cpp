@@ -5,6 +5,7 @@
 #include "filters.h"
 #include "filters_tab.h"
 #include "gradient_tab.h"
+#include "gpu_profiler_tab.h"
 #include "imgui.h"
 #include "owner_info.h"
 #include "owners_tab.h"
@@ -126,7 +127,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.parcel_layer_idx,
             ctx.parcel_selection->active_idx,
             *ctx.query_layers);
-        drawActiveQueriesTab(ActiveQueriesTabContext{
+	        drawActiveQueriesTab(ActiveQueriesTabContext{
             ctx.map_filter_state,
             ctx.query_layers,
             &ctx.parcel_jurisdiction_filter_state->result_set,
@@ -135,10 +136,23 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.zoning_metadata,
             ctx.zoning_zone_enabled,
             ctx.layer_fill_enabled,
-            ctx.zoning_layer_idx,
-            ctx.crime_nibrs_layer_idx
-        });
-        drawVacancyParcelTab(VacancyParcelTabContext{
+	            ctx.zoning_layer_idx,
+	            ctx.crime_nibrs_layer_idx
+	        });
+	        drawGpuProfilerTab(GpuProfilerTabContext{
+	            ctx.profile_mutex,
+	            ctx.profile_samples,
+	            ctx.profile_sample_pos,
+	            ctx.profile_sample_count,
+	            ctx.prof_heatmap_gpu_splat_active,
+	            ctx.prof_heatmap_high_quality,
+	            ctx.prof_heatmap_texture_resident,
+	            ctx.prof_heatmap_async_inflight,
+	            ctx.prof_heatmap_texture_cache_entries,
+	            ctx.gpu_profiler_tab_requested,
+	            ctx.gpu_profiler_reload_requested
+	        });
+	        drawVacancyParcelTab(VacancyParcelTabContext{
             ctx.cached_vac_notice_size,
             ctx.cached_vac_rehab_size,
             ctx.vacant_notice_rows_matched_total->load(std::memory_order_relaxed),

@@ -130,6 +130,16 @@ Expected pass signal:
 Purpose:
 
 - Validates an existing binary triangulation cache for one layer.
+
+## Polygon Hole Selftest
+
+```bash
+./build/worldsim3 --polygon-hole-selftest
+```
+
+Purpose:
+
+- Verifies polygon-with-hole behavior across hit testing, triangulation, and parcel render blob flattening.
 - Rebuilds the binary triangulation cache from hydrated geometry when needed.
 - Bulk mode processes discovered binary triangulation cache artifacts and skips stale entries whose signature or feature count no longer matches the source layer.
 

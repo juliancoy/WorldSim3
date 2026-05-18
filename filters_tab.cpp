@@ -156,64 +156,6 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
     }
 
     ImGui::Checkbox("Enable Filters", &ctx.filters->enabled);
-    ImGui::SeparatorText("Geography");
-    const char* nation_options[] = {"USA", "Nigeria"};
-    int nation_idx = toLowerAscii(ctx.filters->selected_nation_state) == "ng" ? 1 : 0;
-    bool geography_changed = false;
-    if (ImGui::Combo("Nation", &nation_idx, nation_options, IM_ARRAYSIZE(nation_options))) {
-        ctx.filters->selected_nation_state = nation_idx == 1 ? "ng" : "us";
-        ctx.filters->selected_state_region = nation_idx == 1 ? "anambra" : "md";
-        *ctx.center_lon = nation_idx == 1 ? 7.02 : -76.61;
-        *ctx.center_lat = nation_idx == 1 ? 6.17 : 39.29;
-        *ctx.zoom = std::max(*ctx.zoom, nation_idx == 1 ? 10 : 11);
-        if (ctx.clear_parcel_selection) ctx.clear_parcel_selection();
-        ctx.address_locate_matches->clear();
-        *ctx.address_locate_status = "Geography updated.";
-        geography_changed = true;
-    }
-    const char* region_options[] = {"Maryland", "Anambra"};
-    int region_idx = toLowerAscii(ctx.filters->selected_state_region) == "anambra" ? 1 : 0;
-    if (ImGui::Combo("Region", &region_idx, region_options, IM_ARRAYSIZE(region_options))) {
-        ctx.filters->selected_nation_state = region_idx == 1 ? "ng" : "us";
-        ctx.filters->selected_state_region = region_idx == 1 ? "anambra" : "md";
-        *ctx.center_lon = region_idx == 1 ? 7.02 : -76.61;
-        *ctx.center_lat = region_idx == 1 ? 6.17 : 39.29;
-        *ctx.zoom = std::max(*ctx.zoom, region_idx == 1 ? 10 : 11);
-        if (ctx.clear_parcel_selection) ctx.clear_parcel_selection();
-        ctx.address_locate_matches->clear();
-        *ctx.address_locate_status = "Region updated.";
-        geography_changed = true;
-    }
-    ImGui::TextDisabled("Active geography: %s / %s", nation_options[nation_idx], region_options[region_idx]);
-    if (ctx.root && geography_changed) {
-        saveFilterUiState(
-            *ctx.root,
-            &ctx.filters->selected_nation_state,
-            &ctx.filters->selected_state_region,
-            ctx.filters->enabled,
-            ctx.filters->use_date,
-            ctx.filters->year_min,
-            ctx.filters->year_max,
-            ctx.filters->blocklot,
-            ctx.filters->status,
-            ctx.filters->address,
-            ctx.filters->owner,
-            ctx.filters->zip,
-            ctx.filters->crime.enabled,
-            ctx.filters->crime.homicide,
-            ctx.filters->crime.robbery,
-            ctx.filters->crime.assault,
-            ctx.filters->crime.burglary,
-            ctx.filters->crime.theft,
-            ctx.filters->crime.auto_theft,
-            ctx.filters->crime.drug,
-            ctx.filters->crime.shooting,
-            ctx.filters->crime.use_year,
-            ctx.filters->crime.year_min,
-            ctx.filters->crime.year_max,
-            nullptr,
-            ctx.filters->selected_owners);
-    }
     ImGui::Checkbox("Filter By Record Date", &ctx.filters->use_date);
     ImGui::BeginDisabled(!ctx.filters->enabled || !ctx.filters->use_date);
     ImGui::SliderInt("Year Min", &ctx.filters->year_min, 1900, 2100);

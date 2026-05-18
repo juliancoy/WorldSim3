@@ -177,6 +177,10 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.draw = ctx.draw;
     layer_pass_ctx.origin = ctx.origin;
     layer_pass_ctx.size = ctx.size;
+    layer_pass_ctx.center_lon = ctx.center_lon;
+    layer_pass_ctx.center_lat = ctx.center_lat;
+    layer_pass_ctx.zoom = ctx.zoom_ptr;
+    layer_pass_ctx.max_zoom = ctx.max_zoom;
     layer_pass_ctx.math_zoom = ctx.math_zoom;
     layer_pass_ctx.zoom_scale = ctx.zoom_scale;
     layer_pass_ctx.lod_ring_step = ctx.lod_ring_step;

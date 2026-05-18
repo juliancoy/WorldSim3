@@ -8,6 +8,9 @@
 #include <limits>
 
 namespace {
+constexpr float kPointHoverRadiusPx = 10.0f;
+constexpr int kPointClusterMaxMathZoom = 15;
+
 void findHoveredParcel(const MapHoverQuery& query, MapHoverState& out) {
     if (!query.map_hovered || (!query.parcel_hover_active && !query.parcel_inspect_active) ||
         query.parcel_layer_idx < 0 || !query.layers || !query.layer_spatial) {
@@ -91,12 +94,69 @@ void findHoveredZone(const MapHoverQuery& query, MapHoverState& out) {
         }
     }
 }
+
+void findHoveredPointFeature(const MapHoverQuery& query, MapHoverState& out) {
+    if (!query.map_hovered || !query.point_hover_active || !query.layers || !query.layer_spatial || !query.layer_hover_enabled ||
+        !query.project_world || query.math_zoom <= kPointClusterMaxMathZoom ||
+        query.viewport_size.x <= 1.0f || query.viewport_size.y <= 1.0f) {
+        return;
+    }
+
+    const float lon_pad = std::max(
+        0.0001f,
+        (query.view_max_lon - query.view_min_lon) * ((kPointHoverRadiusPx + 2.0f) / query.viewport_size.x));
+    const float lat_pad = std::max(
+        0.0001f,
+        (query.view_max_lat - query.view_min_lat) * ((kPointHoverRadiusPx + 2.0f) / query.viewport_size.y));
+    float best_dist_sq = kPointHoverRadiusPx * kPointHoverRadiusPx;
+
+    for (size_t layer_idx = 0; layer_idx < query.layers->size(); ++layer_idx) {
+        if (layer_idx >= query.layer_spatial->size() || layer_idx >= query.layer_hover_enabled->size()) continue;
+        if (!(*query.layer_hover_enabled)[layer_idx]) continue;
+
+        const LayerDef& layer = (*query.layers)[layer_idx];
+        if (!layer.enabled || layer.scale != "point" || !(*query.layer_spatial)[layer_idx].built) continue;
+
+        std::vector<uint32_t> point_candidates;
+        if (!queryLayerSpatialIndex(
+                (*query.layer_spatial)[layer_idx],
+                query.mouse_ll.x - lon_pad,
+                query.mouse_ll.y - lat_pad,
+                query.mouse_ll.x + lon_pad,
+                query.mouse_ll.y + lat_pad,
+                point_candidates)) {
+            continue;
+        }
+
+        const auto& features = layer.features;
+        for (uint32_t fidx : point_candidates) {
+            if (fidx >= features.size()) continue;
+            const auto& fg = features[(size_t)fidx];
+            if (fg.extent.max_lon < query.view_min_lon || fg.extent.min_lon > query.view_max_lon ||
+                fg.extent.max_lat < query.view_min_lat || fg.extent.min_lat > query.view_max_lat) {
+                continue;
+            }
+
+            const ImVec2 point_screen = query.project_world(ImVec2(fg.extent.min_lon, fg.extent.min_lat));
+            const float dx = point_screen.x - query.mouse_screen.x;
+            const float dy = point_screen.y - query.mouse_screen.y;
+            const float dist_sq = dx * dx + dy * dy;
+            if (dist_sq > best_dist_sq) continue;
+
+            best_dist_sq = dist_sq;
+            out.hovered_point = &fg;
+            out.hovered_point_idx = (size_t)fidx;
+            out.hovered_point_layer_idx = (int)layer_idx;
+        }
+    }
+}
 }
 
 MapHoverState findMapHoverTargets(const MapHoverQuery& query) {
     MapHoverState out;
     findHoveredParcel(query, out);
     findHoveredZone(query, out);
+    findHoveredPointFeature(query, out);
     return out;
 }
 

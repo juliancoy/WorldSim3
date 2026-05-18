@@ -113,6 +113,7 @@ bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
 bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters) {
     const std::string selected_nation = toLowerAscii(trimDisplayValue(filters.selected_nation_state));
     const std::string selected_region = toLowerAscii(trimDisplayValue(filters.selected_state_region));
+    const std::string selected_county_city = toLowerAscii(trimDisplayValue(filters.selected_county_city));
     if (!selected_nation.empty()) {
         const std::string layer_nation = toLowerAscii(trimDisplayValue(layer.provenance_nation_state));
         if (!layer_nation.empty() && layer_nation != selected_nation) return false;
@@ -120,6 +121,10 @@ bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& 
     if (!selected_region.empty()) {
         const std::string layer_region = toLowerAscii(trimDisplayValue(layer.provenance_state_region));
         if (!layer_region.empty() && layer_region != selected_region) return false;
+    }
+    if (!selected_county_city.empty()) {
+        const std::string layer_county_city = toLowerAscii(trimDisplayValue(layer.provenance_county_city));
+        if (layer_county_city.empty() || layer_county_city != selected_county_city) return false;
     }
     return true;
 }

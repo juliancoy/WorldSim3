@@ -71,6 +71,10 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.draw = ctx.draw;
     render_frame_ctx.origin = ctx.origin;
     render_frame_ctx.size = ctx.size;
+    render_frame_ctx.center_lon = ctx.center_lon;
+    render_frame_ctx.center_lat = ctx.center_lat;
+    render_frame_ctx.zoom_ptr = ctx.zoom_ptr;
+    render_frame_ctx.max_zoom = ctx.max_zoom;
     render_frame_ctx.zoom = ctx.zoom;
     render_frame_ctx.math_zoom = ctx.math_zoom;
     render_frame_ctx.zoom_scale = ctx.zoom_scale;

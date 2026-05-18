@@ -5,6 +5,7 @@
 #include "duckdb_analytics.h"
 #include "filters.h"
 #include "filters_tab.h"
+#include "gpu_profiler_tab.h"
 #include "layer_runtime.h"
 #include "owner_aggregates.h"
 #include "owner_info.h"
@@ -122,6 +123,18 @@ struct RightPanelContext {
     std::atomic<size_t>* vacant_rehab_rows_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_with_geometry_total = nullptr;
+
+    std::mutex* profile_mutex = nullptr;
+    std::vector<ProfileFrameSample>* profile_samples = nullptr;
+    size_t* profile_sample_pos = nullptr;
+    size_t* profile_sample_count = nullptr;
+    std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
+    std::atomic<bool>* prof_heatmap_high_quality = nullptr;
+    std::atomic<bool>* prof_heatmap_texture_resident = nullptr;
+    std::atomic<bool>* prof_heatmap_async_inflight = nullptr;
+    std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
+    bool* gpu_profiler_tab_requested = nullptr;
+    bool* gpu_profiler_reload_requested = nullptr;
 
     std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };

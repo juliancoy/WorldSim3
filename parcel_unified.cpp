@@ -36,6 +36,18 @@ std::string addressFor(const LayerDef::FeatureGeom* rp, const LayerDef::FeatureG
     return trimDisplayValue(address);
 }
 
+std::string sourceOfTruthForFeature(
+    const LayerDef::FeatureGeom* feature,
+    const std::string& fallback) {
+    if (feature) {
+        std::string source = trimDisplayValue(prop(*feature, {
+            "source_file", "SOURCE_FILE", "source", "SOURCE"
+        }));
+        if (!source.empty()) return source;
+    }
+    return trimDisplayValue(fallback);
+}
+
 template <typename T>
 T vectorValueAt(const std::vector<T>* values, size_t idx, T fallback = T{}) {
     return values && idx < values->size() ? (*values)[idx] : fallback;
@@ -65,7 +77,7 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
         row.parcel_feature_idx = i;
         row.parcel_geom = &parcel;
         row.blocklot = featureBlockLotJoinKey(parcel);
-        row.parcel_source_file = parcel_layer.file;
+        row.parcel_source_file = sourceOfTruthForFeature(&parcel, parcel_layer.file);
         row.parcel_has_geometry = !parcel.rings.empty();
 
         if (!row.blocklot.empty() &&
@@ -78,6 +90,9 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
                 row.has_property_record = true;
                 if (request.real_property_source_files && it->second < request.real_property_source_files->size()) {
                     row.property_source_file = (*request.real_property_source_files)[it->second];
+                }
+                if (row.property_source_file.empty()) {
+                    row.property_source_file = sourceOfTruthForFeature(row.real_property, {});
                 }
             }
         }

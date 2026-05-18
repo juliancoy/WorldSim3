@@ -24,6 +24,7 @@ struct LeftPanelResult {
     bool zoning_filters_changed = false;
     size_t downloadable_missing_layer_count = 0;
     size_t queueable_missing_layer_count = 0;
+    bool geography_changed = false;
 };
 
 struct LeftPanelContext {
@@ -46,6 +47,7 @@ struct LeftPanelContext {
     int max_zoom = 0;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
+    MapFilterState* map_filter_state = nullptr;
 
     int* hover_inspector_mode = nullptr;
     bool* hover_inspector_enabled = nullptr;

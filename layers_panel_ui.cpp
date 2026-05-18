@@ -47,9 +47,15 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
 bool categoryHasVisibleSubdata(const LayersPanelUiContext& ctx, LayerDef::Category cat) {
     if (!ctx.shared || !ctx.shared->layers) return false;
     for (const LayerDef& layer : *ctx.shared->layers) {
-        if (layer.category == cat && layer.enabled) return true;
+        if (layer.category != cat) continue;
+        if (ctx.map_filter_state && !layerMatchesSelectedGeography(layer, *ctx.map_filter_state)) continue;
+        if (layer.enabled) return true;
     }
     return false;
+}
+
+bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& layer) {
+    return !ctx.map_filter_state || layerMatchesSelectedGeography(layer, *ctx.map_filter_state);
 }
 
 bool drawBranchVisibilityToggle(const char* id, bool visible, const char* tooltip) {
@@ -332,6 +338,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
         LayerDef& layer = (*ctx.shared->layers)[idx];
         if (layer.category != cat) continue;
         if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
+        if (!layerVisibleInHierarchy(ctx, layer)) continue;
         if (layer.subcategory != current_subcategory) {
             if (!current_region.empty() && current_region_open) ImGui::TreePop();
             current_subcategory = layer.subcategory;

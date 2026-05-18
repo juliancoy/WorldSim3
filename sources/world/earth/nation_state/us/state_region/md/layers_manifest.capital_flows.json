@@ -14,7 +14,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "IRS EO BMF Dataset Guide",
@@ -29,7 +32,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "IRS Form 990 XML - 2026 Part 01A",
@@ -46,7 +52,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "IRS Form 990 XML - 2026 Part 02A",
@@ -63,7 +72,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "ProPublica Nonprofit Explorer API",
@@ -80,7 +92,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "USAspending Awards API",
@@ -97,7 +112,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "HUD LIHTC Property Database",
@@ -115,7 +133,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "FFIEC CRA Flat Files",
@@ -132,7 +153,10 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   },
   {
     "name": "CDFI Fund Awards Database",
@@ -149,6 +173,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "reference_only"
   }
 ]

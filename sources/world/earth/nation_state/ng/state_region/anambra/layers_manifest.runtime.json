@@ -1,0 +1,227 @@
+[
+  {
+    "name": "Anambra GRID3 Health Facilities",
+    "file": "anambra_grid3_health_facilities.geojson",
+    "category": "public_health",
+    "subcategory": "grid3",
+    "color": "#d14f2a",
+    "description": "GRID3 health facilities point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1J3wDoPt_EqT4ZAuWnyeM2KcJt6aUNmLV/export?format=xlsx",
+      "artifact_file": "anambra_grid3_health_facilities.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Schools",
+    "file": "anambra_grid3_schools.geojson",
+    "category": "public_health",
+    "subcategory": "grid3",
+    "color": "#2866c7",
+    "description": "GRID3 schools point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1nm-WYf3q0SB9TRAid06PfgMAp5ubEeHW/export?format=xlsx",
+      "artifact_file": "anambra_grid3_schools.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Markets",
+    "file": "anambra_grid3_markets.geojson",
+    "category": "housing",
+    "subcategory": "grid3",
+    "color": "#f39c12",
+    "description": "GRID3 markets point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1ttikUJo3r2w_TNNI4y5IzinFHFKyeSL-/export?format=xlsx",
+      "artifact_file": "anambra_grid3_markets.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Waterpoints",
+    "file": "anambra_grid3_waterpoints.geojson",
+    "category": "infrastructure",
+    "subcategory": "grid3",
+    "color": "#1f9fb4",
+    "description": "GRID3 waterpoints point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1dY6CAsCunnoTFUnao6fWegocltfaQVDp/export?format=xlsx",
+      "artifact_file": "anambra_grid3_waterpoints.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Settlements",
+    "file": "anambra_grid3_settlements.geojson",
+    "category": "housing",
+    "subcategory": "grid3",
+    "color": "#6b8e23",
+    "description": "GRID3 settlements point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1ThE004-rrDDZYAav9yz5Tvw_1q1f_Ihd/export?format=xlsx",
+      "artifact_file": "anambra_grid3_settlements.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Police Stations",
+    "file": "anambra_grid3_police.geojson",
+    "category": "safety",
+    "subcategory": "grid3",
+    "color": "#7b4fa3",
+    "description": "GRID3 police station point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1s1Sl3Ju-sjALlCUFWOAXE9REsu23sOL3/export?format=xlsx",
+      "artifact_file": "anambra_grid3_police.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Churches",
+    "file": "anambra_grid3_churches.geojson",
+    "category": "housing",
+    "subcategory": "grid3",
+    "color": "#9b59b6",
+    "description": "GRID3 churches point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1D4SHOTwDowE-3-A7Ia0gqzjhbu9cjuNu/export?format=xlsx",
+      "artifact_file": "anambra_grid3_churches.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Industries",
+    "file": "anambra_grid3_industries.geojson",
+    "category": "infrastructure",
+    "subcategory": "grid3",
+    "color": "#596275",
+    "description": "GRID3 industries point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1RcmDqhnsN6zWovEedEvX_WlEMZrWxK4H/export?format=xlsx",
+      "artifact_file": "anambra_grid3_industries.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Filling Stations",
+    "file": "anambra_grid3_filling_stations.geojson",
+    "category": "infrastructure",
+    "subcategory": "grid3",
+    "color": "#c0392b",
+    "description": "GRID3 filling stations point dataset for Anambra State.",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "import": {
+      "type": "xlsx_point_table",
+      "url": "https://docs.google.com/spreadsheets/d/1lEIG7MAnyOBiusYh_Ef0WNDqs-cWDuvH/export?format=xlsx",
+      "artifact_file": "anambra_grid3_filling_stations.xlsx",
+      "sheet_name": "Sheet1",
+      "lon_field": "X",
+      "lat_field": "Y"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  }
+]

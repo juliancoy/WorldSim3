@@ -181,6 +181,7 @@ add_executable(worldsim3
   owner_info.cpp
   owner_aggregates.cpp
   active_queries_tab.cpp
+  gpu_profiler_tab.cpp
   owners_tab.cpp
   gradient_tab.cpp
   vacancy_parcel_tab.cpp
@@ -201,6 +202,7 @@ add_executable(worldsim3
   arkavo_signaling_transport_curl.cpp
   arkavo_rtc_session_manager.cpp
   time_cube.cpp
+  headless_layer_hydration.cpp
   layer_state_io.cpp
   layer_import.cpp
   filters.cpp

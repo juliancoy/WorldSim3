@@ -61,6 +61,7 @@ json mapFilterStateJson(const MapFilterState& filters) {
         {"enabled", filters.enabled},
         {"selected_nation_state", filters.selected_nation_state},
         {"selected_state_region", filters.selected_state_region},
+        {"selected_county_city", filters.selected_county_city},
         {"use_date", filters.use_date},
         {"year_min", filters.year_min},
         {"year_max", filters.year_max},

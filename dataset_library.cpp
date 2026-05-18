@@ -10,11 +10,52 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <curl/curl.h>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+int manifestPriority(const fs::path& manifest_path) {
+    const std::string name = manifest_path.filename().string();
+    if (name == "layers_manifest.json") return 0;
+    if (name == "layers_manifest.must_have.json") return 1;
+    if (name == "layers_manifest.nice_to_have.json") return 2;
+    if (name == "layers_manifest.heavy_data.json") return 3;
+    if (name == "layers_manifest.extended_events.json") return 4;
+    if (name == "layers_manifest.historical_high_quality.json") return 5;
+    if (name == "layers_manifest.capital_flows.json") return 6;
+    if (name == "layers_manifest.runtime.json") return 7;
+    if (name == "layers_manifest.repository.json") return 8;
+    if (name == "layers_manifest.archival_research.json") return 9;
+    return 100;
+}
+
+std::vector<fs::path> discoverManifestPaths(const fs::path& root) {
+    std::vector<fs::path> out;
+    const fs::path sources_root = root / "sources" / "world";
+    std::error_code ec;
+    if (!fs::exists(sources_root, ec) || ec) return out;
+    for (fs::recursive_directory_iterator it(sources_root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file()) continue;
+        const std::string name = it->path().filename().string();
+        if (!name.starts_with("layers_manifest") || !name.ends_with(".json")) continue;
+        out.push_back(it->path());
+    }
+    std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) {
+        const fs::path a_parent = a.parent_path().lexically_normal();
+        const fs::path b_parent = b.parent_path().lexically_normal();
+        if (a_parent != b_parent) return a_parent.string() < b_parent.string();
+        const int a_priority = manifestPriority(a);
+        const int b_priority = manifestPriority(b);
+        if (a_priority != b_priority) return a_priority < b_priority;
+        return a.filename().string() < b.filename().string();
+    });
+    return out;
+}
+}
 
 static size_t curlWriteToFile(void* ptr, size_t size, size_t nmemb, void* userdata) {
     FILE* fp = (FILE*)userdata;
@@ -460,15 +501,26 @@ FreshnessCheckResult checkUrlFreshnessVersioned(
 }
 
 std::vector<json> readLayerManifestEntries(const fs::path& root) {
-    const fs::path us_md_root =
-        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
-    std::ifstream in(us_md_root / "layers_manifest.json");
-    if (!in) return {};
-    json arr;
-    in >> arr;
     std::vector<json> out;
-    out.reserve(arr.size());
-    for (const auto& e : arr) out.push_back(e);
+    std::unordered_set<std::string> seen_files;
+    for (const auto& manifest_path : discoverManifestPaths(root)) {
+        std::ifstream in(manifest_path);
+        if (!in) continue;
+        json arr;
+        try {
+            in >> arr;
+        } catch (...) {
+            continue;
+        }
+        if (!arr.is_array()) continue;
+        for (const auto& e : arr) {
+            if (!e.is_object()) continue;
+            const std::string file = e.value("file", std::string());
+            if (!file.empty() && seen_files.contains(file)) continue;
+            if (!file.empty()) seen_files.insert(file);
+            out.push_back(e);
+        }
+    }
     return out;
 }
 
@@ -482,6 +534,7 @@ std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std:
     if (phase == "nice-to-have") return us_md_root / "layers_manifest.nice_to_have.json";
     if (phase == "heavy-data") return us_md_root / "layers_manifest.heavy_data.json";
     if (phase == "capital-flows") return us_md_root / "layers_manifest.capital_flows.json";
+    if (phase == "anambra-runtime") return ng_anambra_root / "layers_manifest.runtime.json";
     if (phase == "anambra-repository") return ng_anambra_root / "layers_manifest.repository.json";
     if (phase == "extended-events") return us_md_root / "layers_manifest.extended_events.json";
     if (phase == "historical-high-quality") return us_md_root / "layers_manifest.historical_high_quality.json";
@@ -584,6 +637,10 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_shapefile = import.value("shapefile", std::string());
             layer.import_service_url = import.value("service_url", std::string());
             layer.import_normalizer = import.value("normalizer", std::string());
+            layer.import_sheet_name = import.value("sheet_name", std::string());
+            layer.import_lon_field = import.value("lon_field", std::string());
+            layer.import_lat_field = import.value("lat_field", std::string());
+            layer.import_artifact_file = import.value("artifact_file", std::string());
             if (item.contains("provenance") && item["provenance"].is_object()) {
                 const auto& provenance = item["provenance"];
                 layer.provenance_world = provenance.value("world", std::string());

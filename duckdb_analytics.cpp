@@ -197,15 +197,26 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         std::filesystem::create_directories(root_ / "data");
         duckdb::DuckDB db(status_.db_path);
         duckdb::Connection con(db);
+        auto exec_or_throw = [&](const std::string& sql, const char* context) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(
+                    std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+            }
+        };
 
-        con.Query("BEGIN TRANSACTION");
-        con.Query("DROP TABLE IF EXISTS layer_features");
-        con.Query("DROP TABLE IF EXISTS unified_parcels");
-        con.Query("DROP TABLE IF EXISTS parcel_events");
-        con.Query("DROP TABLE IF EXISTS anambra_repository_sources");
-        con.Query("DROP TABLE IF EXISTS analytics_build_info");
-        con.Query("DROP TABLE IF EXISTS analytics_source_contributions");
-        con.Query(R"SQL(
+        exec_or_throw("BEGIN TRANSACTION", "begin transaction");
+        exec_or_throw("DROP TABLE IF EXISTS layer_features", "drop layer_features");
+        exec_or_throw("DROP TABLE IF EXISTS unified_parcels", "drop unified_parcels");
+        exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_repository_sources", "drop anambra_repository_sources");
+        exec_or_throw("DROP TABLE IF EXISTS geography_feature_collections", "drop geography_feature_collections");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_features", "drop anambra_runtime_features");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_lga_summary", "drop anambra_runtime_lga_summary");
+        exec_or_throw("DROP TABLE IF EXISTS import_audit", "drop import_audit");
+        exec_or_throw("DROP TABLE IF EXISTS analytics_build_info", "drop analytics_build_info");
+        exec_or_throw("DROP TABLE IF EXISTS analytics_source_contributions", "drop analytics_source_contributions");
+        exec_or_throw(R"SQL(
             CREATE TABLE layer_features (
                 layer_idx UBIGINT,
                 layer_name VARCHAR,
@@ -214,6 +225,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 feature_idx UBIGINT,
                 scale VARCHAR,
                 category VARCHAR,
+                provenance_world VARCHAR,
+                provenance_nation_state VARCHAR,
+                provenance_state_region VARCHAR,
+                provenance_county_city VARCHAR,
                 min_lon DOUBLE,
                 min_lat DOUBLE,
                 max_lon DOUBLE,
@@ -225,9 +240,17 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 status VARCHAR,
                 zoning VARCHAR,
                 value_usd DOUBLE,
+                feature_name VARCHAR,
+                lga_name VARCHAR,
+                ward_name VARCHAR,
+                source_name VARCHAR,
+                event_date_text VARCHAR,
+                event_status_hint VARCHAR,
+                event_year_hint INTEGER,
+                amount_usd_hint DOUBLE,
                 properties_json VARCHAR
             )
-        )SQL");
+        )SQL", "create layer_features");
 
         auto appender = duckdb::Appender(con, "layer_features");
         size_t feature_count = 0;
@@ -252,6 +275,22 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 const std::string status = prop(fg, {"STATUS", "STATE", "CASE_STATUS"});
                 const std::string zoning = zoningClassKey(fg);
                 double value = numericProp(fg, {"value_usd", "property_value_usd", "TAXBASE", "ARTAXBAS", "SALEPRIC"});
+                const std::string feature_name = firstDisplayProperty(
+                    fg, {"name", "poi_name", "prmry_name", "set_name", "market_nam", "plc_st_nam", "fctry_st_n"});
+                const std::string lga_name = firstDisplayProperty(fg, {"lganame"});
+                const std::string ward_name = firstDisplayProperty(fg, {"wardname"});
+                const std::string source_name = firstDisplayProperty(fg, {"source"});
+                const std::string event_date_text = prop(fg, {
+                    "event_date", "DateNotice", "DateIssue", "DateIssued", "Issue_Date_ISO",
+                    "Issue_Date", "SALEDATE", "DATE", "CREATED_DATE", "RECORD_DATE"
+                });
+                const std::string event_status_hint = prop(fg, {"CASE_STATUS", "STATUS", "STATE"});
+                int event_year_hint = 0;
+                if (const std::string year_text = prop(fg, {"Issue_Year", "YEAR"}); !trimDisplayValue(year_text).empty()) {
+                    event_year_hint = (int)parseNumericField(year_text);
+                }
+                double amount_usd_hint = numericProp(
+                    fg, {"amount_usd", "AMOUNT", "Amount", "COST", "TOTALCOST", "SALEPRIC", "TAXBASE", "ARTAXBAS"});
 
                 appender.BeginRow();
                 appender.Append<uint64_t>((uint64_t)li);
@@ -261,6 +300,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<uint64_t>((uint64_t)fi);
                 appender.Append<const char*>(layer.scale.c_str());
                 appender.Append<const char*>(category.c_str());
+                appender.Append<const char*>(layer.provenance_world.c_str());
+                appender.Append<const char*>(layer.provenance_nation_state.c_str());
+                appender.Append<const char*>(layer.provenance_state_region.c_str());
+                appender.Append<const char*>(layer.provenance_county_city.c_str());
                 appender.Append<double>(fg.extent.min_lon);
                 appender.Append<double>(fg.extent.min_lat);
                 appender.Append<double>(fg.extent.max_lon);
@@ -272,6 +315,14 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<const char*>(status.c_str());
                 appender.Append<const char*>(zoning.c_str());
                 appender.Append<double>(value);
+                appender.Append<const char*>(feature_name.c_str());
+                appender.Append<const char*>(lga_name.c_str());
+                appender.Append<const char*>(ward_name.c_str());
+                appender.Append<const char*>(source_name.c_str());
+                appender.Append<const char*>(event_date_text.c_str());
+                appender.Append<const char*>(event_status_hint.c_str());
+                appender.Append<int32_t>(event_year_hint);
+                appender.Append<double>(amount_usd_hint);
                 const std::string pj = propsJson(fg);
                 appender.Append<const char*>(pj.c_str());
                 appender.EndRow();
@@ -280,7 +331,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         }
         appender.Close();
 
-        con.Query(R"SQL(
+        exec_or_throw(R"SQL(
             CREATE TABLE unified_parcels (
                 parcel_layer_idx UBIGINT,
                 parcel_feature_idx UBIGINT,
@@ -311,7 +362,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 max_lon DOUBLE,
                 max_lat DOUBLE
             )
-        )SQL");
+        )SQL", "create unified_parcels");
         if (!unified_parcels.empty()) {
             auto parcel_appender = duckdb::Appender(con, "unified_parcels");
             for (const auto& parcel : unified_parcels) {
@@ -350,12 +401,13 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             parcel_appender.Close();
         }
 
-        con.Query("CREATE INDEX IF NOT EXISTS idx_layer_features_blocklot ON layer_features(blocklot)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_layer_features_owner ON layer_features(owner)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)");
-        con.Query(R"SQL(
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_blocklot ON layer_features(blocklot)", "index layer_features blocklot");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_owner ON layer_features(owner)", "index layer_features owner");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)", "index layer_features layer_file");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_geography ON layer_features(provenance_nation_state, provenance_state_region)", "index layer_features geography");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)", "index unified_parcels blocklot");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)", "index unified_parcels owner");
+        exec_or_throw(R"SQL(
             CREATE TABLE analytics_build_info (
                 built_at_utc VARCHAR,
                 source_signature VARCHAR,
@@ -365,15 +417,15 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 unified_parcels_with_property_record UBIGINT,
                 unified_parcels_with_geometry UBIGINT
             )
-        )SQL");
-        con.Query(R"SQL(
+        )SQL", "create analytics_build_info");
+        exec_or_throw(R"SQL(
             CREATE TABLE analytics_source_contributions (
                 source_role VARCHAR,
                 source_file VARCHAR,
                 row_count UBIGINT
             )
-        )SQL");
-        con.Query(R"SQL(
+        )SQL", "create analytics_source_contributions");
+        exec_or_throw(R"SQL(
             CREATE TABLE anambra_repository_sources (
                 name VARCHAR,
                 file VARCHAR,
@@ -388,7 +440,25 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 provenance_nation_state VARCHAR,
                 provenance_state_region VARCHAR
             )
-        )SQL");
+        )SQL", "create anambra_repository_sources");
+        exec_or_throw(R"SQL(
+            CREATE TABLE import_audit (
+                layer_file VARCHAR,
+                layer_name VARCHAR,
+                import_type VARCHAR,
+                duckdb_role VARCHAR,
+                provenance_nation_state VARCHAR,
+                provenance_state_region VARCHAR,
+                source_artifact_path VARCHAR,
+                source_artifact_exists BOOLEAN,
+                source_artifact_size_bytes UBIGINT,
+                stored_layer_path VARCHAR,
+                stored_layer_exists BOOLEAN,
+                feature_count UBIGINT,
+                missing_name_count UBIGINT,
+                missing_lga_count UBIGINT
+            )
+        )SQL", "create import_audit");
         {
             const std::string built_at_utc = isoNowUtc();
             const std::string source_signature = analyticsBuildSignature(root_, layers);
@@ -479,7 +549,114 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 anambra_appender.Close();
             }
         }
-        con.Query(R"SQL(
+        {
+            auto import_audit_appender = duckdb::Appender(con, "import_audit");
+            for (const auto& layer : layers) {
+                if (layer.import_type.empty()) continue;
+                const fs::path stored_path = resolveStoredLayerPath(root_, layer);
+                std::error_code ec;
+                const bool stored_exists = fs::exists(stored_path, ec) && !ec;
+                fs::path source_artifact_path;
+                if (!layer.import_artifact_file.empty()) {
+                    source_artifact_path = provenanceSourceArtifactPath(root_, layer, layer.import_artifact_file);
+                } else if (layer.import_type == "xlsx_point_table") {
+                    source_artifact_path = provenanceSourceArtifactPath(root_, layer, layer.file + ".source.xlsx");
+                } else if (layer.import_type == "zipped_shapefile") {
+                    source_artifact_path = provenanceSourceArtifactPath(root_, layer, layer.file + ".source.zip");
+                } else if (layer.import_type == "socrata_csv_properties") {
+                    source_artifact_path = provenanceSourceArtifactPath(root_, layer, layer.file + ".source.csv");
+                }
+                ec.clear();
+                const bool source_exists = !source_artifact_path.empty() && fs::exists(source_artifact_path, ec) && !ec;
+                ec.clear();
+                const uint64_t source_size_bytes = source_exists ? (uint64_t)fs::file_size(source_artifact_path, ec) : 0ULL;
+                size_t missing_name_count = 0;
+                size_t missing_lga_count = 0;
+                for (const auto& fg : layer.features) {
+                    const std::string feature_name = firstDisplayProperty(
+                        fg,
+                        {"name", "poi_name", "prmry_name", "set_name", "market_nam", "plc_st_nam", "fctry_st_n"});
+                    if (trimDisplayValue(feature_name).empty()) missing_name_count++;
+                    const std::string lga_name = firstDisplayProperty(fg, {"lganame"});
+                    if (trimDisplayValue(lga_name).empty()) missing_lga_count++;
+                }
+                import_audit_appender.BeginRow();
+                import_audit_appender.Append<const char*>(layer.file.c_str());
+                import_audit_appender.Append<const char*>(layer.name.c_str());
+                import_audit_appender.Append<const char*>(layer.import_type.c_str());
+                import_audit_appender.Append<const char*>(layer.duckdb_role.c_str());
+                import_audit_appender.Append<const char*>(layer.provenance_nation_state.c_str());
+                import_audit_appender.Append<const char*>(layer.provenance_state_region.c_str());
+                import_audit_appender.Append<const char*>(source_artifact_path.string().c_str());
+                import_audit_appender.Append<bool>(source_exists);
+                import_audit_appender.Append<uint64_t>(source_size_bytes);
+                import_audit_appender.Append<const char*>(stored_path.string().c_str());
+                import_audit_appender.Append<bool>(stored_exists);
+                import_audit_appender.Append<uint64_t>((uint64_t)layer.features.size());
+                import_audit_appender.Append<uint64_t>((uint64_t)missing_name_count);
+                import_audit_appender.Append<uint64_t>((uint64_t)missing_lga_count);
+                import_audit_appender.EndRow();
+            }
+            import_audit_appender.Close();
+        }
+        exec_or_throw(R"SQL(
+            CREATE TABLE geography_feature_collections AS
+            SELECT
+                provenance_world,
+                provenance_nation_state,
+                provenance_state_region,
+                provenance_county_city,
+                layer_file,
+                layer_name,
+                duckdb_role,
+                scale,
+                category,
+                count(*) AS feature_count
+            FROM layer_features
+            GROUP BY
+                provenance_world,
+                provenance_nation_state,
+                provenance_state_region,
+                provenance_county_city,
+                layer_file,
+                layer_name,
+                duckdb_role,
+                scale,
+                category
+        )SQL", "create geography_feature_collections");
+        exec_or_throw(R"SQL(
+            CREATE TABLE anambra_runtime_features AS
+            SELECT
+                layer_file,
+                layer_name,
+                duckdb_role,
+                category,
+                feature_idx,
+                    min_lon,
+                    min_lat,
+                    max_lon,
+                    max_lat,
+                    feature_name,
+                    lga_name,
+                    ward_name,
+                    source_name,
+                    properties_json
+            FROM layer_features
+            WHERE provenance_nation_state = 'ng'
+              AND provenance_state_region = 'anambra'
+        )SQL", "create anambra_runtime_features");
+        exec_or_throw(R"SQL(
+            CREATE TABLE anambra_runtime_lga_summary AS
+            SELECT
+                layer_file,
+                layer_name,
+                coalesce(lga_name, '') AS lga_name,
+                count(*) AS feature_count
+            FROM anambra_runtime_features
+            GROUP BY layer_file, layer_name, coalesce(lga_name, '')
+            ORDER BY layer_file, feature_count DESC, lga_name
+        )SQL", "create anambra_runtime_lga_summary");
+        exec_or_throw(R"SQL(
             CREATE TABLE parcel_events AS
             WITH base AS (
                 SELECT
@@ -494,28 +671,14 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     lf.feature_idx,
                     lf.category,
                     lf.value_usd,
+                    lf.event_date_text,
+                    lf.event_status_hint,
+                    lf.event_year_hint,
+                    lf.amount_usd_hint,
                     lf.properties_json,
                     coalesce(
-                        try_strptime(json_extract_string(lf.properties_json, '$.event_date'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.event_date'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateNotice'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateNotice'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssue'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssue'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssued'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DateIssued'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date_ISO'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date_ISO'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.Issue_Date'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.SALEDATE'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.SALEDATE'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DATE'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.DATE'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.CREATED_DATE'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.CREATED_DATE'), '%Y-%m-%d'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.RECORD_DATE'), '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(json_extract_string(lf.properties_json, '$.RECORD_DATE'), '%Y-%m-%d')
+                        try_strptime(lf.event_date_text, '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(lf.event_date_text, '%Y-%m-%d')
                     ) AS parsed_event_ts
                 FROM layer_features lf
                 WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
@@ -539,44 +702,34 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     ELSE duckdb_role
                 END AS event_type,
                 coalesce(
-                    nullif(json_extract_string(properties_json, '$.CASE_STATUS'), ''),
-                    nullif(json_extract_string(properties_json, '$.STATUS'), ''),
-                    nullif(json_extract_string(properties_json, '$.STATE'), ''),
+                    nullif(event_status_hint, ''),
                     feature_status
                 ) AS event_status,
                 cast(parsed_event_ts AS DATE) AS event_date,
                 coalesce(
-                    try_cast(json_extract_string(properties_json, '$.Issue_Year') AS INTEGER),
-                    try_cast(json_extract_string(properties_json, '$.YEAR') AS INTEGER),
+                    nullif(event_year_hint, 0),
                     try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
                 ) AS event_year,
                 coalesce(
                     nullif(value_usd, 0),
-                    try_cast(json_extract_string(properties_json, '$.amount_usd') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.AMOUNT') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.Amount') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.COST') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.TOTALCOST') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.SALEPRIC') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.TAXBASE') AS DOUBLE),
-                    try_cast(json_extract_string(properties_json, '$.ARTAXBAS') AS DOUBLE)
+                    nullif(amount_usd_hint, 0)
                 ) AS amount_usd,
                 layer_file AS source_layer_file,
                 layer_name AS source_layer_name,
                 feature_idx AS source_feature_idx,
                 properties_json
             FROM base
-        )SQL");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)");
-        con.Query("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)");
-        con.Query(R"SQL(
+        )SQL", "create parcel_events");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+        exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW parcel_features AS
             SELECT *
             FROM layer_features
             WHERE scale = 'parcel'
-        )SQL");
-        con.Query(R"SQL(
+        )SQL", "create parcel_features view");
+        exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW owner_rollups AS
             SELECT
                 owner,
@@ -590,22 +743,22 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             WHERE owner IS NOT NULL AND owner <> ''
             GROUP BY owner
             ORDER BY property_count DESC, value_usd DESC
-        )SQL");
-        con.Query(R"SQL(
+        )SQL", "create owner_rollups view");
+        exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW layer_counts AS
             SELECT layer_file, layer_name, duckdb_role, scale, category, count(*) AS feature_count
             FROM layer_features
             GROUP BY layer_file, layer_name, duckdb_role, scale, category
             ORDER BY feature_count DESC
-        )SQL");
-        con.Query(R"SQL(
+        )SQL", "create layer_counts view");
+        exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW analytics_property_source_rollup AS
             SELECT source_file, row_count
             FROM analytics_source_contributions
             WHERE source_role = 'property_record'
             ORDER BY row_count DESC, source_file ASC
-        )SQL");
-        con.Query("COMMIT");
+        )SQL", "create analytics_property_source_rollup view");
+        exec_or_throw("COMMIT", "commit analytics rebuild");
 
         status_.last_rebuild_ok = true;
         status_.layer_count = layer_count;
@@ -809,6 +962,39 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(
         LIMIT 1
     )SQL";
     return executeMapQuery(sql.str(), {}, {}, 1);
+}
+
+DuckDbQueryResult DuckDbAnalytics::queryParcelEvents(
+    const std::string& blocklot,
+    size_t max_rows) const {
+    const std::string key = trimDisplayValue(blocklot);
+    if (key.empty()) {
+        DuckDbQueryResult out;
+        out.ok = false;
+        out.message = "BLOCKLOT is empty";
+        return out;
+    }
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT
+            event_type,
+            event_status,
+            cast(event_date AS VARCHAR) AS event_date,
+            cast(event_year AS VARCHAR) AS event_year,
+            cast(amount_usd AS VARCHAR) AS amount_usd,
+            source_layer_name,
+            source_layer_file,
+            source_feature_idx
+        FROM parcel_events
+        WHERE blocklot = ')SQL" << sqlQuote(key) << R"SQL('
+        ORDER BY
+            coalesce(event_date, DATE '0001-01-01') DESC,
+            coalesce(event_year, 0) DESC,
+            event_type ASC,
+            source_layer_name ASC
+        LIMIT )SQL" << std::max<size_t>(1, max_rows) << R"SQL(
+    )SQL";
+    return executeMapQuery(sql.str(), {}, {}, max_rows);
 }
 
 std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& query, size_t max_rows) const {

@@ -3,6 +3,15 @@
     "name": "2021 Tax Sale List",
     "file": "tax_sale_list_2021.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0",
-    "color": "#a65628"
+    "color": "#a65628",
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]

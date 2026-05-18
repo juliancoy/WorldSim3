@@ -2,6 +2,7 @@
 
 #include "basemap_sources.h"
 #include "geo.h"
+#include "worldsim_app.h"
 #include "worldsim_app_internal.h"
 
 #include <algorithm>
@@ -175,6 +176,7 @@ MapBasemapRenderResult renderMapBasemap(const MapBasemapRenderContext& ctx) {
     if (ctx.basemap_availability_last_check->time_since_epoch().count() == 0 ||
         std::chrono::duration<double>(now_basemap_check - *ctx.basemap_availability_last_check).count() > 5.0) {
         *ctx.basemap_availability_last_check = now_basemap_check;
+        recordGpuProfilerEvent("basemap refresh check");
         *ctx.topo_tiles_available_cached = true;
         *ctx.topo_vector_available_cached = fs::exists(*ctx.root / "data" / "tiles_topo_vector.geojson");
         *ctx.basemap_source_has_any_files_cached = true;

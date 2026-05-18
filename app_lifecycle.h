@@ -94,6 +94,7 @@ struct AppShutdownContext {
     bool* filter_enabled = nullptr;
     std::string* selected_nation_state = nullptr;
     std::string* selected_state_region = nullptr;
+    std::string* selected_county_city = nullptr;
     bool* filter_use_date = nullptr;
     int* filter_year_min = nullptr;
     int* filter_year_max = nullptr;

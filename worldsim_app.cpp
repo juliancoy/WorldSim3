@@ -268,6 +268,18 @@ struct RetiredParcelGpuPayload {
     uint64_t retire_after_frame = 0;
 };
 
+struct GpuProfilerAlertState {
+    bool oom_active = false;
+    uint64_t oom_generation = 0;
+    bool tab_selection_requested = false;
+    std::string last_error;
+};
+
+struct GpuProfilerEvent {
+    std::chrono::steady_clock::time_point at{};
+    std::string label;
+};
+
 struct ParcelGpuUploadResult {
     bool ok = false;
     std::string source_signature;
@@ -293,10 +305,52 @@ static std::thread g_ParcelGpuUploadWorker;
 static std::vector<RetiredParcelGpuPayload> g_RetiredParcelGpuPayloads;
 static std::mutex g_ParcelGpuStatusMutex;
 static ParcelGpuResidencyStatus g_ParcelGpuStatusSnapshot;
+static std::mutex g_GpuProfilerAlertMutex;
+static GpuProfilerAlertState g_GpuProfilerAlertState;
+static std::mutex g_GpuProfilerEventMutex;
+static std::deque<GpuProfilerEvent> g_GpuProfilerEvents;
 static std::atomic<uint64_t> g_PresentedFrameSerial{0};
 static VkDebugUtilsMessengerEXT g_DebugUtilsMessenger = VK_NULL_HANDLE;
 
 static void submitUploadCommands(std::function<void(VkCommandBuffer)> record);
+
+static uint64_t parcelDeviceLocalBytes(const ParcelGpuBuffers& buffers) {
+    return
+        (uint64_t)buffers.positions.size_bytes +
+        (uint64_t)buffers.indices.size_bytes +
+        (uint64_t)buffers.line_indices.size_bytes +
+        (uint64_t)buffers.vertex_feature_refs.size_bytes;
+}
+
+static uint64_t parcelHostVisibleBytes(const ParcelGpuBuffers& buffers) {
+    return
+        (uint64_t)buffers.colors.size_bytes +
+        (uint64_t)buffers.overlay_colors.size_bytes +
+        (uint64_t)buffers.outline_colors.size_bytes;
+}
+
+void recordGpuProfilerEvent(const std::string& label) {
+    if (label.empty()) return;
+    std::lock_guard<std::mutex> lk(g_GpuProfilerEventMutex);
+    g_GpuProfilerEvents.push_back(GpuProfilerEvent{std::chrono::steady_clock::now(), label});
+    while (g_GpuProfilerEvents.size() > 24) g_GpuProfilerEvents.pop_front();
+}
+
+static void noteGpuProfilerAlert(VkResult err, const std::string& stage) {
+    std::lock_guard<std::mutex> lk(g_GpuProfilerAlertMutex);
+    g_GpuProfilerAlertState.last_error = stage + " failed with VkResult=" + std::to_string((int)err);
+    recordGpuProfilerEvent(g_GpuProfilerAlertState.last_error);
+    if (err == VK_ERROR_OUT_OF_DEVICE_MEMORY || err == VK_ERROR_OUT_OF_HOST_MEMORY) {
+        g_GpuProfilerAlertState.oom_active = true;
+        g_GpuProfilerAlertState.oom_generation++;
+        g_GpuProfilerAlertState.tab_selection_requested = true;
+    }
+}
+
+static void clearGpuProfilerAlertStateLocked() {
+    g_GpuProfilerAlertState.oom_active = false;
+    g_GpuProfilerAlertState.last_error.clear();
+}
 
 static void publishParcelGpuStatusSnapshot() {
     ParcelGpuResidencyStatus out;
@@ -328,6 +382,12 @@ static void publishParcelGpuStatusSnapshot() {
         g_ParcelGpuBuffers.outline_colors.mapped &&
         !g_ParcelGpuDrawState.visible_line_chunks.empty() &&
         g_ParcelGpuOutlineHasVisibleColors;
+    out.device_local_bytes = parcelDeviceLocalBytes(g_ParcelGpuBuffers);
+    out.host_visible_bytes = parcelHostVisibleBytes(g_ParcelGpuBuffers);
+    for (const auto& retired : g_RetiredParcelGpuPayloads) {
+        out.retired_device_local_bytes += parcelDeviceLocalBytes(retired.buffers);
+        out.retired_host_visible_bytes += parcelHostVisibleBytes(retired.buffers);
+    }
     out.source_signature = g_ParcelGpuBuffers.source_signature;
 
     std::lock_guard<std::mutex> lk(g_ParcelGpuStatusMutex);
@@ -459,6 +519,56 @@ static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPr
     check_vk_result(vkBindBufferMemory(g_Device, buffer, memory, 0));
 }
 
+static bool tryCreateBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags properties,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory,
+    std::string* error) {
+    buffer = VK_NULL_HANDLE;
+    memory = VK_NULL_HANDLE;
+
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size = size;
+    info.usage = usage;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkResult err = vkCreateBuffer(g_Device, &info, g_Allocator, &buffer);
+    if (err != VK_SUCCESS) {
+        noteGpuProfilerAlert(err, "vkCreateBuffer");
+        if (error) *error = "vkCreateBuffer failed with VkResult=" + std::to_string((int)err);
+        return false;
+    }
+
+    VkMemoryRequirements req{};
+    vkGetBufferMemoryRequirements(g_Device, buffer, &req);
+    VkMemoryAllocateInfo alloc{};
+    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc.allocationSize = req.size;
+    alloc.memoryTypeIndex = findMemoryType(req.memoryTypeBits, properties);
+    err = vkAllocateMemory(g_Device, &alloc, g_Allocator, &memory);
+    if (err != VK_SUCCESS) {
+        noteGpuProfilerAlert(err, "vkAllocateMemory");
+        if (error) *error = "vkAllocateMemory failed with VkResult=" + std::to_string((int)err);
+        vkDestroyBuffer(g_Device, buffer, g_Allocator);
+        buffer = VK_NULL_HANDLE;
+        return false;
+    }
+
+    err = vkBindBufferMemory(g_Device, buffer, memory, 0);
+    if (err != VK_SUCCESS) {
+        noteGpuProfilerAlert(err, "vkBindBufferMemory");
+        if (error) *error = "vkBindBufferMemory failed with VkResult=" + std::to_string((int)err);
+        vkFreeMemory(g_Device, memory, g_Allocator);
+        vkDestroyBuffer(g_Device, buffer, g_Allocator);
+        memory = VK_NULL_HANDLE;
+        buffer = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
 static void destroyParcelGpuBuffer(ParcelGpuBuffer& b) {
     if (b.mapped && b.memory) {
         vkUnmapMemory(g_Device, b.memory);
@@ -491,6 +601,12 @@ static void destroyParcelGpuBuffers(ParcelGpuBuffers& buffers) {
     buffers.source_signature.clear();
 }
 
+static void waitForParcelGpuDeviceIdle() {
+    if (g_Device == VK_NULL_HANDLE) return;
+    std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+    check_vk_result(vkDeviceWaitIdle(g_Device));
+}
+
 static void retireParcelGpuBuffers(ParcelGpuBuffers&& buffers) {
     if (!buffers.positions.buffer &&
         !buffers.indices.buffer &&
@@ -510,6 +626,18 @@ static void retireParcelGpuBuffers(ParcelGpuBuffers&& buffers) {
 static void drainRetiredParcelGpuPayloads(bool force = false) {
     if (g_RetiredParcelGpuPayloads.empty()) return;
     const uint64_t presented_frame = g_PresentedFrameSerial.load(std::memory_order_relaxed);
+    bool has_eligible = force;
+    if (!has_eligible) {
+        for (const auto& retired : g_RetiredParcelGpuPayloads) {
+            if (presented_frame >= retired.retire_after_frame) {
+                has_eligible = true;
+                break;
+            }
+        }
+    }
+    if (!has_eligible) return;
+    waitForParcelGpuDeviceIdle();
+    bool changed = false;
     auto it = g_RetiredParcelGpuPayloads.begin();
     while (it != g_RetiredParcelGpuPayloads.end()) {
         if (!force && presented_frame < it->retire_after_frame) {
@@ -518,7 +646,9 @@ static void drainRetiredParcelGpuPayloads(bool force = false) {
         }
         destroyParcelGpuBuffers(it->buffers);
         it = g_RetiredParcelGpuPayloads.erase(it);
+        changed = true;
     }
+    if (changed) publishParcelGpuStatusSnapshot();
 }
 
 void drainRetiredParcelGpuResources() {
@@ -531,14 +661,13 @@ static bool createHostVisibleParcelBuffer(
     ParcelGpuBuffer& out,
     std::string* error) {
     destroyParcelGpuBuffer(out);
-    createBuffer(
-        size,
-        usage,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        out.buffer,
-        out.memory);
-    if (!out.buffer || !out.memory) {
-        if (error) *error = "failed to create host-visible parcel buffer";
+    if (!tryCreateBuffer(
+            size,
+            usage,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            out.buffer,
+            out.memory,
+            error)) {
         return false;
     }
     if (vkMapMemory(g_Device, out.memory, 0, size, 0, &out.mapped) != VK_SUCCESS) {
@@ -620,14 +749,15 @@ static bool uploadDeviceLocalParcelBuffer(
 
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory staging_mem = VK_NULL_HANDLE;
-    createBuffer(
-        size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        staging,
-        staging_mem);
-    if (!staging || !staging_mem) {
-        if (error) *error = "failed to create staging buffer";
+    std::string create_error;
+    if (!tryCreateBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            staging,
+            staging_mem,
+            &create_error)) {
+        if (error) *error = "failed to create staging buffer: " + create_error;
         return false;
     }
 
@@ -641,14 +771,14 @@ static bool uploadDeviceLocalParcelBuffer(
     std::memcpy(mapped, src, static_cast<size_t>(size));
     vkUnmapMemory(g_Device, staging_mem);
 
-    createBuffer(
-        size,
-        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        out.buffer,
-        out.memory);
-    if (!out.buffer || !out.memory) {
-        if (error) *error = "failed to create device-local parcel buffer";
+    if (!tryCreateBuffer(
+            size,
+            usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            out.buffer,
+            out.memory,
+            &create_error)) {
+        if (error) *error = "failed to create device-local parcel buffer: " + create_error;
         vkDestroyBuffer(g_Device, staging, g_Allocator);
         vkFreeMemory(g_Device, staging_mem, g_Allocator);
         return false;
@@ -681,14 +811,15 @@ static bool uploadDeviceLocalParcelBuffer(
 
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory staging_mem = VK_NULL_HANDLE;
-    createBuffer(
-        size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        staging,
-        staging_mem);
-    if (!staging || !staging_mem) {
-        if (error) *error = "failed to create staging buffer";
+    std::string create_error;
+    if (!tryCreateBuffer(
+            size,
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            staging,
+            staging_mem,
+            &create_error)) {
+        if (error) *error = "failed to create staging buffer: " + create_error;
         return false;
     }
 
@@ -702,14 +833,14 @@ static bool uploadDeviceLocalParcelBuffer(
     std::memcpy(mapped, src, static_cast<size_t>(size));
     vkUnmapMemory(g_Device, staging_mem);
 
-    createBuffer(
-        size,
-        usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        out.buffer,
-        out.memory);
-    if (!out.buffer || !out.memory) {
-        if (error) *error = "failed to create device-local parcel buffer";
+    if (!tryCreateBuffer(
+            size,
+            usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            out.buffer,
+            out.memory,
+            &create_error)) {
+        if (error) *error = "failed to create device-local parcel buffer: " + create_error;
         vkDestroyBuffer(g_Device, staging, g_Allocator);
         vkFreeMemory(g_Device, staging_mem, g_Allocator);
         return false;
@@ -728,12 +859,19 @@ static bool uploadDeviceLocalParcelBuffer(
 }
 
 void clearParcelGpuBuffers() {
-    destroyParcelGpuBuffers(g_ParcelGpuBuffers);
+    retireParcelGpuBuffers(std::move(g_ParcelGpuBuffers));
+    g_ParcelGpuBuffers = ParcelGpuBuffers{};
     g_ParcelGpuOverlayHasVisibleColors = false;
     g_ParcelGpuOutlineHasVisibleColors = false;
-    drainRetiredParcelGpuPayloads(true);
     g_ParcelGpuPipeline.descriptor_dirty = true;
+    if (!g_ParcelGpuPipeline.descriptor_dirty_by_frame.empty()) {
+        std::fill(
+            g_ParcelGpuPipeline.descriptor_dirty_by_frame.begin(),
+            g_ParcelGpuPipeline.descriptor_dirty_by_frame.end(),
+            true);
+    }
     clearParcelGpuDrawState();
+    drainRetiredParcelGpuPayloads(false);
     publishParcelGpuStatusSnapshot();
 }
 
@@ -879,10 +1017,81 @@ ParcelGpuResidencyStatus getParcelGpuResidencyStatus() {
     return g_ParcelGpuStatusSnapshot;
 }
 
+GpuProfilerLiveSnapshot getGpuProfilerLiveSnapshot() {
+    GpuProfilerLiveSnapshot out;
+
+    if (g_PhysicalDevice != VK_NULL_HANDLE) {
+        VkPhysicalDeviceProperties props{};
+        vkGetPhysicalDeviceProperties(g_PhysicalDevice, &props);
+        out.physical_device_name = props.deviceName;
+
+        VkPhysicalDeviceMemoryProperties mem{};
+        vkGetPhysicalDeviceMemoryProperties(g_PhysicalDevice, &mem);
+        out.heaps.reserve(mem.memoryHeapCount);
+        for (uint32_t heap_idx = 0; heap_idx < mem.memoryHeapCount; ++heap_idx) {
+            GpuProfilerHeapSnapshot heap;
+            heap.index = heap_idx;
+            heap.size_bytes = mem.memoryHeaps[heap_idx].size;
+            heap.device_local = (mem.memoryHeaps[heap_idx].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+            for (uint32_t type_idx = 0; type_idx < mem.memoryTypeCount; ++type_idx) {
+                if (mem.memoryTypes[type_idx].heapIndex != heap_idx) continue;
+                heap.memory_type_count++;
+                if (mem.memoryTypes[type_idx].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) heap.host_visible_type_count++;
+                if (mem.memoryTypes[type_idx].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) heap.host_coherent_type_count++;
+            }
+            out.heaps.push_back(heap);
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(g_ParcelGpuStatusMutex);
+        out.parcel_gpu_resident = g_ParcelGpuStatusSnapshot.resident;
+        out.parcel_gpu_draw_active = g_ParcelGpuStatusSnapshot.draw_active;
+        out.parcel_device_local_bytes = g_ParcelGpuStatusSnapshot.device_local_bytes;
+        out.parcel_host_visible_bytes = g_ParcelGpuStatusSnapshot.host_visible_bytes;
+        out.retired_parcel_device_local_bytes = g_ParcelGpuStatusSnapshot.retired_device_local_bytes;
+        out.retired_parcel_host_visible_bytes = g_ParcelGpuStatusSnapshot.retired_host_visible_bytes;
+    }
+    out.tile_cache_entries = g_TileCache.size();
+    out.retired_texture_count = g_RetiredTextures.size();
+    {
+        std::lock_guard<std::mutex> lk(g_GpuProfilerAlertMutex);
+        out.oom_active = g_GpuProfilerAlertState.oom_active;
+        out.oom_generation = g_GpuProfilerAlertState.oom_generation;
+        out.last_error = g_GpuProfilerAlertState.last_error;
+    }
+    {
+        std::lock_guard<std::mutex> lk(g_GpuProfilerEventMutex);
+        const auto now = std::chrono::steady_clock::now();
+        out.recent_events.reserve(g_GpuProfilerEvents.size());
+        for (auto it = g_GpuProfilerEvents.rbegin(); it != g_GpuProfilerEvents.rend(); ++it) {
+            const double age_s = std::chrono::duration<double>(now - it->at).count();
+            char buf[384];
+            std::snprintf(buf, sizeof(buf), "%.1fs ago: %s", age_s, it->label.c_str());
+            out.recent_events.push_back(buf);
+        }
+    }
+    return out;
+}
+
+bool consumeGpuProfilerTabSelectionRequest() {
+    std::lock_guard<std::mutex> lk(g_GpuProfilerAlertMutex);
+    const bool requested = g_GpuProfilerAlertState.tab_selection_requested;
+    g_GpuProfilerAlertState.tab_selection_requested = false;
+    return requested;
+}
+
+void clearGpuProfilerAlertState() {
+    std::lock_guard<std::mutex> lk(g_GpuProfilerAlertMutex);
+    clearGpuProfilerAlertStateLocked();
+}
+
 static void adoptParcelGpuUploadPayload(ParcelGpuUploadPayload&& payload) {
     retireParcelGpuBuffers(std::move(g_ParcelGpuBuffers));
     g_ParcelGpuBuffers = ParcelGpuBuffers{};
     g_ParcelGpuBuffers = std::move(payload.buffers);
+    clearGpuProfilerAlertState();
+    recordGpuProfilerEvent("parcel GPU upload adopted");
     g_ParcelGpuPipeline.descriptor_dirty = true;
     publishParcelGpuStatusSnapshot();
 }

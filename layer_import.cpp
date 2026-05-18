@@ -242,6 +242,17 @@ std::vector<uint8_t> extractZipEntry(const std::vector<uint8_t>& zip, const ZipE
     return out;
 }
 
+std::unordered_map<std::string, std::vector<uint8_t>> extractZipEntriesByName(const fs::path& zip_path) {
+    const auto zip = readFileBytes(zip_path);
+    const auto entries = readZipDirectory(zip);
+    std::unordered_map<std::string, std::vector<uint8_t>> out;
+    out.reserve(entries.size());
+    for (const auto& e : entries) {
+        out.emplace(e.name, extractZipEntry(zip, e));
+    }
+    return out;
+}
+
 std::unordered_map<std::string, std::vector<uint8_t>> extractShapefileMembers(const fs::path& zip_path, const std::string& shapefile) {
     const std::string stem = lower(fs::path(shapefile).stem().string());
     const auto zip = readFileBytes(zip_path);
@@ -256,6 +267,259 @@ std::unordered_map<std::string, std::vector<uint8_t>> extractShapefileMembers(co
     if (!out.count(".shp")) throw std::runtime_error("zip missing " + stem + ".shp");
     if (!out.count(".dbf")) throw std::runtime_error("zip missing " + stem + ".dbf");
     return out;
+}
+
+std::string xmlUnescape(std::string s) {
+    auto replace_all = [&](const std::string& needle, const std::string& repl) {
+        size_t pos = 0;
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            s.replace(pos, needle.size(), repl);
+            pos += repl.size();
+        }
+    };
+    replace_all("&amp;", "&");
+    replace_all("&lt;", "<");
+    replace_all("&gt;", ">");
+    replace_all("&quot;", "\"");
+    replace_all("&apos;", "'");
+    return s;
+}
+
+std::string xmlAttribute(const std::string& tag, const std::string& key) {
+    const std::string needle = key + "=\"";
+    const size_t pos = tag.find(needle);
+    if (pos == std::string::npos) return {};
+    const size_t start = pos + needle.size();
+    const size_t end = tag.find('"', start);
+    if (end == std::string::npos) return {};
+    return xmlUnescape(tag.substr(start, end - start));
+}
+
+std::string xmlFirstText(const std::string& xml, const std::string& tag_name) {
+    size_t pos = 0;
+    std::string out;
+    while (true) {
+        const size_t open = xml.find("<" + tag_name, pos);
+        if (open == std::string::npos) break;
+        const size_t open_end = xml.find('>', open);
+        if (open_end == std::string::npos) break;
+        const size_t close = xml.find("</" + tag_name + ">", open_end + 1);
+        if (close == std::string::npos) break;
+        out += xml.substr(open_end + 1, close - open_end - 1);
+        pos = close + tag_name.size() + 3;
+    }
+    return xmlUnescape(out);
+}
+
+std::vector<std::string> parseXlsxSharedStrings(const std::unordered_map<std::string, std::vector<uint8_t>>& members) {
+    auto it = members.find("xl/sharedStrings.xml");
+    if (it == members.end()) return {};
+    const std::string xml(it->second.begin(), it->second.end());
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while (true) {
+        const size_t open = xml.find("<si", pos);
+        if (open == std::string::npos) break;
+        const size_t open_end = xml.find('>', open);
+        const size_t close = xml.find("</si>", open_end + 1);
+        if (open_end == std::string::npos || close == std::string::npos) break;
+        out.push_back(xmlFirstText(xml.substr(open_end + 1, close - open_end - 1), "t"));
+        pos = close + 5;
+    }
+    return out;
+}
+
+std::string parseFirstWorkbookSheetTarget(const std::unordered_map<std::string, std::vector<uint8_t>>& members, const std::string& preferred_sheet_name) {
+    auto workbook_it = members.find("xl/workbook.xml");
+    auto rels_it = members.find("xl/_rels/workbook.xml.rels");
+    if (workbook_it == members.end() || rels_it == members.end()) return "xl/worksheets/sheet1.xml";
+    const std::string workbook_xml(workbook_it->second.begin(), workbook_it->second.end());
+    const std::string rels_xml(rels_it->second.begin(), rels_it->second.end());
+    std::string desired_rid;
+    size_t pos = 0;
+    while (true) {
+        const size_t open = workbook_xml.find("<sheet", pos);
+        if (open == std::string::npos) break;
+        const size_t end = workbook_xml.find('>', open);
+        if (end == std::string::npos) break;
+        const std::string tag = workbook_xml.substr(open, end - open + 1);
+        const std::string rid = xmlAttribute(tag, "r:id");
+        const std::string name = xmlAttribute(tag, "name");
+        if (desired_rid.empty() || (!preferred_sheet_name.empty() && name == preferred_sheet_name)) {
+            desired_rid = rid;
+            if (!preferred_sheet_name.empty() && name == preferred_sheet_name) break;
+        }
+        pos = end + 1;
+    }
+    if (desired_rid.empty()) return "xl/worksheets/sheet1.xml";
+    pos = 0;
+    while (true) {
+        const size_t open = rels_xml.find("<Relationship", pos);
+        if (open == std::string::npos) break;
+        const size_t end = rels_xml.find("/>", open);
+        if (end == std::string::npos) break;
+        const std::string tag = rels_xml.substr(open, end - open + 2);
+        if (xmlAttribute(tag, "Id") == desired_rid) {
+            std::string target = xmlAttribute(tag, "Target");
+            if (target.rfind("/xl/", 0) == 0) return target.substr(1);
+            if (target.rfind("xl/", 0) == 0) return target;
+            if (target.rfind("worksheets/", 0) == 0) return "xl/" + target;
+            return "xl/" + target;
+        }
+        pos = end + 2;
+    }
+    return "xl/worksheets/sheet1.xml";
+}
+
+int xlsxColumnIndex(const std::string& cell_ref) {
+    int idx = 0;
+    bool saw_alpha = false;
+    for (char ch : cell_ref) {
+        if (std::isalpha((unsigned char)ch)) {
+            saw_alpha = true;
+            idx = idx * 26 + (std::toupper((unsigned char)ch) - 'A' + 1);
+        } else {
+            break;
+        }
+    }
+    return saw_alpha ? (idx - 1) : -1;
+}
+
+bool tryParseDouble(const std::string& text, double& out) {
+    try {
+        size_t used = 0;
+        out = std::stod(trim(text), &used);
+        return used > 0;
+    } catch (...) {
+        return false;
+    }
+}
+
+void writeXlsxPointTableGeoJson(
+    const fs::path& xlsx_path,
+    const fs::path& out_path,
+    const std::string& sheet_name,
+    const std::string& lon_field,
+    const std::string& lat_field) {
+    const auto members = extractZipEntriesByName(xlsx_path);
+    const std::vector<std::string> shared_strings = parseXlsxSharedStrings(members);
+    const std::string sheet_path = parseFirstWorkbookSheetTarget(members, sheet_name);
+    auto sheet_it = members.find(sheet_path);
+    if (sheet_it == members.end()) throw std::runtime_error("xlsx missing worksheet " + sheet_path);
+    const std::string xml(sheet_it->second.begin(), sheet_it->second.end());
+
+    std::vector<std::vector<std::string>> rows;
+    size_t pos = 0;
+    while (true) {
+        const size_t row_open = xml.find("<row", pos);
+        if (row_open == std::string::npos) break;
+        const size_t row_open_end = xml.find('>', row_open);
+        const size_t row_close = xml.find("</row>", row_open_end + 1);
+        if (row_open_end == std::string::npos || row_close == std::string::npos) break;
+        const std::string row_xml = xml.substr(row_open_end + 1, row_close - row_open_end - 1);
+        std::vector<std::string> row;
+        size_t cell_pos = 0;
+        while (true) {
+            const size_t cell_open = row_xml.find("<c", cell_pos);
+            if (cell_open == std::string::npos) break;
+            const size_t cell_open_end = row_xml.find('>', cell_open);
+            if (cell_open_end == std::string::npos) break;
+            const bool self_closing = cell_open_end > cell_open && row_xml[cell_open_end - 1] == '/';
+            const std::string cell_tag = row_xml.substr(cell_open, cell_open_end - cell_open + 1);
+            const int col_idx = xlsxColumnIndex(xmlAttribute(cell_tag, "r"));
+            if (col_idx >= 0 && (size_t)(col_idx + 1) > row.size()) row.resize((size_t)col_idx + 1);
+            std::string value;
+            size_t next_pos = cell_open_end + 1;
+            if (!self_closing) {
+                const size_t cell_close = row_xml.find("</c>", cell_open_end + 1);
+                if (cell_close == std::string::npos) break;
+                const std::string cell_inner = row_xml.substr(cell_open_end + 1, cell_close - cell_open_end - 1);
+                const std::string type = xmlAttribute(cell_tag, "t");
+                if (type == "s") {
+                    const std::string raw = xmlFirstText(cell_inner, "v");
+                    double idx_num = 0.0;
+                    if (tryParseDouble(raw, idx_num)) {
+                        const size_t idx = (size_t)idx_num;
+                        if (idx < shared_strings.size()) value = shared_strings[idx];
+                    }
+                } else if (type == "inlineStr") {
+                    value = xmlFirstText(cell_inner, "t");
+                } else {
+                    value = xmlFirstText(cell_inner, "v");
+                }
+                next_pos = cell_close + 4;
+            }
+            if (col_idx >= 0) row[(size_t)col_idx] = trim(value);
+            cell_pos = next_pos;
+        }
+        bool non_empty = false;
+        for (const auto& field : row) {
+            if (!field.empty()) {
+                non_empty = true;
+                break;
+            }
+        }
+        if (non_empty) rows.push_back(std::move(row));
+        pos = row_close + 6;
+    }
+
+    if (rows.empty()) throw std::runtime_error("xlsx worksheet has no rows");
+    const std::vector<std::string>& headers = rows.front();
+    if (headers.empty()) throw std::runtime_error("xlsx worksheet header row is empty");
+
+    auto find_header_index = [&](const std::string& configured_name, std::initializer_list<const char*> fallbacks) -> int {
+        if (!configured_name.empty()) {
+            for (size_t i = 0; i < headers.size(); ++i) {
+                if (trim(headers[i]) == configured_name) return (int)i;
+            }
+        }
+        for (const char* candidate : fallbacks) {
+            for (size_t i = 0; i < headers.size(); ++i) {
+                if (lower(trim(headers[i])) == lower(candidate)) return (int)i;
+            }
+        }
+        return -1;
+    };
+
+    const int lon_idx = find_header_index(lon_field, {"longitude", "lon", "x"});
+    const int lat_idx = find_header_index(lat_field, {"latitude", "lat", "y"});
+    if (lon_idx < 0 || lat_idx < 0) throw std::runtime_error("xlsx worksheet is missing configured lon/lat columns");
+
+    json collection;
+    collection["type"] = "FeatureCollection";
+    collection["name"] = out_path.stem().string();
+    collection["features"] = json::array();
+
+    for (size_t row_idx = 1; row_idx < rows.size(); ++row_idx) {
+        const auto& row = rows[row_idx];
+        const auto field_at = [&](int idx) -> std::string {
+            return (idx >= 0 && (size_t)idx < row.size()) ? trim(row[(size_t)idx]) : std::string();
+        };
+        double lon = 0.0;
+        double lat = 0.0;
+        if (!tryParseDouble(field_at(lon_idx), lon) || !tryParseDouble(field_at(lat_idx), lat)) continue;
+        json feature;
+        feature["type"] = "Feature";
+        feature["geometry"] = {
+            {"type", "Point"},
+            {"coordinates", {lon, lat}}
+        };
+        json props = json::object();
+        for (size_t i = 0; i < headers.size(); ++i) {
+            const std::string key = trim(headers[i]);
+            if (key.empty()) continue;
+            props[key] = i < row.size() ? trim(row[i]) : "";
+        }
+        feature["properties"] = std::move(props);
+        collection["features"].push_back(std::move(feature));
+    }
+
+    if (collection["features"].empty()) throw std::runtime_error("xlsx worksheet produced no point features");
+    fs::create_directories(out_path.parent_path());
+    std::ofstream out(out_path);
+    if (!out) throw std::runtime_error("failed to open output " + out_path.string());
+    out << collection.dump();
+    out << "\n";
 }
 
 std::vector<std::map<std::string, std::string>> parseDbf(const std::vector<uint8_t>& dbf) {
@@ -842,7 +1106,8 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
 bool layerHasImportSource(const LayerDef& layer) {
     if (layer.import_type == "regional_parcel_builder") return true;
     if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
-    return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties") &&
+    return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties" ||
+            layer.import_type == "xlsx_point_table") &&
         !layer.import_url.empty();
 }
 
@@ -881,6 +1146,31 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
             res.changed = true;
             res.not_modified = false;
             res.message = "imported ArcGIS feature layer";
+        } catch (const std::exception& e) {
+            res.ok = false;
+            res.message = std::string("import failed: ") + e.what();
+        }
+        return res;
+    }
+    if (layer.import_type == "xlsx_point_table") {
+        fs::path artifact_name =
+            !layer.import_artifact_file.empty()
+                ? fs::path(layer.import_artifact_file)
+                : fs::path(out_path.stem().string() + ".xlsx");
+        const fs::path xlsx_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, xlsx_path, root / "data" / "versions");
+        if (!dl.ok) return dl;
+        try {
+            writeXlsxPointTableGeoJson(
+                xlsx_path,
+                out_path,
+                layer.import_sheet_name,
+                layer.import_lon_field,
+                layer.import_lat_field);
+            res.ok = true;
+            res.changed = true;
+            res.not_modified = false;
+            res.message = "imported XLSX point table via " + dl.message;
         } catch (const std::exception& e) {
             res.ok = false;
             res.message = std::string("import failed: ") + e.what();

@@ -4,6 +4,7 @@
 #include "cache_io.h"
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,37 @@ struct ParcelGpuResidencyStatus {
     bool draw_active = false;
     bool overlay_active = false;
     bool outline_active = false;
+    uint64_t device_local_bytes = 0;
+    uint64_t host_visible_bytes = 0;
+    uint64_t retired_device_local_bytes = 0;
+    uint64_t retired_host_visible_bytes = 0;
     std::string source_signature;
+};
+
+struct GpuProfilerHeapSnapshot {
+    uint32_t index = 0;
+    uint64_t size_bytes = 0;
+    bool device_local = false;
+    uint32_t memory_type_count = 0;
+    uint32_t host_visible_type_count = 0;
+    uint32_t host_coherent_type_count = 0;
+};
+
+struct GpuProfilerLiveSnapshot {
+    std::string physical_device_name;
+    std::vector<GpuProfilerHeapSnapshot> heaps;
+    uint64_t parcel_device_local_bytes = 0;
+    uint64_t parcel_host_visible_bytes = 0;
+    uint64_t retired_parcel_device_local_bytes = 0;
+    uint64_t retired_parcel_host_visible_bytes = 0;
+    size_t tile_cache_entries = 0;
+    size_t retired_texture_count = 0;
+    bool parcel_gpu_resident = false;
+    bool parcel_gpu_draw_active = false;
+    bool oom_active = false;
+    uint64_t oom_generation = 0;
+    std::string last_error;
+    std::vector<std::string> recent_events;
 };
 
 struct ParcelGpuDrawConfig {
@@ -44,6 +75,10 @@ bool updateParcelGpuOverlayColorBuffer(const std::vector<ImU32>& colors_rgba, st
 bool updateParcelGpuOutlineColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
 void clearParcelGpuBuffers();
 ParcelGpuResidencyStatus getParcelGpuResidencyStatus();
+GpuProfilerLiveSnapshot getGpuProfilerLiveSnapshot();
+void recordGpuProfilerEvent(const std::string& label);
+bool consumeGpuProfilerTabSelectionRequest();
+void clearGpuProfilerAlertState();
 bool configureParcelGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error = nullptr);
 void clearParcelGpuDrawState();
 bool parcelGpuDrawActive();

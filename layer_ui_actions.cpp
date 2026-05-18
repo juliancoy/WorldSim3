@@ -85,6 +85,7 @@ void setCategoryVisible(LayerUiSharedContext& ctx, int parcel_layer_idx, LayerDe
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         LayerDef& layer = (*ctx.layers)[i];
         if (enabled && layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
+        if (ctx.map_filter_state && !layerMatchesSelectedGeography(layer, *ctx.map_filter_state)) continue;
         if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) {
             layer.enabled = enabled;
             if (!enabled && layer.scale == "parcel" && ctx.layer_heatmap_enabled && i < ctx.layer_heatmap_enabled->size()) {

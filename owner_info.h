@@ -13,13 +13,16 @@
 enum class ElementInfoKind {
     None,
     Parcel,
-    Owner
+    Owner,
+    ParcelSource,
+    PropertySource
 };
 
 struct ElementInfoEntry {
     ElementInfoKind kind = ElementInfoKind::None;
     size_t parcel_idx = (size_t)-1;
     std::string owner;
+    std::string source;
 };
 
 struct ElementInfoUiState {
@@ -55,5 +58,8 @@ struct OwnerInfoTabContext {
 
 void openElementParcelPage(ElementInfoUiState& state, size_t parcel_idx);
 void openOwnerInfoPage(ElementInfoUiState& state, const std::string& owner);
+void openParcelSourceInfoPage(ElementInfoUiState& state, const std::string& source);
+void openPropertySourceInfoPage(ElementInfoUiState& state, const std::string& source);
 void drawOwnerInfoLink(ElementInfoUiState& state, const std::string& owner, const char* id);
+void drawSourceInfoLink(ElementInfoUiState& state, const char* label, const std::string& source, bool property_source, const char* id);
 void drawElementInfoTab(const OwnerInfoTabContext& ctx);

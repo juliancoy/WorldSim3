@@ -29,6 +29,7 @@ struct MapFilterState {
     bool enabled = false;
     std::string selected_nation_state = "us";
     std::string selected_state_region = "md";
+    std::string selected_county_city;
     bool use_date = false;
     int year_min = 2000;
     int year_max = 2026;

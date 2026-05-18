@@ -2,9 +2,13 @@
 
 #include "app_utils.h"
 #include "cache_io.h"
+#include "duckdb_analytics.h"
+#include "headless_layer_hydration.h"
 #include "layer_geometry.h"
+#include "layer_state_io.h"
 #include "layer_pipeline_drain.h"
 #include "map_render_projection.h"
+#include "parcel_consolidation.h"
 #include "profiling_layer_snapshot.h"
 #include "render_layer_pass.h"
 #include "render_plan_builder.h"
@@ -14,6 +18,7 @@
 #include "parcel_matched_layers.h"
 #include "vacancy_overlay.h"
 
+#include <duckdb.hpp>
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -21,6 +26,7 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <thread>
 #include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
@@ -372,6 +378,82 @@ int runProjectionColorCacheSelftest() {
         {"style_miss", style_miss},
         {"overwrite_ok", overwrite_ok},
         {"retained_after_zoom", retained_after_zoom}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runPolygonHoleSelftest() {
+    LayerDef::FeatureGeom feature;
+    feature.extent.min_lon = 0.0f;
+    feature.extent.min_lat = 0.0f;
+    feature.extent.max_lon = 10.0f;
+    feature.extent.max_lat = 10.0f;
+    feature.rings.push_back({
+        ImVec2(0.0f, 0.0f),
+        ImVec2(10.0f, 0.0f),
+        ImVec2(10.0f, 10.0f),
+        ImVec2(0.0f, 10.0f)
+    });
+    feature.rings.push_back({
+        ImVec2(3.0f, 3.0f),
+        ImVec2(3.0f, 7.0f),
+        ImVec2(7.0f, 7.0f),
+        ImVec2(7.0f, 3.0f)
+    });
+    feature.triangles = triangulateRings(feature.rings);
+
+    const bool shell_point_inside = pointInFeature(feature, 1.0f, 1.0f);
+    const bool hole_point_rejected = !pointInFeature(feature, 5.0f, 5.0f);
+    const bool outside_point_rejected = !pointInFeature(feature, 12.0f, 5.0f);
+
+    std::vector<ImVec2> flattened;
+    for (const auto& ring : feature.rings) {
+        flattened.insert(flattened.end(), ring.begin(), ring.end());
+    }
+
+    bool centroids_valid = !feature.triangles.empty();
+    size_t centroid_count = 0;
+    for (size_t ti = 0; ti + 2 < feature.triangles.size(); ti += 3) {
+        const uint32_t ia = feature.triangles[ti + 0];
+        const uint32_t ib = feature.triangles[ti + 1];
+        const uint32_t ic = feature.triangles[ti + 2];
+        if (ia >= flattened.size() || ib >= flattened.size() || ic >= flattened.size()) {
+            centroids_valid = false;
+            break;
+        }
+        const ImVec2& a = flattened[ia];
+        const ImVec2& b = flattened[ib];
+        const ImVec2& c = flattened[ic];
+        const float cx = (a.x + b.x + c.x) / 3.0f;
+        const float cy = (a.y + b.y + c.y) / 3.0f;
+        if (pointInRing(feature.rings[1], cx, cy) || !pointInFeature(feature, cx, cy)) {
+            centroids_valid = false;
+            break;
+        }
+        ++centroid_count;
+    }
+
+    ParcelRenderCacheBlob blob;
+    const bool render_blob_ok = buildParcelRenderCacheBlob({feature}, "polygon_hole_selftest_sig", blob, 64);
+    const bool render_blob_shape_ok =
+        render_blob_ok &&
+        blob.vertices.size() == flattened.size() &&
+        blob.indices.size() == feature.triangles.size() &&
+        blob.line_indices.size() == 16 &&
+        blob.features.size() == 1 &&
+        blob.chunks.size() == 1;
+
+    json out = {
+        {"mode", "polygon-hole-selftest"},
+        {"ok", shell_point_inside && hole_point_rejected && outside_point_rejected && centroids_valid && render_blob_shape_ok},
+        {"shell_point_inside", shell_point_inside},
+        {"hole_point_rejected", hole_point_rejected},
+        {"outside_point_rejected", outside_point_rejected},
+        {"triangle_index_count", feature.triangles.size()},
+        {"triangle_count", centroid_count},
+        {"centroids_valid", centroids_valid},
+        {"render_blob_ok", render_blob_shape_ok}
     };
     std::cout << out.dump(2) << '\n';
     return out["ok"].get<bool>() ? 0 : 1;
@@ -1466,6 +1548,198 @@ int warmHydrationCacheAll(const fs::path& root) {
     return failed_count == 0 ? 0 : 1;
 }
 
+int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
+    std::vector<LayerDef> layers = loadManifest(root);
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+
+    HeadlessLayerHydrationSummary hydration_summary;
+    const bool hydration_ok = hydrateLocalLayersHeadless(
+        root,
+        layers,
+        HeadlessLayerHydrationOptions{worker_count, true},
+        hydration_summary);
+
+    WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
+    ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
+
+    DuckDbAnalytics analytics(root);
+    const bool rebuild_ok = hydration_ok && analytics.rebuild(layers, artifacts.unified_parcels);
+
+    json out = {
+        {"mode", "rebuild-duckdb-analytics"},
+        {"ok", rebuild_ok},
+        {"worker_count", worker_count},
+        {"hydration", {
+            {"ok", hydration_ok},
+            {"local_layer_count", hydration_summary.local_layer_count},
+            {"requested_layer_count", hydration_summary.requested_layer_count},
+            {"hydrated_layer_count", hydration_summary.hydrated_layer_count},
+            {"failed_layer_count", hydration_summary.failed_layer_count},
+            {"skipped_missing_layer_count", hydration_summary.skipped_missing_layer_count},
+            {"total_feature_count", hydration_summary.total_feature_count},
+            {"elapsed_ms", hydration_summary.elapsed_ms}
+        }},
+        {"unified_parcels", artifacts.unified_parcels.size()},
+        {"duckdb", {
+            {"available", analytics.status().available},
+            {"last_rebuild_ok", analytics.status().last_rebuild_ok},
+            {"layer_count", analytics.status().layer_count},
+            {"feature_count", analytics.status().feature_count},
+            {"db_path", analytics.status().db_path},
+            {"message", analytics.status().message}
+        }}
+    };
+    if (!hydration_summary.failures.empty()) {
+        json failures = json::array();
+        for (const auto& failure : hydration_summary.failures) {
+            failures.push_back({
+                {"layer_index", failure.layer_index},
+                {"layer_file", failure.layer_file},
+                {"error", failure.error}
+            });
+        }
+        out["hydration"]["failures"] = std::move(failures);
+    }
+
+    std::cout << out.dump(2) << '\n';
+    return rebuild_ok ? 0 : 1;
+}
+
+int inspectDuckDbGeographyTablesCli(const fs::path& root) {
+    json out = {
+        {"mode", "inspect-duckdb-geography-tables"},
+        {"db_path", (root / "data" / "worldsim.duckdb").string()}
+    };
+    try {
+        duckdb::DuckDB db(root / "data" / "worldsim.duckdb");
+        duckdb::Connection con(db);
+
+        auto table_rows = con.Query(R"SQL(
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+            ORDER BY table_name
+        )SQL");
+        if (!table_rows || table_rows->HasError()) {
+            out["ok"] = false;
+            out["error"] = table_rows ? table_rows->GetError() : "failed to query information_schema.tables";
+            std::cout << out.dump(2) << '\n';
+            return 1;
+        }
+
+        json tables = json::array();
+        std::unordered_set<std::string> table_names;
+        for (size_t i = 0; i < (size_t)table_rows->RowCount(); ++i) {
+            const std::string name = table_rows->GetValue(0, i).ToString();
+            tables.push_back(name);
+            table_names.insert(name);
+        }
+        out["tables"] = std::move(tables);
+
+        auto count_one = [&](const std::string& sql) -> json {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                json j = json::object();
+                j["ok"] = false;
+                j["error"] = res ? res->GetError() : "query failed";
+                return j;
+            }
+            json j = json::object();
+            j["ok"] = true;
+            j["count"] = res->GetValue<int64_t>(0, 0);
+            return j;
+        };
+
+        out["table_presence"] = {
+            {"geography_feature_collections", table_names.contains("geography_feature_collections")},
+            {"anambra_runtime_features", table_names.contains("anambra_runtime_features")},
+            {"anambra_runtime_lga_summary", table_names.contains("anambra_runtime_lga_summary")},
+            {"import_audit", table_names.contains("import_audit")},
+            {"layer_features", table_names.contains("layer_features")}
+        };
+
+        out["base_counts"] = {
+            {"layer_features_anambra", count_one(
+                "SELECT count(*)::BIGINT FROM layer_features "
+                "WHERE provenance_nation_state = 'ng' AND provenance_state_region = 'anambra'")},
+            {"import_audit_anambra", count_one(
+                "SELECT count(*)::BIGINT FROM import_audit "
+                "WHERE provenance_nation_state = 'ng' AND provenance_state_region = 'anambra'")}
+        };
+
+        const char* runtime_features_sql = R"SQL(
+            SELECT count(*)::BIGINT
+            FROM (
+                SELECT
+                    layer_file,
+                    layer_name,
+                    duckdb_role,
+                    category,
+                    feature_idx,
+                    min_lon,
+                    min_lat,
+                    max_lon,
+                    max_lat,
+                    coalesce(
+                        json_extract_string(properties_json, '$.name'),
+                        json_extract_string(properties_json, '$.poi_name'),
+                        json_extract_string(properties_json, '$.prmry_name'),
+                        json_extract_string(properties_json, '$.set_name'),
+                        json_extract_string(properties_json, '$.market_nam'),
+                        json_extract_string(properties_json, '$.plc_st_nam'),
+                        json_extract_string(properties_json, '$.fctry_st_n')
+                    ) AS feature_name,
+                    json_extract_string(properties_json, '$.lganame') AS lga_name,
+                    json_extract_string(properties_json, '$.wardname') AS ward_name,
+                    json_extract_string(properties_json, '$.source') AS source_name,
+                    properties_json
+                FROM layer_features
+                WHERE provenance_nation_state = 'ng'
+                  AND provenance_state_region = 'anambra'
+            ) t
+        )SQL";
+        const char* lga_summary_sql = R"SQL(
+            SELECT count(*)::BIGINT
+            FROM (
+                SELECT
+                    layer_file,
+                    layer_name,
+                    coalesce(json_extract_string(properties_json, '$.lganame'), '') AS lga_name,
+                    count(*) AS feature_count
+                FROM layer_features
+                WHERE provenance_nation_state = 'ng'
+                  AND provenance_state_region = 'anambra'
+                GROUP BY layer_file, layer_name, coalesce(json_extract_string(properties_json, '$.lganame'), '')
+            ) t
+        )SQL";
+
+        out["derivation_diagnostics"] = {
+            {"anambra_runtime_features_query", count_one(runtime_features_sql)},
+            {"anambra_runtime_lga_summary_query", count_one(lga_summary_sql)}
+        };
+
+        if (table_names.contains("anambra_runtime_features")) {
+            out["materialized_counts"] = {
+                {"anambra_runtime_features", count_one("SELECT count(*)::BIGINT FROM anambra_runtime_features")}
+            };
+        }
+        if (table_names.contains("anambra_runtime_lga_summary")) {
+            out["materialized_counts"]["anambra_runtime_lga_summary"] =
+                count_one("SELECT count(*)::BIGINT FROM anambra_runtime_lga_summary");
+        }
+
+        out["ok"] = true;
+        std::cout << out.dump(2) << '\n';
+        return 0;
+    } catch (const std::exception& e) {
+        out["ok"] = false;
+        out["error"] = e.what();
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+}
+
 json warmTriangulationCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
     exit_code = 0;
     if (!isBareLayerFilename(file)) {
@@ -1844,6 +2118,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_projection_color_cache_selftest = true;
             continue;
         }
+        if (arg == "--polygon-hole-selftest") {
+            options.run_polygon_hole_selftest = true;
+            continue;
+        }
         if (arg == "--parcel-render-cache-selftest") {
             options.run_parcel_render_cache_selftest = true;
             continue;
@@ -1977,6 +2255,14 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             }
             continue;
         }
+        if (arg == "--rebuild-duckdb-analytics") {
+            options.run_rebuild_duckdb_analytics = true;
+            continue;
+        }
+        if (arg == "--inspect-duckdb-geography-tables") {
+            options.run_inspect_duckdb_geography_tables = true;
+            continue;
+        }
         if (arg == "--build-parcel-matched-layers") {
             options.run_build_parcel_matched_layers = true;
             continue;
@@ -2023,7 +2309,9 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
-        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 --rebuild-duckdb-analytics [--reserve-cores N]\n"
+        << "       worldsim3 --inspect-duckdb-geography-tables\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
         << "       worldsim3 --warm-hydration-cache LAYER_FILE\n"
         << "       worldsim3 --warm-hydration-cache-all\n"
@@ -2041,6 +2329,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
+        << "       worldsim3 --polygon-hole-selftest\n"
         << "       worldsim3 --parcel-render-cache-selftest\n"
         << "       worldsim3 --triangulation-apply-selftest\n"
         << "       worldsim3 --spatial-index-selftest\n"
@@ -2074,6 +2363,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_projection_color_cache_selftest) {
         return runProjectionColorCacheSelftest();
+    }
+    if (options.run_polygon_hole_selftest) {
+        return runPolygonHoleSelftest();
     }
     if (options.run_parcel_render_cache_selftest) {
         return runParcelRenderCacheSelftest(root);
@@ -2137,6 +2429,12 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
             root,
             options.download_phase.empty() ? "all" : options.download_phase,
             options.include_large_downloads);
+    }
+    if (options.run_rebuild_duckdb_analytics) {
+        return rebuildDuckDbAnalyticsCli(root, options.reserve_cores_set ? options.reserve_cores : 0);
+    }
+    if (options.run_inspect_duckdb_geography_tables) {
+        return inspectDuckDbGeographyTablesCli(root);
     }
     if (options.run_build_parcel_matched_layers) {
         ensureParcelMatchedEventLayers(root, options.force_build_parcel_matched_layers, &std::cout);

@@ -50,6 +50,7 @@ struct LayerUiStateSyncContext {
     bool filter_enabled = false;
     const std::string* selected_nation_state = nullptr;
     const std::string* selected_state_region = nullptr;
+    const std::string* selected_county_city = nullptr;
     const char* filter_owner = nullptr;
     const char* filter_address = nullptr;
     const char* filter_zip = nullptr;

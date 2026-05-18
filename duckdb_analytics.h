@@ -63,6 +63,9 @@ public:
     DuckDbQueryResult queryUnifiedParcelDetail(
         size_t parcel_layer_idx,
         size_t parcel_feature_idx) const;
+    DuckDbQueryResult queryParcelEvents(
+        const std::string& blocklot,
+        size_t max_rows = 200) const;
     std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
 
 private:

@@ -103,7 +103,7 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     }
     if (ImGui::Combo("Aggregate method", &layer_algo_ui, layer_algo_items, IM_ARRAYSIZE(layer_algo_items)) && ctx.idx < shared.layer_heatmap_algo->size()) {
         if (ctx.idx < shared.layer_heatmap_enabled->size()) (*shared.layer_heatmap_enabled)[ctx.idx] = layer_algo_ui != 0;
-        if (layer_algo_ui != 0) (*shared.layer_heatmap_algo)[ctx.idx] = aggregateAlgoFromLayerUiIndex(layer_algo_ui);
+        (*shared.layer_heatmap_algo)[ctx.idx] = layer_algo_ui == 0 ? kAggregateNone : aggregateAlgoFromLayerUiIndex(layer_algo_ui);
         *shared.layer_heatmap_state_changed = true;
     }
     const bool aggregate_none = layer_algo_ui == 0;

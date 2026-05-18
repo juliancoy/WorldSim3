@@ -53,6 +53,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
 
     const bool hover_parcels_enabled = (ctx.hover_inspector_mode == 1 || ctx.hover_inspector_mode == 3);
     const bool hover_zoning_enabled = (ctx.hover_inspector_mode == 2 || ctx.hover_inspector_mode == 3);
+    const bool hover_points_enabled = (ctx.hover_inspector_mode != 0);
     *ctx.hover_inspector_enabled = (ctx.hover_inspector_mode != 0);
     session.parcel_hover_active = hover_parcels_enabled && layerToggleEnabled(ctx.layer_hover_enabled, ctx.parcel_layer_idx);
     session.parcel_inspect_active = layerToggleEnabled(ctx.layer_inspect_enabled, ctx.parcel_layer_idx);
@@ -67,15 +68,21 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     hover_query.parcel_inspect_active = session.parcel_inspect_active;
     hover_query.zoning_hover_active = session.zoning_hover_active;
     hover_query.zoning_inspect_active = session.zoning_inspect_active;
+    hover_query.point_hover_active = hover_points_enabled;
     hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
     hover_query.zoning_layer_idx = ctx.zoning_layer_idx;
     hover_query.layers = ctx.layers;
     hover_query.layer_spatial = ctx.layer_spatial;
+    hover_query.layer_hover_enabled = ctx.layer_hover_enabled;
     hover_query.mouse_ll = map_viewport.mouse_ll;
+    hover_query.mouse_screen = ImGui::GetIO().MousePos;
+    hover_query.viewport_size = session.size;
     hover_query.view_min_lon = session.view_min_lon;
     hover_query.view_max_lon = session.view_max_lon;
     hover_query.view_min_lat = session.view_min_lat;
     hover_query.view_max_lat = session.view_max_lat;
+    hover_query.math_zoom = session.math_zoom;
+    hover_query.project_world = session.project_world;
     session.hover_state = findMapHoverTargets(hover_query);
 
     const auto tile_prof_begin = std::chrono::steady_clock::now();

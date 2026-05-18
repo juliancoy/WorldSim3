@@ -93,7 +93,15 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
         return;
     }
 
-    const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows", "anambra-repository"};
+    const char* download_phases[] = {
+        "must-have",
+        "nice-to-have",
+        "heavy-data",
+        "all",
+        "capital-flows",
+        "anambra-runtime",
+        "anambra-repository"
+    };
     finalizeDataLibraryBulkDownloadIfReady(*ctx.coordinator);
     ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
     ImGui::SameLine();

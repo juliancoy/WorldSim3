@@ -118,6 +118,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         *ctx.root,
         ctx.selected_nation_state,
         ctx.selected_state_region,
+        ctx.selected_county_city,
         ctx.filter_enabled,
         ctx.filter_use_date,
         ctx.filter_year_min,

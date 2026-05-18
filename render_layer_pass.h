@@ -19,6 +19,10 @@ struct RenderLayerPassContext {
     ImDrawList* draw = nullptr;
     ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size = ImVec2(0.0f, 0.0f);
+    double* center_lon = nullptr;
+    double* center_lat = nullptr;
+    int* zoom = nullptr;
+    int max_zoom = 0;
     int math_zoom = 0;
     float zoom_scale = 1.0f;
     int lod_ring_step = 1;

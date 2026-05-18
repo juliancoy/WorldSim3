@@ -1,5 +1,6 @@
 #pragma once
 
+inline constexpr int kAggregateNone = -1;
 inline constexpr int kAggregateGridBinning = 0;
 inline constexpr int kAggregateKdeGaussian = 1;
 inline constexpr int kAggregateGpuSplatBlur = 2;

@@ -58,6 +58,7 @@ struct LayerUiSharedContext {
     bool* heatmap_controls_active = nullptr;
 
     int* parcel_parameter_mode = nullptr;
+    const MapFilterState* map_filter_state = nullptr;
 };
 
 struct LayersPanelUiContext {
@@ -81,4 +82,5 @@ struct LayersPanelUiContext {
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
 
     ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
+    const MapFilterState* map_filter_state = nullptr;
 };

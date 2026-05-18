@@ -41,6 +41,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.layer_heatmap_state_changed = input.layer_heatmap_state_changed;
     ctx.heatmap_controls_active = input.heatmap_controls_active;
     ctx.parcel_parameter_mode = input.parcel_parameter_mode;
+    ctx.map_filter_state = input.map_filter_state;
     return ctx;
 }
 
@@ -64,5 +65,6 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     ctx.crime_nibrs_layer_idx = input.crime_nibrs_layer_idx;
     ctx.crime_breakdown = input.crime_breakdown;
     ctx.parcel_jurisdiction_filter_state = input.parcel_jurisdiction_filter_state;
+    ctx.map_filter_state = input.map_filter_state;
     return ctx;
 }

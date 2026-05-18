@@ -63,7 +63,8 @@ void drawMapCameraIcon(ImDrawList* draw, const ImVec2& min, bool hovered) {
 }
 
 void drawMapFpsOverlay(const MapCanvasSession& session) {
-    if (!session.draw) return;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    if (!draw) return;
     const float fps = ImGui::GetIO().Framerate;
     char label[32];
     std::snprintf(label, sizeof(label), "FPS %.1f", fps);
@@ -72,9 +73,11 @@ void drawMapFpsOverlay(const MapCanvasSession& session) {
     const ImVec2 pad(10.0f, 6.0f);
     const ImVec2 min(session.origin.x + 12.0f, session.origin.y + 12.0f);
     const ImVec2 max(min.x + text_size.x + pad.x * 2.0f, min.y + text_size.y + pad.y * 2.0f);
-    session.draw->AddRectFilled(min, max, IM_COL32(17, 24, 32, 215), 8.0f);
-    session.draw->AddRect(min, max, IM_COL32(255, 255, 255, 80), 8.0f);
-    session.draw->AddText(ImVec2(min.x + pad.x, min.y + pad.y), IM_COL32(245, 248, 250, 240), label);
+    draw->PushClipRect(session.origin, ImVec2(session.origin.x + session.size.x, session.origin.y + session.size.y), true);
+    draw->AddRectFilled(min, max, IM_COL32(17, 24, 32, 215), 8.0f);
+    draw->AddRect(min, max, IM_COL32(255, 255, 255, 80), 8.0f);
+    draw->AddText(ImVec2(min.x + pad.x, min.y + pad.y), IM_COL32(245, 248, 250, 240), label);
+    draw->PopClipRect();
 }
 
 MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const MapCanvasSession& session) {
@@ -219,6 +222,10 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.draw = map_canvas_session.draw;
             map_frame_session_ctx.origin = map_canvas_session.origin;
             map_frame_session_ctx.size = map_canvas_session.size;
+            map_frame_session_ctx.center_lon = ctx.center_lon;
+            map_frame_session_ctx.center_lat = ctx.center_lat;
+            map_frame_session_ctx.zoom_ptr = ctx.zoom;
+            map_frame_session_ctx.max_zoom = ctx.max_zoom;
             map_frame_session_ctx.zoom = *ctx.zoom;
             map_frame_session_ctx.math_zoom = map_canvas_session.math_zoom;
             map_frame_session_ctx.zoom_scale = map_canvas_session.zoom_scale;

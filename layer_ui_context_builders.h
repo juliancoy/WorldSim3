@@ -44,6 +44,7 @@ struct LayerUiContextFactoryInput {
     bool* layer_inspect_state_changed = nullptr;
     bool* layer_heatmap_state_changed = nullptr;
     bool* heatmap_controls_active = nullptr;
+    MapFilterState* map_filter_state = nullptr;
 };
 
 struct LayersPanelContextFactoryInput {
@@ -65,6 +66,7 @@ struct LayersPanelContextFactoryInput {
     int crime_nibrs_layer_idx = -1;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
     ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
+    MapFilterState* map_filter_state = nullptr;
 };
 
 LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& input);

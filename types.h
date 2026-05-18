@@ -26,6 +26,10 @@ struct LayerDef {
     std::string import_shapefile;
     std::string import_service_url;
     std::string import_normalizer;
+    std::string import_sheet_name;
+    std::string import_lon_field;
+    std::string import_lat_field;
+    std::string import_artifact_file;
     std::string duckdb_role;
     std::string provenance_world;
     std::string provenance_nation_state;

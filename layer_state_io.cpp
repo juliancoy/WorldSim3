@@ -16,6 +16,43 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+int manifestPriority(const fs::path& manifest_path) {
+    const std::string name = manifest_path.filename().string();
+    if (name == "layers_manifest.json") return 0;
+    if (name == "layers_manifest.must_have.json") return 1;
+    if (name == "layers_manifest.nice_to_have.json") return 2;
+    if (name == "layers_manifest.heavy_data.json") return 3;
+    if (name == "layers_manifest.extended_events.json") return 4;
+    if (name == "layers_manifest.historical_high_quality.json") return 5;
+    if (name == "layers_manifest.capital_flows.json") return 6;
+    if (name == "layers_manifest.repository.json") return 7;
+    if (name == "layers_manifest.archival_research.json") return 8;
+    return 100;
+}
+
+std::vector<fs::path> discoverManifestPaths(const fs::path& root) {
+    std::vector<fs::path> out;
+    const fs::path sources_root = root / "sources" / "world";
+    std::error_code ec;
+    if (!fs::exists(sources_root, ec) || ec) return out;
+    for (fs::recursive_directory_iterator it(sources_root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file()) continue;
+        const std::string name = it->path().filename().string();
+        if (!name.starts_with("layers_manifest") || !name.ends_with(".json")) continue;
+        out.push_back(it->path());
+    }
+    std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) {
+        const fs::path a_parent = a.parent_path().lexically_normal();
+        const fs::path b_parent = b.parent_path().lexically_normal();
+        if (a_parent != b_parent) return a_parent.string() < b_parent.string();
+        const int a_priority = manifestPriority(a);
+        const int b_priority = manifestPriority(b);
+        if (a_priority != b_priority) return a_priority < b_priority;
+        return a.filename().string() < b.filename().string();
+    });
+    return out;
+}
+
 template <typename T>
 struct LayerSettingDescriptor {
     const char* key;
@@ -159,6 +196,10 @@ static void appendManifestEntries(
             ld.import_shapefile = import.value("shapefile", std::string());
             ld.import_service_url = import.value("service_url", std::string());
             ld.import_normalizer = import.value("normalizer", std::string());
+            ld.import_sheet_name = import.value("sheet_name", std::string());
+            ld.import_lon_field = import.value("lon_field", std::string());
+            ld.import_lat_field = import.value("lat_field", std::string());
+            ld.import_artifact_file = import.value("artifact_file", std::string());
         }
         if (arr[i].contains("provenance") && arr[i]["provenance"].is_object()) {
             const auto& provenance = arr[i]["provenance"];
@@ -187,21 +228,16 @@ static void appendManifestEntries(
 
 std::vector<LayerDef> loadManifest(const fs::path& root) {
     std::vector<LayerDef> layers;
+    const fs::path regional_parcels_path =
+        root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / "regional_parcels.geojson";
+    const fs::path legacy_regional_parcels_path = root / "data" / "layers" / "regional_parcels.geojson";
     const bool regional_parcels_available =
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
+        fs::exists(regional_parcels_path) ||
+        fs::exists(regional_parcels_path.parent_path() / "regional_parcels.geojson.canonical.bin") ||
+        fs::exists(legacy_regional_parcels_path) ||
+        fs::exists(legacy_regional_parcels_path.parent_path() / "regional_parcels.geojson.canonical.bin");
     std::unordered_set<std::string> seen_files;
-    const fs::path us_md_root =
-        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
-
-    const std::vector<fs::path> manifest_paths = {
-        us_md_root / "layers_manifest.json",
-        us_md_root / "layers_manifest.must_have.json",
-        us_md_root / "layers_manifest.nice_to_have.json",
-        us_md_root / "layers_manifest.heavy_data.json",
-        us_md_root / "layers_manifest.extended_events.json",
-        us_md_root / "layers_manifest.historical_high_quality.json"
-    };
+    const std::vector<fs::path> manifest_paths = discoverManifestPaths(root);
     for (const auto& manifest_path : manifest_paths) {
         appendManifestEntries(manifest_path, root, regional_parcels_available, seen_files, layers);
     }
@@ -418,6 +454,7 @@ void loadFilterUiState(
     const fs::path& root,
     std::string* selected_nation_state,
     std::string* selected_state_region,
+    std::string* selected_county_city,
     bool* filter_enabled,
     bool* filter_use_date,
     int* filter_year_min,
@@ -463,6 +500,9 @@ void loadFilterUiState(
     if (selected_state_region && f.contains("selected_state_region") && f["selected_state_region"].is_string()) {
         *selected_state_region = f["selected_state_region"].get<std::string>();
     }
+    if (selected_county_city && f.contains("selected_county_city") && f["selected_county_city"].is_string()) {
+        *selected_county_city = f["selected_county_city"].get<std::string>();
+    }
     if (filter_enabled && f.contains("enabled") && f["enabled"].is_boolean()) *filter_enabled = f["enabled"].get<bool>();
     if (filter_use_date && f.contains("use_date") && f["use_date"].is_boolean()) *filter_use_date = f["use_date"].get<bool>();
     if (filter_year_min && f.contains("year_min") && f["year_min"].is_number_integer()) *filter_year_min = f["year_min"].get<int>();
@@ -499,6 +539,7 @@ void saveFilterUiState(
     const fs::path& root,
     const std::string* selected_nation_state,
     const std::string* selected_state_region,
+    const std::string* selected_county_city,
     bool filter_enabled,
     bool filter_use_date,
     int filter_year_min,
@@ -537,6 +578,7 @@ void saveFilterUiState(
     json f = json::object();
     f["selected_nation_state"] = selected_nation_state ? *selected_nation_state : "us";
     f["selected_state_region"] = selected_state_region ? *selected_state_region : "md";
+    f["selected_county_city"] = selected_county_city ? *selected_county_city : "";
     f["enabled"] = filter_enabled;
     f["use_date"] = filter_use_date;
     f["year_min"] = filter_year_min;
