@@ -82,7 +82,7 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
     if (jurisdiction[0] == '\0') return false;
 
     ImGui::PushID((int)idx);
-    const std::filesystem::path local_layer_path = ctx.shared->root / "data" / "layers" / layer.file;
+    const std::filesystem::path local_layer_path = resolveStoredLayerPath(ctx.shared->root, layer);
     const bool local_layer_exists =
         ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
             ? (*ctx.shared->local_layer_exists_cache)[idx]
@@ -364,7 +364,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
         }
 
         ImGui::PushID((int)idx);
-        const std::filesystem::path local_layer_path = ctx.shared->root / "data" / "layers" / layer.file;
+        const std::filesystem::path local_layer_path = resolveStoredLayerPath(ctx.shared->root, layer);
         const bool local_layer_exists =
             ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
                 ? (*ctx.shared->local_layer_exists_cache)[idx]

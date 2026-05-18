@@ -6,6 +6,7 @@
 #include "zoning.h"
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -19,6 +20,7 @@ struct AddressLocateMatch {
 };
 
 struct FiltersTabContext {
+    const std::filesystem::path* root = nullptr;
     MapFilterState* filters = nullptr;
     const std::vector<LayerDef>* layers = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;

@@ -6,7 +6,7 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-LAYERS = ROOT / "data" / "layers"
+LAYERS = ROOT / "data" / "provenance" / "stored" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "county_city" / "baltimore_city" / "layers"
 PARCEL_PATH = LAYERS / "parcel.geojson"
 REAL_PROPERTY_PATH = LAYERS / "real_property_information.geojson"
 OUT_PATH = LAYERS / "year_built_parcels.geojson"

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "data" / "layers"
+OUT_DIR = ROOT / "data" / "provenance" / "stored" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers"
 PAGE_SIZE = 800
 
 MULTIFAMILY_SERVICE = (

@@ -110,12 +110,30 @@ bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
         (*ctx.layers)[layer_idx].category != LayerDef::Category::Zoning;
 }
 
+bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters) {
+    const std::string selected_nation = toLowerAscii(trimDisplayValue(filters.selected_nation_state));
+    const std::string selected_region = toLowerAscii(trimDisplayValue(filters.selected_state_region));
+    if (!selected_nation.empty()) {
+        const std::string layer_nation = toLowerAscii(trimDisplayValue(layer.provenance_nation_state));
+        if (!layer_nation.empty() && layer_nation != selected_nation) return false;
+    }
+    if (!selected_region.empty()) {
+        const std::string layer_region = toLowerAscii(trimDisplayValue(layer.provenance_state_region));
+        if (!layer_region.empty() && layer_region != selected_region) return false;
+    }
+    return true;
+}
+
 bool featurePassesFilters(
     const FeatureFilterContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef::FeatureGeom& fg) {
     const MapFilterState& filters = mapFilters(ctx);
+    if (ctx.layers && layer_idx < ctx.layers->size() &&
+        !layerMatchesSelectedGeography((*ctx.layers)[layer_idx], filters)) {
+        return false;
+    }
     if (!resultSetAllows(ctx, layer_idx, feature_idx, fg)) return false;
 
     if (isCrimeLayer(ctx, layer_idx)) {

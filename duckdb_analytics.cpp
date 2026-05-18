@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <unordered_map>
 
@@ -49,6 +50,32 @@ double numericProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const 
     return parseNumericField(firstDisplayProperty(fg, keys));
 }
 
+fs::path manifestItemOutputPath(const fs::path& root, const json& item) {
+    if (item.contains("directory") && item["directory"].is_string() &&
+        item.contains("file") && item["file"].is_string()) {
+        fs::path dir(item["directory"].get<std::string>());
+        if (!dir.is_absolute()) dir = root / dir;
+        return dir / item["file"].get<std::string>();
+    }
+    if (item.contains("provenance") && item["provenance"].is_object() &&
+        item.contains("file") && item["file"].is_string()) {
+        LayerDef layer;
+        layer.file = item["file"].get<std::string>();
+        const auto& provenance = item["provenance"];
+        layer.provenance_world = provenance.value("world", std::string());
+        layer.provenance_nation_state = provenance.value("nation_state", std::string());
+        layer.provenance_state_region = provenance.value("state_region", std::string());
+        layer.provenance_county_city = provenance.value("county_city", std::string());
+        return provenanceStoredLayerPath(root, layer);
+    }
+    return {};
+}
+
+fs::path anambraRepositoryManifestPath(const fs::path& root) {
+    return root / "sources" / "world" / "earth" / "nation_state" / "ng" / "state_region" / "anambra" /
+        "layers_manifest.repository.json";
+}
+
 std::string isoNowUtc() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t now_time = std::chrono::system_clock::to_time_t(now);
@@ -70,7 +97,7 @@ std::string analyticsBuildSignature(const fs::path& root, const std::vector<Laye
             << ":duckdb=" << (layer.duckdb_ingest ? 1 : 0)
             << ":role=" << layer.duckdb_role << "|";
         if (!layer.duckdb_ingest) continue;
-        const fs::path layer_path = root / "data" / "layers" / layer.file;
+        const fs::path layer_path = resolveStoredLayerPath(root, layer);
         if (!fs::exists(layer_path)) continue;
         sig << "sig=" << fileSignature(layer_path) << "|";
     }
@@ -175,6 +202,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         con.Query("DROP TABLE IF EXISTS layer_features");
         con.Query("DROP TABLE IF EXISTS unified_parcels");
         con.Query("DROP TABLE IF EXISTS parcel_events");
+        con.Query("DROP TABLE IF EXISTS anambra_repository_sources");
         con.Query("DROP TABLE IF EXISTS analytics_build_info");
         con.Query("DROP TABLE IF EXISTS analytics_source_contributions");
         con.Query(R"SQL(
@@ -345,6 +373,22 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 row_count UBIGINT
             )
         )SQL");
+        con.Query(R"SQL(
+            CREATE TABLE anambra_repository_sources (
+                name VARCHAR,
+                file VARCHAR,
+                source_url VARCHAR,
+                source_name VARCHAR,
+                description VARCHAR,
+                local_path VARCHAR,
+                local_exists BOOLEAN,
+                file_size_bytes UBIGINT,
+                downloadable BOOLEAN,
+                reason VARCHAR,
+                provenance_nation_state VARCHAR,
+                provenance_state_region VARCHAR
+            )
+        )SQL");
         {
             const std::string built_at_utc = isoNowUtc();
             const std::string source_signature = analyticsBuildSignature(root_, layers);
@@ -395,6 +439,45 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 source_appender.EndRow();
             }
             source_appender.Close();
+        }
+        {
+            std::ifstream in(anambraRepositoryManifestPath(root_));
+            json arr;
+            if (in) {
+                try {
+                    in >> arr;
+                } catch (...) {
+                    arr = json::array();
+                }
+            }
+            if (arr.is_array()) {
+                auto anambra_appender = duckdb::Appender(con, "anambra_repository_sources");
+                for (const auto& item : arr) {
+                    if (!item.is_object()) continue;
+                    const fs::path local_path = manifestItemOutputPath(root_, item);
+                    std::error_code ec;
+                    const bool local_exists = !local_path.empty() && fs::exists(local_path, ec) && !ec;
+                    const uint64_t file_size_bytes =
+                        local_exists ? (uint64_t)fs::file_size(local_path, ec) : 0ULL;
+                    const auto& provenance = item.contains("provenance") && item["provenance"].is_object()
+                        ? item["provenance"] : json::object();
+                    anambra_appender.BeginRow();
+                    anambra_appender.Append<const char*>(item.value("name", std::string()).c_str());
+                    anambra_appender.Append<const char*>(item.value("file", std::string()).c_str());
+                    anambra_appender.Append<const char*>(item.value("url", std::string()).c_str());
+                    anambra_appender.Append<const char*>(item.value("source", std::string()).c_str());
+                    anambra_appender.Append<const char*>(item.value("description", std::string()).c_str());
+                    anambra_appender.Append<const char*>(local_path.string().c_str());
+                    anambra_appender.Append<bool>(local_exists);
+                    anambra_appender.Append<uint64_t>(file_size_bytes);
+                    anambra_appender.Append<bool>(item.value("download", true));
+                    anambra_appender.Append<const char*>(item.value("reason", std::string()).c_str());
+                    anambra_appender.Append<const char*>(provenance.value("nation_state", std::string()).c_str());
+                    anambra_appender.Append<const char*>(provenance.value("state_region", std::string()).c_str());
+                    anambra_appender.EndRow();
+                }
+                anambra_appender.Close();
+            }
         }
         con.Query(R"SQL(
             CREATE TABLE parcel_events AS

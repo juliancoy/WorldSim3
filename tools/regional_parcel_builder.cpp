@@ -352,7 +352,9 @@ SourceSpec parseSourceSpec(const std::string& raw) {
 }
 
 void usage(const char* argv0) {
-    std::cerr << "Usage: " << argv0 << " --input Jurisdiction:path.geojson [--property-input Jurisdiction:path.geojson] --output data/layers/regional_parcels.geojson\n";
+    std::cerr << "Usage: " << argv0
+              << " --input Jurisdiction:path.geojson [--property-input Jurisdiction:path.geojson]"
+              << " --output data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson\n";
 }
 }
 
@@ -360,7 +362,7 @@ int main(int argc, char** argv) {
     try {
         std::vector<SourceSpec> inputs;
         std::vector<SourceSpec> property_inputs;
-        fs::path output = "data/layers/regional_parcels.geojson";
+        fs::path output = "data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson";
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             auto need_value = [&](const char* name) -> std::string {

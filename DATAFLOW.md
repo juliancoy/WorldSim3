@@ -4,7 +4,7 @@ This document describes how layer data moves from source files into runtime memo
 
 ## Source Identity
 
-Every source layer file under `data/layers/` is identified by `fileSignature(path)` from `cache_io.cpp`.
+Every source layer file under `data/.../layers/` is identified by `fileSignature(path)` from `cache_io.cpp`.
 
 The signature is:
 
@@ -19,7 +19,7 @@ This signature is the invalidation key shared by hydration, triangulation, deriv
 
 WorldSim3 persists four broad classes of disk artifacts:
 
-- Authoritative or source-adjacent data under `data/layers/`, `data/imports/`, and `data/inbox/`.
+- Authoritative or source-adjacent data under `data/`, `sources/`, and `data/inbox/`.
 - Rebuildable runtime caches under `data/cache/`.
 - Runtime/user state JSON files under `data/`.
 - Analytics exports and SQL cache files under `data/analytics/` and `data/worldsim.duckdb`.
@@ -34,11 +34,11 @@ The main artifacts are:
 
 | Path | Kind | Producer | Consumer | Notes |
 | --- | --- | --- | --- | --- |
-| `data/layers/*.geojson` | Source/interchange layer data | Download queue, import tools, builders, scripts | Hydration workers, layer registry, derived builders | The normal source of truth for most map layers. File size and mtime form the source signature. |
-| `data/layers/*.geojson.part` | In-progress layer download | Layer download queue | Download finalization only | Temporary artifact; should not be accepted as a layer source. |
-| `data/imports/*.source.*` | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV payloads used to generate normalized GeoJSON layers. |
+| `data/world/.../layers/*.geojson` | Source/interchange layer data | Download queue, import tools, builders, scripts | Hydration workers, layer registry, derived builders | The normal source of truth for most map layers. File size and mtime form the source signature. Paths encode geographic provenance from world down to county/city when applicable. |
+| `data/world/.../layers/*.geojson.part` | In-progress layer download | Layer download queue | Download finalization only | Temporary artifact; should not be accepted as a layer source. |
+| `sources/world/.../**/*` excluding tracked manifests | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV/XLSX/PDF payloads used to generate normalized GeoJSON layers or document the upstream source. Paths mirror the same geographic provenance hierarchy as stored layer outputs. These files are local-only working artifacts and should normally be ignored by git. |
 | `data/inbox/**` | Manual drop-zone inputs | User or external process | Builder scripts/tools | Used for datasets that are copied in manually, such as HUD PIT files. |
-| `data/layers/regional_parcels.geojson.canonical.bin` | Canonical parcel binary source companion | Regional parcel builder | Hydration workers, headless hydration, validation CLI | Signature-bound compact parcel source. Lets statewide parcels hydrate without reparsing the 7 GB GeoJSON when the binary hydration cache is missing. |
+| `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin` | Canonical parcel binary source companion | Regional parcel builder | Hydration workers, headless hydration, validation CLI | Signature-bound compact parcel source. Lets statewide parcels hydrate without reparsing the 7 GB GeoJSON when the binary hydration cache is missing. |
 | `data/cache/hydration/<layer-file>.bin` | Primary hydrated CPU feature cache | Hydration workers, warm CLI | Hydration workers, parcel render cache warmer | Rebuildable cache of `LayerDef::FeatureGeom` records. Startup still streams this into RAM because render filters, hit testing, derived joins, DuckDB, and spatial indexing use CPU layer objects. |
 | `data/cache/hydration/*.tmp.*` | In-progress hydration cache write | Hydration cache writer | None after successful rename | Temporary artifact. A completed write atomically renames to `.bin`; leftover temp files can be deleted when no writer is running. |
 | `data/cache/triangulation/<layer-file>.tri.bin` | Primary triangulation cache | Triangulation worker, warm/render CLI | Triangulation worker, parcel render sidecar builder | Stores per-feature triangle index vectors keyed by source signature and feature count. |
@@ -59,7 +59,7 @@ The main artifacts are:
 | `data/layer_ui_state.json` | Layer UI/filter/render state | Layer UI state sync | Startup state load, layer UI | Persists enabled flags, colors, opacity, heatmap settings, filters, and related layer controls. |
 | `data/app_settings.json` | App-level settings | Settings UI and shutdown | Startup settings load | Persists Vulkan validation setting, CPU core reservation, basemap toggles/opacities, zoning color mode, and similar app controls. |
 
-Files under `data/cache/` are rebuildable and should be treated as performance artifacts. Files under `data/layers/`, `data/imports/`, and `data/inbox/` are source or source-adjacent artifacts and should not be cleared as routine cache cleanup unless the intended result is to force reimport or redownload.
+Files under `data/cache/` are rebuildable and should be treated as performance artifacts. Files under `data/`, `sources/`, and `data/inbox/` are source or source-adjacent artifacts and should not be cleared as routine cache cleanup unless the intended result is to force reimport or redownload.
 
 Use `./build/worldsim3 --parcel-artifact-health regional_parcels.geojson` for a non-mutating parcel artifact audit. It reads cache headers and file sizes, reports signature/count compatibility, and recommends the next rebuild step without loading full statewide feature bodies.
 
@@ -69,7 +69,7 @@ Use `./build/worldsim3 --warm-parcel-runtime-stack regional_parcels.geojson` to 
 
 On startup, `app_main_loop.cpp` enqueues every enabled layer for hydration.
 
-That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`. For `regional_parcels.geojson`, `data/layers/regional_parcels.geojson.canonical.bin` is the authoritative source-signature provider and the preferred source rebuild path when the hydration cache is missing or stale. If one of these binary sources exists, matches the source signature, and passes sanity checks, the worker streams structured features into runtime memory. If not, non-canonical layers parse their source layer and write a new hydration cache when the layer is cacheable.
+That does not mean every source GeoJSON is reparsed. The hydration worker first checks `data/cache/hydration/<layer-file>.bin`. For `regional_parcels.geojson`, `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin` is the authoritative source-signature provider and the preferred source rebuild path when the hydration cache is missing or stale. If one of these binary sources exists, matches the source signature, and passes sanity checks, the worker streams structured features into runtime memory. If not, non-canonical layers parse their source layer and write a new hydration cache when the layer is cacheable.
 
 Hydration always repopulates `layers[i].features` in RAM because filters, hit testing, derived joins, spatial indexing, and optional analytics rebuilds operate on runtime layer objects.
 

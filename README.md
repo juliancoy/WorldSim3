@@ -82,7 +82,7 @@ LAN sharing and peer signaling are available while the app runs:
 - Status API (local only): `http://127.0.0.1:8787/status`
 - Screenshot API (local only): `http://127.0.0.1:8787/screenshot` returns logical window pixels on HiDPI displays; add `?native=1` for raw framebuffer pixels.
 - Dataset API (LAN): `http://<host-ip>:8788/datasets`
-- File fetch (LAN): `http://<host-ip>:8788/dataset/file?path=data/layers/<file>.geojson`
+- File fetch (LAN): `http://<host-ip>:8788/dataset/file?path=data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/<file>.geojson`
 - P2P signaling (LAN): `http://<host-ip>:8788/p2p/register`, `/p2p/publish`, `/p2p/poll`
 - LAN discovery/version check (UDP): broadcast probe `WS3_DISCOVER_V1` on port `8789`
 
@@ -111,7 +111,7 @@ Dataset download/update workflows, generated dataset/model commands, and LAN dat
 
 ## Layers (17)
 
-Defined in `layers_manifest.json` and sourced from Open Baltimore official GeoJSON endpoints.
+Defined in `sources/world/earth/nation_state/us/state_region/md/layers_manifest.json` and sourced from Open Baltimore official GeoJSON endpoints.
 
 Crime coverage now includes NIBRS Group A Crime Data (2022-present).
 

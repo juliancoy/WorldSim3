@@ -92,6 +92,8 @@ struct AppShutdownContext {
     float* heatmap_multires_blend = nullptr;
     bool* heatmap_allow_cpu_fallback = nullptr;
     bool* filter_enabled = nullptr;
+    std::string* selected_nation_state = nullptr;
+    std::string* selected_state_region = nullptr;
     bool* filter_use_date = nullptr;
     int* filter_year_min = nullptr;
     int* filter_year_max = nullptr;

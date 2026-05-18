@@ -6,8 +6,8 @@ The statewide parcel stack has been materialized, but the canonical parcel binar
 
 Present artifacts:
 
-- `data/layers/regional_parcels.geojson`
-- `data/layers/regional_parcels.geojson.canonical.bin`
+- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson`
+- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
 - `data/cache/hydration/regional_parcels.geojson.bin`
 - `data/cache/triangulation/regional_parcels.geojson.tri.bin`
 - `data/cache/render/regional_parcels.geojson.parcel-render.bin`

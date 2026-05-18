@@ -123,6 +123,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.selected_owners) {
         saveFilterUiState(
             *ctx.root,
+            ctx.selected_nation_state,
+            ctx.selected_state_region,
             *ctx.filter_enabled,
             *ctx.filter_use_date,
             *ctx.filter_year_min,

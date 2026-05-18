@@ -10,3 +10,12 @@ AppDir/
 *.AppImage
 linuxdeploy-*.AppImage
 appimagetool-*.AppImage
+
+# Source manifests stay in git, but downloaded upstream payloads under the
+# parallel geographic sources tree are local-only artifacts.
+sources/world/**/*.source.*
+sources/world/**/*.zip
+sources/world/**/*.csv
+sources/world/**/*.xls
+sources/world/**/*.xlsx
+sources/world/**/*.pdf

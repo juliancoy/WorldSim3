@@ -1,6 +1,7 @@
 #include "app_utils.h"
 
 #include "feature_props.h"
+#include "layer_state_io.h"
 
 #include <algorithm>
 #include <cmath>
@@ -13,6 +14,34 @@
 #include <unordered_map>
 
 namespace fs = std::filesystem;
+
+namespace {
+std::string safeProvenanceComponent(const std::string& value, const std::string& fallback = {}) {
+    return value.empty() ? fallback : value;
+}
+
+fs::path provenanceHierarchyRoot(
+    const fs::path& root,
+    const char* top_level,
+    const std::string& world,
+    const std::string& nation_state,
+    const std::string& state_region,
+    const std::string& county_city) {
+    fs::path out = root / top_level / "world" / safeProvenanceComponent(world, "earth");
+    if (!nation_state.empty()) out /= fs::path("nation_state") / nation_state;
+    if (!state_region.empty()) out /= fs::path("state_region") / state_region;
+    if (!county_city.empty()) out /= fs::path("county_city") / county_city;
+    return out;
+}
+
+const LayerDef* findManifestLayerByFile(const fs::path& root, const std::string& file, std::vector<LayerDef>& scratch) {
+    scratch = loadManifest(root);
+    for (auto& layer : scratch) {
+        if (layer.file == file) return &layer;
+    }
+    return nullptr;
+}
+}
 
 const char* categoryToString(LayerDef::Category c) {
     switch (c) {
@@ -35,7 +64,8 @@ std::pair<int, int> deg2num(double lat_deg, double lon_deg, int zoom) {
 
 std::filesystem::path resolveAppRoot(const fs::path& start, const char* argv0) {
     auto has_manifest = [](const fs::path& p) {
-        return fs::exists(p / "layers_manifest.json") || fs::exists(p / "scripts" / "layers_manifest.json");
+        return fs::exists(
+            p / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers_manifest.json");
     };
     auto climb = [&](fs::path p) -> fs::path {
         std::error_code ec;
@@ -298,6 +328,47 @@ std::string formatUsNumber(double value, int decimals) {
 
 std::string formatUsd(double value, int decimals) {
     return "$" + formatUsNumber(value, decimals);
+}
+
+std::filesystem::path provenanceStoredLayerPath(const fs::path& root, const LayerDef& layer) {
+    return provenanceHierarchyRoot(
+               root,
+               "data",
+               layer.provenance_world,
+               layer.provenance_nation_state,
+               layer.provenance_state_region,
+               layer.provenance_county_city) /
+           "layers" / layer.file;
+}
+
+std::filesystem::path provenanceSourceArtifactPath(const fs::path& root, const LayerDef& layer, const std::string& artifact_name) {
+    return provenanceHierarchyRoot(
+               root,
+               "sources",
+               layer.provenance_world,
+               layer.provenance_nation_state,
+               layer.provenance_state_region,
+               layer.provenance_county_city) /
+           "layers" / artifact_name;
+}
+
+std::filesystem::path resolveStoredLayerPath(const fs::path& root, const LayerDef& layer) {
+    const fs::path provenance_path = provenanceStoredLayerPath(root, layer);
+    std::error_code ec;
+    if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+    const fs::path legacy_path = root / "data" / "layers" / layer.file;
+    return legacy_path;
+}
+
+std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const std::string& file) {
+    std::vector<LayerDef> scratch;
+    if (const LayerDef* layer = findManifestLayerByFile(root, file, scratch)) {
+        const fs::path provenance_path = provenanceStoredLayerPath(root, *layer);
+        std::error_code ec;
+        if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+        return root / "data" / "layers" / file;
+    }
+    return root / "data" / "layers" / file;
 }
 
 std::string trimDisplayValue(std::string s) {

@@ -1,5 +1,6 @@
 #include "dataset_library.h"
 #include "layer_import.h"
+#include "app_utils.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -459,8 +460,9 @@ FreshnessCheckResult checkUrlFreshnessVersioned(
 }
 
 std::vector<json> readLayerManifestEntries(const fs::path& root) {
-    std::ifstream in(root / "layers_manifest.json");
-    if (!in) in.open(root / "scripts" / "layers_manifest.json");
+    const fs::path us_md_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
+    std::ifstream in(us_md_root / "layers_manifest.json");
     if (!in) return {};
     json arr;
     in >> arr;
@@ -471,14 +473,19 @@ std::vector<json> readLayerManifestEntries(const fs::path& root) {
 }
 
 std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std::string& phase) {
-    if (phase == "all" || phase.empty()) return root / "layers_manifest.json";
-    if (phase == "must-have") return root / "layers_manifest.must_have.json";
-    if (phase == "nice-to-have") return root / "layers_manifest.nice_to_have.json";
-    if (phase == "heavy-data") return root / "layers_manifest.heavy_data.json";
-    if (phase == "capital-flows") return root / "layers_manifest.capital_flows.json";
-    if (phase == "extended-events") return root / "layers_manifest.extended_events.json";
-    if (phase == "historical-high-quality") return root / "layers_manifest.historical_high_quality.json";
-    if (phase == "archival-research") return root / "layers_manifest.archival_research.json";
+    const fs::path us_md_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
+    const fs::path ng_anambra_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "ng" / "state_region" / "anambra";
+    if (phase == "all" || phase.empty()) return us_md_root / "layers_manifest.json";
+    if (phase == "must-have") return us_md_root / "layers_manifest.must_have.json";
+    if (phase == "nice-to-have") return us_md_root / "layers_manifest.nice_to_have.json";
+    if (phase == "heavy-data") return us_md_root / "layers_manifest.heavy_data.json";
+    if (phase == "capital-flows") return us_md_root / "layers_manifest.capital_flows.json";
+    if (phase == "anambra-repository") return ng_anambra_root / "layers_manifest.repository.json";
+    if (phase == "extended-events") return us_md_root / "layers_manifest.extended_events.json";
+    if (phase == "historical-high-quality") return us_md_root / "layers_manifest.historical_high_quality.json";
+    if (phase == "archival-research") return us_md_root / "layers_manifest.archival_research.json";
     fs::path p(phase);
     return p.is_absolute() ? p : root / p;
 }
@@ -488,10 +495,21 @@ static fs::path layerOutputDirForManifestItem(const fs::path& root, const json& 
         fs::path p(item["directory"].get<std::string>());
         return p.is_absolute() ? p : root / p;
     }
+    if (item.contains("provenance") && item["provenance"].is_object()) {
+        const auto& provenance = item["provenance"];
+        LayerDef layer;
+        layer.file = item.value("file", std::string());
+        layer.provenance_world = provenance.value("world", std::string());
+        layer.provenance_nation_state = provenance.value("nation_state", std::string());
+        layer.provenance_state_region = provenance.value("state_region", std::string());
+        layer.provenance_county_city = provenance.value("county_city", std::string());
+        const fs::path stored_path = provenanceStoredLayerPath(root, layer);
+        return stored_path.parent_path();
+    }
     if (item.value("category", std::string()) == "capital-flows") {
         return root / "data" / "capital_flows";
     }
-    return root / "data" / "layers";
+    return root / "data" / "provenance" / "stored" / "world" / "earth" / "layers";
 }
 
 LayerDownloadSummary downloadLayerManifestPhase(
@@ -566,6 +584,13 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_shapefile = import.value("shapefile", std::string());
             layer.import_service_url = import.value("service_url", std::string());
             layer.import_normalizer = import.value("normalizer", std::string());
+            if (item.contains("provenance") && item["provenance"].is_object()) {
+                const auto& provenance = item["provenance"];
+                layer.provenance_world = provenance.value("world", std::string());
+                layer.provenance_nation_state = provenance.value("nation_state", std::string());
+                layer.provenance_state_region = provenance.value("state_region", std::string());
+                layer.provenance_county_city = provenance.value("county_city", std::string());
+            }
             res = downloadOrImportLayer(layer, out_path, root);
         }
         if (res.ok) {

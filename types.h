@@ -27,6 +27,10 @@ struct LayerDef {
     std::string import_service_url;
     std::string import_normalizer;
     std::string duckdb_role;
+    std::string provenance_world;
+    std::string provenance_nation_state;
+    std::string provenance_state_region;
+    std::string provenance_county_city;
     std::string description;
     std::string heatmap_field;
     std::string subcategory;

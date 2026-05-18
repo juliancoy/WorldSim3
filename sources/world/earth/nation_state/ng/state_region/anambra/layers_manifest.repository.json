@@ -1,0 +1,620 @@
+[
+  {
+    "name": "Anambra State Budget 2025",
+    "file": "anambra_budget_2025.pdf",
+    "url": "https://anambrastate.gov.ng/wp-content/uploads/Anambra-State-2025-Budget-Publication.pdf",
+    "category": "anambra-repository",
+    "source": "Anambra State Government / Anambra Open Data Portal",
+    "description": "Approved 2025 Anambra State budget publication.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/budget",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra State Budget 2024",
+    "file": "anambra_budget_2024.pdf",
+    "url": "https://anambrastate.gov.ng/wp-content/uploads/2024-BUDGET-OF-ANAMBRA-STATE.pdf",
+    "category": "anambra-repository",
+    "source": "Anambra State Government / Anambra Open Data Portal",
+    "description": "Approved 2024 Anambra State budget publication.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/budget",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra State Budget 2023",
+    "file": "anambra_budget_2023.pdf",
+    "url": "https://ngfrepository.org.ng:8443/bitstream/123456789/5815/3/Anambra-State-FY-2023-Budget_-.pdf",
+    "category": "anambra-repository",
+    "source": "NGF Repository / Anambra Open Data Portal",
+    "description": "Approved 2023 Anambra State budget publication.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/budget",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra State Budget 2022",
+    "file": "anambra_budget_2022.pdf",
+    "url": "https://ngfrepository.org.ng:8443/jspui/bitstream/123456789/5817/2/Anambra%20State%202022%20Approved%20Budget.pdf",
+    "category": "anambra-repository",
+    "source": "NGF Repository / Anambra Open Data Portal",
+    "description": "Approved 2022 Anambra State budget publication.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/budget",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Agric Statistics",
+    "file": "anambra_grid3_agric_statistics.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/17f3D05kKzWv7i7r58n_wUF8hHIUGRPLK/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial agriculture dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Filling Stations",
+    "file": "anambra_grid3_filling_stations.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1lEIG7MAnyOBiusYh_Ef0WNDqs-cWDuvH/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial filling station dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Settlements",
+    "file": "anambra_grid3_settlements.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1ThE004-rrDDZYAav9yz5Tvw_1q1f_Ihd/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial settlements dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Churches",
+    "file": "anambra_grid3_churches.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1D4SHOTwDowE-3-A7Ia0gqzjhbu9cjuNu/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial churches dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Farmland",
+    "file": "anambra_grid3_farmland.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1vLDOtL-GlZzs8tnHBBQ3kDZAy_aZ1cCv/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial farmland dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Farms",
+    "file": "anambra_grid3_farms.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1SQLF5ZFlUjk_qK6NB8JjHKE9SQ0PnFYK/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial farms dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Financial Institutions",
+    "file": "anambra_grid3_financial_institutions_folder.url",
+    "url": "https://drive.google.com/drive/folders/1WWM9ycSBhFsLVpxFXH6e56HW7wX8qUjp?usp=sharing",
+    "download": false,
+    "reason": "Portal points to a Google Drive folder rather than a single stable file URL.",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "Folder source for Anambra GRID3 financial institutions data.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Health Facilities",
+    "file": "anambra_grid3_health_facilities.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1J3wDoPt_EqT4ZAuWnyeM2KcJt6aUNmLV/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial health facilities dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Industries",
+    "file": "anambra_grid3_industries.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1RcmDqhnsN6zWovEedEvX_WlEMZrWxK4H/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial industries dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 LGAs",
+    "file": "anambra_grid3_lgas.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/18WBx0BZNY9uaTAv1jAETU7n3hOIN_rMN/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial LGA dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Markets",
+    "file": "anambra_grid3_markets.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1ttikUJo3r2w_TNNI4y5IzinFHFKyeSL-/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial markets dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Police",
+    "file": "anambra_grid3_police.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1s1Sl3Ju-sjALlCUFWOAXE9REsu23sOL3/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial police dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Projects",
+    "file": "anambra_grid3_projects.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1Jo-sZGWB98aW8a2J3jRpq0iItvLeoU92/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial development projects dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Schools",
+    "file": "anambra_grid3_schools.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1nm-WYf3q0SB9TRAid06PfgMAp5ubEeHW/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial schools dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Ward Boundaries",
+    "file": "anambra_grid3_ward_boundaries.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1yO6gjBibrtQ305L8O2AAm-53sPi3jU3M/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial ward boundaries dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra GRID3 Waterpoints",
+    "file": "anambra_grid3_waterpoints.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1dY6CAsCunnoTFUnao6fWegocltfaQVDp/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal / GRID3",
+    "description": "GRID3 geospatial waterpoints dataset for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/grid3",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Agriculture",
+    "file": "anambra_statistics_agriculture.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1Sg3swmnQe58oGKFeKr48Kp1s3GYmXRjP/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Agriculture statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Education",
+    "file": "anambra_statistics_education.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1QsMO19GjtQefKuL1MqS45qHcOpV2VdKI/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Education statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Housing",
+    "file": "anambra_statistics_housing.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1zC1q0hkT48e9JCMnKjXh6Tn4MQUIn86e/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Housing statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Legislative",
+    "file": "anambra_statistics_legislative.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1048TidCNbVTA7PYZjnn7Y96JQMpTmoLg/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Legislative statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Business",
+    "file": "anambra_statistics_business.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1yC0SQhroY46IHyghJjczve6Q0T32JuR_/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Business statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Transportation",
+    "file": "anambra_statistics_transportation.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1Bd2aXJCcGzXvFtZKRMZZbsakON5ICXK9/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Transportation statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Youth",
+    "file": "anambra_statistics_youth_folder.url",
+    "url": "https://drive.google.com/drive/folders/1dSRpIWOYdjnk0HTdXVyWXrxdc6U4zXm8?usp=sharing",
+    "download": false,
+    "reason": "Portal points to a Google Drive folder rather than a single stable file URL.",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Folder source for youth statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Security",
+    "file": "anambra_statistics_security.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/162OOsHp1gdzGdNHjK-gzqhJ-QerDdj58/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Security statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Environment",
+    "file": "anambra_statistics_environment.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/18bwJ0XccQhutO6vkP8PQME52G72QJgYD/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Environment statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Geography",
+    "file": "anambra_statistics_geography_folder.url",
+    "url": "https://drive.google.com/drive/folders/1Fy1FYaY-BfFqBwTw2TKb9YMFA7DVqRzX?usp=sharing",
+    "download": false,
+    "reason": "Portal points to a Google Drive folder rather than a single stable file URL.",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Folder source for geography statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Crime and Justice",
+    "file": "anambra_statistics_crime_justice.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1uUjpg9b1h6jy0oB9Duyd2awUFcL4evHU/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Crime and justice statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Communication",
+    "file": "anambra_statistics_communication.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1CmWmpO4wAugD-wpd3gKAlPMoxU0oMsmp/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Communication statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Electricity",
+    "file": "anambra_statistics_electricity.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1g4wpD89QMWZUguX7fXUuvK1wE2rMe55d/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Electricity statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Health",
+    "file": "anambra_statistics_health.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1gPY17tGpeEpdRds1wrAskgVIfBfxdBxq/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Health statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Water",
+    "file": "anambra_statistics_water.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1b65xamaUFOso33PkZWHawQdDc-jjyEGb/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Water statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Population",
+    "file": "anambra_statistics_population.xlsx",
+    "url": "https://docs.google.com/spreadsheets/d/1mUnkYYpi8Svw_Hzh0-JXqvKRl5_lrOrK/export?format=xlsx",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Population statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Statistics Women Affairs",
+    "file": "anambra_statistics_women_affairs_folder.url",
+    "url": "https://drive.google.com/drive/folders/1313MQ8QO9Np5pLBRI2zibnGmAiWGmWkV?usp=sharing",
+    "download": false,
+    "reason": "Portal points to a Google Drive folder rather than a single stable file URL.",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Folder source for women affairs statistics for Anambra State.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/statistics",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  },
+  {
+    "name": "Anambra Other Datasets Page",
+    "file": "anambra_other_datasets_page.html",
+    "url": "https://anambra360.ng/other-datasets/",
+    "download": false,
+    "reason": "The page currently says 'Kindly check back later' and does not expose downloadable files yet.",
+    "category": "anambra-repository",
+    "source": "Anambra Open Data Portal",
+    "description": "Placeholder source page for additional Anambra datasets not yet published as downloadable files.",
+    "directory": "sources/world/earth/nation_state/ng/state_region/anambra/other",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "ng",
+      "state_region": "anambra"
+    }
+  }
+]

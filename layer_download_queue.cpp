@@ -1,6 +1,7 @@
 #include "layer_download_queue.h"
 
 #include "dataset_library.h"
+#include "app_utils.h"
 #include "layer_import.h"
 #include "net_http_utils.h"
 #include "types.h"
@@ -115,7 +116,7 @@ void startLayerDownload(LayerDownloadQueueContext& ctx, size_t idx) {
     *ctx.active_idx = idx;
     *ctx.active_file = layers[idx].file;
     const LayerDef layer_for_download = layers[idx];
-    const fs::path local_layer_path = ctx.root / "data" / "layers" / layers[idx].file;
+    const fs::path local_layer_path = provenanceStoredLayerPath(ctx.root, layers[idx]);
     const auto now = std::chrono::steady_clock::now();
     constexpr auto kLanAutoScanInterval = std::chrono::seconds(30);
     if (ctx.lan && ctx.lan->last_scan_at && now - *ctx.lan->last_scan_at > kLanAutoScanInterval) {
@@ -125,7 +126,7 @@ void startLayerDownload(LayerDownloadQueueContext& ctx, size_t idx) {
     if (ctx.lan && ctx.lan->peers) {
         for (const auto& peer : *ctx.lan->peers) {
             if (!peer.protocol_match || peer.ip.empty() || peer.dataset_port <= 0) continue;
-            const std::string rel = "data/layers/" + layers[idx].file;
+            const std::string rel = provenanceStoredLayerPath(ctx.root, layers[idx]).lexically_relative(ctx.root).string();
             const std::string path_q = urlEncodeComponent(rel);
             std::string url = "http://" + peer.ip + ":" + std::to_string(peer.dataset_port) + "/dataset/file?path=" + path_q;
             std::string label = peer.ip + ":" + std::to_string(peer.dataset_port);

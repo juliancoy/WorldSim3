@@ -59,6 +59,8 @@ json mapFilterStateJson(const MapFilterState& filters) {
     for (const auto& owner : filters.selected_owners) owners.push_back(owner);
     return {
         {"enabled", filters.enabled},
+        {"selected_nation_state", filters.selected_nation_state},
+        {"selected_state_region", filters.selected_state_region},
         {"use_date", filters.use_date},
         {"year_min", filters.year_min},
         {"year_max", filters.year_max},

@@ -43,7 +43,7 @@ std::vector<fs::path> supplementalPropertyLayerPaths(const fs::path& root, const
     std::vector<fs::path> paths;
     for (const auto& layer : layers) {
         if (!isPropertyOnlySupplementalLayer(layer)) continue;
-        const fs::path path = root / "data" / "layers" / layer.file;
+        const fs::path path = resolveStoredLayerPath(root, layer);
         if (fs::exists(path)) paths.push_back(path);
     }
     return paths;
@@ -80,9 +80,9 @@ WorldsimLayerIndices detectWorldsimLayerIndices(
     const std::vector<LayerDef>& layers) {
     WorldsimLayerIndices indices;
     const bool regional_parcels_available =
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
-    const bool regional_real_property_available = fs::exists(root / "data" / "layers" / "regional_real_property.geojson");
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
+    const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices.parcel_layer_idx = (int)i;
         else if (layers[i].file == "parcel.geojson" && indices.parcel_layer_idx < 0) indices.parcel_layer_idx = (int)i;
@@ -146,7 +146,7 @@ void rebuildHarmonizedRealPropertyFeatures(
     }
     for (const auto& layer : layers) {
         if (!isPropertyOnlySupplementalLayer(layer)) continue;
-        const fs::path path = root / "data" / "layers" / layer.file;
+        const fs::path path = resolveStoredLayerPath(root, layer);
         if (!fs::exists(path)) continue;
         auto extra_features = loadPropertyOnlyFeaturesFromGeoJson(path);
         harmonized_source_files.insert(harmonized_source_files.end(), extra_features.size(), layer.file);

@@ -1,6 +1,7 @@
 #include "heatmap_key_builder.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "cache_io.h"
 #include "map_render_utils.h"
 #include "worldsim_app_internal.h"
@@ -83,7 +84,7 @@ uint64_t buildHeatmapKey(const HeatmapKeyBuilderContext& ctx, bool include_view_
             hashCombineU64(key, (ctx.layer_heatmap_multires_enabled && i < ctx.layer_heatmap_multires_enabled->size() && (*ctx.layer_heatmap_multires_enabled)[i]) ? 1ULL : 0ULL);
             hashCombineFloat(key, ctx.layer_heatmap_multires_blend && i < ctx.layer_heatmap_multires_blend->size() ? (*ctx.layer_heatmap_multires_blend)[i] : ctx.heatmap_multires_blend);
             hashCombineU64(key, (uint64_t)(*ctx.layers)[i].features.size());
-            const std::string sig = fileSignature(ctx.root / "data" / "layers" / (*ctx.layers)[i].file);
+            const std::string sig = fileSignature(resolveStoredLayerPath(ctx.root, (*ctx.layers)[i]));
             for (unsigned char ch : sig) hashCombineU64(key, (uint64_t)ch);
         }
     }

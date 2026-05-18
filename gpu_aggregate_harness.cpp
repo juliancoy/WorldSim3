@@ -110,7 +110,7 @@ static void setup_vulkan_minimal() {
 }
 
 struct BenchConfig {
-    std::filesystem::path input = "data/layers/regional_parcels.geojson";
+    std::filesystem::path input = "data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson";
     std::string jurisdiction = "HowardCounty";
     int raster_w = 2048;
     int raster_h = 2048;

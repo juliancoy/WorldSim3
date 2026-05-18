@@ -1,5 +1,6 @@
 #include "parcel_matched_layers.h"
 
+#include "app_utils.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -223,8 +224,7 @@ std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
     const fs::path& root,
     bool force,
     std::ostream* log) {
-    const fs::path data_dir = root / "data" / "layers";
-    const fs::path parcel_path = data_dir / "parcel.geojson";
+    const fs::path parcel_path = resolveStoredLayerPathForFile(root, "parcel.geojson");
     std::vector<ParcelMatchedLayerBuildStat> stats;
 
     json parcel_collection;
@@ -247,8 +247,8 @@ std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
         ParcelMatchedLayerBuildStat stat;
         stat.source = spec.source;
         stat.output = spec.output;
-        const fs::path source_path = data_dir / spec.source;
-        const fs::path out_path = data_dir / spec.output;
+        const fs::path source_path = resolveStoredLayerPathForFile(root, spec.source);
+        const fs::path out_path = resolveStoredLayerPathForFile(root, spec.output);
 
         if (!force && outputIsFresh(out_path, parcel_path, source_path)) {
             stat.skipped_up_to_date = true;

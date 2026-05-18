@@ -16,7 +16,7 @@ Use the GPU aggregate harness to profile the full Howard County parcel extent wi
 ```bash
 ./build/worldsim3_gpu_aggregate_harness \
   --howard \
-  --input data/layers/howard_county_parcels.geojson \
+  --input data/world/earth/nation_state/us/state_region/md/county_city/howard_county/layers/howard_county_parcels.geojson \
   --jurisdiction "Howard County" \
   --raster 512 \
   --repeats 3
@@ -33,7 +33,7 @@ The harness loads all matching features, computes the full input extent, emits o
 --jurisdiction NAME # e.g. HowardCounty for regional_parcels.geojson
 ```
 
-Baseline on the current machine with `data/layers/howard_county_parcels.geojson` after persistent GPU buffers/descriptor/command-buffer reuse:
+Baseline on the current machine with `data/world/earth/nation_state/us/state_region/md/county_city/howard_county/layers/howard_county_parcels.geojson` after persistent GPU buffers/descriptor/command-buffer reuse:
 
 | Raster | Samples | GPU bin/readback avg | CPU blur avg | Total avg |
 | --- | ---: | ---: | ---: | ---: |

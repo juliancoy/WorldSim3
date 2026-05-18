@@ -283,7 +283,7 @@ int main(int argc, char** argv) {
         if (idx >= layers.size() || !layers[idx].features.empty()) continue;
         zero_feature_diagnostics.push_back({
             layers[idx].file,
-            diagnoseZeroFeatureLayer(root / "data" / "layers" / layers[idx].file)
+            diagnoseZeroFeatureLayer(resolveStoredLayerPath(root, layers[idx]))
         });
     }
 

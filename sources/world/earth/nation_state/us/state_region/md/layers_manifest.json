@@ -33,7 +33,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "Baltimore City Parcels",
@@ -48,7 +54,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore County Parcels",
@@ -76,7 +88,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_county"
+    }
   },
   {
     "name": "Howard County Parcels",
@@ -106,7 +124,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
+    }
   },
   {
     "name": "Allegany County Parcels",
@@ -134,7 +158,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "allegany_county"
+    }
   },
   {
     "name": "Anne Arundel County Parcels",
@@ -162,7 +192,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "anne_arundel_county"
+    }
   },
   {
     "name": "Calvert County Parcels",
@@ -190,7 +226,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "calvert_county"
+    }
   },
   {
     "name": "Caroline County Parcels",
@@ -218,7 +260,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "caroline_county"
+    }
   },
   {
     "name": "Carroll County Parcels",
@@ -246,7 +294,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "carroll_county"
+    }
   },
   {
     "name": "Cecil County Parcels",
@@ -274,7 +328,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "cecil_county"
+    }
   },
   {
     "name": "Charles County Parcels",
@@ -302,7 +362,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "charles_county"
+    }
   },
   {
     "name": "Dorchester County Parcels",
@@ -330,7 +396,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "dorchester_county"
+    }
   },
   {
     "name": "Frederick County Parcels",
@@ -358,7 +430,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "frederick_county"
+    }
   },
   {
     "name": "Garrett County Parcels",
@@ -386,7 +464,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "garrett_county"
+    }
   },
   {
     "name": "Harford County Parcels",
@@ -414,7 +498,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "harford_county"
+    }
   },
   {
     "name": "Kent County Parcels",
@@ -442,7 +532,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "kent_county"
+    }
   },
   {
     "name": "Montgomery County Parcels",
@@ -470,7 +566,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "montgomery_county"
+    }
   },
   {
     "name": "Prince George's County Parcels",
@@ -498,7 +600,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "prince_georges_county"
+    }
   },
   {
     "name": "Queen Anne's County Parcels",
@@ -526,7 +634,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "queen_annes_county"
+    }
   },
   {
     "name": "St. Mary's County Parcels",
@@ -554,7 +668,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "st_marys_county"
+    }
   },
   {
     "name": "Somerset County Parcels",
@@ -582,7 +702,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "somerset_county"
+    }
   },
   {
     "name": "Talbot County Parcels",
@@ -610,7 +736,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "talbot_county"
+    }
   },
   {
     "name": "Washington County Parcels",
@@ -638,7 +770,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "washington_county"
+    }
   },
   {
     "name": "Wicomico County Parcels",
@@ -666,7 +804,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "wicomico_county"
+    }
   },
   {
     "name": "Worcester County Parcels",
@@ -694,7 +838,13 @@
     },
     "runtime_load": false,
     "duckdb_ingest": false,
-    "duckdb_role": "staging"
+    "duckdb_role": "staging",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "worcester_county"
+    }
   },
   {
     "name": "Howard County Real Property Assessments",
@@ -719,7 +869,13 @@
     },
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
+    }
   },
   {
     "name": "Real Property Information",
@@ -733,7 +889,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Property Value (Parcels)",
@@ -751,7 +913,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_context"
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Year Built (Parcels)",
@@ -771,7 +939,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_context"
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Parcel Intelligence (Derived)",
@@ -793,7 +967,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_context"
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Vacant Building Notices",
@@ -807,7 +987,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Vacant Code",
@@ -823,7 +1009,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Vacant Code Parcels",
@@ -840,7 +1032,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Exterior Code",
@@ -856,7 +1054,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Exterior Code Parcels",
@@ -873,7 +1077,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior Code",
@@ -889,7 +1099,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior Code Parcels",
@@ -906,7 +1122,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior/Exterior Code",
@@ -922,7 +1144,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior/Exterior Code Parcels",
@@ -939,7 +1167,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Other Code",
@@ -955,7 +1189,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Other Code Parcels",
@@ -972,7 +1212,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Vacant Building Rehabs",
@@ -986,7 +1232,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Buildings",
@@ -1002,7 +1254,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Building Parcels",
@@ -1019,7 +1277,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed VBN Parcels",
@@ -1035,7 +1299,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
@@ -1049,7 +1319,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "2021 Tax Sale List",
@@ -1063,7 +1339,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Bid List - Vacants to Value",
@@ -1077,7 +1359,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Completed City Demo",
@@ -1091,7 +1379,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Housing and Building Permits 2019-Present",
@@ -1105,7 +1399,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "MD DHCD Multifamily Sites",
@@ -1124,7 +1424,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Targeted Areas",
@@ -1142,7 +1448,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Qualified Census Tracts",
@@ -1160,7 +1472,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Communities of Opportunity",
@@ -1178,7 +1496,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Small Difficult Development Areas",
@@ -1196,7 +1520,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Rural Areas",
@@ -1214,7 +1544,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD BRHP Opportunity Designations",
@@ -1232,7 +1568,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Baltimore County Opportunity Areas",
@@ -1250,7 +1592,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Just Communities",
@@ -1268,7 +1616,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "Zoning",
@@ -1282,7 +1636,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_context"
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Streets",
@@ -1296,7 +1656,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Major Drainage",
@@ -1310,7 +1676,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Water (Infrastructure Layer 19)",
@@ -1324,7 +1696,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Rate of Clogged Storm Drain Reports (CSA)",
@@ -1338,7 +1716,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Median Price of Homes Sold (CSA)",
@@ -1352,7 +1736,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Total Number of Businesses (CSA)",
@@ -1366,7 +1756,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Life Expectancy (CSA)",
@@ -1380,7 +1776,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Asthma (Baltimore Tracts)",
@@ -1395,7 +1797,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Diabetes (Baltimore Tracts)",
@@ -1410,7 +1818,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Obesity (Baltimore Tracts)",
@@ -1425,7 +1839,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Stroke (Baltimore Tracts)",
@@ -1440,7 +1860,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Depression (Baltimore Tracts)",
@@ -1455,7 +1881,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Total Population (Baltimore Tracts)",
@@ -1470,7 +1902,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
@@ -1485,7 +1923,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
@@ -1500,7 +1944,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
@@ -1515,7 +1965,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
@@ -1530,7 +1986,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
@@ -1545,7 +2007,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
@@ -1560,7 +2028,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
@@ -1575,7 +2049,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC SVI 2022 (Baltimore Tracts)",
@@ -1590,7 +2070,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
@@ -1612,7 +2098,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HUD Continuum of Care Boundaries (Maryland)",
@@ -1626,7 +2118,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "HUD Continuum of Care Boundary (Baltimore City CoC MD-503)",
@@ -1640,7 +2138,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HUD PIT Homelessness Trends by CoC (2007-2024)",
@@ -1660,7 +2164,13 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
@@ -1674,6 +2184,12 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "point_event"
+    "duckdb_role": "point_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]

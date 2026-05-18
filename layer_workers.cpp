@@ -1,5 +1,6 @@
 #include "layer_workers.h"
 
+#include "app_utils.h"
 #include "cache_io.h"
 #include "layer_geometry.h"
 #include "memory_utils.h"
@@ -54,9 +55,9 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     if (i < layer_states.size()) layer_states[i].status = LayerPipelineStatus::Hydrating;
                 }
 
-                const fs::path layer_path = root / "data" / "layers" / layers[i].file;
+                const fs::path layer_path = resolveStoredLayerPath(root, layers[i]);
                 const fs::path binary_cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".bin");
-                const fs::path canonical_binary_path = root / "data" / "layers" / (layers[i].file + ".canonical.bin");
+                const fs::path canonical_binary_path = layer_path.parent_path() / (layers[i].file + ".canonical.bin");
                 std::string sig;
                 std::string source_kind;
                 if (!resolveLayerSourceSignature(layer_path, sig, &source_kind)) {
@@ -293,7 +294,7 @@ std::thread startTriangulationWorker(LayerWorkersContext ctx) {
                 if (job.index < layer_states.size()) layer_states[job.index].status = LayerPipelineStatus::Triangulating;
             }
 
-            fs::path layer_path = root / "data" / "layers" / job.file;
+            fs::path layer_path = resolveStoredLayerPathForFile(root, job.file);
             fs::path binary_cache_path = root / "data" / "cache" / "triangulation" / (job.file + ".tri.bin");
             std::string sig = job.source_signature.empty() ? fileSignature(layer_path) : job.source_signature;
             TriResult result;

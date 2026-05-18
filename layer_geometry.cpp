@@ -1,5 +1,6 @@
 #include "layer_geometry.h"
 
+#include "app_utils.h"
 #include "geo.h"
 
 #include <algorithm>
@@ -297,7 +298,7 @@ void hydrateLayerBatches(
 }
 
 void loadLayerPoints(LayerDef& layer, const fs::path& root) {
-    layer.features = loadLayerPointsFromFile(root / "data" / "layers" / layer.file);
+    layer.features = loadLayerPointsFromFile(resolveStoredLayerPath(root, layer));
 }
 
 std::vector<uint32_t> triangulateRings(const std::vector<std::vector<ImVec2>>& rings) {

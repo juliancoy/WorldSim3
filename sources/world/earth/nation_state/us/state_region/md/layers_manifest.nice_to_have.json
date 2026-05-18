@@ -3,55 +3,109 @@
     "name": "Vacant Building Rehabs",
     "file": "vacant_building_rehabs.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/4db6d1e54e714a3e8125990a09d4623d/geojson?layers=2",
-    "color": "#984ea3"
+    "color": "#984ea3",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
     "file": "tax_lien_certificate_sale_properties.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
-    "color": "#ff7f00"
+    "color": "#ff7f00",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Bid List - Vacants to Value",
     "file": "open_bid_list_vacants_to_value.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/1b844b06c28a45ca86cdfb586fdce3a7/geojson?layers=7",
-    "color": "#f781bf"
+    "color": "#f781bf",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Completed City Demo",
     "file": "completed_city_demo.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/37f242ca93b244a998c31b6c0a3696a7/geojson?layers=0",
-    "color": "#999999"
+    "color": "#999999",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Major Drainage",
     "file": "major_drainage.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/00156edf8258493fa28384e0aa8286a8/geojson?layers=0",
-    "color": "#8da0cb"
+    "color": "#8da0cb",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Water (Infrastructure Layer 19)",
     "file": "water_infrastructure_layer_19.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/8ed6565f93a04455ae6bd5bcb7d272db/geojson?layers=19",
-    "color": "#1f78b4"
+    "color": "#1f78b4",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Rate of Clogged Storm Drain Reports (CSA)",
     "file": "rate_clogged_storm_drain_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/cc307b1f087244e2bf064d211427d80e/geojson?layers=0",
-    "color": "#6a3d9a"
+    "color": "#6a3d9a",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Median Price of Homes Sold (CSA)",
     "file": "median_price_homes_sold_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/eb55867e580740228b0d4317464ea040/geojson?layers=0",
-    "color": "#b2df8a"
+    "color": "#b2df8a",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Total Number of Businesses (CSA)",
     "file": "total_businesses_csa.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/132ea1fbc8c84645b828a1a55406824d/geojson?layers=0",
-    "color": "#fb9a99"
+    "color": "#fb9a99",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Environmental Citations",
@@ -68,6 +122,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/ECB_OB/FeatureServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -85,6 +145,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/OpenGov_RegAndLicense/MapServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -102,6 +168,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/FIRE/Fire_Calls/MapServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -119,6 +191,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/21"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -136,6 +214,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/27"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -153,6 +237,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/14"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -170,6 +260,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -187,6 +283,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/2"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -204,6 +306,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/5"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -221,6 +329,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/10"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -238,6 +352,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/11"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -255,6 +375,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxCityPrograms/MapServer/20"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -272,6 +398,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/53"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   },
   {
@@ -289,6 +421,12 @@
     "import": {
       "type": "arcgis_feature_layer",
       "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/54"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
     }
   }
 ]

@@ -402,8 +402,8 @@ This is the correct professional boundary for the current product model. DuckDB 
 
 The seventeenth implemented step is a compact canonical parcel binary companion for the statewide parcel layer. `worldsim_regional_parcel_builder` now emits:
 
-- `data/layers/regional_parcels.geojson`
-- `data/layers/regional_parcels.geojson.canonical.bin`
+- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson`
+- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
 
 The GeoJSON file remains the human-readable interchange and debugging artifact. The companion binary stores the hydrated parcel feature content in a dense binary layout keyed to the final GeoJSON file signature. Hydration workers can consume that binary companion directly when the normal hydration cache is absent or stale, instead of reparsing multi-gigabyte GeoJSON text.
 

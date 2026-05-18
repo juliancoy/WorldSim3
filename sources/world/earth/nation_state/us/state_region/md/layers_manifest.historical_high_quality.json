@@ -13,7 +13,13 @@
     "join_strategy": "BLOCKLOT; fallback to address/geocoding if needed",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "DPW Capital Improvement Projects - Storm MS4",
@@ -29,7 +35,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "DPW Capital Improvement Projects - Stormwater",
@@ -45,7 +57,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "DPW Capital Improvement Projects - Water",
@@ -61,7 +79,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "DPW Capital Improvement Projects - Wastewater",
@@ -77,7 +101,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Capital Improvements Dashboard - Wastewater",
@@ -93,7 +123,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Capital Improvements Dashboard - Water",
@@ -109,7 +145,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Capital Improvements Dashboard - Stormwater",
@@ -125,7 +167,13 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Capital Improvements Dashboard - MS4",
@@ -141,6 +189,12 @@
     "join_strategy": "Spatial intersection with parcel, block, CSA, or neighborhood",
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]

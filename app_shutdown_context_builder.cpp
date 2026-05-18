@@ -38,6 +38,8 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.heatmap_multires_blend = input.heatmap_multires_blend;
     ctx.heatmap_allow_cpu_fallback = input.heatmap_allow_cpu_fallback;
     ctx.filter_enabled = input.filter_enabled;
+    ctx.selected_nation_state = input.selected_nation_state;
+    ctx.selected_state_region = input.selected_state_region;
     ctx.filter_use_date = input.filter_use_date;
     ctx.filter_year_min = input.filter_year_min;
     ctx.filter_year_max = input.filter_year_max;

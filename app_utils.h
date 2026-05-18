@@ -46,4 +46,8 @@ std::string trimDisplayValue(std::string s);
 std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys);
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);
 std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg);
+std::filesystem::path provenanceStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
+std::filesystem::path provenanceSourceArtifactPath(const std::filesystem::path& root, const LayerDef& layer, const std::string& artifact_name);
+std::filesystem::path resolveStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
+std::filesystem::path resolveStoredLayerPathForFile(const std::filesystem::path& root, const std::string& file);
 void openUrlInBrowser(const std::string& url);

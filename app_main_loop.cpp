@@ -703,7 +703,7 @@ int runWorldSim3App(int argc, char** argv) {
     }
     auto layer_file_size = [&](size_t idx) -> uintmax_t {
         std::error_code ec;
-        const fs::path p = root / "data" / "layers" / layers[idx].file;
+        const fs::path p = resolveStoredLayerPath(root, layers[idx]);
         const uintmax_t sz = fs::file_size(p, ec);
         return ec ? std::numeric_limits<uintmax_t>::max() : sz;
     };
@@ -981,7 +981,7 @@ int runWorldSim3App(int argc, char** argv) {
     auto refresh_local_layer_exists_cache = [&]() {
         for (size_t i = 0; i < layers.size(); ++i) {
             std::error_code ec;
-            local_layer_exists_cache[i] = fs::exists(root / "data" / "layers" / layers[i].file, ec) && !ec;
+            local_layer_exists_cache[i] = fs::exists(resolveStoredLayerPath(root, layers[i]), ec) && !ec;
         }
     };
     auto mark_local_layer_exists = [&](size_t idx, bool exists) {
@@ -1036,6 +1036,8 @@ int runWorldSim3App(int argc, char** argv) {
     auto& crime_year_max = map_filter_state.crime.year_max;
     loadFilterUiState(
         root,
+        &map_filter_state.selected_nation_state,
+        &map_filter_state.selected_state_region,
         &filter_enabled,
         &filter_use_date,
         &filter_year_min,
@@ -1722,6 +1724,8 @@ int runWorldSim3App(int argc, char** argv) {
             tax_sale_layer_idx,
             zoning_layer_idx,
             filter_enabled,
+            &map_filter_state.selected_nation_state,
+            &map_filter_state.selected_state_region,
             filter_owner,
             filter_address,
             filter_zip,
@@ -2702,6 +2706,8 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.heatmap_multires_blend = &heatmap_multires_blend;
     shutdown_input.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
     shutdown_input.filter_enabled = &filter_enabled;
+    shutdown_input.selected_nation_state = &map_filter_state.selected_nation_state;
+    shutdown_input.selected_state_region = &map_filter_state.selected_state_region;
     shutdown_input.filter_use_date = &filter_use_date;
     shutdown_input.filter_year_min = &filter_year_min;
     shutdown_input.filter_year_max = &filter_year_max;

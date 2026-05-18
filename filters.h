@@ -27,6 +27,8 @@ struct MapFilterState {
     // SSOT for map filters created by UI controls. Rendering reads this via
     // FeatureFilterContext; individual tabs should mutate only this object.
     bool enabled = false;
+    std::string selected_nation_state = "us";
+    std::string selected_state_region = "md";
     bool use_date = false;
     int year_min = 2000;
     int year_max = 2026;
@@ -110,3 +112,5 @@ bool queryMapColorForFeature(
     size_t feature_idx,
     const LayerDef::FeatureGeom& fg,
     float out_color[4]);
+
+bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters);

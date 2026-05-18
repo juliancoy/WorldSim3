@@ -72,9 +72,9 @@ void saveDerivedVacancyStatus(
 }
 
 int runVacancySelftest(const fs::path& root) {
-    const fs::path parcel_path = root / "data" / "layers" / "parcel.geojson";
-    const fs::path notice_path = root / "data" / "layers" / "vacant_building_notices.geojson";
-    const fs::path rehab_path = root / "data" / "layers" / "vacant_building_rehabs.geojson";
+    const fs::path parcel_path = resolveStoredLayerPathForFile(root, "parcel.geojson");
+    const fs::path notice_path = resolveStoredLayerPathForFile(root, "vacant_building_notices.geojson");
+    const fs::path rehab_path = resolveStoredLayerPathForFile(root, "vacant_building_rehabs.geojson");
 
     json out;
     out["mode"] = "vacancy-selftest";
@@ -196,4 +196,3 @@ int runVacancySelftest(const fs::path& root) {
     std::printf("%s\n", out.dump(2).c_str());
     return out["ok"].get<bool>() ? 0 : 3;
 }
-

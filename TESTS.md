@@ -356,7 +356,7 @@ Common variants:
 
 ```bash
 ./build/worldsim3_gpu_aggregate_harness --howard
-./build/worldsim3_gpu_aggregate_harness --input data/layers/parcel.geojson --jurisdiction "Baltimore City"
+./build/worldsim3_gpu_aggregate_harness --input data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/parcel.geojson --jurisdiction "Baltimore City"
 ./build/worldsim3_gpu_aggregate_harness --raster 512 --repeats 3 --sigma 1.5
 ./build/worldsim3_gpu_aggregate_harness --no-cpu-blur
 ```

@@ -1,6 +1,7 @@
 #include "layer_state_io.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -159,6 +160,13 @@ static void appendManifestEntries(
             ld.import_service_url = import.value("service_url", std::string());
             ld.import_normalizer = import.value("normalizer", std::string());
         }
+        if (arr[i].contains("provenance") && arr[i]["provenance"].is_object()) {
+            const auto& provenance = arr[i]["provenance"];
+            ld.provenance_world = provenance.value("world", std::string());
+            ld.provenance_nation_state = provenance.value("nation_state", std::string());
+            ld.provenance_state_region = provenance.value("state_region", std::string());
+            ld.provenance_county_city = provenance.value("county_city", std::string());
+        }
         ld.description = arr[i].contains("description") ? arr[i]["description"].get<std::string>() : "";
         ld.heatmap_field = arr[i].contains("heatmap_field") ? arr[i]["heatmap_field"].get<std::string>() : "";
         ld.subcategory = arr[i].contains("subcategory") ? arr[i]["subcategory"].get<std::string>() : "";
@@ -180,17 +188,19 @@ static void appendManifestEntries(
 std::vector<LayerDef> loadManifest(const fs::path& root) {
     std::vector<LayerDef> layers;
     const bool regional_parcels_available =
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
     std::unordered_set<std::string> seen_files;
+    const fs::path us_md_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
 
     const std::vector<fs::path> manifest_paths = {
-        root / "layers_manifest.json",
-        root / "layers_manifest.must_have.json",
-        root / "layers_manifest.nice_to_have.json",
-        root / "layers_manifest.heavy_data.json",
-        root / "layers_manifest.extended_events.json",
-        root / "layers_manifest.historical_high_quality.json"
+        us_md_root / "layers_manifest.json",
+        us_md_root / "layers_manifest.must_have.json",
+        us_md_root / "layers_manifest.nice_to_have.json",
+        us_md_root / "layers_manifest.heavy_data.json",
+        us_md_root / "layers_manifest.extended_events.json",
+        us_md_root / "layers_manifest.historical_high_quality.json"
     };
     for (const auto& manifest_path : manifest_paths) {
         appendManifestEntries(manifest_path, root, regional_parcels_available, seen_files, layers);
@@ -406,6 +416,8 @@ void saveLayerUiState(
 
 void loadFilterUiState(
     const fs::path& root,
+    std::string* selected_nation_state,
+    std::string* selected_state_region,
     bool* filter_enabled,
     bool* filter_use_date,
     int* filter_year_min,
@@ -445,6 +457,12 @@ void loadFilterUiState(
     }
     if (!j.contains("filters") || !j["filters"].is_object()) return;
     const json& f = j["filters"];
+    if (selected_nation_state && f.contains("selected_nation_state") && f["selected_nation_state"].is_string()) {
+        *selected_nation_state = f["selected_nation_state"].get<std::string>();
+    }
+    if (selected_state_region && f.contains("selected_state_region") && f["selected_state_region"].is_string()) {
+        *selected_state_region = f["selected_state_region"].get<std::string>();
+    }
     if (filter_enabled && f.contains("enabled") && f["enabled"].is_boolean()) *filter_enabled = f["enabled"].get<bool>();
     if (filter_use_date && f.contains("use_date") && f["use_date"].is_boolean()) *filter_use_date = f["use_date"].get<bool>();
     if (filter_year_min && f.contains("year_min") && f["year_min"].is_number_integer()) *filter_year_min = f["year_min"].get<int>();
@@ -479,6 +497,8 @@ void loadFilterUiState(
 
 void saveFilterUiState(
     const fs::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
     bool filter_enabled,
     bool filter_use_date,
     int filter_year_min,
@@ -515,6 +535,8 @@ void saveFilterUiState(
         }
     }
     json f = json::object();
+    f["selected_nation_state"] = selected_nation_state ? *selected_nation_state : "us";
+    f["selected_state_region"] = selected_state_region ? *selected_state_region : "md";
     f["enabled"] = filter_enabled;
     f["use_date"] = filter_use_date;
     f["year_min"] = filter_year_min;
@@ -536,7 +558,13 @@ void saveFilterUiState(
     f["crime_use_year"] = crime_filter_use_year;
     f["crime_year_min"] = crime_year_min;
     f["crime_year_max"] = crime_year_max;
-    f["owner_search_query"] = owner_search_query ? owner_search_query : "";
+    if (owner_search_query) {
+        f["owner_search_query"] = owner_search_query;
+    } else if (j.contains("filters") && j["filters"].is_object()) {
+        f["owner_search_query"] = j["filters"].value("owner_search_query", std::string());
+    } else {
+        f["owner_search_query"] = "";
+    }
     json owners = json::array();
     for (const auto& owner : selected_owners) owners.push_back(owner);
     f["selected_owners"] = std::move(owners);

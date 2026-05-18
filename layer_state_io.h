@@ -82,6 +82,8 @@ void saveLayerUiState(
 
 void loadFilterUiState(
     const std::filesystem::path& root,
+    std::string* selected_nation_state = nullptr,
+    std::string* selected_state_region = nullptr,
     bool* filter_enabled = nullptr,
     bool* filter_use_date = nullptr,
     int* filter_year_min = nullptr,
@@ -114,6 +116,8 @@ void loadFilterUiState(
 
 void saveFilterUiState(
     const std::filesystem::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
     bool filter_enabled,
     bool filter_use_date,
     int filter_year_min,

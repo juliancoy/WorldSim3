@@ -93,7 +93,7 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
         return;
     }
 
-    const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows"};
+    const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows", "anambra-repository"};
     finalizeDataLibraryBulkDownloadIfReady(*ctx.coordinator);
     ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
     ImGui::SameLine();
@@ -176,7 +176,7 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
             for (int display_index = clipper.DisplayStart; display_index < clipper.DisplayEnd; ++display_index) {
                 const size_t i = (*ctx.visible_rows)[static_cast<size_t>(display_index)];
                 auto& layer = (*ctx.layers)[i];
-                const std::filesystem::path local_path = *ctx.root / "data" / "layers" / layer.file;
+                const std::filesystem::path local_path = resolveStoredLayerPath(*ctx.root, layer);
                 const bool local_exists =
                     i < ctx.coordinator->local_layer_exists_cache->size() ? (*ctx.coordinator->local_layer_exists_cache)[i] : false;
                 (*ctx.rendered_rows_last)++;

@@ -1,5 +1,6 @@
 #include "worldsim_cli.h"
 
+#include "app_utils.h"
 #include "cache_io.h"
 #include "layer_geometry.h"
 #include "layer_pipeline_drain.h"
@@ -71,9 +72,9 @@ bool ensureHydrationCacheReady(
     std::vector<LayerDef::FeatureGeom>& features,
     std::string& source_used,
     std::string& error) {
-    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path binary_path = root / "data" / "cache" / "hydration" / (file + ".bin");
-    const fs::path canonical_path = root / "data" / "layers" / canonicalBinaryPathForLayerFile(file);
+    const fs::path canonical_path = layer_path.parent_path() / canonicalBinaryPathForLayerFile(file);
 
     if (loadBinaryHydrationCache(binary_path, sig, features)) {
         source_used = "binary";
@@ -1063,8 +1064,8 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path layer_path = root / "data" / "layers" / file;
-    const fs::path canonical_path = root / "data" / "layers" / canonicalBinaryPathForLayerFile(file);
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
+    const fs::path canonical_path = layer_path.parent_path() / canonicalBinaryPathForLayerFile(file);
     const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
     const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
@@ -1241,7 +1242,7 @@ int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path canonical_path = root / "data" / "layers" / canonicalBinaryPathForLayerFile(file);
+    const fs::path canonical_path = resolveStoredLayerPathForFile(root, file).parent_path() / canonicalBinaryPathForLayerFile(file);
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(canonical_path, meta)) {
         std::cout << json{
@@ -1283,7 +1284,7 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     if (!fs::exists(layer_path)) {
         std::cout << json{
             {"mode", "validate-canonical-parcel-binary"},
@@ -1310,7 +1311,7 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
     std::string geojson_error;
     const bool geojson_ok = collectHydratedFeaturesFromGeoJson(layer_path, geojson_features, geojson_error);
     std::vector<LayerDef::FeatureGeom> canonical_features;
-    const fs::path canonical_path = root / "data" / "layers" / canonicalBinaryPathForLayerFile(file);
+    const fs::path canonical_path = resolveStoredLayerPathForFile(root, file).parent_path() / canonicalBinaryPathForLayerFile(file);
     const bool canonical_ok = loadBinaryCanonicalFeatureCollection(canonical_path, sig, canonical_features);
     CanonicalFeatureCollectionMetadata meta;
     const bool meta_ok = loadBinaryCanonicalMetadata(canonical_path, meta);
@@ -1358,7 +1359,7 @@ json warmHydrationCacheOne(const fs::path& root, const std::string& file, int& e
             {"error", "requires a layer filename, not a path"}
         };
     }
-    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path binary_path = root / "data" / "cache" / "hydration" / (file + ".bin");
     std::string sig;
     std::string sig_source_kind;
@@ -1416,7 +1417,7 @@ int warmHydrationCache(const fs::path& root, const std::string& file) {
 }
 
 int warmHydrationCacheAll(const fs::path& root) {
-    const fs::path layers_dir = root / "data" / "layers";
+    const fs::path layers_dir = root / "data" / "provenance" / "stored";
     std::error_code ec;
     if (!fs::exists(layers_dir, ec)) {
         std::cerr << "layers directory missing: " << layers_dir << '\n';
@@ -1476,7 +1477,7 @@ json warmTriangulationCacheOne(const fs::path& root, const std::string& file, in
             {"error", "requires a layer filename, not a path"}
         };
     }
-    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path binary_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
     std::string sig;
     std::string sig_source_kind;
@@ -1607,7 +1608,7 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
         };
     }
 
-    const fs::path layer_path = root / "data" / "layers" / file;
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
     const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
@@ -2022,7 +2023,7 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
-        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
         << "       worldsim3 --warm-hydration-cache LAYER_FILE\n"
         << "       worldsim3 --warm-hydration-cache-all\n"

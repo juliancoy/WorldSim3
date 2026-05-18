@@ -10,7 +10,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Parcel",
@@ -23,7 +29,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_record"
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Zoning",
@@ -36,7 +48,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_context"
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Housing and Building Permits 2019-Present",
@@ -49,7 +67,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Vacant Building Notices",
@@ -62,7 +86,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
@@ -75,7 +105,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "point_event"
+    "duckdb_role": "point_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Life Expectancy (CSA)",
@@ -88,7 +124,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Asthma (Baltimore Tracts)",
@@ -102,7 +144,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Diabetes (Baltimore Tracts)",
@@ -116,7 +164,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Obesity (Baltimore Tracts)",
@@ -130,7 +184,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Stroke (Baltimore Tracts)",
@@ -144,7 +204,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Depression (Baltimore Tracts)",
@@ -158,7 +224,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Total Population (Baltimore Tracts)",
@@ -172,7 +244,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
@@ -186,7 +264,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
@@ -200,7 +284,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
@@ -214,7 +304,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
@@ -228,7 +324,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
@@ -242,7 +344,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
@@ -256,7 +364,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
@@ -270,7 +384,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC SVI 2022 (Baltimore Tracts)",
@@ -284,7 +404,13 @@
     "default_enabled": true,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
@@ -305,6 +431,12 @@
     ],
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]

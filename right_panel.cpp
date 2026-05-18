@@ -83,6 +83,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
     ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
     if (ImGui::BeginTabBar("right_tabs")) {
         drawFiltersTab(FiltersTabContext{
+            ctx.root,
             ctx.map_filter_state,
             ctx.layers,
             ctx.zoning_metadata,

@@ -1,4 +1,5 @@
 #include "layer_import.h"
+#include "app_utils.h"
 
 #include <zlib.h>
 #include <curl/curl.h>
@@ -688,10 +689,14 @@ std::string regionalParcelJurisdictionForFile(const std::string& file) {
 bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer) {
     layer = LayerDef{};
     layer.file = file;
+    layer.provenance_world = "earth";
+    layer.provenance_nation_state = "us";
+    layer.provenance_state_region = "md";
     if (file == "parcel.geojson") {
         layer.name = "Baltimore City Parcels";
         layer.source_url =
             "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0";
+        layer.provenance_county_city = "baltimore_city";
         return true;
     }
     if (file == "baltimore_county_parcels.geojson") {
@@ -699,6 +704,7 @@ bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer)
         layer.import_type = "arcgis_feature_layer";
         layer.import_service_url = "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1";
         layer.import_normalizer = "baltimore_county_parcels";
+        layer.provenance_county_city = "baltimore_county";
         return true;
     }
     if (file == "howard_county_parcels.geojson") {
@@ -707,6 +713,7 @@ bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer)
         layer.import_url = "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip";
         layer.import_shapefile = "Property.shp";
         layer.import_source_crs = "EPSG:2248";
+        layer.provenance_county_city = "howard_county";
         return true;
     }
     static const std::unordered_map<std::string, std::pair<std::string, std::string>> kMarylandPlanningCountyZips = {
@@ -739,17 +746,23 @@ bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer)
     layer.import_url = it->second.first;
     layer.import_shapefile = it->second.second;
     layer.import_source_crs = "EPSG:26985";
+    layer.provenance_county_city = toLowerAscii(layer.name.substr(0, layer.name.size() - 8));
+    std::replace(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), ' ', '_');
+    std::replace(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), '.', '_');
+    layer.provenance_county_city.erase(
+        std::remove(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), '\''),
+        layer.provenance_county_city.end());
     return true;
 }
 
 bool ensureRegionalParcelInputAvailable(const fs::path& root, const std::string& file, std::string* err) {
-    const fs::path input = root / "data" / "layers" / file;
-    if (fs::exists(input)) return true;
     LayerDef source;
     if (!populateRegionalParcelSourceLayer(file, source)) {
         if (err) *err = "no configured parcel source for " + file;
         return false;
     }
+    const fs::path input = resolveStoredLayerPath(root, source);
+    if (fs::exists(input)) return true;
     VersionedDownloadResult res = downloadOrImportLayer(source, input, root);
     if (!res.ok) {
         if (err) *err = "failed to materialize " + file + ": " + res.message;
@@ -794,7 +807,7 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
              {"wicomico_county_parcels.geojson", ""},
              {"worcester_county_parcels.geojson", ""}
          }) {
-        const fs::path input = root / "data" / "layers" / file;
+        const fs::path input = resolveStoredLayerPathForFile(root, file);
         if (!fs::exists(input)) {
             std::string import_err;
             ensureRegionalParcelInputAvailable(root, file, &import_err);
@@ -846,7 +859,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
         return buildRegionalParcelLayer(out_path, root);
     }
     if (layer.import_type == "socrata_csv_properties") {
-        const fs::path csv_path = root / "data" / "imports" / (out_path.filename().string() + ".source.csv");
+        const fs::path csv_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.csv");
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, csv_path, root / "data" / "versions");
         if (!dl.ok) return dl;
         try {
@@ -879,7 +892,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
         res.message = "unsupported import type/source CRS";
         return res;
     }
-    const fs::path archive_path = root / "data" / "imports" / (out_path.filename().string() + ".source.zip");
+    const fs::path archive_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.zip");
     VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, archive_path, root / "data" / "versions");
     if (!dl.ok) return dl;
     try {

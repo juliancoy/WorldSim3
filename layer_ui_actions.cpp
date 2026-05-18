@@ -1,6 +1,7 @@
 #include "layer_ui_actions.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "dataset_library.h"
 #include "layer_import.h"
 #include "memory_utils.h"

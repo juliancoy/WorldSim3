@@ -11,7 +11,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "point_event"
+    "duckdb_role": "point_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Foreclosure Filings",
@@ -25,7 +31,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Receivership - Filed and Open",
@@ -39,7 +51,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Receivership - Settled",
@@ -53,7 +71,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Work Orders",
@@ -67,7 +91,13 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "parcel_event"
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Impact Investment Areas",
@@ -81,6 +111,12 @@
     "default_enabled": false,
     "runtime_load": true,
     "duckdb_ingest": true,
-    "duckdb_role": "neighborhood_context"
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]

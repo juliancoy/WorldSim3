@@ -1,5 +1,6 @@
 #include "headless_layer_hydration.h"
 
+#include "app_utils.h"
 #include "layer_runtime.h"
 #include "layer_workers.h"
 #include "memory_utils.h"
@@ -40,8 +41,8 @@ bool hydrateLocalLayersHeadless(
     std::vector<size_t> local_indices;
     local_indices.reserve(layers.size());
     for (size_t i = 0; i < layers.size(); ++i) {
-        const fs::path layer_path = root / "data" / "layers" / layers[i].file;
-        const fs::path canonical_path = root / "data" / "layers" / (layers[i].file + ".canonical.bin");
+        const fs::path layer_path = resolveStoredLayerPath(root, layers[i]);
+        const fs::path canonical_path = layer_path.parent_path() / (layers[i].file + ".canonical.bin");
         std::error_code exists_ec;
         const bool exists =
             (fs::exists(layer_path, exists_ec) && !exists_ec) ||
@@ -56,7 +57,7 @@ bool hydrateLocalLayersHeadless(
 
     auto file_size_or_max = [&](size_t idx) {
         std::error_code ec;
-        const auto size = fs::file_size(root / "data" / "layers" / layers[idx].file, ec);
+        const auto size = fs::file_size(resolveStoredLayerPath(root, layers[idx]), ec);
         return ec ? std::numeric_limits<uintmax_t>::max() : size;
     };
     std::stable_sort(local_indices.begin(), local_indices.end(), [&](size_t a, size_t b) {

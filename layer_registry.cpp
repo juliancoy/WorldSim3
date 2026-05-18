@@ -1,5 +1,6 @@
 #include "layer_registry.h"
 
+#include "app_utils.h"
 #include "layer_import.h"
 
 namespace fs = std::filesystem;
@@ -12,9 +13,9 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
     layers_ = &layers;
     indices_ = {};
     const bool regional_parcels_available =
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson") ||
-        fs::exists(root / "data" / "layers" / "regional_parcels.geojson.canonical.bin");
-    const bool regional_real_property_available = fs::exists(root / "data" / "layers" / "regional_real_property.geojson");
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
+        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
+    const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices_.parcel_layer_idx = (int)i;
         else if (layers[i].file == "parcel.geojson" && indices_.parcel_layer_idx < 0) indices_.parcel_layer_idx = (int)i;

@@ -10,7 +10,13 @@
     "quality_tier": "official-document",
     "temporal_coverage": "1797-1915 tax records guide and series description",
     "description": "Guide to Baltimore City property tax records including general tax books, assessor tax records, and field assessor work books.",
-    "future_work": "Extract series/year/roll references into data/archival/sources and normalize owner/address/value events with confidence-scored joins."
+    "future_work": "Extract series/year/roll references into data/archival/sources and normalize owner/address/value events with confidence-scored joins.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore City Property Tax Records Online Guide",
@@ -22,7 +28,13 @@
     "source": "Baltimore City Archives",
     "quality_tier": "official-document",
     "temporal_coverage": "1797-1915 digitized tax records; assessor records 1800-1867; field assessor work books 1837-1896",
-    "description": "Research guide describing digitized Baltimore property tax records and access requirements."
+    "description": "Research guide describing digitized Baltimore property tax records and access requirements.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland SDAT Real Property Data Search",
@@ -36,7 +48,13 @@
     "temporal_coverage": "Current real property assessment records with sale/transfer context exposed through the SDAT search workflow",
     "description": "Official Maryland real-property search for ownership, assessed values, property characteristics, and sales information.",
     "join_strategy": "Account/PIN where available; fallback to normalized BLOCKLOT/address against Baltimore parcel geometry.",
-    "future_work": "Review access terms and build a compliant resolver for parcel-level assessment and sale history fields."
+    "future_work": "Review access terms and build a compliant resolver for parcel-level assessment and sale history fields.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland SDAT Real Property Sales History File",
@@ -50,7 +68,13 @@
     "temporal_coverage": "Recent and historical Maryland real-property sales records, subject to SDAT product availability",
     "description": "Candidate source for parcel-level sale transaction history that can extend beyond the single SALEDATE/SALEPRIC fields in current Real Property Information.",
     "join_strategy": "SDAT account/PIN; fallback to normalized deed/account fields and Baltimore BLOCKLOT/address joins.",
-    "future_work": "Locate downloadable sales-history files, normalize sale date/amount/instrument fields, and emit parcel value events with confidence scores."
+    "future_work": "Locate downloadable sales-history files, normalize sale date/amount/instrument fields, and emit parcel value events with confidence scores.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Planning Parcel Data and Mapping / MD Property View",
@@ -64,7 +88,13 @@
     "temporal_coverage": "Statewide parcel accounts, real-property characteristics, and sales products by available release year",
     "description": "Candidate bulk source for standardized parcel accounts, property characteristics, sales, and assessment-related fields.",
     "join_strategy": "Maryland parcel/account identifiers; fallback to Baltimore BLOCKLOT normalization and spatial joins.",
-    "future_work": "Select release years, document schema, and generate normalized parcel assessment/sale history tables."
+    "future_work": "Select release years, document schema, and generate normalized parcel assessment/sale history tables.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore City Archives Geography Sources",
@@ -76,7 +106,13 @@
     "source": "Baltimore City Archives",
     "quality_tier": "official-document",
     "temporal_coverage": "Historic maps and atlases, including Sanborn updates through the 1950s in archive holdings",
-    "description": "Guide to Sanborn maps, Bromley and Thompson atlases, and Baltimore City block maps."
+    "description": "Guide to Sanborn maps, Bromley and Thompson atlases, and Baltimore City block maps.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Library of Congress Sanborn Fire Insurance Maps Guide",
@@ -88,7 +124,13 @@
     "source": "Library of Congress",
     "quality_tier": "official-document",
     "temporal_coverage": "Historic Sanborn editions including Baltimore sheets where available",
-    "description": "Library of Congress guide for searching Sanborn fire insurance map holdings."
+    "description": "Library of Congress guide for searching Sanborn fire insurance map holdings.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore Permit History Request",
@@ -100,7 +142,13 @@
     "source": "Baltimore City Permits",
     "quality_tier": "official-request-workflow",
     "temporal_coverage": "Older permits, citations, building plans, inspection notes, certificates, occupancy reports",
-    "description": "Official workflow for requesting older permit and property records from Baltimore City."
+    "description": "Official workflow for requesting older permit and property records from Baltimore City.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore City Records Management",
@@ -111,7 +159,13 @@
     "category": "archival-research",
     "source": "Baltimore City Department of Legislative Reference",
     "quality_tier": "official-request-workflow",
-    "description": "Records Management Center information for temporary and permanent historical records."
+    "description": "Records Management Center information for temporary and permanent historical records.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Inventory of Historic Properties - Baltimore City Search",
@@ -122,7 +176,13 @@
     "category": "archival-research",
     "source": "Maryland Historical Trust",
     "quality_tier": "official-document",
-    "description": "Baltimore City entries in the Maryland Inventory of Historic Properties."
+    "description": "Baltimore City entries in the Maryland Inventory of Historic Properties.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Inventory of Historic Properties Map Service",
@@ -133,7 +193,13 @@
     "category": "archival-research",
     "source": "Maryland iMAP / Maryland Historical Trust",
     "quality_tier": "official-api",
-    "description": "Statewide MIHP map service candidate for future historic-property overlays."
+    "description": "Statewide MIHP map service candidate for future historic-property overlays.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore 311 Customer Service Requests 2026",
@@ -146,7 +212,13 @@
     "quality_tier": "official-api",
     "temporal_coverage": "Current calendar year",
     "description": "311 service requests with request type, status, and location. High-value parcel distress and service-response source.",
-    "join_strategy": "Spatial join to parcel or nearest parcel; preserve request category and status history."
+    "join_strategy": "Spatial join to parcel or nearest parcel; preserve request category and status history.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore Liquor Licenses",
@@ -159,7 +231,13 @@
     "quality_tier": "official-api",
     "temporal_coverage": "Current license records",
     "description": "Liquor license table with trade name, class, status, and address fields.",
-    "join_strategy": "Normalize and geocode AddrStreet plus ZIP to parcel; use license number as stable business key."
+    "join_strategy": "Normalize and geocode AddrStreet plus ZIP to parcel; use license number as stable business key.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Food License and Permit Guidance",
@@ -170,7 +248,13 @@
     "category": "archival-research",
     "source": "Maryland Department of Health",
     "quality_tier": "official-request-workflow",
-    "description": "Reference page for food facility permitting and licensing. Candidate starting point for restaurant and food-business permit data."
+    "description": "Reference page for food facility permitting and licensing. Candidate starting point for restaurant and food-business permit data.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Courts Dashboards",
@@ -181,7 +265,13 @@
     "category": "archival-research",
     "source": "Maryland Judiciary",
     "quality_tier": "official-api",
-    "description": "Official Maryland Courts dashboards, including high-level caseload and housing-related reporting."
+    "description": "Official Maryland Courts dashboards, including high-level caseload and housing-related reporting.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Maryland Court Records Access",
@@ -192,7 +282,13 @@
     "category": "archival-research",
     "source": "Maryland Judiciary",
     "quality_tier": "official-request-workflow",
-    "description": "Official court-record access page covering District Court civil judgment and satisfaction data and other record access methods."
+    "description": "Official court-record access page covering District Court civil judgment and satisfaction data and other record access methods.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore Lien Certificate Request Workflow",
@@ -203,7 +299,13 @@
     "category": "archival-research",
     "source": "City of Baltimore",
     "quality_tier": "official-request-workflow",
-    "description": "Official lien certificate request workflow for Baltimore City. Relevant for tax-delinquency and title-risk research."
+    "description": "Official lien certificate request workflow for Baltimore City. Relevant for tax-delinquency and title-risk research.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Lead Paint Violation Notices",
@@ -214,6 +316,12 @@
     "category": "archival-research",
     "source": "Baltimore City Health Department",
     "quality_tier": "official-document",
-    "description": "Lead paint violation notice document with address-level enforcement context."
+    "description": "Lead paint violation notice document with address-level enforcement context.",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   }
 ]
