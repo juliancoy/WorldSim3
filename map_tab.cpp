@@ -246,15 +246,15 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 configureParcelGpuDrawState(parcel_draw_cfg);
             }
             bool any_zoning_gpu_layer_enabled = false;
-            for (const LayerDef& layer : *ctx.layers) {
-                if (layer.enabled && isZoningPolygonLayerForGpu(layer)) {
-                    any_zoning_gpu_layer_enabled = true;
-                    break;
+            const ImGuiIO& io = ImGui::GetIO();
+            const ImVec2 fb_scale = io.DisplayFramebufferScale;
+            for (size_t layer_idx = 0; layer_idx < ctx.layers->size(); ++layer_idx) {
+                const LayerDef& layer = (*ctx.layers)[layer_idx];
+                if (!layer.enabled || !isZoningPolygonLayerForGpu(layer)) {
+                    clearZoningGpuDrawState(layer_idx);
+                    continue;
                 }
-            }
-            if (any_zoning_gpu_layer_enabled) {
-                const ImGuiIO& io = ImGui::GetIO();
-                const ImVec2 fb_scale = io.DisplayFramebufferScale;
+                any_zoning_gpu_layer_enabled = true;
                 ParcelGpuDrawConfig zoning_draw_cfg;
                 zoning_draw_cfg.active = true;
                 zoning_draw_cfg.math_zoom = map_canvas_session.math_zoom;
@@ -270,9 +270,10 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 zoning_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
                 zoning_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
                 zoning_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
-                configureZoningGpuDrawState(zoning_draw_cfg);
-            } else {
-                clearZoningGpuDrawState();
+                configureZoningGpuDrawState(layer_idx, zoning_draw_cfg);
+            }
+            if (!any_zoning_gpu_layer_enabled) {
+                clearAllZoningGpuDrawStates();
             }
             if (ctx.crime_nibrs_layer_idx >= 0 &&
                 (size_t)ctx.crime_nibrs_layer_idx < ctx.layers->size() &&

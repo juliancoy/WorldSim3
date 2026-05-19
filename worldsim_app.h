@@ -93,22 +93,25 @@ void stopParcelGpuUploadWorker();
 bool requestParcelGpuUpload(const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
 bool drainParcelGpuUploadResults(const std::string* expected_signature = nullptr, std::string* adopted_signature = nullptr, std::string* error = nullptr);
 
-bool ensureZoningGpuBuffersResident(const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
-bool updateZoningGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
-bool updateZoningGpuOutlineColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
-void clearZoningGpuBuffers();
-bool configureZoningGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error = nullptr);
-void clearZoningGpuDrawState();
-bool zoningGpuDrawActive();
-void enqueueZoningGpuDraw(ImDrawList* draw_list);
-bool zoningGpuOutlineDrawActive();
-void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list);
+bool ensureZoningGpuBuffersResident(size_t layer_idx, const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
+bool updateZoningGpuColorBuffer(size_t layer_idx, const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+bool updateZoningGpuOutlineColorBuffer(size_t layer_idx, const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+void clearZoningGpuBuffers(size_t layer_idx);
+void clearAllZoningGpuBuffers();
+bool configureZoningGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& config, std::string* error = nullptr);
+void clearZoningGpuDrawState(size_t layer_idx);
+void clearAllZoningGpuDrawStates();
+bool zoningGpuDrawActive(size_t layer_idx);
+void enqueueZoningGpuDraw(ImDrawList* draw_list, size_t layer_idx);
+bool zoningGpuOutlineDrawActive(size_t layer_idx);
+void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list, size_t layer_idx);
 
 bool ensureCrimePointGpuBuffersResident(
     const std::string& source_signature,
     const std::vector<ImVec2>& lonlat_positions,
     std::string* error = nullptr);
 bool updateCrimePointGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+bool updateCrimePointGpuGlyphBuffer(const std::vector<uint32_t>& glyph_codes, std::string* error = nullptr);
 void clearCrimePointGpuBuffers();
 bool configureCrimePointGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error = nullptr);
 void clearCrimePointGpuDrawState();

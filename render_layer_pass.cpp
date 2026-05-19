@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "app_utils.h"
+#include "cpu_zoning_fallback.h"
 #include "feature_props.h"
 #include "geo.h"
 #include "layer_geometry.h"
@@ -206,7 +207,10 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     return hs.find(nd) != std::string::npos;
 }
 
-PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer) {
+PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+    if (fg && isLikelyCrimePointLayer(layer)) {
+        return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
+    }
     if (containsCaseInsensitive(layer.name, "water")) return PointMarkerGlyph::Droplet;
     if (containsCaseInsensitive(layer.name, "health")) return PointMarkerGlyph::Cross;
     if (containsCaseInsensitive(layer.name, "school")) return PointMarkerGlyph::Triangle;
@@ -376,15 +380,14 @@ bool layerHasPrimaryGpuDraw(
     const LayerDef& layer) {
     if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) return true;
     if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) return true;
-    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive()) return true;
+    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive(layer_idx)) return true;
     return false;
 }
 
 void enqueuePrimaryGpuDrawForLayer(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
-    const LayerDef& layer,
-    bool& zoning_draw_enqueued) {
+    const LayerDef& layer) {
     if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
         enqueueParcelGpuDraw(ctx.draw);
         return;
@@ -393,12 +396,11 @@ void enqueuePrimaryGpuDrawForLayer(
         enqueueCrimePointGpuDraw(ctx.draw);
         return;
     }
-    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive() && !zoning_draw_enqueued) {
-        enqueueZoningGpuDraw(ctx.draw);
-        if (zoningGpuOutlineDrawActive()) {
-            enqueueZoningGpuOutlineDraw(ctx.draw);
+    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive(layer_idx)) {
+        enqueueZoningGpuDraw(ctx.draw, layer_idx);
+        if (zoningGpuOutlineDrawActive(layer_idx)) {
+            enqueueZoningGpuOutlineDraw(ctx.draw, layer_idx);
         }
-        zoning_draw_enqueued = true;
     }
 }
 
@@ -537,7 +539,7 @@ void renderClusteredPointCandidates(
         bucket.center_sum.y += ps.y;
         if (bucket.count == 0) {
             bucket.color = feature_c;
-            bucket.glyph = pointMarkerGlyphForLayer(layer);
+            bucket.glyph = pointMarkerGlyphForLayerFeature(layer);
             bucket.representative_feature_idx = (size_t)fidx;
             bucket.representative_feature = &fg;
             bucket.min_lon = fg.extent.min_lon;
@@ -673,9 +675,12 @@ void drawFeatureGeometry(
             ctx.zoom_value < 14.0;
         const bool use_gpu_parcel_fill =
             (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
-        const bool use_gpu_zoning_fill =
-            isZoningPolygonLayer(layer) && zoningGpuDrawActive();
-        if (!use_gpu_parcel_fill && !use_gpu_zoning_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
+        const bool allow_cpu_zoning_fill =
+            isZoningPolygonLayer(layer) && cpuZoningFillAllowed(layer) && !zoningGpuDrawActive(layer_idx);
+        if (!use_gpu_parcel_fill &&
+            (!isZoningPolygonLayer(layer) || allow_cpu_zoning_fill) &&
+            fill_enabled_for_layer &&
+            ctx.should_fill_layer_polygon(layer_idx)) {
             const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
             const uint32_t fill_alpha = (uint32_t)std::clamp(
                 (int)std::lround((float)src_alpha * std::clamp(ctx.map_polygon_fill_opacity, 0.0f, 1.0f)),
@@ -722,9 +727,11 @@ void drawFeatureGeometry(
         }
 
         for (const auto& r : world_rings) {
+            const bool allow_cpu_zoning_outline =
+                isZoningPolygonLayer(layer) && cpuZoningOutlineAllowed(layer) && !zoningGpuOutlineDrawActive(layer_idx);
             if (!suppress_base_parcel_outlines &&
                 ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) &&
-                (!isZoningPolygonLayer(layer) || !zoningGpuOutlineDrawActive())) {
+                (!isZoningPolygonLayer(layer) || allow_cpu_zoning_outline)) {
                 ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
                 const auto& line = ctx.projection->scratchLine();
                 ctx.draw->AddPolyline(line.data(), (int)line.size(), outline_c, ImDrawFlags_Closed, 1.0f);
@@ -752,7 +759,7 @@ void drawFeatureGeometry(
                 ctx.draw,
                 ps,
                 feature_c,
-                pointMarkerGlyphForLayer(layer),
+                pointMarkerGlyphForLayerFeature(layer, &fg),
                 hovered ? (kPointMarkerRadiusPx + 1.8f) : kPointMarkerRadiusPx);
             if (ctx.prof_features_drawn_frame) {
                 ++(*ctx.prof_features_drawn_frame);
@@ -779,7 +786,7 @@ void flushDeferredPointRenderJobs(
             ctx.draw,
             ps,
             job.color,
-            pointMarkerGlyphForLayer(*job.layer),
+            pointMarkerGlyphForLayerFeature(*job.layer, job.feature),
             hovered ? (kPointMarkerRadiusPx + 1.8f) : kPointMarkerRadiusPx);
         if (ctx.prof_features_drawn_frame) {
             ++(*ctx.prof_features_drawn_frame);
@@ -866,7 +873,6 @@ bool shouldBypassCpuParcelFeaturePass(
 void runRenderLayerPass(const RenderLayerPassContext& ctx) {
     std::vector<uint32_t> render_candidates;
     std::vector<DeferredPointRenderJob> deferred_point_jobs;
-    bool zoning_draw_enqueued = false;
     for (size_t layer_idx : ctx.render_plan->draw_layer_order) {
         auto& l = (*ctx.layers)[layer_idx];
         if (!l.enabled) continue;
@@ -874,7 +880,7 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
         const bool is_zoning_layer = isZoningPolygonLayer(l);
-        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l, zoning_draw_enqueued);
+        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l);
         if (layerHasPrimaryGpuDraw(ctx, layer_idx, l)) {
             continue;
         }

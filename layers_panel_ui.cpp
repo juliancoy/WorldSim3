@@ -372,18 +372,33 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
     const std::filesystem::path& local_layer_path,
     bool local_layer_exists);
 
+bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& layer);
+
 bool categoryHasVisibleSubdata(const LayersPanelUiContext& ctx, LayerDef::Category cat) {
     if (!ctx.shared || !ctx.shared->layers) return false;
     for (const LayerDef& layer : *ctx.shared->layers) {
         if (layer.category != cat) continue;
-        if (ctx.map_filter_state && !layerMatchesSelectedGeography(layer, *ctx.map_filter_state)) continue;
+        if (!layerVisibleInHierarchy(ctx, layer)) continue;
         if (layer.enabled) return true;
     }
     return false;
 }
 
+bool layerMatchesSearch(const LayersPanelUiContext& ctx, const LayerDef& layer) {
+    const std::string query = ctx.layer_search_query ? trimDisplayValue(ctx.layer_search_query) : "";
+    if (query.empty()) return true;
+    const std::string scope = geographicScopeLabel(layer);
+    return fuzzyTextMatches(layer.name, query) ||
+           fuzzyTextMatches(layer.description, query) ||
+           fuzzyTextMatches(layer.subcategory, query) ||
+           fuzzyTextMatches(layer.region, query) ||
+           fuzzyTextMatches(layer.file, query) ||
+           fuzzyTextMatches(scope, query);
+}
+
 bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& layer) {
-    return !ctx.map_filter_state || layerMatchesSelectedGeography(layer, *ctx.map_filter_state);
+    if (ctx.map_filter_state && !layerMatchesSelectedGeography(layer, *ctx.map_filter_state)) return false;
+    return layerMatchesSearch(ctx, layer);
 }
 
 bool drawBranchVisibilityToggle(const char* id, bool visible, const char* tooltip) {
@@ -600,6 +615,16 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
 
 void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const char* label) {
     if (!ctx.shared || !ctx.shared->layers) return;
+    bool category_has_rows = false;
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        const LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (layer.category != cat) continue;
+        if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
+        if (!layerVisibleInHierarchy(ctx, layer)) continue;
+        category_has_rows = true;
+        break;
+    }
+    if (!category_has_rows) return;
     const bool any_visible = categoryHasVisibleSubdata(ctx, cat);
     const std::string toggle_id = std::string("toggle_") + label;
     const std::string toggle_tip = std::string("Toggle all ") + label + " subdata";

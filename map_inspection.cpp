@@ -9,6 +9,11 @@
 #include "worldsim_app_internal.h"
 
 #include <filesystem>
+#include <atomic>
+#include <cmath>
+#include <memory>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 
 namespace {
@@ -33,7 +38,11 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     return hs.find(nd) != std::string::npos;
 }
 
-const char* pointIconTypeLabel(const LayerDef& layer) {
+std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg);
+std::string eventFeatureOpenUrl(const LayerDef::FeatureGeom& fg);
+
+const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+    if (fg && isLikelyCrimePointLayer(layer)) return crimePointTypeLabel(*fg);
     if (containsCaseInsensitive(layer.name, "water")) return "Waterpoint";
     if (containsCaseInsensitive(layer.name, "health")) return "Health facility";
     if (containsCaseInsensitive(layer.name, "school")) return "School";
@@ -58,7 +67,10 @@ const char* pointIconTypeLabel(const LayerDef& layer) {
     }
 }
 
-PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer) {
+PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+    if (fg && isLikelyCrimePointLayer(layer)) {
+        return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
+    }
     if (containsCaseInsensitive(layer.name, "water")) return PointMarkerGlyph::Droplet;
     if (containsCaseInsensitive(layer.name, "health")) return PointMarkerGlyph::Cross;
     if (containsCaseInsensitive(layer.name, "school")) return PointMarkerGlyph::Triangle;
@@ -163,8 +175,11 @@ struct HoverImageCacheEntry {
     TileTexture tex;
     int width = 0;
     int height = 0;
-    bool attempted = false;
-    bool available = false;
+    std::atomic<bool> download_requested{false};
+    std::atomic<bool> downloading{false};
+    std::atomic<bool> download_complete{false};
+    std::atomic<bool> load_attempted{false};
+    std::atomic<bool> available{false};
 };
 
 bool isLikelyEventPointLayer(const LayerDef& layer) {
@@ -192,19 +207,38 @@ std::string hoverImageCachePathForUrl(const std::string& url) {
 }
 
 HoverImageCacheEntry* getHoverImage(const std::string& url) {
-    static std::unordered_map<std::string, HoverImageCacheEntry> cache;
+    static std::unordered_map<std::string, std::shared_ptr<HoverImageCacheEntry>> cache;
+    static std::mutex cache_mutex;
     if (url.empty()) return nullptr;
-    HoverImageCacheEntry& entry = cache[url];
-    if (entry.attempted) return entry.available ? &entry : nullptr;
-    entry.attempted = true;
-
+    std::shared_ptr<HoverImageCacheEntry> entry;
+    {
+        std::lock_guard<std::mutex> lk(cache_mutex);
+        auto it = cache.find(url);
+        if (it == cache.end()) {
+            it = cache.emplace(url, std::make_shared<HoverImageCacheEntry>()).first;
+        }
+        entry = it->second;
+    }
     const std::string cache_path = hoverImageCachePathForUrl(url);
     if (cache_path.empty()) return nullptr;
-    std::error_code ec;
-    if (!fs::exists(cache_path, ec) || ec) {
-        std::string err;
-        if (!downloadUrlToFile(url, cache_path, err)) return nullptr;
+    if (!entry->download_requested.exchange(true)) {
+        std::error_code ec;
+        if (fs::exists(cache_path, ec) && !ec) {
+            entry->download_complete.store(true);
+        } else {
+            entry->downloading.store(true);
+            std::thread([url, cache_path, entry]() {
+                std::string err;
+                const bool ok = downloadUrlToFile(url, cache_path, err);
+                entry->downloading.store(false);
+                entry->download_complete.store(ok);
+            }).detach();
+            return nullptr;
+        }
     }
+    if (!entry->download_complete.load()) return nullptr;
+    if (entry->available.load()) return entry.get();
+    if (entry->load_attempted.exchange(true)) return nullptr;
 
     int w = 0;
     int h = 0;
@@ -214,18 +248,107 @@ HoverImageCacheEntry* getHoverImage(const std::string& url) {
         if (pixels) stbi_image_free(pixels);
         return nullptr;
     }
-    if (!uploadRgbaTexture(pixels, (uint32_t)w, (uint32_t)h, entry.tex)) {
+    if (!uploadRgbaTexture(pixels, (uint32_t)w, (uint32_t)h, entry->tex)) {
         stbi_image_free(pixels);
         return nullptr;
     }
     stbi_image_free(pixels);
-    entry.width = w;
-    entry.height = h;
-    entry.available = true;
-    return &entry;
+    entry->width = w;
+    entry->height = h;
+    entry->available.store(true);
+    return entry.get();
 }
 
-void drawPointLayerHeader(const LayerDef& layer) {
+std::string eventFeatureImageUrl(const LayerDef::FeatureGeom& fg) {
+    std::string url = firstDisplayProperty(
+        fg,
+        {"image_url_resolved", "org_image_url_resolved", "imageUrl", "image_url", "orgImageUrl"});
+    if (!url.empty() && url[0] == '/') return std::string("https://codecollective.us") + url;
+    return url;
+}
+
+bool samePointLocation(const LayerDef::FeatureGeom& a, const LayerDef::FeatureGeom& b) {
+    constexpr double eps = 1e-7;
+    return std::abs((double)a.extent.min_lon - (double)b.extent.min_lon) <= eps &&
+           std::abs((double)a.extent.min_lat - (double)b.extent.min_lat) <= eps;
+}
+
+std::vector<const LayerDef::FeatureGeom*> collectColocatedEventFeatures(
+    const LayerDef& layer,
+    const LayerDef::FeatureGeom& anchor) {
+    std::vector<const LayerDef::FeatureGeom*> matches;
+    matches.reserve(8);
+    for (const auto& fg : layer.features) {
+        if (samePointLocation(fg, anchor)) matches.push_back(&fg);
+    }
+    return matches;
+}
+
+void drawEventAvatar(const LayerDef::FeatureGeom& fg, float max_w, float max_h) {
+    const std::string image_url = eventFeatureImageUrl(fg);
+    if (HoverImageCacheEntry* image = getHoverImage(image_url); image && image->tex.descriptor != VK_NULL_HANDLE) {
+        float draw_w = (float)image->width;
+        float draw_h = (float)image->height;
+        const float scale = std::min(max_w / std::max(1.0f, draw_w), max_h / std::max(1.0f, draw_h));
+        if (scale < 1.0f) {
+            draw_w *= scale;
+            draw_h *= scale;
+        }
+        ImGui::Image((ImTextureID)image->tex.descriptor, ImVec2(draw_w, draw_h));
+        return;
+    }
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 size(max_w, max_h);
+    draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(42, 48, 56, 255), 4.0f);
+    draw->AddRect(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(88, 98, 112, 255), 4.0f, 0, 1.0f);
+    ImGui::Dummy(size);
+}
+
+void drawEventListEntry(const LayerDef::FeatureGeom& fg, const char* row_id, bool clickable) {
+    const std::string title = pointFeatureTitle(fg);
+    const std::string org_name = firstDisplayProperty(fg, {"org_name", "orgName", "organization", "source_group"});
+    const std::string start = firstDisplayProperty(fg, {"startDate", "start_date", "date_start"});
+    const std::string venue = firstDisplayProperty(fg, {"location.name", "venue", "Venue"});
+    const float row_height = 40.0f;
+    const float avail_w = std::max(220.0f, ImGui::GetContentRegionAvail().x);
+
+    ImGui::PushID(row_id);
+    if (clickable) {
+        ImGui::InvisibleButton("event_row", ImVec2(avail_w, row_height));
+    } else {
+        ImGui::Dummy(ImVec2(avail_w, row_height));
+    }
+    const bool hovered = clickable && ImGui::IsItemHovered();
+    const bool clicked = clickable && ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const ImVec2 min = ImGui::GetItemRectMin();
+    const ImVec2 max = ImGui::GetItemRectMax();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImU32 bg = hovered ? IM_COL32(58, 88, 132, 180) : IM_COL32(32, 36, 44, 120);
+    draw->AddRectFilled(min, max, bg, 6.0f);
+    draw->AddRect(min, max, IM_COL32(78, 86, 98, 180), 6.0f, 0, 1.0f);
+
+    ImGui::SetCursorScreenPos(ImVec2(min.x + 6.0f, min.y + 6.0f));
+    drawEventAvatar(fg, 28.0f, 28.0f);
+    ImGui::SetCursorScreenPos(ImVec2(min.x + 42.0f, min.y + 5.0f));
+    ImGui::BeginGroup();
+    ImGui::TextWrapped("%s", title.empty() ? "(untitled event)" : title.c_str());
+    if (!org_name.empty()) {
+        ImGui::TextDisabled("%s", org_name.c_str());
+    } else if (!venue.empty()) {
+        ImGui::TextDisabled("%s", venue.c_str());
+    } else if (!start.empty()) {
+        ImGui::TextDisabled("%s", start.c_str());
+    }
+    ImGui::EndGroup();
+    if (clicked) {
+        const std::string open_url = eventFeatureOpenUrl(fg);
+        if (!open_url.empty()) openUrlInBrowser(open_url);
+    }
+    ImGui::PopID();
+}
+
+void drawPointLayerHeader(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float icon_size = 22.0f;
     ImGui::Dummy(ImVec2(icon_size, icon_size));
@@ -234,7 +357,7 @@ void drawPointLayerHeader(const LayerDef& layer) {
     const ImVec2 center((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
     drawPointMarkerGlyph(
         draw,
-        pointMarkerGlyphForLayer(layer),
+        pointMarkerGlyphForLayer(layer, fg),
         center,
         7.0f,
         ImGui::ColorConvertFloat4ToU32(layer.color));
@@ -243,7 +366,7 @@ void drawPointLayerHeader(const LayerDef& layer) {
     ImGui::SetWindowFontScale(1.35f);
     ImGui::TextWrapped("%s", layer.name.c_str());
     ImGui::SetWindowFontScale(1.0f);
-    ImGui::TextDisabled("%s", pointIconTypeLabel(layer));
+    ImGui::TextDisabled("%s", pointIconTypeLabel(layer, fg));
     ImGui::EndGroup();
 }
 
@@ -287,7 +410,19 @@ std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg) {
          "industry_name", "station_name", "waterpoint_name"});
 }
 
+std::string eventFeatureOpenUrl(const LayerDef::FeatureGeom& fg) {
+    std::string url = firstDisplayProperty(fg, {"url", "URL"});
+    if (!url.empty()) return url;
+    return firstDisplayProperty(fg, {"source_url", "source", "Source"});
+}
+
+std::string pointFeatureOpenUrl(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
+    if (!isLikelyEventPointLayer(layer)) return {};
+    return eventFeatureOpenUrl(fg);
+}
+
 void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
+    const std::vector<const LayerDef::FeatureGeom*> colocated = collectColocatedEventFeatures(layer, fg);
     const std::string title = pointFeatureTitle(fg);
     const std::string description = firstDisplayProperty(fg, {"description", "Description", "DESC"});
     const std::string address = firstDisplayProperty(
@@ -301,43 +436,55 @@ void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureGeom& f
     const std::string tags = firstDisplayProperty(fg, {"tags", "Tags"});
     const std::string event_url = firstDisplayProperty(fg, {"url", "URL"});
     const std::string source_url = firstDisplayProperty(fg, {"source_url", "source", "Source"});
-    const std::string image_url = firstDisplayProperty(fg, {"orgImageUrl", "imageUrl", "image_url"});
+    const std::string image_url = eventFeatureImageUrl(fg);
 
-    ImGui::SetNextWindowSize(ImVec2(480.0f, 0.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Always);
     ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(460.0f);
-    drawPointLayerHeader(layer);
-    if (HoverImageCacheEntry* image = getHoverImage(image_url); image && image->tex.descriptor != VK_NULL_HANDLE) {
-        const float max_w = 132.0f;
-        const float max_h = 72.0f;
-        float draw_w = (float)image->width;
-        float draw_h = (float)image->height;
-        const float scale = std::min(max_w / std::max(1.0f, draw_w), max_h / std::max(1.0f, draw_h));
-        if (scale < 1.0f) {
-            draw_w *= scale;
-            draw_h *= scale;
+    ImGui::PushTextWrapPos(540.0f);
+    drawPointLayerHeader(layer, &fg);
+    if (colocated.size() > 1) {
+        ImGui::TextWrapped("%zu events at this location", colocated.size());
+        ImGui::TextDisabled("Click the marker to open the full event list.");
+        ImGui::Separator();
+        ImGui::BeginChild("event_location_stack", ImVec2(0.0f, std::min(300.0f, 48.0f * (float)colocated.size())), true);
+        for (size_t i = 0; i < colocated.size(); ++i) {
+            drawEventListEntry(*colocated[i], ("hover_row_" + std::to_string(i)).c_str(), false);
         }
-        ImGui::Image((ImTextureID)image->tex.descriptor, ImVec2(draw_w, draw_h));
-    }
-    if (!title.empty()) ImGui::TextWrapped("%s", title.c_str());
-    if (!org_name.empty()) ImGui::TextDisabled("%s", org_name.c_str());
-    if (!status.empty()) ImGui::TextWrapped("Status: %s", status.c_str());
-    if (!start.empty()) ImGui::TextWrapped("Starts: %s", start.c_str());
-    if (!end_date.empty()) ImGui::TextWrapped("Ends: %s", end_date.c_str());
-    if (!end_time.empty()) ImGui::TextWrapped("End Time: %s", end_time.c_str());
-    if (!venue.empty()) ImGui::TextWrapped("Venue: %s", venue.c_str());
-    if (!address.empty()) ImGui::TextWrapped("Address: %s", address.c_str());
-    if (!tags.empty()) ImGui::TextWrapped("Tags: %s", tags.c_str());
-    ImGui::TextWrapped("Location: %.6f, %.6f", fg.extent.min_lat, fg.extent.min_lon);
-    if (!description.empty()) {
-        ImGui::Separator();
-        ImGui::TextWrapped("%s", description.c_str());
-    }
-    if (!event_url.empty() || !source_url.empty() || !image_url.empty()) {
-        ImGui::Separator();
-        if (!event_url.empty()) ImGui::TextWrapped("Event URL: %s", event_url.c_str());
-        if (!source_url.empty()) ImGui::TextWrapped("Source: %s", source_url.c_str());
-        if (!image_url.empty()) ImGui::TextWrapped("Image: %s", image_url.c_str());
+        ImGui::EndChild();
+        ImGui::TextWrapped("Location: %.6f, %.6f", fg.extent.min_lat, fg.extent.min_lon);
+    } else {
+        if (HoverImageCacheEntry* image = getHoverImage(image_url); image && image->tex.descriptor != VK_NULL_HANDLE) {
+            const float max_w = 240.0f;
+            const float max_h = 140.0f;
+            float draw_w = (float)image->width;
+            float draw_h = (float)image->height;
+            const float scale = std::min(max_w / std::max(1.0f, draw_w), max_h / std::max(1.0f, draw_h));
+            if (scale < 1.0f) {
+                draw_w *= scale;
+                draw_h *= scale;
+            }
+            ImGui::Image((ImTextureID)image->tex.descriptor, ImVec2(draw_w, draw_h));
+        }
+        if (!title.empty()) ImGui::TextWrapped("%s", title.c_str());
+        if (!org_name.empty()) ImGui::TextDisabled("%s", org_name.c_str());
+        if (!status.empty()) ImGui::TextWrapped("Status: %s", status.c_str());
+        if (!start.empty()) ImGui::TextWrapped("Starts: %s", start.c_str());
+        if (!end_date.empty()) ImGui::TextWrapped("Ends: %s", end_date.c_str());
+        if (!end_time.empty()) ImGui::TextWrapped("End Time: %s", end_time.c_str());
+        if (!venue.empty()) ImGui::TextWrapped("Venue: %s", venue.c_str());
+        if (!address.empty()) ImGui::TextWrapped("Address: %s", address.c_str());
+        if (!tags.empty()) ImGui::TextWrapped("Tags: %s", tags.c_str());
+        ImGui::TextWrapped("Location: %.6f, %.6f", fg.extent.min_lat, fg.extent.min_lon);
+        if (!description.empty()) {
+            ImGui::Separator();
+            ImGui::TextWrapped("%s", description.c_str());
+        }
+        if (!event_url.empty() || !source_url.empty() || !image_url.empty()) {
+            ImGui::Separator();
+            if (!event_url.empty()) ImGui::TextWrapped("Event URL: %s", event_url.c_str());
+            if (!source_url.empty()) ImGui::TextWrapped("Source: %s", source_url.c_str());
+            if (!image_url.empty()) ImGui::TextWrapped("Image: %s", image_url.c_str());
+        }
     }
     ImGui::PopTextWrapPos();
     ImGui::EndTooltip();
@@ -358,7 +505,7 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureGeom&
     ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
     ImGui::BeginTooltip();
     ImGui::PushTextWrapPos(440.0f);
-    drawPointLayerHeader(layer);
+    drawPointLayerHeader(layer, &fg);
     if (!title.empty()) ImGui::TextWrapped("Feature: %s", title.c_str());
     if (!feature_type.empty()) ImGui::TextWrapped("Type: %s", feature_type.c_str());
     if (!lga.empty()) ImGui::TextWrapped("LGA: %s", lga.c_str());
@@ -373,6 +520,11 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureGeom&
 }
 
 void handleMapInspection(const MapInspectionContext& ctx) {
+    static bool event_stack_popup_open = false;
+    static int event_stack_layer_idx = -1;
+    static float event_stack_lon = 0.0f;
+    static float event_stack_lat = 0.0f;
+
     if (!ctx.hover_state || !ctx.layers || !ctx.parcel_selection) return;
     const LayerDef::FeatureGeom* hovered_parcel = ctx.hover_state->hovered_parcel;
     const size_t hovered_parcel_idx = ctx.hover_state->hovered_parcel_idx;
@@ -384,6 +536,36 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
         ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
+
+    if (ctx.map_hovered && click_select && hovered_point && hovered_point_layer_idx >= 0 &&
+        (size_t)hovered_point_layer_idx < ctx.layers->size()) {
+        const LayerDef& hovered_point_layer = (*ctx.layers)[(size_t)hovered_point_layer_idx];
+        if (isLikelyEventPointLayer(hovered_point_layer)) {
+            const std::vector<const LayerDef::FeatureGeom*> colocated =
+                collectColocatedEventFeatures(hovered_point_layer, *hovered_point);
+            if (colocated.size() > 1) {
+                event_stack_popup_open = true;
+                event_stack_layer_idx = hovered_point_layer_idx;
+                event_stack_lon = hovered_point->extent.min_lon;
+                event_stack_lat = hovered_point->extent.min_lat;
+                ImGui::OpenPopup("Event Location List");
+                hovered_parcel = nullptr;
+                hovered_zone = nullptr;
+            } else {
+                const std::string open_url = pointFeatureOpenUrl(hovered_point_layer, *hovered_point);
+                if (!open_url.empty()) {
+                    openUrlInBrowser(open_url);
+                    return;
+                }
+            }
+        } else {
+            const std::string open_url = pointFeatureOpenUrl(hovered_point_layer, *hovered_point);
+            if (!open_url.empty()) {
+                openUrlInBrowser(open_url);
+                return;
+            }
+        }
+    }
 
     if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel != nullptr) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
@@ -481,5 +663,32 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     } else if (ctx.map_hovered && hovered_point && hovered_point_layer_idx >= 0 &&
                (size_t)hovered_point_layer_idx < ctx.layers->size()) {
         drawPointFeatureSummary((*ctx.layers)[(size_t)hovered_point_layer_idx], *hovered_point);
+    }
+
+    if (event_stack_popup_open) {
+        ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
+        const bool keep_open = ImGui::BeginPopupModal("Event Location List", &event_stack_popup_open, ImGuiWindowFlags_NoSavedSettings);
+        if (keep_open) {
+            if (event_stack_layer_idx >= 0 && (size_t)event_stack_layer_idx < ctx.layers->size()) {
+                const LayerDef& layer = (*ctx.layers)[(size_t)event_stack_layer_idx];
+                LayerDef::FeatureGeom anchor;
+                anchor.extent.min_lon = event_stack_lon;
+                anchor.extent.min_lat = event_stack_lat;
+                const std::vector<const LayerDef::FeatureGeom*> colocated = collectColocatedEventFeatures(layer, anchor);
+                drawPointLayerHeader(layer, colocated.empty() ? nullptr : colocated.front());
+                ImGui::Separator();
+                ImGui::TextWrapped("%zu events at %.6f, %.6f", colocated.size(), event_stack_lat, event_stack_lon);
+                ImGui::BeginChild("event_location_click_list", ImVec2(0.0f, -38.0f), true);
+                for (size_t i = 0; i < colocated.size(); ++i) {
+                    drawEventListEntry(*colocated[i], ("popup_row_" + std::to_string(i)).c_str(), true);
+                }
+                ImGui::EndChild();
+            }
+            if (ImGui::Button("Close")) {
+                event_stack_popup_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
     }
 }

@@ -72,6 +72,7 @@ struct LayersPanelUiContext {
     LayerUiSharedContext* shared = nullptr;
     int parcel_layer_idx = -1;
     int zoom = 0;
+    const char* layer_search_query = nullptr;
 
     bool* crime_filter_enabled = nullptr;
     bool* crime_filter_use_year = nullptr;

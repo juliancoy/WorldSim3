@@ -59,6 +59,15 @@ bool isCrimeLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
     return ctx.crime_nibrs_layer_idx >= 0 && (int)layer_idx == ctx.crime_nibrs_layer_idx;
 }
 
+bool isZoningLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
+    if (!ctx.layers || layer_idx >= ctx.layers->size()) return false;
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    if (layerUsesPointGeometry(layer)) return false;
+    if (layer.category == LayerDef::Category::Zoning) return true;
+    return containsCaseInsensitive(layer.file, "zoning") ||
+           containsCaseInsensitive(layer.name, "zoning");
+}
+
 bool crimeFeatureMatches(const FeatureFilterContext& ctx, const LayerDef::FeatureGeom& fg) {
     const CrimeFilterState& crime = mapFilters(ctx).crime;
     if (!crime.enabled) return true;
@@ -196,6 +205,8 @@ bool featurePassesFilters(
         }
     }
 
+    const bool zoning_layer = isZoningLayer(ctx, layer_idx);
+
     const bool parcel_related_layer = isParcelRelatedLayer(ctx, layer_idx);
     const bool selected_owner_filter_active =
         parcel_related_layer &&
@@ -213,6 +224,8 @@ bool featurePassesFilters(
         if (owner.empty() || filters.selected_owners.find(owner) == filters.selected_owners.end()) return false;
     }
     if (!filters.enabled) return true;
+
+    if (zoning_layer) return true;
 
     if (filters.use_date) {
         std::string ds = firstProp(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});

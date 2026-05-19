@@ -10,6 +10,13 @@
 #include <unordered_set>
 
 namespace {
+bool isZoningPolygonLayerForCaches(const LayerDef& layer) {
+    if (layerUsesPointGeometry(layer)) return false;
+    if (layer.category == LayerDef::Category::Zoning) return true;
+    return containsCaseInsensitive(layer.file, "zoning") ||
+           containsCaseInsensitive(layer.name, "zoning");
+}
+
 std::string hydratedLayerSignature(
     const std::vector<LayerDef>& layers,
     const std::vector<LayerRuntimeState>* layer_states,
@@ -51,7 +58,10 @@ std::string derivedLayerRefreshInputsSignature(const DerivedLayerCachesContext& 
     sig += "|rp:";
     appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.real_property_layer_idx);
     sig += "|z:";
-    appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.zoning_layer_idx);
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (!layers[i].enabled || !isZoningPolygonLayerForCaches(layers[i])) continue;
+        appendLayerInputsSignature(sig, layers, ctx.layer_states, (int)i);
+    }
     sig += "|vn:";
     appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.vacant_notice_layer_idx);
     sig += "|vr:";
@@ -101,19 +111,24 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     if (*ctx.last_refresh_inputs_signature == refresh_inputs_signature) return;
     *ctx.last_refresh_inputs_signature = refresh_inputs_signature;
 
-    if (ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < layers.size()) {
-        const auto& zfeats = layers[(size_t)ctx.zoning_layer_idx].features;
-        if (zfeats.size() != *ctx.zoning_zone_discovered_feature_count) {
-            *ctx.zoning_zone_discovered_feature_count = zfeats.size();
-            ctx.zoning_zone_counts->clear();
-            ctx.zoning_zone_label->clear();
-            ctx.zoning_group_zones->clear();
-            ctx.zoning_group_order->clear();
-            std::unordered_map<std::string, bool> prev_enabled = *ctx.zoning_zone_enabled;
-            ctx.zoning_zone_order->clear();
-            std::unordered_set<std::string> seen_zone_keys;
-            seen_zone_keys.reserve(zfeats.size() / 4 + 16);
-            for (const auto& fg : zfeats) {
+    size_t active_zoning_feature_total = 0;
+    for (const LayerDef& layer : layers) {
+        if (!layer.enabled || !isZoningPolygonLayerForCaches(layer)) continue;
+        active_zoning_feature_total += layer.features.size();
+    }
+    if (active_zoning_feature_total != *ctx.zoning_zone_discovered_feature_count) {
+        *ctx.zoning_zone_discovered_feature_count = active_zoning_feature_total;
+        ctx.zoning_zone_counts->clear();
+        ctx.zoning_zone_label->clear();
+        ctx.zoning_group_zones->clear();
+        ctx.zoning_group_order->clear();
+        std::unordered_map<std::string, bool> prev_enabled = *ctx.zoning_zone_enabled;
+        ctx.zoning_zone_order->clear();
+        std::unordered_set<std::string> seen_zone_keys;
+        seen_zone_keys.reserve(active_zoning_feature_total / 4 + 16);
+        for (const LayerDef& layer : layers) {
+            if (!layer.enabled || !isZoningPolygonLayerForCaches(layer)) continue;
+            for (const auto& fg : layer.features) {
                 std::string zkey = zoningClassKey(fg);
                 std::string zlabel = zoningClassLabel(fg);
                 (*ctx.zoning_zone_counts)[zkey] += 1;
@@ -137,14 +152,14 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                     }
                 }
             }
-            std::sort(ctx.zoning_zone_order->begin(), ctx.zoning_zone_order->end());
-            for (const auto& zkey : *ctx.zoning_zone_order) {
-                std::string g = zoningGroupKey(zkey);
-                if (ctx.zoning_group_zones->find(g) == ctx.zoning_group_zones->end()) ctx.zoning_group_order->push_back(g);
-                (*ctx.zoning_group_zones)[g].push_back(zkey);
-            }
-            std::sort(ctx.zoning_group_order->begin(), ctx.zoning_group_order->end());
         }
+        std::sort(ctx.zoning_zone_order->begin(), ctx.zoning_zone_order->end());
+        for (const auto& zkey : *ctx.zoning_zone_order) {
+            std::string g = zoningGroupKey(zkey);
+            if (ctx.zoning_group_zones->find(g) == ctx.zoning_group_zones->end()) ctx.zoning_group_order->push_back(g);
+            (*ctx.zoning_group_zones)[g].push_back(zkey);
+        }
+        std::sort(ctx.zoning_group_order->begin(), ctx.zoning_group_order->end());
     }
 
     {

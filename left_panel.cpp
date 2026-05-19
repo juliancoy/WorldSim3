@@ -256,6 +256,7 @@ void deselectAllLayersAndFilters(const LeftPanelContext& ctx) {
 LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     LeftPanelResult result;
     if (!leftPanelContextReady(ctx)) return result;
+    static char layer_search_query[128] = "";
 
     ImGui::SetNextWindowPos(ImVec2(ctx.layout_margin, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.left_panel_w, ctx.main_panel_h), ImGuiCond_Always);
@@ -476,6 +477,10 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     }
     *ctx.hover_inspector_enabled = *ctx.hover_inspector_mode != 0;
 
+    ImGui::SeparatorText("Layer Search");
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##layer_search_query", "Filter layers...", layer_search_query, IM_ARRAYSIZE(layer_search_query));
+
     ImGui::SeparatorText("Heatmap");
     ImGui::TextDisabled("Global heatmap controls removed.");
     ImGui::TextDisabled("Use each layer's settings (⚙) to configure aggregate method and heatmap parameters.");
@@ -601,6 +606,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layers_panel_input.shared = &layer_ui_shared;
     layers_panel_input.parcel_layer_idx = ctx.parcel_layer_idx;
     layers_panel_input.zoom = *ctx.zoom;
+    layers_panel_input.layer_search_query = layer_search_query;
     layers_panel_input.crime_filter_enabled = ctx.crime_filter_enabled;
     layers_panel_input.crime_filter_use_year = ctx.crime_filter_use_year;
     layers_panel_input.crime_year_min = ctx.crime_year_min;

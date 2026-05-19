@@ -80,9 +80,92 @@ std::string trim(std::string s) {
     return s;
 }
 
+std::string collapseSpaces(std::string s) {
+    std::string out;
+    out.reserve(s.size());
+    bool prev_space = false;
+    for (unsigned char ch : s) {
+        if (std::isspace(ch)) {
+            if (!prev_space && !out.empty()) out.push_back(' ');
+            prev_space = true;
+        } else {
+            out.push_back((char)ch);
+            prev_space = false;
+        }
+    }
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
 std::string lower(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
     return s;
+}
+
+std::string normalizeLocationKey(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char ch : s) {
+        if (std::isalnum(ch)) out.push_back((char)std::tolower(ch));
+        else out.push_back(' ');
+    }
+    out = collapseSpaces(out);
+    static const std::vector<std::pair<std::string, std::string>> replacements = {
+        {" boulevard ", " blvd "},
+        {" avenue ", " ave "},
+        {" street ", " st "},
+        {" road ", " rd "},
+        {" drive ", " dr "},
+        {" lane ", " ln "},
+        {" place ", " pl "},
+        {" suite ", " ste "},
+        {" junior ", " jr "},
+        {" maryland ", " md "},
+        {" united states ", " us "}
+    };
+    std::string padded = " " + out + " ";
+    for (const auto& repl : replacements) {
+        size_t pos = 0;
+        while ((pos = padded.find(repl.first, pos)) != std::string::npos) {
+            padded.replace(pos, repl.first.size(), repl.second);
+            pos += repl.second.size();
+        }
+    }
+    return trim(collapseSpaces(padded));
+}
+
+std::vector<std::string> locationKeysForItem(const json& item) {
+    std::vector<std::string> keys;
+    const json* loc = item.contains("location") && item["location"].is_object() ? &item["location"] : nullptr;
+    auto push_key = [&](const std::string& raw) {
+        const std::string key = normalizeLocationKey(raw);
+        if (key.empty()) return;
+        if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
+    };
+    if (loc) {
+        push_key(loc->value("name", ""));
+        push_key(loc->value("address", ""));
+        push_key(loc->value("geocode_query", ""));
+    }
+    return keys;
+}
+
+std::string urlOrigin(const std::string& url) {
+    const size_t scheme = url.find("://");
+    if (scheme == std::string::npos) return {};
+    const size_t host_end = url.find('/', scheme + 3);
+    if (host_end == std::string::npos) return url;
+    return url.substr(0, host_end);
+}
+
+std::string resolveRelativeUrl(const std::string& url, const std::string& base_url) {
+    if (url.empty()) return {};
+    if (url.find("://") != std::string::npos) return url;
+    if (!url.empty() && url[0] == '/') {
+        const std::string origin = urlOrigin(base_url);
+        if (!origin.empty()) return origin + url;
+    }
+    return url;
 }
 
 std::vector<uint8_t> readFileBytes(const fs::path& p) {
@@ -856,6 +939,20 @@ void maybeNormalizeArcgisFeature(const std::string& normalizer, json& feature) {
     throw std::runtime_error("unsupported ArcGIS feature normalizer: " + normalizer);
 }
 
+size_t arcgisServiceMaxRecordCount(const std::string& service_url) {
+    try {
+        json meta = json::parse(httpPostForm(service_url, {
+            {"f", "json"}
+        }).body);
+        if (meta.contains("maxRecordCount") && meta["maxRecordCount"].is_number_integer()) {
+            const int64_t value = meta["maxRecordCount"].get<int64_t>();
+            if (value > 0) return (size_t)value;
+        }
+    } catch (...) {
+    }
+    return 1000;
+}
+
 void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path, const std::string& normalizer) {
     if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
     json ids = json::parse(httpPostForm(service_url + "/query", {
@@ -877,7 +974,7 @@ void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::pa
     out << "{\"type\":\"FeatureCollection\",\"name\":\"" << jsonEscape(out_path.stem().string()) << "\",\"features\":[";
     bool first_feature = true;
     size_t written = 0;
-    constexpr size_t page_size = 2000;
+    const size_t page_size = std::max<size_t>(1, std::min<size_t>(1000, arcgisServiceMaxRecordCount(service_url)));
     for (size_t off = 0; off < object_ids.size(); off += page_size) {
         std::ostringstream id_list;
         const size_t end = std::min(object_ids.size(), off + page_size);
@@ -1162,7 +1259,8 @@ void writeJsonPointFeedGeoJson(
     const fs::path& out_path,
     const std::string& item_path,
     const std::string& lon_field,
-    const std::string& lat_field) {
+    const std::string& lat_field,
+    const std::string& base_url) {
     std::ifstream in(json_path);
     if (!in) throw std::runtime_error("failed to open json feed");
     json root;
@@ -1176,15 +1274,44 @@ void writeJsonPointFeedGeoJson(
     out << "{\"type\":\"FeatureCollection\",\"features\":[\n";
     bool first = true;
     size_t written = 0;
+    std::unordered_map<std::string, std::pair<double, double>> inferred_coords_by_key;
     for (const auto& item : *items) {
         if (!item.is_object()) continue;
         double lon = 0.0;
         double lat = 0.0;
         if (!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) continue;
+        for (const std::string& key : locationKeysForItem(item)) {
+            inferred_coords_by_key.emplace(key, std::make_pair(lon, lat));
+        }
+    }
+    for (const auto& item : *items) {
+        if (!item.is_object()) continue;
+        double lon = 0.0;
+        double lat = 0.0;
+        if (!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) {
+            bool inferred = false;
+            for (const std::string& key : locationKeysForItem(item)) {
+                auto it = inferred_coords_by_key.find(key);
+                if (it == inferred_coords_by_key.end()) continue;
+                lon = it->second.first;
+                lat = it->second.second;
+                inferred = true;
+                break;
+            }
+            if (!inferred) continue;
+        }
         json props = json::object();
         std::vector<std::pair<std::string, std::string>> flat_props;
         flattenJsonProperties(item, "", flat_props);
         for (const auto& kv : flat_props) props[kv.first] = kv.second;
+        const std::string org_image = item.value("orgImageUrl", "");
+        const std::string image_url = item.value("imageUrl", "");
+        const std::string resolved_org_image = resolveRelativeUrl(org_image, base_url);
+        const std::string resolved_image = resolveRelativeUrl(image_url, base_url);
+        if (!resolved_org_image.empty()) props["orgImageUrl"] = resolved_org_image;
+        if (!resolved_image.empty()) props["imageUrl"] = resolved_image;
+        if (!resolved_image.empty()) props["image_url_resolved"] = resolved_image;
+        if (!resolved_org_image.empty()) props["org_image_url_resolved"] = resolved_org_image;
         json feature = {
             {"type", "Feature"},
             {"geometry", {
@@ -1296,7 +1423,8 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
                 out_path,
                 layer.import_item_path,
                 layer.import_lon_field,
-                layer.import_lat_field);
+                layer.import_lat_field,
+                layer.import_url);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;

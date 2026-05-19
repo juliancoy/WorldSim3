@@ -165,6 +165,7 @@ add_executable(worldsim3
   heat_normalization.cpp
   heatmap_key_builder.cpp
   heatmap_runtime.cpp
+  cpu_zoning_fallback.cpp
   render_layer_pass.cpp
   render_tail_pass.cpp
   render_policy.cpp

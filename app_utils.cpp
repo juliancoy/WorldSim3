@@ -150,6 +150,66 @@ bool containsCaseInsensitive(const std::string& haystack, const std::string& nee
     return h.find(n) != std::string::npos;
 }
 
+bool isLikelyCrimePointLayer(const LayerDef& layer) {
+    return containsCaseInsensitive(layer.name, "crime") ||
+           containsCaseInsensitive(layer.subcategory, "crime") ||
+           containsCaseInsensitive(layer.file, "crime_nibrs");
+}
+
+namespace {
+
+std::string firstCrimeProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+    for (const char* k : keys) {
+        std::string v = getPropertyValue(fg, k);
+        if (!v.empty()) return v;
+    }
+    return {};
+}
+
+std::string normalizedCrimeDescriptor(const LayerDef::FeatureGeom& fg) {
+    const std::string desc = toLowerAscii(firstCrimeProp(fg, {"Description", "description", "OFFENSE", "UCRDescription"}));
+    const std::string code = toLowerAscii(firstCrimeProp(fg, {"CrimeCode", "UCR_CODE", "UCRCode"}));
+    if (desc.empty()) return code;
+    if (code.empty()) return desc;
+    return desc + " " + code;
+}
+
+bool crimeDescriptorHas(const std::string& descriptor, const char* needle) {
+    return !descriptor.empty() && descriptor.find(needle) != std::string::npos;
+}
+
+} // namespace
+
+uint32_t crimePointGlyphCode(const LayerDef::FeatureGeom& fg) {
+    const std::string descriptor = normalizedCrimeDescriptor(fg);
+    if (crimeDescriptorHas(descriptor, "shooting")) return 5; // Cross
+    if (crimeDescriptorHas(descriptor, "homicide") || crimeDescriptorHas(descriptor, "murder")) return 4; // Plus
+    if (crimeDescriptorHas(descriptor, "robbery")) return 2; // Diamond
+    if (crimeDescriptorHas(descriptor, "assault")) return 3; // Triangle
+    if (crimeDescriptorHas(descriptor, "burglary")) return 1; // Square
+    if (crimeDescriptorHas(descriptor, "motor vehicle theft") ||
+        crimeDescriptorHas(descriptor, "auto theft") ||
+        crimeDescriptorHas(descriptor, "vehicle theft")) return 6; // Droplet
+    if (crimeDescriptorHas(descriptor, "drug") || crimeDescriptorHas(descriptor, "narcotic")) return 1; // Square
+    if (crimeDescriptorHas(descriptor, "larceny") || crimeDescriptorHas(descriptor, "theft")) return 0; // Circle
+    return 0; // Circle
+}
+
+const char* crimePointTypeLabel(const LayerDef::FeatureGeom& fg) {
+    const std::string descriptor = normalizedCrimeDescriptor(fg);
+    if (crimeDescriptorHas(descriptor, "shooting")) return "Shooting";
+    if (crimeDescriptorHas(descriptor, "homicide") || crimeDescriptorHas(descriptor, "murder")) return "Homicide";
+    if (crimeDescriptorHas(descriptor, "robbery")) return "Robbery";
+    if (crimeDescriptorHas(descriptor, "assault")) return "Assault";
+    if (crimeDescriptorHas(descriptor, "burglary")) return "Burglary";
+    if (crimeDescriptorHas(descriptor, "motor vehicle theft") ||
+        crimeDescriptorHas(descriptor, "auto theft") ||
+        crimeDescriptorHas(descriptor, "vehicle theft")) return "Auto theft";
+    if (crimeDescriptorHas(descriptor, "drug") || crimeDescriptorHas(descriptor, "narcotic")) return "Drug offense";
+    if (crimeDescriptorHas(descriptor, "larceny") || crimeDescriptorHas(descriptor, "theft")) return "Theft";
+    return "Crime incident";
+}
+
 std::string normalizeFuzzySearchText(const std::string& s) {
     std::string cleaned;
     cleaned.reserve(s.size());

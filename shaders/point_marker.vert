@@ -7,6 +7,10 @@ layout(std430, set = 0, binding = 0) readonly buffer PointColors {
     uint packed_colors[];
 };
 
+layout(std430, set = 0, binding = 1) readonly buffer PointGlyphs {
+    uint glyph_codes[];
+};
+
 layout(push_constant) uniform PushConstants {
     vec2 center_world;
     vec2 viewport_origin;
@@ -19,6 +23,7 @@ layout(push_constant) uniform PushConstants {
 
 layout(location = 0) out vec2 outLocal;
 layout(location = 1) flat out vec4 outColor;
+layout(location = 2) flat out uint outGlyph;
 
 const float PI = 3.14159265358979323846;
 
@@ -54,4 +59,5 @@ void main() {
 
     outLocal = local;
     outColor = unpackUnorm4x8(packed_colors[inFeatureRef]);
+    outGlyph = glyph_codes[inFeatureRef];
 }

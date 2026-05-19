@@ -2193,10 +2193,10 @@
     }
   },
   {
-    "name": "Upcoming Baltimore Events",
+    "name": "Code Collective Events",
     "file": "upcoming_baltimore_events.geojson",
     "color": "#2a9d8f",
-    "description": "Upcoming Baltimore event feed with provided latitude/longitude coordinates.",
+    "description": "Code Collective Events feed for Baltimore with provided latitude/longitude coordinates.",
     "category": "infrastructure",
     "subcategory": "Events",
     "scale": "point",
@@ -2204,13 +2204,13 @@
     "runtime_load": true,
     "duckdb_ingest": true,
     "duckdb_role": "point_event",
-    "reference_url": "https://codecollective.us/baltimore/upcoming_events.json",
+    "reference_url": "https://codecollective.us/upcoming_events.json",
     "source_urls": [
-      "https://codecollective.us/baltimore/upcoming_events.json"
+      "https://codecollective.us/upcoming_events.json"
     ],
     "import": {
       "type": "json_point_feed",
-      "url": "https://codecollective.us/baltimore/upcoming_events.json",
+      "url": "https://codecollective.us/upcoming_events.json",
       "item_path": "",
       "lon_field": "location.longitude",
       "lat_field": "location.latitude",
@@ -2339,6 +2339,32 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "prince_georges_county"
+    }
+  },
+  {
+    "name": "Howard County Zoning",
+    "file": "howard_county_zoning.geojson",
+    "color": "#bc6c25",
+    "description": "Official Howard County zoning polygons from the county GeoServer WFS service.",
+    "reference_url": "https://hcgeoserver.howardcountymd.gov:8443/geoserver/ows?service=WFS&version=1.1.0&request=GetCapabilities",
+    "source_urls": [
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AZoning&outputFormat=application/json&srsName=EPSG%3A4326",
+      "https://data.howardcountymd.gov/datadownload/metadata/zoning.html",
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/wms?service=WMS&version=1.1.1&request=GetCapabilities"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
     }
   }
 ]

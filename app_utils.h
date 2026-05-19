@@ -45,6 +45,9 @@ std::string formatUsNumber(double value, int decimals = 0);
 std::string formatUsd(double value, int decimals = 0);
 std::string trimDisplayValue(std::string s);
 bool layerUsesPointGeometry(const LayerDef& layer);
+bool isLikelyCrimePointLayer(const LayerDef& layer);
+uint32_t crimePointGlyphCode(const LayerDef::FeatureGeom& fg);
+const char* crimePointTypeLabel(const LayerDef::FeatureGeom& fg);
 bool geographyViewPreset(
     const std::string& selected_nation_state,
     const std::string& selected_state_region,

@@ -52,6 +52,7 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     ctx.shared = input.shared;
     ctx.parcel_layer_idx = input.parcel_layer_idx;
     ctx.zoom = input.zoom;
+    ctx.layer_search_query = input.layer_search_query;
     ctx.crime_filter_enabled = input.crime_filter_enabled;
     ctx.crime_filter_use_year = input.crime_filter_use_year;
     ctx.crime_year_min = input.crime_year_min;
