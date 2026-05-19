@@ -22,6 +22,7 @@
 
 struct LeftPanelResult {
     bool zoning_filters_changed = false;
+    bool event_sector_filters_changed = false;
     size_t downloadable_missing_layer_count = 0;
     size_t queueable_missing_layer_count = 0;
     bool geography_changed = false;
@@ -42,7 +43,7 @@ struct LeftPanelContext {
     std::vector<std::string>* data_freshness_msg = nullptr;
     std::string* data_library_status_msg = nullptr;
 
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     double* center_lon = nullptr;
@@ -71,6 +72,7 @@ struct LeftPanelContext {
     std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
     std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    std::vector<float>* layer_choropleth_gamma = nullptr;
     std::vector<float>* layer_heatmap_multires_blend = nullptr;
     std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth = nullptr;
     std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
@@ -133,6 +135,7 @@ struct LeftPanelContext {
     std::function<size_t()> queue_all_missing_layer_downloads;
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
+    std::function<void(size_t, bool)> open_layer_color_editor;
 };
 
 LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx);

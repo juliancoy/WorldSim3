@@ -837,6 +837,23 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"center_lat", current_lat_state.load(std::memory_order_relaxed)},
                     {"visible_vacant_parcels_last_frame", visible_vacant_parcels_last_frame.load(std::memory_order_relaxed)}
                 };
+                if (ctx.hover_debug_state) {
+                    std::lock_guard<std::mutex> hover_lk(ctx.hover_debug_state->mutex);
+                    out["hover"] = {
+                        {"map_hovered", ctx.hover_debug_state->map_hovered},
+                        {"mouse_screen_x", ctx.hover_debug_state->mouse_screen_x},
+                        {"mouse_screen_y", ctx.hover_debug_state->mouse_screen_y},
+                        {"mouse_lon", ctx.hover_debug_state->mouse_lon},
+                        {"mouse_lat", ctx.hover_debug_state->mouse_lat},
+                        {"hovered_parcel", ctx.hover_debug_state->hovered_parcel},
+                        {"hovered_parcel_idx", ctx.hover_debug_state->hovered_parcel_idx},
+                        {"hovered_zone", ctx.hover_debug_state->hovered_zone},
+                        {"hovered_zone_idx", ctx.hover_debug_state->hovered_zone_idx},
+                        {"hovered_point", ctx.hover_debug_state->hovered_point},
+                        {"hovered_point_idx", ctx.hover_debug_state->hovered_point_idx},
+                        {"hovered_point_layer_idx", ctx.hover_debug_state->hovered_point_layer_idx}
+                    };
+                }
                 out["vacancy_probe"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},
                     {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)},

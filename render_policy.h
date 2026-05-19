@@ -35,6 +35,7 @@ enum class LayerDisplayMode {
     PerFeature,
     Aggregate,
     LodGeometry,
+    PointCluster,
     ParcelChoroplethDetail
 };
 
@@ -54,4 +55,5 @@ int resolveLayerParcelDetailMinZoom(const HeatmapLayerPolicyContext& ctx, size_t
 bool layerUsesParcelChoroplethDetail(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesLodGeometry(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
+bool layerUsesPointClustering(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer_idx, HeatSample& hs);

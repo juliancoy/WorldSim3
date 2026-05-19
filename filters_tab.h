@@ -32,7 +32,7 @@ struct FiltersTabContext {
     size_t* selected_zone_idx = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     std::string* address_locate_status = nullptr;
     std::vector<AddressLocateMatch>* address_locate_matches = nullptr;
     DuckDbAnalytics* duckdb_analytics = nullptr;

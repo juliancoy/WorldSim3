@@ -6,6 +6,8 @@
 
 #include <cstddef>
 #include <functional>
+#include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,7 +47,24 @@ struct MapHoverState {
     int hovered_point_layer_idx = -1;
 };
 
+struct HoverDebugState {
+    std::mutex mutex;
+    bool map_hovered = false;
+    float mouse_screen_x = 0.0f;
+    float mouse_screen_y = 0.0f;
+    float mouse_lon = 0.0f;
+    float mouse_lat = 0.0f;
+    bool hovered_parcel = false;
+    size_t hovered_parcel_idx = (size_t)-1;
+    bool hovered_zone = false;
+    size_t hovered_zone_idx = (size_t)-1;
+    bool hovered_point = false;
+    size_t hovered_point_idx = (size_t)-1;
+    int hovered_point_layer_idx = -1;
+};
+
 MapHoverState findMapHoverTargets(const MapHoverQuery& query);
+uint64_t stablePointFeatureOrderKey(size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg);
 void drawZoningHoverTooltip(
     const LayerDef::FeatureGeom& zone,
     const std::unordered_map<std::string, ZoneMetadata>& zoning_metadata);

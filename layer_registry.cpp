@@ -3,7 +3,30 @@
 #include "app_utils.h"
 #include "layer_import.h"
 
+#include <algorithm>
+#include <cctype>
+
 namespace fs = std::filesystem;
+
+namespace {
+bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
+    if (!needle || !*needle) return false;
+    std::string hs = haystack;
+    std::string nd = needle;
+    std::transform(hs.begin(), hs.end(), hs.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    std::transform(nd.begin(), nd.end(), nd.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return hs.find(nd) != std::string::npos;
+}
+
+int zoningLayerMatchScore(const LayerDef& layer) {
+    const bool non_point = !layerUsesPointGeometry(layer);
+    if (layer.category == LayerDef::Category::Zoning && non_point) return 4;
+    if (layer.file == "zoning.geojson") return 3;
+    if (non_point && containsCaseInsensitive(layer.file, "zoning")) return 2;
+    if (non_point && containsCaseInsensitive(layer.name, "zoning")) return 1;
+    return 0;
+}
+}
 
 LayerRegistry::LayerRegistry(const fs::path& root, const std::vector<LayerDef>& layers) {
     refresh(root, layers);
@@ -16,6 +39,7 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
         fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
         fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
     const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
+    int best_zoning_match = 0;
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices_.parcel_layer_idx = (int)i;
         else if (layers[i].file == "parcel.geojson" && indices_.parcel_layer_idx < 0) indices_.parcel_layer_idx = (int)i;
@@ -25,8 +49,12 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
         else if (layers[i].file == "vacant_building_rehabs.geojson") indices_.vacant_rehab_layer_idx = (int)i;
         else if (layers[i].file == "tax_lien_certificate_sale_properties.geojson") indices_.tax_lien_layer_idx = (int)i;
         else if (layers[i].file == "tax_sale_list_2021.geojson") indices_.tax_sale_layer_idx = (int)i;
-        else if (layers[i].file == "zoning.geojson") indices_.zoning_layer_idx = (int)i;
         else if (layers[i].file == "crime_nibrs_group_a_2022_present.geojson") indices_.crime_nibrs_layer_idx = (int)i;
+        const int zoning_match = zoningLayerMatchScore(layers[i]);
+        if (zoning_match > best_zoning_match) {
+            best_zoning_match = zoning_match;
+            indices_.zoning_layer_idx = (int)i;
+        }
     }
 }
 
@@ -73,4 +101,38 @@ bool LayerRegistry::isHiddenParcelGeometryLayer(size_t idx) const {
            (int)idx != indices_.parcel_layer_idx &&
            (*layers_)[idx].scale == "parcel" &&
            (*layers_)[idx].region.empty();
+}
+
+int LayerRegistry::findBestZoningLayerForGeography(
+    const std::string& selected_nation_state,
+    const std::string& selected_state_region,
+    const std::string& selected_county_city) const {
+    if (!layers_) return -1;
+    const std::string nation = normalizeGeographyToken(selected_nation_state);
+    const std::string region = normalizeGeographyToken(selected_state_region);
+    const std::string county_city = normalizeGeographyToken(selected_county_city);
+    int best_idx = -1;
+    int best_score = 0;
+    for (size_t i = 0; i < layers_->size(); ++i) {
+        const LayerDef& layer = (*layers_)[i];
+        const int base_score = zoningLayerMatchScore(layer);
+        if (base_score <= 0) continue;
+        int score = base_score * 10;
+        const std::string layer_nation = normalizeGeographyToken(layer.provenance_nation_state);
+        const std::string layer_region = normalizeGeographyToken(layer.provenance_state_region);
+        const std::string layer_county_city = normalizeGeographyToken(layer.provenance_county_city);
+        if (!nation.empty() && !layer_nation.empty() && layer_nation != nation) continue;
+        if (!region.empty() && !layer_region.empty() && layer_region != region) continue;
+        if (!county_city.empty()) {
+            if (layer_county_city == county_city) score += 5;
+            else if (!layer_county_city.empty()) continue;
+        } else if (layer_county_city.empty()) {
+            score += 1;
+        }
+        if (score > best_score) {
+            best_score = score;
+            best_idx = (int)i;
+        }
+    }
+    return best_idx;
 }

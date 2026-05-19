@@ -1,6 +1,7 @@
 #pragma once
 
 #include "layer_runtime.h"
+#include "map_render_hover.h"
 #include "profiling.h"
 #include "screenshot_state.h"
 #include "time_cube.h"
@@ -52,6 +53,7 @@ struct StatusApiContext {
     std::string* active_filter_status = nullptr;
     TimeCubeService* time_cube_service = nullptr;
     ScreenshotRequestState* screenshot = nullptr;
+    HoverDebugState* hover_debug_state = nullptr;
 
     std::mutex* status_mutex = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;

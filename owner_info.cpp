@@ -2,13 +2,20 @@
 
 #include "app_utils.h"
 #include "feature_props.h"
+#include "geo.h"
 #include "imgui.h"
 #include "parcel_value_ui.h"
 #include "parcel_timeline.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace {
+constexpr ImVec4 kDarkModeLinkBlue = ImVec4(0.42f, 0.72f, 1.00f, 1.0f);
+constexpr ImVec4 kDarkModeLinkBlueBg = ImVec4(0.18f, 0.38f, 0.72f, 0.10f);
+constexpr ImVec4 kDarkModeLinkBlueHoverBg = ImVec4(0.20f, 0.40f, 0.72f, 0.22f);
+constexpr ImVec4 kDarkModeLinkBlueActiveBg = ImVec4(0.16f, 0.34f, 0.62f, 0.32f);
+
 ElementInfoEntry currentEntry(const ElementInfoUiState& state) {
     if (state.history_index >= state.history.size()) return {};
     return state.history[state.history_index];
@@ -36,6 +43,53 @@ void openElementPage(ElementInfoUiState& state, ElementInfoEntry entry) {
     state.history_index = state.history.size() - 1;
     state.tab_requested = true;
     if (currentEntry(state).kind == ElementInfoKind::Owner) clearOwnerPropertyQuery(state);
+}
+
+struct GeoBounds {
+    bool valid = false;
+    double min_lon = 0.0;
+    double min_lat = 0.0;
+    double max_lon = 0.0;
+    double max_lat = 0.0;
+};
+
+void expandBounds(GeoBounds& bounds, const LayerDef::FeatureExtent& extent) {
+    if (!bounds.valid) {
+        bounds.valid = true;
+        bounds.min_lon = extent.min_lon;
+        bounds.min_lat = extent.min_lat;
+        bounds.max_lon = extent.max_lon;
+        bounds.max_lat = extent.max_lat;
+        return;
+    }
+    bounds.min_lon = std::min(bounds.min_lon, (double)extent.min_lon);
+    bounds.min_lat = std::min(bounds.min_lat, (double)extent.min_lat);
+    bounds.max_lon = std::max(bounds.max_lon, (double)extent.max_lon);
+    bounds.max_lat = std::max(bounds.max_lat, (double)extent.max_lat);
+}
+
+int fitZoomForBounds(const GeoBounds& bounds, float map_view_w, float map_view_h, int min_zoom, int max_zoom) {
+    if (!bounds.valid) return std::clamp(18, min_zoom, max_zoom);
+    const float pad_px = 96.0f;
+    const double avail_w = std::max(64.0, (double)map_view_w - pad_px);
+    const double avail_h = std::max(64.0, (double)map_view_h - pad_px);
+    for (int z = max_zoom; z >= min_zoom; --z) {
+        const ImVec2 nw = lonLatToWorldPx(bounds.min_lon, bounds.max_lat, z);
+        const ImVec2 se = lonLatToWorldPx(bounds.max_lon, bounds.min_lat, z);
+        const double span_w = std::fabs((double)se.x - (double)nw.x);
+        const double span_h = std::fabs((double)se.y - (double)nw.y);
+        if (span_w <= avail_w && span_h <= avail_h) return z;
+    }
+    return min_zoom;
+}
+
+void applyBoundsView(
+    const OwnerInfoTabContext& ctx,
+    const GeoBounds& bounds) {
+    if (!bounds.valid || !ctx.center_lon || !ctx.center_lat || !ctx.zoom) return;
+    *ctx.center_lon = (bounds.min_lon + bounds.max_lon) * 0.5;
+    *ctx.center_lat = std::clamp((bounds.min_lat + bounds.max_lat) * 0.5, -85.0, 85.0);
+    *ctx.zoom = fitZoomForBounds(bounds, ctx.map_view_w, ctx.map_view_h, ctx.min_zoom, ctx.max_zoom);
 }
 
 struct DuckDbParcelDetailSnapshot {
@@ -82,10 +136,10 @@ void drawSourceButton(ElementInfoUiState* state, const char* label, const std::s
     ImGui::TextUnformatted(label);
     ImGui::SameLine();
     ImGui::PushID(id);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.05f, 0.22f, 0.55f, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.05f, 0.28f, 0.72f, 0.18f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.04f, 0.20f, 0.58f, 0.28f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.05f, 0.30f, 0.78f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, kDarkModeLinkBlueBg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kDarkModeLinkBlueHoverBg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, kDarkModeLinkBlueActiveBg);
+    ImGui::PushStyleColor(ImGuiCol_Text, kDarkModeLinkBlue);
     if (ImGui::Button(source.c_str())) {
         if (property_source) openPropertySourceInfoPage(*state, source);
         else openParcelSourceInfoPage(*state, source);
@@ -100,7 +154,7 @@ void drawSourceButton(ElementInfoUiState* state, const char* label, const std::s
     ImGui::GetWindowDrawList()->AddLine(
         ImVec2(link_min.x + pad_x, link_max.y - 3.0f),
         ImVec2(link_max.x - pad_x, link_max.y - 3.0f),
-        ImGui::ColorConvertFloat4ToU32(ImVec4(0.05f, 0.30f, 0.78f, 1.0f)),
+        ImGui::ColorConvertFloat4ToU32(kDarkModeLinkBlue),
         1.0f);
     ImGui::PopStyleColor(4);
     ImGui::PopID();
@@ -205,6 +259,47 @@ bool drawDuckDbParcelTimeline(DuckDbAnalytics* duckdb_analytics, const std::stri
         ImGui::Separator();
     }
     ImGui::EndChild();
+    return true;
+}
+
+bool drawLocalParcelTimeline(
+    const std::vector<LayerDef>* layers,
+    const LayerDef::FeatureGeom* parcel,
+    const LayerDef::FeatureGeom* real_property,
+    int vacant_notice_layer_idx,
+    int vacant_rehab_layer_idx,
+    int tax_lien_layer_idx,
+    int tax_sale_layer_idx) {
+    const std::vector<ParcelTimelineEvent> events = buildParcelTimeline(ParcelTimelineRequest{
+        layers,
+        parcel,
+        real_property,
+        vacant_notice_layer_idx,
+        vacant_rehab_layer_idx,
+        tax_lien_layer_idx,
+        tax_sale_layer_idx
+    });
+    if (events.empty()) return false;
+
+    ImGui::TextDisabled("%zu event(s), newest first", events.size());
+    ImGui::BeginChild("parcel_history_events", ImVec2(0, 260.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (const ParcelTimelineEvent& event : events) {
+        const std::string date_label = event.date.empty() ? "(date unavailable)" : event.date;
+        ImGui::TextWrapped(
+            "%s - %s",
+            date_label.c_str(),
+            event.event_type.empty() ? "Event" : event.event_type.c_str());
+        if (!event.status.empty()) ImGui::TextWrapped("Status: %s", event.status.c_str());
+        if (!event.amount.empty()) {
+            const double amount_value = parseNumericField(event.amount);
+            if (amount_value > 0.0) ImGui::TextWrapped("Amount: %s", formatUsd(amount_value, 2).c_str());
+            else ImGui::TextWrapped("Amount: %s", event.amount.c_str());
+        }
+        if (!event.source_layer.empty()) ImGui::TextDisabled("Source: %s", event.source_layer.c_str());
+        ImGui::Separator();
+    }
+    ImGui::EndChild();
+    ImGui::TextDisabled("Timeline source: loaded runtime parcel-related layers");
     return true;
 }
 
@@ -350,11 +445,26 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     }
 
     ImGui::SeparatorText("Parcel History");
-    if (!drawDuckDbParcelTimeline(ctx.duckdb_analytics, duckdb_detail.ok ? duckdb_detail.blocklot : blocklot_raw)) {
-        if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) {
-            ImGui::TextDisabled("Parcel history requires DuckDB analytics.");
+    const std::string timeline_blocklot = duckdb_detail.ok ? duckdb_detail.blocklot : blocklot_raw;
+    const bool duckdb_timeline_available =
+        ctx.duckdb_analytics &&
+        ctx.duckdb_analytics->status().last_rebuild_ok &&
+        !trimDisplayValue(timeline_blocklot).empty();
+    if (!drawDuckDbParcelTimeline(ctx.duckdb_analytics, timeline_blocklot)) {
+        if (!duckdb_timeline_available) {
+            ImGui::TextDisabled("DuckDB parcel timeline unavailable; showing runtime-derived timeline.");
+            if (!drawLocalParcelTimeline(
+                    ctx.layers,
+                    &selected,
+                    selected_rp,
+                    ctx.vacant_notice_layer_idx,
+                    ctx.vacant_rehab_layer_idx,
+                    ctx.tax_lien_layer_idx,
+                    ctx.tax_sale_layer_idx)) {
+                ImGui::TextDisabled("No parcel history events found in loaded runtime layers.");
+            }
         } else {
-            ImGui::TextDisabled("No parcel history events found in DuckDB for this parcel.");
+            ImGui::TextDisabled("No parcel history events found in DuckDB.");
         }
     }
 }
@@ -376,10 +486,20 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
             owner_value_total += parcel_record.current_value;
         }
 
+        GeoBounds owner_bounds;
+        for (size_t pi : owner_parcel_indices) {
+            const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
+            if (!parcel_record || !parcel_record->parcel_geom) continue;
+            expandBounds(owner_bounds, parcel_record->parcel_geom->extent);
+        }
+
         ImGui::Text("Element: Owner");
         ImGui::Text("Owner: %s", owner.c_str());
         ImGui::Text("Properties: %zu", owner_parcel_indices.size());
         ImGui::Text("Total Current Value: %s", formatUsd(owner_value_total).c_str());
+        if (owner_bounds.valid && ImGui::Button("Zoom To Owner Extent")) {
+            applyBoundsView(ctx, owner_bounds);
+        }
 
         if (ctx.state && ctx.state->property_query && ctx.state->property_query_size > 0) {
             ImGui::SetNextItemWidth(-1.0f);
@@ -418,7 +538,7 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
                 if (ctx.center_lat) {
                     *ctx.center_lat = std::clamp(((double)pf.extent.min_lat + (double)pf.extent.max_lat) * 0.5, -85.0, 85.0);
                 }
-                if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18);
+                if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
                 if (ctx.select_parcel_idx) ctx.select_parcel_idx(pi, ImGui::GetIO().KeyCtrl);
                 if (ctx.state) openElementParcelPage(*ctx.state, pi);
             }
@@ -451,10 +571,20 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
         source_value_total += parcel_record.current_value;
     }
 
+    GeoBounds source_bounds;
+    for (size_t pi : source_parcel_indices) {
+        const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
+        if (!parcel_record || !parcel_record->parcel_geom) continue;
+        expandBounds(source_bounds, parcel_record->parcel_geom->extent);
+    }
+
     ImGui::Text("Element: %s", property_source ? "Property Source" : "Parcel Source");
     ImGui::TextWrapped("Source: %s", source.c_str());
     ImGui::Text("Properties: %zu", source_parcel_indices.size());
     ImGui::Text("Total Current Value: %s", formatUsd(source_value_total).c_str());
+    if (source_bounds.valid && ImGui::Button(property_source ? "Zoom To Property Source Extent" : "Zoom To Parcel Source Extent")) {
+        applyBoundsView(ctx, source_bounds);
+    }
 
     if (ctx.state && ctx.state->property_query && ctx.state->property_query_size > 0) {
         ImGui::SetNextItemWidth(-1.0f);
@@ -493,7 +623,7 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
             if (ctx.center_lat) {
                 *ctx.center_lat = std::clamp(((double)pf.extent.min_lat + (double)pf.extent.max_lat) * 0.5, -85.0, 85.0);
             }
-            if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18);
+            if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
             if (ctx.select_parcel_idx) ctx.select_parcel_idx(pi, ImGui::GetIO().KeyCtrl);
             if (ctx.state) openElementParcelPage(*ctx.state, pi);
         }
@@ -526,10 +656,10 @@ void drawOwnerInfoLink(ElementInfoUiState& state, const std::string& owner, cons
     ImGui::TextUnformatted("Owner:");
     ImGui::SameLine();
     ImGui::PushID(id);
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.05f, 0.22f, 0.55f, 0.08f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.05f, 0.28f, 0.72f, 0.18f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.04f, 0.20f, 0.58f, 0.28f));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.05f, 0.30f, 0.78f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, kDarkModeLinkBlueBg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kDarkModeLinkBlueHoverBg);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, kDarkModeLinkBlueActiveBg);
+    ImGui::PushStyleColor(ImGuiCol_Text, kDarkModeLinkBlue);
     if (ImGui::Button(owner.c_str())) openOwnerInfoPage(state, owner);
     if (ImGui::IsItemHovered()) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -541,7 +671,7 @@ void drawOwnerInfoLink(ElementInfoUiState& state, const std::string& owner, cons
     ImGui::GetWindowDrawList()->AddLine(
         ImVec2(link_min.x + pad_x, link_max.y - 3.0f),
         ImVec2(link_max.x - pad_x, link_max.y - 3.0f),
-        ImGui::ColorConvertFloat4ToU32(ImVec4(0.05f, 0.30f, 0.78f, 1.0f)),
+        ImGui::ColorConvertFloat4ToU32(kDarkModeLinkBlue),
         1.0f);
     ImGui::PopStyleColor(4);
     ImGui::PopID();

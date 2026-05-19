@@ -38,7 +38,7 @@ struct MapTabContext {
 
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
@@ -58,6 +58,7 @@ struct MapTabContext {
     bool* show_selected_zone_details = nullptr;
     size_t* selected_zone_idx = nullptr;
     ElementInfoUiState* element_info_state = nullptr;
+    HoverDebugState* hover_debug_state = nullptr;
 
     int real_property_layer_idx = -1;
     int parcel_layer_idx = -1;

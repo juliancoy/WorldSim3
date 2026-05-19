@@ -92,3 +92,14 @@ bool startParcelGpuUploadWorker(std::string* error = nullptr);
 void stopParcelGpuUploadWorker();
 bool requestParcelGpuUpload(const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
 bool drainParcelGpuUploadResults(const std::string* expected_signature = nullptr, std::string* adopted_signature = nullptr, std::string* error = nullptr);
+
+bool ensureZoningGpuBuffersResident(const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
+bool updateZoningGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+bool updateZoningGpuOutlineColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+void clearZoningGpuBuffers();
+bool configureZoningGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error = nullptr);
+void clearZoningGpuDrawState();
+bool zoningGpuDrawActive();
+void enqueueZoningGpuDraw(ImDrawList* draw_list);
+bool zoningGpuOutlineDrawActive();
+void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list);

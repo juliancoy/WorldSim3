@@ -7,7 +7,8 @@
 struct MapViewportContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
+    double zoom_step = 0.25;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;

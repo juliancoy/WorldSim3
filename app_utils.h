@@ -31,6 +31,7 @@ void setBootstrapStatus(BootstrapProgress& bp, const std::string& s);
 std::string readTextFile(const std::filesystem::path& p);
 void collectTodoWork(const std::string& todo_text, std::vector<std::string>& past, std::vector<std::string>& future);
 std::string toLowerAscii(std::string s);
+std::string normalizeGeographyToken(const std::string& s);
 bool containsCaseInsensitive(const std::string& haystack, const std::string& needle);
 std::string normalizeFuzzySearchText(const std::string& s);
 int fuzzyTextScore(const std::string& text, const std::string& query);
@@ -43,6 +44,13 @@ double parseNumericField(const std::string& s);
 std::string formatUsNumber(double value, int decimals = 0);
 std::string formatUsd(double value, int decimals = 0);
 std::string trimDisplayValue(std::string s);
+bool layerUsesPointGeometry(const LayerDef& layer);
+bool geographyViewPreset(
+    const std::string& selected_nation_state,
+    const std::string& selected_state_region,
+    double& center_lon,
+    double& center_lat,
+    int& suggested_zoom);
 std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys);
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);
 std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg);

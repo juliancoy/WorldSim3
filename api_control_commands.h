@@ -11,7 +11,7 @@
 #include <vector>
 
 struct ApiControlContext {
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
     std::atomic<int>* api_zoom_cmd = nullptr;

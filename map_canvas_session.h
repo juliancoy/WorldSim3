@@ -20,7 +20,7 @@
 struct MapCanvasSessionContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
@@ -68,6 +68,7 @@ struct MapCanvasSession {
     int math_zoom = 0;
     double zoom_scale = 1.0;
     ImVec2 center_world = ImVec2(0.0f, 0.0f);
+    ImVec2 mouse_ll = ImVec2(0.0f, 0.0f);
     float view_min_lon = 0.0f;
     float view_max_lon = 0.0f;
     float view_min_lat = 0.0f;
@@ -83,6 +84,7 @@ struct MapCanvasSession {
     bool tax_sale_enabled = false;
     ImVec4 vacancy_notice_color = ImVec4(1, 0, 0, 1);
     ImVec4 vacancy_rehab_color = ImVec4(0, 1, 1, 1);
+    double zoom = 0.0;
     int lod_ring_step = 1;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::function<bool(size_t)> should_fill_layer_polygon;

@@ -1,5 +1,7 @@
 #include "frame_prelude.h"
 
+#include <cmath>
+
 FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     FramePreludeResult result;
     if (!ctx.root || !ctx.layers || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty ||
@@ -116,7 +118,7 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     api_control_ctx.api_ui_mouse_release_button = ctx.api_ui_mouse_release_button;
     applyApiControlCommands(api_control_ctx);
 
-    ctx.current_zoom_state->store(*ctx.zoom, std::memory_order_relaxed);
+    ctx.current_zoom_state->store((int)std::lround(*ctx.zoom), std::memory_order_relaxed);
     ctx.current_lon_state->store(*ctx.center_lon, std::memory_order_relaxed);
     ctx.current_lat_state->store(*ctx.center_lat, std::memory_order_relaxed);
 

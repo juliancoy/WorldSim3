@@ -2267,6 +2267,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_build_parcel_matched_layers = true;
             continue;
         }
+        if (arg == "--color-editor") {
+            options.run_color_editor = true;
+            if (i + 1 < argc) options.color_editor_session_file = argv[++i];
+            continue;
+        }
         if (arg == "--force-build-parcel-matched-layers") {
             options.run_build_parcel_matched_layers = true;
             options.force_build_parcel_matched_layers = true;
@@ -2275,6 +2280,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--download-layers=", 0) == 0) {
             options.run_download_layers = true;
             options.download_phase = arg.substr(std::strlen("--download-layers="));
+            continue;
+        }
+        if (arg.rfind("--color-editor=", 0) == 0) {
+            options.run_color_editor = true;
+            options.color_editor_session_file = arg.substr(std::strlen("--color-editor="));
             continue;
         }
         if (arg == "--include-large") {

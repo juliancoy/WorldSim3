@@ -14,10 +14,10 @@ void drawMapStatusBadge(ImDrawList* draw, ImVec2 origin, const char* label) {
     draw->AddText(ImVec2(box_min.x + pad_x, box_min.y + pad_y), IM_COL32(245, 248, 250, 245), label);
 }
 
-void drawMapZoomBadge(ImDrawList* draw, ImVec2 origin, ImVec2 size, int zoom) {
+void drawMapZoomBadge(ImDrawList* draw, ImVec2 origin, ImVec2 size, double zoom) {
     if (!draw) return;
     char zoom_label[32];
-    std::snprintf(zoom_label, sizeof(zoom_label), "Zoom %d", zoom);
+    std::snprintf(zoom_label, sizeof(zoom_label), "Zoom %.2f", zoom);
     const ImVec2 text_size = ImGui::CalcTextSize(zoom_label);
     const float pad_x = 10.0f;
     const float pad_y = 6.0f;

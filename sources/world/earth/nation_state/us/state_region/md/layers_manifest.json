@@ -2191,5 +2191,154 @@
       "state_region": "md",
       "county_city": "baltimore_city"
     }
+  },
+  {
+    "name": "Upcoming Baltimore Events",
+    "file": "upcoming_baltimore_events.geojson",
+    "color": "#2a9d8f",
+    "description": "Upcoming Baltimore event feed with provided latitude/longitude coordinates.",
+    "category": "infrastructure",
+    "subcategory": "Events",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "reference_url": "https://codecollective.us/baltimore/upcoming_events.json",
+    "source_urls": [
+      "https://codecollective.us/baltimore/upcoming_events.json"
+    ],
+    "import": {
+      "type": "json_point_feed",
+      "url": "https://codecollective.us/baltimore/upcoming_events.json",
+      "item_path": "",
+      "lon_field": "location.longitude",
+      "lat_field": "location.latitude",
+      "artifact_file": "upcoming_baltimore_events.source.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Baltimore County Zoning",
+    "file": "baltimore_county_zoning.geojson",
+    "color": "#f4a261",
+    "description": "Current zoning districts for Baltimore County from the county ArcGIS zoning service.",
+    "reference_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1",
+    "source_urls": [
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_county"
+    }
+  },
+  {
+    "name": "Montgomery County Zoning",
+    "file": "montgomery_county_zoning.geojson",
+    "color": "#f6bd60",
+    "description": "Countywide zoning polygons for Montgomery County from the county zoning ArcGIS service.",
+    "reference_url": "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1",
+    "source_urls": [
+      "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1",
+      "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "montgomery_county"
+    }
+  },
+  {
+    "name": "Anne Arundel County Zoning",
+    "file": "anne_arundel_county_zoning.geojson",
+    "color": "#e76f51",
+    "description": "Official adopted zoning layer for Anne Arundel County from the county planning ArcGIS service.",
+    "reference_url": "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7",
+    "source_urls": [
+      "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7",
+      "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "anne_arundel_county"
+    }
+  },
+  {
+    "name": "Prince George's County Zoning",
+    "file": "prince_georges_county_zoning.geojson",
+    "color": "#d97706",
+    "description": "Countywide zoning polygons for Prince George's County from the Planning Department open data shapefile.",
+    "reference_url": "https://gisdata.pgplanning.org/opendata/search.asp?s=zoning",
+    "source_urls": [
+      "https://gisdata.pgplanning.org/opendata/search.asp?s=zoning",
+      "https://gisdata.pgplanning.org/opendata/downloadzip.asp?FileName=../data/ShapeFile/Zoning_Py.zip"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://gisdata.pgplanning.org/opendata/downloadzip.asp?FileName=../data/ShapeFile/Zoning_Py.zip",
+      "shapefile": "Zoning_Py.shp",
+      "source_crs": "EPSG:6488"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "prince_georges_county"
+    }
   }
 ]

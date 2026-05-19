@@ -50,7 +50,11 @@ struct OwnerInfoTabContext {
     int tax_sale_layer_idx = -1;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
+    int min_zoom = 0;
+    int max_zoom = 0;
+    float map_view_w = 0.0f;
+    float map_view_h = 0.0f;
     std::function<void()> clear_parcel_selection;
     std::function<bool(size_t, bool)> select_parcel_idx;
     std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;

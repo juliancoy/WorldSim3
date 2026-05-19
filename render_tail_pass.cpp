@@ -30,6 +30,8 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.unified_parcels = ctx.unified_parcels;
     overlay_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
     overlay_ctx.parcel_choropleth_gamma = ctx.parcel_choropleth_gamma;
+    overlay_ctx.layer_heatmap_percentile_clip = ctx.layer_heatmap_percentile_clip;
+    overlay_ctx.layer_normalize_mode = ctx.layer_normalize_mode;
     overlay_ctx.feature_passes_filters = ctx.feature_passes_filters;
     overlay_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
     overlay_ctx.projection = ctx.projection;
@@ -37,7 +39,8 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     MapOverlayResult overlay_result;
     const bool gpu_overlay_active = parcelGpuOverlayDrawActive();
     const bool gpu_outline_active = parcelGpuOutlineDrawActive();
-    if (!gpu_overlay_active && !gpu_outline_active) {
+    const bool parcel_layer_present = ctx.parcel_layer_idx >= 0;
+    if (!parcel_layer_present && !gpu_overlay_active && !gpu_outline_active) {
         overlay_result = renderParcelSourceOverlays(overlay_ctx);
     }
     if (gpu_overlay_active) {

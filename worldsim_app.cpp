@@ -292,6 +292,10 @@ static bool g_ParcelGpuOverlayHasVisibleColors = false;
 static bool g_ParcelGpuOutlineHasVisibleColors = false;
 static ParcelGpuDrawState g_ParcelGpuDrawState;
 static ParcelGpuPipeline g_ParcelGpuPipeline;
+static ParcelGpuBuffers g_ZoningGpuBuffers;
+static bool g_ZoningGpuOutlineHasVisibleColors = false;
+static ParcelGpuDrawState g_ZoningGpuDrawState;
+static ParcelGpuPipeline g_ZoningGpuPipeline;
 static VkCommandBuffer g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
 static VkRenderPass g_CurrentFrameRenderPass = VK_NULL_HANDLE;
 static uint32_t g_CurrentFrameRenderIndex = 0;
@@ -1233,6 +1237,29 @@ static void destroyParcelGpuPipeline() {
     g_ParcelGpuPipeline.descriptor_dirty = true;
 }
 
+static void destroyZoningGpuPipeline() {
+    if (g_ZoningGpuPipeline.fill_pipeline) {
+        vkDestroyPipeline(g_Device, g_ZoningGpuPipeline.fill_pipeline, g_Allocator);
+        g_ZoningGpuPipeline.fill_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ZoningGpuPipeline.line_pipeline) {
+        vkDestroyPipeline(g_Device, g_ZoningGpuPipeline.line_pipeline, g_Allocator);
+        g_ZoningGpuPipeline.line_pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ZoningGpuPipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_ZoningGpuPipeline.pipeline_layout, g_Allocator);
+        g_ZoningGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (g_ZoningGpuPipeline.descriptor_set_layout) {
+        vkDestroyDescriptorSetLayout(g_Device, g_ZoningGpuPipeline.descriptor_set_layout, g_Allocator);
+        g_ZoningGpuPipeline.descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    g_ZoningGpuPipeline.descriptor_sets_by_frame.clear();
+    g_ZoningGpuPipeline.descriptor_dirty_by_frame.clear();
+    g_ZoningGpuPipeline.render_pass = VK_NULL_HANDLE;
+    g_ZoningGpuPipeline.descriptor_dirty = true;
+}
+
 static uint32_t parcelGpuDescriptorFrameCount() {
     return std::max<uint32_t>(1, g_MainWindowData.ImageCount);
 }
@@ -1558,16 +1585,24 @@ bool configureParcelGpuDrawState(const ParcelGpuDrawConfig& config, std::string*
     g_ParcelGpuDrawState.framebuffer_size = config.framebuffer_size;
     g_ParcelGpuDrawState.visible_chunks.reserve(g_ParcelGpuBuffers.chunks.size());
     g_ParcelGpuDrawState.visible_line_chunks.reserve(g_ParcelGpuBuffers.chunks.size());
+    const float lon_span = std::max(0.0f, config.view_max_lon - config.view_min_lon);
+    const float lat_span = std::max(0.0f, config.view_max_lat - config.view_min_lat);
+    const float lon_pad = std::max(
+        0.0001f,
+        lon_span * (2.0f / std::max(1.0f, config.viewport_size.x)));
+    const float lat_pad = std::max(
+        0.0001f,
+        lat_span * (2.0f / std::max(1.0f, config.viewport_size.y)));
     for (const ParcelRenderChunkRecord& chunk : g_ParcelGpuBuffers.chunks) {
         if (!rectsOverlap(
                 chunk.min_lon,
                 chunk.min_lat,
                 chunk.max_lon,
                 chunk.max_lat,
-                config.view_min_lon,
-                config.view_min_lat,
-                config.view_max_lon,
-                config.view_max_lat)) {
+                config.view_min_lon - lon_pad,
+                config.view_min_lat - lat_pad,
+                config.view_max_lon + lon_pad,
+                config.view_max_lat + lat_pad)) {
             continue;
         }
         if (chunk.index_count == 0) continue;
@@ -1844,6 +1879,473 @@ static void renderParcelGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
 void enqueueParcelGpuOutlineDraw(ImDrawList* draw_list) {
     if (!draw_list || !parcelGpuOutlineDrawActive()) return;
     draw_list->AddCallback(renderParcelGpuOutlineDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+}
+
+bool ensureZoningGpuBuffersResident(const ParcelRenderCacheBlob& blob, std::string* error) {
+    if (!g_Device || !g_UploadCommandBuffer) {
+        if (error) *error = "Vulkan device/upload command buffer is not ready";
+        return false;
+    }
+    if (blob.vertices.empty() || blob.indices.empty() || blob.features.empty() ||
+        blob.line_indices.empty() || blob.vertex_feature_refs.size() != blob.vertices.size()) {
+        if (error) *error = "zoning render cache blob is incomplete";
+        return false;
+    }
+    if (g_ZoningGpuBuffers.source_signature == blob.source_signature &&
+        g_ZoningGpuBuffers.vertices == blob.vertices.size() &&
+        g_ZoningGpuBuffers.indices_count == blob.indices.size() &&
+        g_ZoningGpuBuffers.line_indices_count == blob.line_indices.size() &&
+        g_ZoningGpuBuffers.render_features == blob.features.size()) {
+        return true;
+    }
+    ParcelGpuUploadPayload payload;
+    ParcelGpuUploadContext ctx;
+    ctx.command_pool = g_UploadCommandPool;
+    ctx.command_buffer = g_UploadCommandBuffer;
+    g_ZoningGpuPipeline.descriptor_dirty = true;
+    if (!buildParcelGpuUploadPayload(ctx, blob, payload, error)) return false;
+    clearZoningGpuBuffers();
+    g_ZoningGpuBuffers = std::move(payload.buffers);
+    g_ZoningGpuPipeline.descriptor_dirty = true;
+    return true;
+}
+
+bool updateZoningGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_ZoningGpuBuffers.colors.mapped || g_ZoningGpuBuffers.render_features == 0) {
+        if (error) *error = "zoning GPU color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_ZoningGpuBuffers.render_features) {
+        if (error) *error = "zoning GPU color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(g_ZoningGpuBuffers.colors.mapped, colors_rgba.data(), colors_rgba.size() * sizeof(ImU32));
+    return true;
+}
+
+bool updateZoningGpuOutlineColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_ZoningGpuBuffers.outline_colors.mapped || g_ZoningGpuBuffers.render_features == 0) {
+        if (error) *error = "zoning GPU outline color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_ZoningGpuBuffers.render_features) {
+        if (error) *error = "zoning GPU outline color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(g_ZoningGpuBuffers.outline_colors.mapped, colors_rgba.data(), colors_rgba.size() * sizeof(ImU32));
+    g_ZoningGpuOutlineHasVisibleColors = std::any_of(colors_rgba.begin(), colors_rgba.end(), [](ImU32 color) {
+        return (color >> 24) != 0;
+    });
+    return true;
+}
+
+void clearZoningGpuBuffers() {
+    destroyParcelGpuBuffers(g_ZoningGpuBuffers);
+    g_ZoningGpuBuffers = ParcelGpuBuffers{};
+    g_ZoningGpuOutlineHasVisibleColors = false;
+    g_ZoningGpuPipeline.descriptor_dirty = true;
+}
+
+static bool ensureZoningGpuDescriptorSetsAllocated(std::string* error) {
+    if (!g_Device || !g_DescriptorPool || !g_ZoningGpuBuffers.colors.buffer || !g_ZoningGpuBuffers.outline_colors.buffer) {
+        if (error) *error = "zoning GPU descriptor prerequisites are not ready";
+        return false;
+    }
+    if (!g_ZoningGpuPipeline.descriptor_set_layout) {
+        VkDescriptorSetLayoutBinding color_binding{};
+        color_binding.binding = 0;
+        color_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        color_binding.descriptorCount = 1;
+        color_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &color_binding;
+        if (vkCreateDescriptorSetLayout(g_Device, &layout_info, g_Allocator, &g_ZoningGpuPipeline.descriptor_set_layout) != VK_SUCCESS) {
+            if (error) *error = "vkCreateDescriptorSetLayout failed for zoning GPU pipeline";
+            return false;
+        }
+    }
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    if (g_ZoningGpuPipeline.descriptor_sets_by_frame.size() != frame_count) {
+        std::vector<VkDescriptorSetLayout> layouts((size_t)frame_count * 2, g_ZoningGpuPipeline.descriptor_set_layout);
+        std::vector<VkDescriptorSet> sets(layouts.size(), VK_NULL_HANDLE);
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = g_DescriptorPool;
+        alloc_info.descriptorSetCount = (uint32_t)layouts.size();
+        alloc_info.pSetLayouts = layouts.data();
+        if (vkAllocateDescriptorSets(g_Device, &alloc_info, sets.data()) != VK_SUCCESS) {
+            if (error) *error = "vkAllocateDescriptorSets failed for zoning GPU pipeline";
+            return false;
+        }
+        g_ZoningGpuPipeline.descriptor_sets_by_frame.assign(frame_count, {});
+        g_ZoningGpuPipeline.descriptor_dirty_by_frame.assign(frame_count, true);
+        for (uint32_t frame = 0; frame < frame_count; ++frame) {
+            g_ZoningGpuPipeline.descriptor_sets_by_frame[frame] = {
+                sets[(size_t)frame * 2 + 0],
+                VK_NULL_HANDLE,
+                sets[(size_t)frame * 2 + 1]
+            };
+        }
+        g_ZoningGpuPipeline.descriptor_dirty = true;
+    }
+    if (g_ZoningGpuPipeline.descriptor_dirty) {
+        if (g_ZoningGpuPipeline.descriptor_dirty_by_frame.size() != frame_count) {
+            g_ZoningGpuPipeline.descriptor_dirty_by_frame.assign(frame_count, true);
+        } else {
+            std::fill(g_ZoningGpuPipeline.descriptor_dirty_by_frame.begin(), g_ZoningGpuPipeline.descriptor_dirty_by_frame.end(), true);
+        }
+        g_ZoningGpuPipeline.descriptor_dirty = false;
+    }
+    return true;
+}
+
+static bool ensureZoningGpuDescriptorSet(std::string* error, std::array<VkDescriptorSet, 3>* out_sets) {
+    if (!ensureZoningGpuDescriptorSetsAllocated(error)) return false;
+    if (!out_sets || g_ZoningGpuPipeline.descriptor_sets_by_frame.empty()) {
+        if (error) *error = "zoning GPU descriptor set output is unavailable";
+        return false;
+    }
+    const uint32_t frame_count = (uint32_t)g_ZoningGpuPipeline.descriptor_sets_by_frame.size();
+    const uint32_t frame_index = frame_count > 0 ? (g_CurrentFrameRenderIndex % frame_count) : 0;
+    *out_sets = g_ZoningGpuPipeline.descriptor_sets_by_frame[frame_index];
+    if (frame_index >= g_ZoningGpuPipeline.descriptor_dirty_by_frame.size() ||
+        !g_ZoningGpuPipeline.descriptor_dirty_by_frame[frame_index]) {
+        return true;
+    }
+    VkDescriptorBufferInfo base_color_info{};
+    base_color_info.buffer = g_ZoningGpuBuffers.colors.buffer;
+    base_color_info.offset = 0;
+    base_color_info.range = g_ZoningGpuBuffers.colors.size_bytes;
+    VkDescriptorBufferInfo outline_color_info{};
+    outline_color_info.buffer = g_ZoningGpuBuffers.outline_colors.buffer;
+    outline_color_info.offset = 0;
+    outline_color_info.range = g_ZoningGpuBuffers.outline_colors.size_bytes;
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = (*out_sets)[0];
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[0].pBufferInfo = &base_color_info;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = (*out_sets)[2];
+    writes[1].dstBinding = 0;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &outline_color_info;
+    vkUpdateDescriptorSets(g_Device, 2, writes, 0, nullptr);
+    g_ZoningGpuPipeline.descriptor_dirty_by_frame[frame_index] = false;
+    return true;
+}
+
+static bool ensureZoningGpuPipeline(VkRenderPass render_pass, std::string* error) {
+    if (!g_Device || !render_pass) {
+        if (error) *error = "zoning GPU render pass/device is not ready";
+        return false;
+    }
+    if (!ensureZoningGpuDescriptorSetsAllocated(error)) return false;
+    if (g_ZoningGpuPipeline.fill_pipeline && g_ZoningGpuPipeline.line_pipeline && g_ZoningGpuPipeline.render_pass == render_pass) return true;
+    if (g_ZoningGpuPipeline.fill_pipeline) vkDestroyPipeline(g_Device, g_ZoningGpuPipeline.fill_pipeline, g_Allocator);
+    if (g_ZoningGpuPipeline.line_pipeline) vkDestroyPipeline(g_Device, g_ZoningGpuPipeline.line_pipeline, g_Allocator);
+    if (g_ZoningGpuPipeline.pipeline_layout) vkDestroyPipelineLayout(g_Device, g_ZoningGpuPipeline.pipeline_layout, g_Allocator);
+    g_ZoningGpuPipeline.fill_pipeline = VK_NULL_HANDLE;
+    g_ZoningGpuPipeline.line_pipeline = VK_NULL_HANDLE;
+    g_ZoningGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+
+    const std::vector<uint32_t> vert_code = loadSpirvFile(kParcelGpuVertShaderPath);
+    const std::vector<uint32_t> frag_code = loadSpirvFile(kParcelGpuFragShaderPath);
+    if (vert_code.empty() || frag_code.empty()) {
+        if (error) *error = "zoning GPU shader SPIR-V is unavailable";
+        return false;
+    }
+    VkShaderModuleCreateInfo shader_info{};
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.codeSize = vert_code.size() * sizeof(uint32_t);
+    shader_info.pCode = vert_code.data();
+    VkShaderModule vert_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &vert_shader) != VK_SUCCESS) {
+        if (error) *error = "vkCreateShaderModule failed for zoning vertex shader";
+        return false;
+    }
+    shader_info.codeSize = frag_code.size() * sizeof(uint32_t);
+    shader_info.pCode = frag_code.data();
+    VkShaderModule frag_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &frag_shader) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        if (error) *error = "vkCreateShaderModule failed for zoning fragment shader";
+        return false;
+    }
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(ParcelGpuPushConstants);
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &g_ZoningGpuPipeline.descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_range;
+    if (vkCreatePipelineLayout(g_Device, &pipeline_layout_info, g_Allocator, &g_ZoningGpuPipeline.pipeline_layout) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+        if (error) *error = "vkCreatePipelineLayout failed for zoning GPU pipeline";
+        return false;
+    }
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert_shader;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag_shader;
+    stages[1].pName = "main";
+    VkVertexInputBindingDescription bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].stride = sizeof(ImVec2);
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(uint32_t);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[2]{};
+    attrs[0].location = 0;
+    attrs[0].binding = 0;
+    attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[0].offset = 0;
+    attrs[1].location = 1;
+    attrs[1].binding = 1;
+    attrs[1].format = VK_FORMAT_R32_UINT;
+    attrs[1].offset = 0;
+    VkPipelineVertexInputStateCreateInfo vertex_input{};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount = 2;
+    vertex_input.pVertexBindingDescriptions = bindings;
+    vertex_input.vertexAttributeDescriptionCount = 2;
+    vertex_input.pVertexAttributeDescriptions = attrs;
+    VkPipelineInputAssemblyStateCreateInfo assembly{};
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.lineWidth = 1.0f;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    VkPipelineMultisampleStateCreateInfo msaa{};
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState blend_attachment{};
+    blend_attachment.blendEnable = VK_TRUE;
+    blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blend_attachment;
+    const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic{};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = (uint32_t)IM_ARRAYSIZE(dynamic_states);
+    dynamic.pDynamicStates = dynamic_states;
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &raster;
+    pipeline_info.pMultisampleState = &msaa;
+    pipeline_info.pColorBlendState = &blend;
+    pipeline_info.pDynamicState = &dynamic;
+    pipeline_info.layout = g_ZoningGpuPipeline.pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+    VkPipeline fill_pipeline = VK_NULL_HANDLE;
+    const VkResult fill_result = vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &fill_pipeline);
+    VkPipeline line_pipeline = VK_NULL_HANDLE;
+    if (fill_result == VK_SUCCESS) {
+        VkPipelineInputAssemblyStateCreateInfo line_assembly = assembly;
+        line_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+        VkPipelineRasterizationStateCreateInfo line_raster = raster;
+        line_raster.lineWidth = 1.0f;
+        pipeline_info.pInputAssemblyState = &line_assembly;
+        pipeline_info.pRasterizationState = &line_raster;
+        if (vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &line_pipeline) != VK_SUCCESS) {
+            vkDestroyPipeline(g_Device, fill_pipeline, g_Allocator);
+            fill_pipeline = VK_NULL_HANDLE;
+        }
+    }
+    vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+    vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+    if (!fill_pipeline || !line_pipeline) {
+        if (error) *error = "vkCreateGraphicsPipelines failed for zoning GPU pipeline";
+        vkDestroyPipelineLayout(g_Device, g_ZoningGpuPipeline.pipeline_layout, g_Allocator);
+        g_ZoningGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+        return false;
+    }
+    g_ZoningGpuPipeline.fill_pipeline = fill_pipeline;
+    g_ZoningGpuPipeline.line_pipeline = line_pipeline;
+    g_ZoningGpuPipeline.render_pass = render_pass;
+    return true;
+}
+
+bool configureZoningGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error) {
+    g_ZoningGpuDrawState = ParcelGpuDrawState{};
+    if (!config.active) return true;
+    if (!g_ZoningGpuBuffers.positions.buffer || !g_ZoningGpuBuffers.indices.buffer || g_ZoningGpuBuffers.chunks.empty()) {
+        if (error) *error = "zoning GPU buffers are not resident";
+        return false;
+    }
+    g_ZoningGpuDrawState.active = true;
+    g_ZoningGpuDrawState.math_zoom = config.math_zoom;
+    g_ZoningGpuDrawState.zoom_scale = config.zoom_scale;
+    g_ZoningGpuDrawState.center_world = config.center_world;
+    g_ZoningGpuDrawState.viewport_origin = config.viewport_origin;
+    g_ZoningGpuDrawState.viewport_size = config.viewport_size;
+    g_ZoningGpuDrawState.framebuffer_size = config.framebuffer_size;
+    g_ZoningGpuDrawState.visible_chunks.reserve(g_ZoningGpuBuffers.chunks.size());
+    g_ZoningGpuDrawState.visible_line_chunks.reserve(g_ZoningGpuBuffers.chunks.size());
+    const float lon_span = std::max(0.0f, config.view_max_lon - config.view_min_lon);
+    const float lat_span = std::max(0.0f, config.view_max_lat - config.view_min_lat);
+    const float lon_pad = std::max(0.0001f, lon_span * (2.0f / std::max(1.0f, config.viewport_size.x)));
+    const float lat_pad = std::max(0.0001f, lat_span * (2.0f / std::max(1.0f, config.viewport_size.y)));
+    for (const ParcelRenderChunkRecord& chunk : g_ZoningGpuBuffers.chunks) {
+        if (!rectsOverlap(chunk.min_lon, chunk.min_lat, chunk.max_lon, chunk.max_lat,
+                config.view_min_lon - lon_pad, config.view_min_lat - lat_pad,
+                config.view_max_lon + lon_pad, config.view_max_lat + lat_pad)) {
+            continue;
+        }
+        if (chunk.index_count == 0) continue;
+        g_ZoningGpuDrawState.visible_chunks.push_back(ParcelGpuDrawChunk{chunk.index_offset, chunk.index_count});
+        if (chunk.line_index_count > 0) {
+            g_ZoningGpuDrawState.visible_line_chunks.push_back(ParcelGpuLineDrawChunk{chunk.line_index_offset, chunk.line_index_count});
+        }
+    }
+    return true;
+}
+
+void clearZoningGpuDrawState() {
+    g_ZoningGpuDrawState = ParcelGpuDrawState{};
+}
+
+bool zoningGpuDrawActive() {
+    return g_ZoningGpuDrawState.active &&
+        !g_ZoningGpuDrawState.visible_chunks.empty() &&
+        g_ZoningGpuBuffers.positions.buffer &&
+        g_ZoningGpuBuffers.indices.buffer &&
+        g_ZoningGpuBuffers.vertex_feature_refs.buffer &&
+        g_ZoningGpuBuffers.colors.buffer;
+}
+
+static void renderZoningGpuDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!zoningGpuDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureZoningGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) return;
+    std::array<VkDescriptorSet, 3> descriptor_sets{};
+    if (!ensureZoningGpuDescriptorSet(&pipeline_error, &descriptor_sets)) return;
+    ParcelGpuPushConstants push{};
+    push.center_world[0] = g_ZoningGpuDrawState.center_world.x;
+    push.center_world[1] = g_ZoningGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_ZoningGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_ZoningGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_ZoningGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_ZoningGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_ZoningGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_ZoningGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_ZoningGpuDrawState.math_zoom;
+    push.zoom_scale = g_ZoningGpuDrawState.zoom_scale;
+    VkViewport viewport{0.0f, 0.0f, push.framebuffer_size[0], push.framebuffer_size[1], 0.0f, 1.0f};
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_ZoningGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_ZoningGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_ZoningGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ZoningGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+    const VkBuffer vertex_buffers[] = {g_ZoningGpuBuffers.positions.buffer, g_ZoningGpuBuffers.vertex_feature_refs.buffer};
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ZoningGpuPipeline.fill_pipeline);
+    vkCmdBindDescriptorSets(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ZoningGpuPipeline.pipeline_layout, 0, 1, &descriptor_sets[0], 0, nullptr);
+    vkCmdPushConstants(g_CurrentFrameRenderCommandBuffer, g_ZoningGpuPipeline.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, g_ZoningGpuBuffers.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    for (const ParcelGpuDrawChunk& chunk : g_ZoningGpuDrawState.visible_chunks) {
+        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    }
+}
+
+void enqueueZoningGpuDraw(ImDrawList* draw_list) {
+    if (!draw_list || !zoningGpuDrawActive()) return;
+    draw_list->AddCallback(renderZoningGpuDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+}
+
+bool zoningGpuOutlineDrawActive() {
+    return zoningGpuDrawActive() &&
+        g_ZoningGpuBuffers.outline_colors.mapped &&
+        !g_ZoningGpuDrawState.visible_line_chunks.empty() &&
+        g_ZoningGpuOutlineHasVisibleColors;
+}
+
+static void renderZoningGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!zoningGpuOutlineDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureZoningGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) return;
+    std::array<VkDescriptorSet, 3> descriptor_sets{};
+    if (!ensureZoningGpuDescriptorSet(&pipeline_error, &descriptor_sets)) return;
+    ParcelGpuPushConstants push{};
+    push.center_world[0] = g_ZoningGpuDrawState.center_world.x;
+    push.center_world[1] = g_ZoningGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_ZoningGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_ZoningGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_ZoningGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_ZoningGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_ZoningGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_ZoningGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_ZoningGpuDrawState.math_zoom;
+    push.zoom_scale = g_ZoningGpuDrawState.zoom_scale;
+    VkViewport viewport{0.0f, 0.0f, push.framebuffer_size[0], push.framebuffer_size[1], 0.0f, 1.0f};
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_ZoningGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_ZoningGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_ZoningGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ZoningGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+    const VkBuffer vertex_buffers[] = {g_ZoningGpuBuffers.positions.buffer, g_ZoningGpuBuffers.vertex_feature_refs.buffer};
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ZoningGpuPipeline.line_pipeline);
+    vkCmdBindDescriptorSets(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ZoningGpuPipeline.pipeline_layout, 0, 1, &descriptor_sets[2], 0, nullptr);
+    vkCmdPushConstants(g_CurrentFrameRenderCommandBuffer, g_ZoningGpuPipeline.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, g_ZoningGpuBuffers.line_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+    for (const ParcelGpuLineDrawChunk& chunk : g_ZoningGpuDrawState.visible_line_chunks) {
+        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    }
+}
+
+void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list) {
+    if (!draw_list || !zoningGpuOutlineDrawActive()) return;
+    draw_list->AddCallback(renderZoningGpuOutlineDrawCallback, nullptr);
     draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }
 
@@ -2403,8 +2905,10 @@ void CleanupVulkan() {
     CleanupTileCache();
     shutdownGpuSplatAggregate();
     stopParcelGpuUploadWorker();
+    clearZoningGpuBuffers();
     clearParcelGpuBuffers();
     drainRetiredParcelGpuPayloads(true);
+    destroyZoningGpuPipeline();
     destroyParcelGpuPipeline();
     if (g_UploadCommandPool) vkDestroyCommandPool(g_Device, g_UploadCommandPool, g_Allocator);
     if (g_TileSampler) vkDestroySampler(g_Device, g_TileSampler, g_Allocator);

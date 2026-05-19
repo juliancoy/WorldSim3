@@ -4,6 +4,7 @@
 #include "download_queue.h"
 #include "imgui.h"
 #include "layer_runtime.h"
+#include "layer_ui_contexts.h"
 #include "tiles.h"
 
 #include <atomic>

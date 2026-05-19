@@ -48,7 +48,7 @@ struct FramePreludeContext {
     int protocol_version = 0;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     std::atomic<int>* current_zoom_state = nullptr;

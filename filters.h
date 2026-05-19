@@ -40,6 +40,7 @@ struct MapFilterState {
     char zip[24] = "";
     CrimeFilterState crime;
     std::unordered_set<std::string> selected_owners;
+    std::unordered_map<std::string, bool> event_sector_enabled;
 };
 
 struct FeatureKey {
@@ -89,6 +90,9 @@ struct ParcelJurisdictionFilterState {
 struct FeatureFilterContext {
     const std::vector<LayerDef>* layers = nullptr;
     const MapFilterState* map_filters = nullptr;
+    std::string selected_nation_state_normalized;
+    std::string selected_state_region_normalized;
+    std::string selected_county_city_normalized;
     const FilterResultSet* result_set = nullptr;
     const std::vector<QueryMapLayer>* query_layers = nullptr;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
@@ -115,3 +119,4 @@ bool queryMapColorForFeature(
     float out_color[4]);
 
 bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters);
+bool layerMatchesSelectedGeography(const LayerDef& layer, const FeatureFilterContext& ctx);

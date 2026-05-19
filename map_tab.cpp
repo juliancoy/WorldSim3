@@ -190,6 +190,21 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.prof_projection_world_extent_cache_entries,
                 ctx.prof_projection_cache_generation
             });
+            if (ctx.hover_debug_state) {
+                std::lock_guard<std::mutex> lk(ctx.hover_debug_state->mutex);
+                ctx.hover_debug_state->map_hovered = map_canvas_session.map_hovered;
+                ctx.hover_debug_state->mouse_screen_x = ImGui::GetIO().MousePos.x;
+                ctx.hover_debug_state->mouse_screen_y = ImGui::GetIO().MousePos.y;
+                ctx.hover_debug_state->mouse_lon = map_canvas_session.mouse_ll.x;
+                ctx.hover_debug_state->mouse_lat = map_canvas_session.mouse_ll.y;
+                ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel != nullptr;
+                ctx.hover_debug_state->hovered_parcel_idx = map_canvas_session.hover_state.hovered_parcel_idx;
+                ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
+                ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
+                ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
+                ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
+                ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
+            }
             const MapCornerControlState map_corner_controls = hitTestMapCornerControls(ctx, map_canvas_session);
             drawMapFpsOverlay(map_canvas_session);
 
@@ -214,6 +229,30 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 parcel_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
                 parcel_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
                 configureParcelGpuDrawState(parcel_draw_cfg);
+            }
+            if (ctx.zoning_layer_idx >= 0 &&
+                (size_t)ctx.zoning_layer_idx < ctx.layers->size() &&
+                (*ctx.layers)[(size_t)ctx.zoning_layer_idx].enabled) {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImVec2 fb_scale = io.DisplayFramebufferScale;
+                ParcelGpuDrawConfig zoning_draw_cfg;
+                zoning_draw_cfg.active = true;
+                zoning_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                zoning_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                zoning_draw_cfg.center_world = map_canvas_session.center_world;
+                zoning_draw_cfg.viewport_origin =
+                    ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                zoning_draw_cfg.viewport_size =
+                    ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                zoning_draw_cfg.framebuffer_size =
+                    ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                zoning_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                zoning_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                zoning_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                zoning_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                configureZoningGpuDrawState(zoning_draw_cfg);
+            } else {
+                clearZoningGpuDrawState();
             }
 
             MapFrameSessionContext map_frame_session_ctx;

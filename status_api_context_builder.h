@@ -17,6 +17,7 @@ struct StatusApiContextFactoryInput {
     std::string* active_filter_status = nullptr;
     TimeCubeService* time_cube_service = nullptr;
     ScreenshotRequestState* screenshot = nullptr;
+    HoverDebugState* hover_debug_state = nullptr;
 
     std::mutex* status_mutex = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;

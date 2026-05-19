@@ -1,5 +1,6 @@
 #include "layer_import.h"
 #include "app_utils.h"
+#include "layer_geometry.h"
 
 #include <zlib.h>
 #include <curl/curl.h>
@@ -1101,13 +1102,117 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
     res.message = "generated from " + std::to_string(input_count) + " local parcel layer(s)";
     return res;
 }
+
+const json* jsonPathValue(const json& root, const std::string& path) {
+    if (path.empty()) return &root;
+    const json* current = &root;
+    size_t start = 0;
+    while (start <= path.size()) {
+        const size_t dot = path.find('.', start);
+        const std::string key = path.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+        if (key.empty() || !current->is_object()) return nullptr;
+        auto it = current->find(key);
+        if (it == current->end()) return nullptr;
+        current = &(*it);
+        if (dot == std::string::npos) break;
+        start = dot + 1;
+    }
+    return current;
+}
+
+bool jsonPathDouble(const json& root, const std::string& path, double& out) {
+    const json* value = jsonPathValue(root, path);
+    if (!value) return false;
+    try {
+        if (value->is_number()) {
+            out = value->get<double>();
+            return std::isfinite(out);
+        }
+        if (value->is_string()) {
+            char* end = nullptr;
+            const std::string s = value->get<std::string>();
+            out = std::strtod(s.c_str(), &end);
+            return end && end != s.c_str() && *end == '\0' && std::isfinite(out);
+        }
+    } catch (...) {
+    }
+    return false;
+}
+
+void flattenJsonProperties(
+    const json& value,
+    const std::string& prefix,
+    std::vector<std::pair<std::string, std::string>>& out) {
+    if (value.is_object()) {
+        for (auto it = value.begin(); it != value.end(); ++it) {
+            const std::string key = prefix.empty() ? it.key() : prefix + "." + it.key();
+            flattenJsonProperties(it.value(), key, out);
+        }
+        return;
+    }
+    if (value.is_array()) {
+        out.push_back({prefix, value.dump()});
+        return;
+    }
+    out.push_back({prefix, jsonValueToString(value)});
+}
+
+void writeJsonPointFeedGeoJson(
+    const fs::path& json_path,
+    const fs::path& out_path,
+    const std::string& item_path,
+    const std::string& lon_field,
+    const std::string& lat_field) {
+    std::ifstream in(json_path);
+    if (!in) throw std::runtime_error("failed to open json feed");
+    json root;
+    in >> root;
+    const json* items = item_path.empty() ? &root : jsonPathValue(root, item_path);
+    if (!items || !items->is_array()) throw std::runtime_error("json feed items path is not an array");
+
+    const fs::path tmp = out_path.string() + ".tmp";
+    std::ofstream out(tmp);
+    if (!out) throw std::runtime_error("failed to open geojson output");
+    out << "{\"type\":\"FeatureCollection\",\"features\":[\n";
+    bool first = true;
+    size_t written = 0;
+    for (const auto& item : *items) {
+        if (!item.is_object()) continue;
+        double lon = 0.0;
+        double lat = 0.0;
+        if (!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) continue;
+        json props = json::object();
+        std::vector<std::pair<std::string, std::string>> flat_props;
+        flattenJsonProperties(item, "", flat_props);
+        for (const auto& kv : flat_props) props[kv.first] = kv.second;
+        json feature = {
+            {"type", "Feature"},
+            {"geometry", {
+                {"type", "Point"},
+                {"coordinates", {lon, lat}}
+            }},
+            {"properties", std::move(props)}
+        };
+        if (!first) out << ",\n";
+        first = false;
+        out << feature.dump();
+        written++;
+    }
+    out << "\n]}\n";
+    out.close();
+    if (!out.good()) throw std::runtime_error("failed writing geojson");
+    if (written == 0) throw std::runtime_error("json feed produced no point features");
+    std::error_code ec;
+    fs::rename(tmp, out_path, ec);
+    if (ec) throw std::runtime_error("rename failed: " + ec.message());
+}
 }
 
 bool layerHasImportSource(const LayerDef& layer) {
     if (layer.import_type == "regional_parcel_builder") return true;
     if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
     return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties" ||
-            layer.import_type == "xlsx_point_table") &&
+            layer.import_type == "xlsx_point_table" || layer.import_type == "json_point_feed") &&
         !layer.import_url.empty();
 }
 
@@ -1177,8 +1282,36 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
         }
         return res;
     }
+    if (layer.import_type == "json_point_feed") {
+        fs::path artifact_name =
+            !layer.import_artifact_file.empty()
+                ? fs::path(layer.import_artifact_file)
+                : fs::path(out_path.stem().string() + ".json");
+        const fs::path json_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, json_path, root / "data" / "versions");
+        if (!dl.ok) return dl;
+        try {
+            writeJsonPointFeedGeoJson(
+                json_path,
+                out_path,
+                layer.import_item_path,
+                layer.import_lon_field,
+                layer.import_lat_field);
+            res.ok = true;
+            res.changed = true;
+            res.not_modified = false;
+            res.message = "imported JSON point feed via " + dl.message;
+        } catch (const std::exception& e) {
+            res.ok = false;
+            res.message = std::string("import failed: ") + e.what();
+        }
+        return res;
+    }
     if (layer.import_type != "zipped_shapefile" ||
-        (layer.import_source_crs != "EPSG:2248" && layer.import_source_crs != "EPSG:26985")) {
+        (layer.import_source_crs != "EPSG:2248" &&
+         layer.import_source_crs != "EPSG:26985" &&
+         layer.import_source_crs != "EPSG:6488" &&
+         layer.import_source_crs != "ESRI:103069")) {
         res.message = "unsupported import type/source CRS";
         return res;
     }
@@ -1201,7 +1334,9 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
             collection_name,
             jurisdiction,
             source_file,
-            layer.import_source_crs == "EPSG:2248");
+            layer.import_source_crs == "EPSG:2248" ||
+                layer.import_source_crs == "EPSG:6488" ||
+                layer.import_source_crs == "ESRI:103069");
         res.ok = true;
         res.changed = true;
         res.not_modified = false;

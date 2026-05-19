@@ -3,6 +3,7 @@
 #include "filters.h"
 #include "heatmap_runtime.h"
 #include "layer_runtime.h"
+#include "map_render_hover.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
 #include "render_policy.h"
@@ -24,9 +25,9 @@ struct RenderFrameOrchestrationContext {
     ImVec2 size = ImVec2(0.0f, 0.0f);
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom_ptr = nullptr;
+    double* zoom_ptr = nullptr;
     int max_zoom = 0;
-    int zoom = 0;
+    double zoom = 0.0;
     int math_zoom = 0;
     float zoom_scale = 1.0f;
     int lod_ring_step = 1;
@@ -97,10 +98,12 @@ struct RenderFrameOrchestrationContext {
 
     HeatmapRuntimeState* heatmap_runtime = nullptr;
     MapProjectionCache* projection = nullptr;
+    const MapHoverState* hover_state = nullptr;
 
     std::function<bool(size_t)> is_parcel_related_layer;
     std::function<bool(size_t)> layer_uses_heatmap_aggregate;
     std::function<bool(size_t)> layer_uses_lod_geometry;
+    std::function<bool(size_t)> layer_passes_filters;
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&, ImU32&)> query_map_color;
     std::function<bool(size_t)> should_fill_layer_polygon;

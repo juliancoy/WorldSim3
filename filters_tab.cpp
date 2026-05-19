@@ -38,7 +38,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         const auto& parcel = parcel_layer.features[idx];
         *ctx.center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
         *ctx.center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
-        *ctx.zoom = std::max(*ctx.zoom, 18);
+        *ctx.zoom = std::max(*ctx.zoom, 18.0);
         return ctx.select_parcel_idx ? ctx.select_parcel_idx(idx, ImGui::GetIO().KeyCtrl) : false;
     };
 

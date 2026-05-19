@@ -15,6 +15,9 @@
 #include "arkavo_rtc_session_manager.h"
 #include "time_cube.h"
 #include "app_settings.h"
+#include "choropleth_histogram.h"
+#include "color_editor_ipc.h"
+#include "color_editor_window.h"
 #include "dataset_library.h"
 #include "net_http_utils.h"
 #include "profiling.h"
@@ -65,6 +68,7 @@
 #include "left_panel.h"
 #include "frame_prelude.h"
 #include "download_queue.h"
+#include "event_sectors.h"
 #include "basemap_panel.h"
 #include "layer_download_queue.h"
 #include "lan_discovery.h"
@@ -136,7 +140,10 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <signal.h>
 #include <thread>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -188,6 +195,28 @@ bool loadTrianglesForParcelRender(
     const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
     return loadBinaryTriCache(tri_bin, sig, feature_count, out);
 }
+
+bool ensureTrianglesForParcelRender(
+    const fs::path& root,
+    const std::string& layer_file,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureGeom>& features) {
+    std::vector<std::vector<uint32_t>> triangles;
+    if (!loadTrianglesForParcelRender(root, layer_file, sig, features.size(), triangles)) {
+        triangles.resize(features.size());
+        for (size_t i = 0; i < features.size(); ++i) {
+            if (!features[i].rings.empty()) {
+                triangles[i] = triangulateRings(features[i].rings);
+            }
+        }
+        const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
+        saveBinaryTriCache(tri_bin, sig, triangles);
+    }
+    for (size_t i = 0; i < features.size() && i < triangles.size(); ++i) {
+        features[i].triangles = std::move(triangles[i]);
+    }
+    return true;
+}
 }
 
 int runWorldSim3App(int argc, char** argv) {
@@ -198,6 +227,10 @@ int runWorldSim3App(int argc, char** argv) {
     runtime.argv = argv;
     runtime.root = root;
     const WorldsimCliOptions cli_options = parseWorldsimCliOptions(argc, argv);
+    if (cli_options.run_color_editor) {
+        if (cli_options.color_editor_session_file.empty()) return 1;
+        return runColorEditorWindow(root, cli_options.color_editor_session_file);
+    }
     const int cli_result = runWorldsimCliImmediate(root, cli_options);
     if (cli_result >= 0) return cli_result;
 
@@ -381,6 +414,8 @@ int runWorldSim3App(int argc, char** argv) {
     }
     ImGui::SetCurrentContext(main_imgui_context);
 
+    ImGui::SetCurrentContext(main_imgui_context);
+
     BootstrapProgress bootstrap;
     bootstrap.running.store(false, std::memory_order_relaxed);
     bootstrap.done.store(true, std::memory_order_relaxed);
@@ -398,7 +433,7 @@ int runWorldSim3App(int argc, char** argv) {
     const int vacant_rehab_layer_idx = layer_indices.vacant_rehab_layer_idx;
     const int tax_lien_layer_idx = layer_indices.tax_lien_layer_idx;
     const int tax_sale_layer_idx = layer_indices.tax_sale_layer_idx;
-    const int zoning_layer_idx = layer_indices.zoning_layer_idx;
+    int zoning_layer_idx = layer_indices.zoning_layer_idx;
     const int crime_nibrs_layer_idx = layer_indices.crime_nibrs_layer_idx;
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
     std::vector<LayerDef::FeatureGeom> harmonized_real_property_features;
@@ -512,13 +547,20 @@ int runWorldSim3App(int argc, char** argv) {
     std::string parcel_geometry_restart_required_signature;
     std::string parcel_render_requested_signature;
     std::string parcel_gpu_upload_requested_signature;
+    std::string zoning_gpu_uploaded_signature;
+    int zoning_gpu_uploaded_layer_idx = -1;
     uint64_t parcel_gpu_filter_state_key = 0;
     uint64_t parcel_gpu_overlay_state_key = 0;
     uint64_t parcel_gpu_outline_state_key = 0;
+    uint64_t zoning_gpu_color_state_key = 0;
+    uint64_t zoning_gpu_outline_state_key = 0;
     std::vector<ImU32> parcel_gpu_last_base_colors;
     std::vector<ImU32> parcel_gpu_last_overlay_colors;
     std::vector<ImU32> parcel_gpu_last_outline_colors;
     ParcelRenderCacheBlob parcel_gpu_render_blob;
+    std::vector<ImU32> zoning_gpu_last_base_colors;
+    std::vector<ImU32> zoning_gpu_last_outline_colors;
+    ParcelRenderCacheBlob zoning_gpu_render_blob;
     std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
     std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
     std::atomic<size_t> prof_projection_cache_generation{0};
@@ -804,20 +846,12 @@ int runWorldSim3App(int argc, char** argv) {
                 std::vector<LayerDef::FeatureGeom> hydrated_features;
                 if (!loadHydratedFeaturesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features)) {
                     result.error = "failed to load hydration cache for parcel render build";
+                } else if (!ensureTrianglesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features)) {
+                    result.error = "failed to prepare triangulation cache for parcel render build";
+                } else if (!buildParcelRenderCacheBlob(hydrated_features, req.source_signature, result.blob)) {
+                    result.error = "failed to build parcel render cache blob";
                 } else {
-                    std::vector<std::vector<uint32_t>> triangles;
-                    if (!loadTrianglesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features.size(), triangles)) {
-                        result.error = "failed to load triangulation cache for parcel render build";
-                    } else {
-                        for (size_t i = 0; i < hydrated_features.size() && i < triangles.size(); ++i) {
-                            hydrated_features[i].triangles = std::move(triangles[i]);
-                        }
-                        if (!buildParcelRenderCacheBlob(hydrated_features, req.source_signature, result.blob)) {
-                            result.error = "failed to build parcel render cache blob";
-                        } else {
-                            saveBinaryParcelRenderCache(req.cache_path, result.blob);
-                        }
-                    }
+                    saveBinaryParcelRenderCache(req.cache_path, result.blob);
                 }
             }
 
@@ -831,6 +865,7 @@ int runWorldSim3App(int argc, char** argv) {
         }
     });
 
+    HoverDebugState hover_debug_state;
     StatusApiContextFactoryInput status_api_input;
     status_api_input.app_version = kAppVersion;
     status_api_input.protocol_version = kProtocolVersion;
@@ -845,6 +880,7 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.active_filter_status = &parcel_jurisdiction_filter_state.status;
     status_api_input.time_cube_service = &time_cube_service;
     status_api_input.screenshot = &g_ScreenshotState;
+    status_api_input.hover_debug_state = &hover_debug_state;
     status_api_input.status_mutex = &status_mutex;
     status_api_input.layer_states = &layer_states;
     status_api_input.layer_fill_mutex = &layer_fill_mutex;
@@ -940,7 +976,7 @@ int runWorldSim3App(int argc, char** argv) {
 
 
 
-    int zoom = 12;
+    double zoom = 12.0;
     double center_lon = -76.6122;
     double center_lat = 39.2904;
     float ui_text_scale = 1.0f;
@@ -1056,15 +1092,48 @@ int runWorldSim3App(int argc, char** argv) {
         &crime_year_max,
         owner_search_query,
         sizeof(owner_search_query),
-        &selected_owners);
+        &selected_owners,
+        &map_filter_state.event_sector_enabled);
+    ensureCommunitySectorFilterDefaults(map_filter_state.event_sector_enabled);
+    {
+        double preset_lon = center_lon;
+        double preset_lat = center_lat;
+        int preset_zoom = (int)std::floor(zoom);
+        if (geographyViewPreset(
+                map_filter_state.selected_nation_state,
+                map_filter_state.selected_state_region,
+                preset_lon,
+                preset_lat,
+                preset_zoom)) {
+            center_lon = preset_lon;
+            center_lat = preset_lat;
+            zoom = preset_zoom;
+        }
+    }
     loadMapUiState(
         root,
+        &map_filter_state.selected_nation_state,
+        &map_filter_state.selected_state_region,
+        &map_filter_state.selected_county_city,
         &center_lon,
         &center_lat,
         &zoom,
         &selected_parcel_idx,
         &selected_parcel_indices);
-    zoom = std::clamp(zoom, kMinZoom, kMaxZoom);
+    zoning_layer_idx = layer_registry.findBestZoningLayerForGeography(
+        map_filter_state.selected_nation_state,
+        map_filter_state.selected_state_region,
+        map_filter_state.selected_county_city);
+    if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size()) {
+        MapFilterState geography_only_filters;
+        geography_only_filters.selected_nation_state = map_filter_state.selected_nation_state;
+        geography_only_filters.selected_state_region = map_filter_state.selected_state_region;
+        geography_only_filters.selected_county_city = map_filter_state.selected_county_city;
+        if (layerMatchesSelectedGeography(layers[(size_t)zoning_layer_idx], geography_only_filters)) {
+            layers[(size_t)zoning_layer_idx].enabled = true;
+        }
+    }
+    zoom = std::clamp(zoom, (double)kMinZoom, (double)kMaxZoom);
     center_lat = std::clamp(center_lat, -85.0, 85.0);
     selected_parcel_index_set.clear();
     for (size_t idx : selected_parcel_indices) selected_parcel_index_set.insert(idx);
@@ -1093,7 +1162,7 @@ int runWorldSim3App(int argc, char** argv) {
     size_t topo_missing_tiles_cached = 0;
     size_t topo_total_tiles_cached = 0;
     bool basemap_coverage_dirty = true;
-    constexpr auto kBasemapCoverageRefreshInterval = std::chrono::seconds(2);
+    constexpr auto kBasemapCoverageRefreshInterval = std::chrono::seconds(60);
     std::string tile_root_dir_cached = "tiles";
     auto basemap_availability_last_check = std::chrono::steady_clock::time_point{};
     auto last_frame_ts = std::chrono::steady_clock::now();
@@ -1292,9 +1361,405 @@ int runWorldSim3App(int argc, char** argv) {
         g_ScreenshotState.framebuffer_scale_x = 1.0f;
         g_ScreenshotState.framebuffer_scale_y = 1.0f;
     };
+    const fs::path color_editor_dir = root / "data" / "cache" / "ui" / "layer_color_editor";
+    const fs::path color_editor_snapshot_path = color_editor_dir / "session.json";
+    const fs::path color_editor_command_path = color_editor_dir / "command.json";
+    uint64_t color_editor_snapshot_revision = 0;
+    uint64_t color_editor_last_command_seq = 0;
+    pid_t color_editor_pid = -1;
+    int active_color_editor_layer_idx = -1;
+    bool active_color_editor_outline_target = false;
+    bool pending_external_layer_fill_state_changed = false;
+    bool pending_external_layer_heatmap_state_changed = false;
+
+    auto collect_numeric_layer_values = [&](const LayerDef& layer) {
+        std::vector<double> values;
+        if (layer.heatmap_field.empty()) return values;
+        values.reserve(layer.features.size());
+        for (const auto& fg : layer.features) {
+            float v = 0.0f;
+            if (tryGetFeaturePropertyFloat(fg, layer.heatmap_field, v) && std::isfinite(v)) values.push_back((double)v);
+        }
+        return values;
+    };
+    auto collect_parcel_area_values = [&](const LayerDef& layer) {
+        std::vector<double> values;
+        constexpr double kDegToMetersLat = 111320.0;
+        values.reserve(layer.features.size());
+        for (const auto& fg : layer.features) {
+            if (fg.rings.empty()) continue;
+            double total = 0.0;
+            for (const auto& ring : fg.rings) {
+                if (ring.size() < 3) continue;
+                double lat_sum = 0.0;
+                for (const auto& p : ring) lat_sum += (double)p.y;
+                const double lat0 = lat_sum / (double)ring.size();
+                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
+                double area = 0.0;
+                for (size_t i = 0, n = ring.size(); i < n; ++i) {
+                    const auto& p = ring[i];
+                    const auto& q = ring[(i + 1) % n];
+                    area += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                            ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+                }
+                total += std::abs(area) * 0.5;
+            }
+            if (total > 0.0 && std::isfinite(total)) values.push_back(total);
+        }
+        return values;
+    };
+    auto collect_parcel_value_per_area_values = [&](const LayerDef& parcel_layer, const LayerDef& property_value_layer) {
+        std::vector<double> values;
+        const size_t n = std::min(parcel_layer.features.size(), property_value_layer.features.size());
+        values.reserve(n);
+        constexpr double kDegToMetersLat = 111320.0;
+        for (size_t i = 0; i < n; ++i) {
+            const auto& fg = parcel_layer.features[i];
+            if (fg.rings.empty()) continue;
+            double total = 0.0;
+            for (const auto& ring : fg.rings) {
+                if (ring.size() < 3) continue;
+                double lat_sum = 0.0;
+                for (const auto& p : ring) lat_sum += (double)p.y;
+                const double lat0 = lat_sum / (double)ring.size();
+                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
+                double area = 0.0;
+                for (size_t ri = 0, rn = ring.size(); ri < rn; ++ri) {
+                    const auto& p = ring[ri];
+                    const auto& q = ring[(ri + 1) % rn];
+                    area += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                            ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+                }
+                total += std::abs(area) * 0.5;
+            }
+            if (!(total > 0.0) || !std::isfinite(total)) continue;
+            float v = 0.0f;
+            if (!tryGetFeaturePropertyFloat(property_value_layer.features[i], property_value_layer.heatmap_field, v) ||
+                !std::isfinite(v) || v <= 0.0f) {
+                continue;
+            }
+            values.push_back((double)v / total);
+        }
+        return values;
+    };
+    auto make_histogram_snapshot = [&](const std::vector<double>& values, float clip_pct) {
+        const ApproxHistogram hist = buildApproxHistogram(values, clip_pct);
+        ColorEditorHistogramSnapshot snapshot;
+        snapshot.valid = hist.valid;
+        snapshot.sample_count = hist.sample_count;
+        snapshot.min_value = hist.min_value;
+        snapshot.max_value = hist.max_value;
+        snapshot.clipped_max_value = hist.clipped_max_value;
+        snapshot.median_value = hist.median_value;
+        snapshot.bin_width = hist.bin_width;
+        snapshot.max_bin = hist.max_bin;
+        snapshot.plot_bins = hist.plot_bins;
+        snapshot.bins = hist.bins;
+        snapshot.cumulative_bins = hist.cumulative_bins;
+        return snapshot;
+    };
+    auto active_parcel_continuous_layer_idx = [&]() -> int {
+        if (parcel_layer_idx < 0 || parcel_parameter_mode == 1) return -1;
+        if (parcel_parameter_mode == 2 || parcel_parameter_mode == 3) {
+            for (size_t i = 0; i < layers.size(); ++i) {
+                if (layers[i].file == "property_value_parcels.geojson") return (int)i;
+            }
+        }
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if ((int)i == parcel_layer_idx) continue;
+            const LayerDef& layer = layers[i];
+            const bool is_parameter_layer = layer_registry.isParcelHeatmapLayer(i) ||
+                (layer.scale == "parcel" && !layer.heatmap_field.empty());
+            if (is_parameter_layer && layer.enabled) return (int)i;
+        }
+        return -1;
+    };
+    auto clear_parcel_heatmap_layers = [&]() {
+        for (size_t i = 0; i < layers.size(); ++i) {
+            LayerDef& layer = layers[i];
+            if (layer.scale == "parcel" && !layer.heatmap_field.empty()) {
+                layer.enabled = false;
+                if (i < layer_heatmap_enabled.size()) layer_heatmap_enabled[i] = false;
+            }
+        }
+    };
+    auto build_color_editor_snapshot = [&](size_t layer_idx, bool outline_target) {
+        ColorEditorSnapshot snapshot;
+        if (layer_idx >= layers.size()) return snapshot;
+        const LayerDef& layer = layers[layer_idx];
+        snapshot.revision = 0;
+        snapshot.command_path = color_editor_command_path;
+        snapshot.layer_idx = (int)layer_idx;
+        snapshot.outline_target = outline_target;
+        snapshot.dark_mode = app_settings.dark_mode;
+        snapshot.layer_name = layer.name;
+        snapshot.layer_file = layer.file;
+        snapshot.fill_color = layer.color;
+        snapshot.outline_color = layer.outline_color;
+
+        ColorEditorOptionSnapshot static_option;
+        static_option.id = "static";
+        static_option.label = "Static";
+        snapshot.options.push_back(static_option);
+
+        if ((int)layer_idx == parcel_layer_idx) {
+            snapshot.supports_continuous = true;
+            ColorEditorOptionSnapshot area_option;
+            area_option.id = "parcel_area";
+            area_option.label = "Continuous: parcel area";
+            area_option.field_label = "parcel_area_sq_m";
+            area_option.control_layer_idx = parcel_layer_idx;
+            if ((size_t)parcel_layer_idx < layer_normalize_mode.size()) area_option.normalize_mode = layer_normalize_mode[(size_t)parcel_layer_idx];
+            if ((size_t)parcel_layer_idx < layer_heatmap_percentile_clip.size()) area_option.percentile_clip = layer_heatmap_percentile_clip[(size_t)parcel_layer_idx];
+            if ((size_t)parcel_layer_idx < layer_choropleth_gamma.size()) area_option.gamma = layer_choropleth_gamma[(size_t)parcel_layer_idx];
+            area_option.histogram = make_histogram_snapshot(collect_parcel_area_values(layer), area_option.percentile_clip);
+            snapshot.options.push_back(area_option);
+            const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
+            if (property_value_layer_idx >= 0 && (size_t)property_value_layer_idx < layers.size()) {
+                ColorEditorOptionSnapshot value_per_area_option;
+                value_per_area_option.id = "value_per_area";
+                value_per_area_option.label = "Continuous: value per area";
+                value_per_area_option.field_label = "value_per_area";
+                value_per_area_option.control_layer_idx = property_value_layer_idx;
+                if ((size_t)property_value_layer_idx < layer_normalize_mode.size()) value_per_area_option.normalize_mode = layer_normalize_mode[(size_t)property_value_layer_idx];
+                if ((size_t)property_value_layer_idx < layer_heatmap_percentile_clip.size()) value_per_area_option.percentile_clip = layer_heatmap_percentile_clip[(size_t)property_value_layer_idx];
+                if ((size_t)property_value_layer_idx < layer_choropleth_gamma.size()) value_per_area_option.gamma = layer_choropleth_gamma[(size_t)property_value_layer_idx];
+                value_per_area_option.histogram = make_histogram_snapshot(
+                    collect_parcel_value_per_area_values(layer, layers[(size_t)property_value_layer_idx]),
+                    value_per_area_option.percentile_clip);
+                snapshot.options.push_back(value_per_area_option);
+            }
+            for (size_t i = 0; i < layers.size(); ++i) {
+                if ((int)i == parcel_layer_idx) continue;
+                const LayerDef& parameter_layer = layers[i];
+                const bool is_parameter_layer = layer_registry.isParcelHeatmapLayer(i) ||
+                    (parameter_layer.scale == "parcel" && !parameter_layer.heatmap_field.empty());
+                if (!is_parameter_layer) continue;
+                ColorEditorOptionSnapshot option;
+                option.id = "layer:" + std::to_string(i);
+                option.label = "Continuous: " + parameter_layer.name;
+                option.field_label = parameter_layer.heatmap_field;
+                option.control_layer_idx = (int)i;
+                if (i < layer_normalize_mode.size()) option.normalize_mode = layer_normalize_mode[i];
+                if (i < layer_heatmap_percentile_clip.size()) option.percentile_clip = layer_heatmap_percentile_clip[i];
+                if (i < layer_choropleth_gamma.size()) option.gamma = layer_choropleth_gamma[i];
+                option.histogram = make_histogram_snapshot(collect_numeric_layer_values(parameter_layer), option.percentile_clip);
+                snapshot.options.push_back(option);
+            }
+            if (parcel_parameter_mode == 1) snapshot.selected_option_id = "parcel_area";
+            else if (parcel_parameter_mode == 3) snapshot.selected_option_id = "value_per_area";
+            else if (const int active_idx = active_parcel_continuous_layer_idx(); active_idx >= 0) snapshot.selected_option_id = "layer:" + std::to_string(active_idx);
+            else snapshot.selected_option_id = "static";
+        } else if (!layer.heatmap_field.empty()) {
+            snapshot.supports_continuous = true;
+            ColorEditorOptionSnapshot option;
+            option.id = "self";
+            option.label = "Continuous: " + layer.heatmap_field;
+            option.field_label = layer.heatmap_field;
+            option.control_layer_idx = (int)layer_idx;
+            if (layer_idx < layer_normalize_mode.size()) option.normalize_mode = layer_normalize_mode[layer_idx];
+            if (layer_idx < layer_heatmap_percentile_clip.size()) option.percentile_clip = layer_heatmap_percentile_clip[layer_idx];
+            if (layer_idx < layer_choropleth_gamma.size()) option.gamma = layer_choropleth_gamma[layer_idx];
+            option.histogram = make_histogram_snapshot(collect_numeric_layer_values(layer), option.percentile_clip);
+            snapshot.options.push_back(option);
+            snapshot.selected_option_id = (layer_idx < layer_heatmap_use_gradient.size() && layer_heatmap_use_gradient[layer_idx]) ? "self" : "static";
+        }
+        return snapshot;
+    };
+    auto histogram_snapshot_equal = [](const ColorEditorHistogramSnapshot& a, const ColorEditorHistogramSnapshot& b) {
+        return a.valid == b.valid &&
+               a.sample_count == b.sample_count &&
+               a.min_value == b.min_value &&
+               a.max_value == b.max_value &&
+               a.clipped_max_value == b.clipped_max_value &&
+               a.median_value == b.median_value &&
+               a.bin_width == b.bin_width &&
+               a.max_bin == b.max_bin &&
+               a.plot_bins == b.plot_bins &&
+               a.bins == b.bins &&
+               a.cumulative_bins == b.cumulative_bins;
+    };
+    auto option_snapshot_equal = [&](const ColorEditorOptionSnapshot& a, const ColorEditorOptionSnapshot& b) {
+        return a.id == b.id &&
+               a.label == b.label &&
+               a.field_label == b.field_label &&
+               a.control_layer_idx == b.control_layer_idx &&
+               a.normalize_mode == b.normalize_mode &&
+               a.percentile_clip == b.percentile_clip &&
+               a.gamma == b.gamma &&
+               histogram_snapshot_equal(a.histogram, b.histogram);
+    };
+    auto color_editor_snapshot_equal = [&](const ColorEditorSnapshot& a, const ColorEditorSnapshot& b) {
+        if (a.command_path != b.command_path ||
+            a.layer_idx != b.layer_idx ||
+            a.outline_target != b.outline_target ||
+            a.dark_mode != b.dark_mode ||
+            a.supports_continuous != b.supports_continuous ||
+            a.layer_name != b.layer_name ||
+            a.layer_file != b.layer_file ||
+            a.fill_color.x != b.fill_color.x || a.fill_color.y != b.fill_color.y ||
+            a.fill_color.z != b.fill_color.z || a.fill_color.w != b.fill_color.w ||
+            a.outline_color.x != b.outline_color.x || a.outline_color.y != b.outline_color.y ||
+            a.outline_color.z != b.outline_color.z || a.outline_color.w != b.outline_color.w ||
+            a.selected_option_id != b.selected_option_id ||
+            a.options.size() != b.options.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < a.options.size(); ++i) {
+            if (!option_snapshot_equal(a.options[i], b.options[i])) return false;
+        }
+        return true;
+    };
+    std::optional<ColorEditorSnapshot> last_saved_color_editor_snapshot;
+    auto save_color_editor_snapshot_if_changed = [&](ColorEditorSnapshot snapshot) {
+        if (last_saved_color_editor_snapshot &&
+            color_editor_snapshot_equal(snapshot, *last_saved_color_editor_snapshot)) {
+            return true;
+        }
+        snapshot.revision = ++color_editor_snapshot_revision;
+        if (!saveColorEditorSnapshot(color_editor_snapshot_path, snapshot)) return false;
+        last_saved_color_editor_snapshot = std::move(snapshot);
+        return true;
+    };
+    auto color_editor_process_alive = [&]() {
+        if (color_editor_pid <= 0) return false;
+        int status = 0;
+        const pid_t waited = waitpid(color_editor_pid, &status, WNOHANG);
+        if (waited == 0) return kill(color_editor_pid, 0) == 0;
+        color_editor_pid = -1;
+        active_color_editor_layer_idx = -1;
+        return false;
+    };
+    auto spawn_color_editor_process = [&]() {
+        if (color_editor_process_alive()) return;
+        const fs::path exe_path = argc > 0 && argv && argv[0] ? fs::absolute(argv[0]) : fs::path{};
+        if (exe_path.empty()) return;
+        const pid_t child_pid = fork();
+        if (child_pid == 0) {
+            execl(
+                exe_path.c_str(),
+                exe_path.c_str(),
+                "--color-editor",
+                color_editor_snapshot_path.c_str(),
+                (char*)nullptr);
+            _exit(127);
+        }
+        if (child_pid > 0) color_editor_pid = child_pid;
+    };
+    auto apply_color_editor_option = [&](int layer_idx, const std::string& option_id) {
+        if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
+        if (layer_idx == parcel_layer_idx) {
+            if (option_id == "static") {
+                parcel_parameter_mode = 0;
+                clear_parcel_heatmap_layers();
+                pending_external_layer_heatmap_state_changed = true;
+                return;
+            }
+            if (option_id == "parcel_area") {
+                parcel_parameter_mode = 1;
+                clear_parcel_heatmap_layers();
+                pending_external_layer_heatmap_state_changed = true;
+                return;
+            }
+            if (option_id == "value_per_area") {
+                clear_parcel_heatmap_layers();
+                parcel_parameter_mode = 3;
+                const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
+                if (property_value_layer_idx >= 0 && (size_t)property_value_layer_idx < layers.size()) {
+                    layers[(size_t)property_value_layer_idx].enabled = true;
+                    if ((size_t)property_value_layer_idx < layer_heatmap_enabled.size()) layer_heatmap_enabled[(size_t)property_value_layer_idx] = true;
+                    if ((size_t)property_value_layer_idx < layer_heatmap_use_gradient.size()) layer_heatmap_use_gradient[(size_t)property_value_layer_idx] = true;
+                    if ((size_t)property_value_layer_idx < layer_heatmap_algo.size()) layer_heatmap_algo[(size_t)property_value_layer_idx] = kAggregateMedianChoropleth;
+                    enqueue_hydration((size_t)property_value_layer_idx, true);
+                }
+                pending_external_layer_heatmap_state_changed = true;
+                return;
+            }
+            if (option_id.rfind("layer:", 0) == 0) {
+                const int parameter_idx = std::atoi(option_id.c_str() + 6);
+                if (parameter_idx < 0 || (size_t)parameter_idx >= layers.size()) return;
+                clear_parcel_heatmap_layers();
+                parcel_parameter_mode = layers[(size_t)parameter_idx].file == "property_value_parcels.geojson" ? 2 : 0;
+                layers[(size_t)parameter_idx].enabled = true;
+                if ((size_t)parameter_idx < layer_heatmap_enabled.size()) layer_heatmap_enabled[(size_t)parameter_idx] = true;
+                if ((size_t)parameter_idx < layer_heatmap_use_gradient.size()) layer_heatmap_use_gradient[(size_t)parameter_idx] = true;
+                if ((size_t)parameter_idx < layer_heatmap_algo.size()) layer_heatmap_algo[(size_t)parameter_idx] = kAggregateMedianChoropleth;
+                enqueue_hydration((size_t)parameter_idx, true);
+                pending_external_layer_heatmap_state_changed = true;
+                return;
+            }
+        }
+        if (option_id == "static") {
+            if ((size_t)layer_idx < layer_heatmap_use_gradient.size()) layer_heatmap_use_gradient[(size_t)layer_idx] = false;
+            pending_external_layer_heatmap_state_changed = true;
+            return;
+        }
+        if (option_id == "self") {
+            if ((size_t)layer_idx < layer_heatmap_use_gradient.size()) layer_heatmap_use_gradient[(size_t)layer_idx] = true;
+            pending_external_layer_heatmap_state_changed = true;
+        }
+    };
+    auto apply_color_editor_command = [&](const ColorEditorCommand& command) {
+        if (command.layer_idx < 0 || (size_t)command.layer_idx >= layers.size()) return;
+        if (command.type == "fill_color") {
+            layers[(size_t)command.layer_idx].color = command.color;
+            pending_external_layer_fill_state_changed = true;
+            return;
+        }
+        if (command.type == "outline_color") {
+            layers[(size_t)command.layer_idx].outline_color = command.color;
+            pending_external_layer_fill_state_changed = true;
+            return;
+        }
+        if (command.type == "select_option") {
+            apply_color_editor_option(command.layer_idx, command.option_id);
+            return;
+        }
+        const int control_idx = command.control_layer_idx;
+        if (control_idx < 0 || (size_t)control_idx >= layer_normalize_mode.size() ||
+            (size_t)control_idx >= layer_heatmap_percentile_clip.size() ||
+            (size_t)control_idx >= layer_choropleth_gamma.size()) {
+            return;
+        }
+        if (command.type == "normalize_mode") {
+            layer_normalize_mode[(size_t)control_idx] = command.normalize_mode;
+            pending_external_layer_heatmap_state_changed = true;
+        } else if (command.type == "percentile_clip") {
+            layer_heatmap_percentile_clip[(size_t)control_idx] = command.percentile_clip;
+            pending_external_layer_heatmap_state_changed = true;
+        } else if (command.type == "gamma") {
+            layer_choropleth_gamma[(size_t)control_idx] = command.gamma;
+            pending_external_layer_heatmap_state_changed = true;
+        }
+    };
+    auto open_external_color_editor = [&](size_t layer_idx, bool outline) {
+        if ((int)layer_idx == parcel_layer_idx && !outline) {
+            enqueue_hydration(layer_idx, true);
+            for (size_t i = 0; i < layers.size(); ++i) {
+                if ((int)i == parcel_layer_idx) continue;
+                const LayerDef& parameter_layer = layers[i];
+                const bool is_parameter_layer = layer_registry.isParcelHeatmapLayer(i) ||
+                    (parameter_layer.scale == "parcel" && !parameter_layer.heatmap_field.empty());
+                if (is_parameter_layer) enqueue_hydration(i, true);
+            }
+        }
+        const ColorEditorSnapshot snapshot = build_color_editor_snapshot(layer_idx, outline);
+        if (snapshot.layer_idx < 0) return;
+        if (!save_color_editor_snapshot_if_changed(snapshot)) return;
+        active_color_editor_layer_idx = (int)layer_idx;
+        active_color_editor_outline_target = outline;
+        spawn_color_editor_process();
+    };
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        const bool color_editor_alive = color_editor_process_alive();
+        ColorEditorCommand color_editor_command;
+        if (loadColorEditorCommand(color_editor_command_path, color_editor_command) &&
+            color_editor_command.seq > color_editor_last_command_seq) {
+            apply_color_editor_command(color_editor_command);
+            color_editor_last_command_seq = color_editor_command.seq;
+        }
 
         int fb_w = 0;
         int fb_h = 0;
@@ -1352,12 +1817,20 @@ int runWorldSim3App(int argc, char** argv) {
         size_t prof_tiles_drawn_frame = 0;
         size_t prof_features_considered_frame = 0;
         size_t prof_features_drawn_frame = 0;
-        bool layer_fill_state_changed = false;
+        bool layer_fill_state_changed = pending_external_layer_fill_state_changed;
         bool layer_hover_state_changed = false;
         bool layer_inspect_state_changed = false;
-        bool layer_heatmap_state_changed = false;
+        bool layer_heatmap_state_changed = pending_external_layer_heatmap_state_changed;
         bool heatmap_settings_state_changed = false;
         bool heatmap_controls_active = false;
+        pending_external_layer_fill_state_changed = false;
+        pending_external_layer_heatmap_state_changed = false;
+        if (color_editor_alive &&
+            active_color_editor_layer_idx >= 0 &&
+            (size_t)active_color_editor_layer_idx < layers.size()) {
+            save_color_editor_snapshot_if_changed(
+                build_color_editor_snapshot((size_t)active_color_editor_layer_idx, active_color_editor_outline_target));
+        }
         FramePreludeResult frame_prelude = runFramePrelude(FramePreludeContext{
             &root,
             &layers,
@@ -1473,6 +1946,7 @@ int runWorldSim3App(int argc, char** argv) {
                 &layer_heatmap_bandwidth_px,
                 &layer_heatmap_blur_sigma_px,
                 &layer_heatmap_percentile_clip,
+                &layer_choropleth_gamma,
                 &layer_heatmap_multires_blend,
                 &layer_heatmap_zoom_adaptive_bandwidth,
                 &layer_heatmap_multires_enabled,
@@ -1528,10 +2002,18 @@ int runWorldSim3App(int argc, char** argv) {
                 [&](size_t i) { return layerDownloadPending(frame_prelude.layer_download, i); },
                 [&]() { return frame_prelude.queue_all_missing_layer_downloads(); },
                 [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
-                [&](size_t i, bool required) { enqueue_hydration(i, required); }
+                [&](size_t i, bool required) { enqueue_hydration(i, required); },
+                [&](size_t i, bool outline) { open_external_color_editor(i, outline); }
             });
         }
+        if (left_panel.geography_changed) {
+            zoning_layer_idx = layer_registry.findBestZoningLayerForGeography(
+                map_filter_state.selected_nation_state,
+                map_filter_state.selected_state_region,
+                map_filter_state.selected_county_city);
+        }
         bool zoning_filters_changed = left_panel.zoning_filters_changed;
+        bool event_sector_filters_changed = left_panel.event_sector_filters_changed;
         const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
         const size_t queueable_missing_layer_count = left_panel.queueable_missing_layer_count;
         auto resolve_download_label = [&](const std::string& key) -> std::string {
@@ -1698,6 +2180,7 @@ int runWorldSim3App(int argc, char** argv) {
             &last_hover_inspector_mode,
             &last_enabled_state,
             zoning_filters_changed,
+            event_sector_filters_changed,
             layer_fill_state_changed,
             layer_hover_state_changed,
             layer_inspect_state_changed,
@@ -1768,7 +2251,8 @@ int runWorldSim3App(int argc, char** argv) {
             crime_year_min,
             crime_year_max,
             owner_search_query,
-            &selected_owners
+            &selected_owners,
+            &map_filter_state.event_sector_enabled
         });
         const bool vacant_layer_active = ui_state_sync.vacant_layer_active;
         LayerPipelineDrainContext pipeline_drain_ctx;
@@ -2117,38 +2601,74 @@ int runWorldSim3App(int argc, char** argv) {
                     filter_input.parcel_layer_idx = parcel_layer_idx;
                     filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
                     const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+                    const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
 
                     if (color_state_key != parcel_gpu_filter_state_key) {
                         std::vector<ImU32> parcel_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
                         const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
-                        const bool value_choropleth_enabled = parcel_parameter_mode == 2 && layers[(size_t)parcel_layer_idx].enabled;
+                        const bool value_choropleth_enabled =
+                            (parcel_parameter_mode == 2 || parcel_parameter_mode == 3) && layers[(size_t)parcel_layer_idx].enabled;
+                        const size_t parcel_value_control_layer_idx =
+                            property_value_layer_idx >= 0 ? (size_t)property_value_layer_idx : (size_t)parcel_layer_idx;
                         const float parcel_gamma =
-                            (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
-                                ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
+                            parcel_value_control_layer_idx < layer_choropleth_gamma.size()
+                                ? layer_choropleth_gamma[parcel_value_control_layer_idx]
                                 : 1.0f;
+                        const float parcel_clip =
+                            parcel_value_control_layer_idx < layer_heatmap_percentile_clip.size()
+                                ? layer_heatmap_percentile_clip[parcel_value_control_layer_idx]
+                                : 100.0f;
+                        const int parcel_normalize_mode =
+                            parcel_value_control_layer_idx < layer_normalize_mode.size()
+                                ? std::clamp(layer_normalize_mode[parcel_value_control_layer_idx], 0, 3)
+                                : 1;
                         auto current_value_at = [&](size_t parcel_idx) -> double {
                             const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
                             return rec ? rec->current_value : 0.0;
                         };
-                        double min_value = std::numeric_limits<double>::infinity();
-                        double max_value = -std::numeric_limits<double>::infinity();
+                        auto parcel_area_sq_m = [](const LayerDef::FeatureGeom& fg) -> double {
+                            if (fg.rings.empty()) return 0.0;
+                            constexpr double kDegToMetersLat = 111320.0;
+                            double total = 0.0;
+                            for (const auto& ring : fg.rings) {
+                                if (ring.size() < 3) continue;
+                                double lat_sum = 0.0;
+                                for (const auto& p : ring) lat_sum += (double)p.y;
+                                const double lat0 = lat_sum / (double)ring.size();
+                                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
+                                double a = 0.0;
+                                for (size_t ri = 0, n = ring.size(); ri < n; ++ri) {
+                                    const auto& p = ring[ri];
+                                    const auto& q = ring[(ri + 1) % n];
+                                    a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
+                                         ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
+                                }
+                                total += std::abs(a) * 0.5;
+                            }
+                            return total;
+                        };
+                        auto current_value_per_area_at = [&](size_t parcel_idx, const LayerDef::FeatureGeom& fg) -> double {
+                            const double area = parcel_area_sq_m(fg);
+                            if (!(area > 0.0) || !std::isfinite(area)) return 0.0;
+                            const double value = current_value_at(parcel_idx);
+                            return value > 0.0 && std::isfinite(value) ? value / area : 0.0;
+                        };
+                        std::vector<double> value_samples;
                         if (value_choropleth_enabled) {
+                            value_samples.reserve(parcel_gpu_render_blob.features.size());
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
                                 const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
                                 if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
-                                const double v = current_value_at(feature_idx);
-                                if (v <= 0.0 || !std::isfinite(v)) continue;
-                                min_value = std::min(min_value, v);
-                                max_value = std::max(max_value, v);
+                                const double v = parcel_parameter_mode == 3
+                                    ? current_value_per_area_at(feature_idx, fg)
+                                    : current_value_at(feature_idx);
+                                if (v > 0.0 && std::isfinite(v)) value_samples.push_back(v);
                             }
                         }
-                        const bool value_range_valid =
-                            value_choropleth_enabled &&
-                            std::isfinite(min_value) &&
-                            std::isfinite(max_value) &&
-                            max_value > min_value;
+                        const ApproxHistogram value_hist = buildApproxHistogram(value_samples, parcel_clip);
+                        const bool value_range_valid = value_choropleth_enabled && value_hist.rangeValid();
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
@@ -2158,10 +2678,16 @@ int runWorldSim3App(int argc, char** argv) {
                                 continue;
                             }
                             if (value_range_valid) {
-                                const double v = current_value_at(feature_idx);
+                                const double v = parcel_parameter_mode == 3
+                                    ? current_value_per_area_at(feature_idx, fg)
+                                    : current_value_at(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) {
+                                    const float normalized =
+                                        parcel_normalize_mode == 0
+                                            ? value_hist.normalizeLinear(v)
+                                            : (parcel_normalize_mode == 3 ? value_hist.normalizeEqualCountZones(v) : value_hist.normalizeApproxPercentile(v));
                                     const float t = applyPowerGamma(
-                                        std::clamp((float)((v - min_value) / (max_value - min_value)), 0.0f, 1.0f),
+                                        normalized,
                                         parcel_gamma);
                                     parcel_colors[i] = mapPolygonFillColor(
                                         ImGui::ColorConvertFloat4ToU32(heatColor(t)),
@@ -2224,6 +2750,14 @@ int runWorldSim3App(int argc, char** argv) {
                                     const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
                                     return rec ? rec->current_value : 0.0;
                                 }
+                                case 3: {
+                                    const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
+                                    const double area = parcel_area_sq_m(fg);
+                                    if (!rec || !(area > 0.0) || !std::isfinite(area)) return 0.0;
+                                    return rec->current_value > 0.0 && std::isfinite(rec->current_value)
+                                        ? rec->current_value / area
+                                        : 0.0;
+                                }
                                 default:
                                     return 0.0;
                             }
@@ -2236,25 +2770,28 @@ int runWorldSim3App(int argc, char** argv) {
                         const bool tax_fill_enabled =
                             (layer_enabled_at(tax_lien_layer_idx) || layer_enabled_at(tax_sale_layer_idx)) &&
                             (layer_fill_enabled_at(tax_lien_layer_idx) || layer_fill_enabled_at(tax_sale_layer_idx));
-                        double min_parameter = std::numeric_limits<double>::infinity();
-                        double max_parameter = -std::numeric_limits<double>::infinity();
+                        std::vector<double> parameter_samples;
                         if (parameter_fill_enabled) {
+                            parameter_samples.reserve(parcel_gpu_render_blob.features.size());
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
                                 const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
                                 if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
                                 const double v = parameter_value(feature_idx, fg);
-                                if (v <= 0.0 || !std::isfinite(v)) continue;
-                                min_parameter = std::min(min_parameter, v);
-                                max_parameter = std::max(max_parameter, v);
+                                if (v > 0.0 && std::isfinite(v)) parameter_samples.push_back(v);
                             }
                         }
-                        const bool parameter_range_valid =
-                            parameter_fill_enabled &&
-                            std::isfinite(min_parameter) &&
-                            std::isfinite(max_parameter) &&
-                            max_parameter > min_parameter;
+                        const float parameter_clip =
+                            (size_t)parcel_layer_idx < layer_heatmap_percentile_clip.size()
+                                ? layer_heatmap_percentile_clip[(size_t)parcel_layer_idx]
+                                : 100.0f;
+                        const int parameter_normalize_mode =
+                            (size_t)parcel_layer_idx < layer_normalize_mode.size()
+                                ? std::clamp(layer_normalize_mode[(size_t)parcel_layer_idx], 0, 3)
+                                : 1;
+                        const ApproxHistogram parameter_hist = buildApproxHistogram(parameter_samples, parameter_clip);
+                        const bool parameter_range_valid = parameter_fill_enabled && parameter_hist.rangeValid();
                         const ImVec4 lien_c =
                             (tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size())
                                 ? layers[(size_t)tax_lien_layer_idx].color
@@ -2286,8 +2823,12 @@ int runWorldSim3App(int argc, char** argv) {
                             if (parameter_range_valid) {
                                 const double v = parameter_value(feature_idx, fg);
                                 if (v > 0.0 && std::isfinite(v)) {
+                                    const float normalized =
+                                        parameter_normalize_mode == 0
+                                            ? parameter_hist.normalizeLinear(v)
+                                            : (parameter_normalize_mode == 3 ? parameter_hist.normalizeEqualCountZones(v) : parameter_hist.normalizeApproxPercentile(v));
                                     const float t = applyPowerGamma(
-                                        std::clamp((float)((v - min_parameter) / (max_parameter - min_parameter)), 0.0f, 1.0f),
+                                        normalized,
                                         parcel_gamma);
                                     overlay = colorWithAlpha(heatColor(t), 150);
                                 }
@@ -2365,6 +2906,189 @@ int runWorldSim3App(int argc, char** argv) {
             }
         }
 
+        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size() &&
+            (size_t)zoning_layer_idx < layer_states.size()) {
+            const LayerDef& zoning_layer = layers[(size_t)zoning_layer_idx];
+            const LayerRuntimeState& zoning_state = layer_states[(size_t)zoning_layer_idx];
+            const bool zoning_ready =
+                zoning_layer.enabled &&
+                zoning_state.status == LayerPipelineStatus::Ready &&
+                !zoning_state.hydration_source_signature.empty();
+            if (!zoning_ready) {
+                clearZoningGpuBuffers();
+                clearZoningGpuDrawState();
+                zoning_gpu_uploaded_signature.clear();
+                zoning_gpu_uploaded_layer_idx = -1;
+                zoning_gpu_color_state_key = 0;
+                zoning_gpu_outline_state_key = 0;
+                zoning_gpu_last_base_colors.clear();
+                zoning_gpu_last_outline_colors.clear();
+                zoning_gpu_render_blob = ParcelRenderCacheBlob{};
+            } else {
+                const std::string& sig = zoning_state.hydration_source_signature;
+                if (zoning_gpu_uploaded_signature != sig || zoning_gpu_uploaded_layer_idx != zoning_layer_idx) {
+                    ParcelRenderCacheBlob blob;
+                    const fs::path render_cache_path =
+                        root / "data" / "cache" / "render" / (zoning_layer.file + ".parcel-render.bin");
+                    bool blob_ok = loadBinaryParcelRenderCache(render_cache_path, sig, blob);
+                    if (!blob_ok) {
+                        blob_ok = buildParcelRenderCacheBlob(zoning_layer.features, sig, blob, 2048);
+                        if (blob_ok) saveBinaryParcelRenderCache(render_cache_path, blob);
+                    }
+                    if (blob_ok) {
+                        std::string zoning_error;
+                        if (ensureZoningGpuBuffersResident(blob, &zoning_error)) {
+                            zoning_gpu_render_blob = std::move(blob);
+                            zoning_gpu_uploaded_signature = sig;
+                            zoning_gpu_uploaded_layer_idx = zoning_layer_idx;
+                            zoning_gpu_color_state_key = 0;
+                            zoning_gpu_outline_state_key = 0;
+                            zoning_gpu_last_base_colors.assign(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                            zoning_gpu_last_outline_colors.assign(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        } else {
+                            std::fprintf(stderr, "[worldsim3] Zoning GPU upload failed: %s\n", zoning_error.c_str());
+                            clearZoningGpuBuffers();
+                            clearZoningGpuDrawState();
+                            zoning_gpu_uploaded_signature.clear();
+                            zoning_gpu_uploaded_layer_idx = -1;
+                            zoning_gpu_render_blob = ParcelRenderCacheBlob{};
+                        }
+                    }
+                }
+                if (zoning_gpu_uploaded_signature == sig && !zoning_gpu_render_blob.features.empty()) {
+                    auto hash_mix = [](uint64_t& h, uint64_t v) {
+                        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    };
+                    auto hash_cstr = [&](uint64_t& h, const char* s) {
+                        const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
+                        while (*p) {
+                            hash_mix(h, *p);
+                            ++p;
+                        }
+                    };
+                    auto hash_f32 = [&](uint64_t& h, float value) {
+                        uint32_t bits = 0;
+                        std::memcpy(&bits, &value, sizeof(bits));
+                        hash_mix(h, bits);
+                    };
+
+                    uint64_t color_state_key = 1469598103934665603ULL;
+                    hash_mix(color_state_key, (uint64_t)zoning_layer_idx);
+                    hash_mix(color_state_key, (uint64_t)zoning_layer.enabled);
+                    hash_mix(color_state_key, (uint64_t)layer_fill_enabled[(size_t)zoning_layer_idx]);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_min);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_max);
+                    hash_cstr(color_state_key, map_filter_state.blocklot);
+                    hash_cstr(color_state_key, map_filter_state.status);
+                    hash_cstr(color_state_key, map_filter_state.address);
+                    hash_cstr(color_state_key, map_filter_state.owner);
+                    hash_cstr(color_state_key, map_filter_state.zip);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.selected_owners.size());
+                    for (const auto& owner : map_filter_state.selected_owners) {
+                        for (unsigned char ch : owner) hash_mix(color_state_key, ch);
+                    }
+                    hash_mix(color_state_key, (uint64_t)query_layers.size());
+                    for (const auto& ql : query_layers) {
+                        hash_mix(color_state_key, (uint64_t)ql.enabled);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.active);
+                        hash_mix(color_state_key, (uint64_t)ql.row_count);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
+                        for (float c : ql.color) hash_f32(color_state_key, c);
+                    }
+                    hash_mix(color_state_key, (uint64_t)zoning_zone_enabled.size());
+                    for (const auto& [zone_key, enabled] : zoning_zone_enabled) {
+                        for (unsigned char ch : zone_key) hash_mix(color_state_key, ch);
+                        hash_mix(color_state_key, (uint64_t)enabled);
+                    }
+                    hash_mix(color_state_key, (uint64_t)zoning_zone_color.size());
+                    for (const auto& [zone_key, color] : zoning_zone_color) {
+                        for (unsigned char ch : zone_key) hash_mix(color_state_key, ch);
+                        hash_f32(color_state_key, color.x);
+                        hash_f32(color_state_key, color.y);
+                        hash_f32(color_state_key, color.z);
+                        hash_f32(color_state_key, color.w);
+                    }
+                    hash_f32(color_state_key, app_settings.map_polygon_fill_opacity);
+                    uint64_t outline_state_key = color_state_key;
+                    hash_f32(outline_state_key, zoning_layer.outline_color.x);
+                    hash_f32(outline_state_key, zoning_layer.outline_color.y);
+                    hash_f32(outline_state_key, zoning_layer.outline_color.z);
+                    hash_f32(outline_state_key, zoning_layer.outline_color.w);
+
+                    FeatureFilterContextFactoryInput filter_input;
+                    filter_input.layers = &layers;
+                    filter_input.map_filters = &map_filter_state;
+                    filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
+                        ? &parcel_jurisdiction_filter_state.result_set
+                        : nullptr;
+                    filter_input.query_layers = &query_layers;
+                    filter_input.real_property_by_blocklot = &real_property_by_blocklot;
+                    filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+                    filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+                    filter_input.real_property_layer_idx = real_property_layer_idx;
+                    filter_input.parcel_layer_idx = parcel_layer_idx;
+                    filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+                    const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+
+                    if (color_state_key != zoning_gpu_color_state_key) {
+                        std::vector<ImU32> zoning_colors(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(zoning_layer.color);
+                        for (size_t i = 0; i < zoning_gpu_render_blob.features.size(); ++i) {
+                            const uint32_t feature_idx = zoning_gpu_render_blob.features[i].feature_idx;
+                            if (feature_idx >= zoning_layer.features.size()) continue;
+                            const LayerDef::FeatureGeom& fg = zoning_layer.features[feature_idx];
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg)) continue;
+                            ImU32 color = base_color;
+                            const std::string zkey = zoningClassKey(fg);
+                            auto it_col = zoning_zone_color.find(zkey);
+                            if (it_col != zoning_zone_color.end()) {
+                                color = ImGui::ColorConvertFloat4ToU32(it_col->second);
+                            }
+                            float query_color[4] = {0, 0, 0, 0};
+                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg, query_color)) {
+                                color = ImGui::ColorConvertFloat4ToU32(
+                                    ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                            }
+                            zoning_colors[i] = mapPolygonFillColor(color, app_settings.map_polygon_fill_opacity);
+                        }
+                        std::string color_error;
+                        if (updateZoningGpuColorBuffer(zoning_colors, &color_error)) {
+                            zoning_gpu_color_state_key = color_state_key;
+                            zoning_gpu_last_base_colors = std::move(zoning_colors);
+                        }
+                    }
+                    if (outline_state_key != zoning_gpu_outline_state_key) {
+                        std::vector<ImU32> outline_colors(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        const ImU32 outline_color = ImGui::ColorConvertFloat4ToU32(zoning_layer.outline_color);
+                        for (size_t i = 0; i < zoning_gpu_render_blob.features.size(); ++i) {
+                            const uint32_t feature_idx = zoning_gpu_render_blob.features[i].feature_idx;
+                            if (feature_idx >= zoning_layer.features.size()) continue;
+                            const LayerDef::FeatureGeom& fg = zoning_layer.features[feature_idx];
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg)) continue;
+                            outline_colors[i] = outline_color;
+                        }
+                        std::string outline_error;
+                        if (updateZoningGpuOutlineColorBuffer(outline_colors, &outline_error)) {
+                            zoning_gpu_outline_state_key = outline_state_key;
+                            zoning_gpu_last_outline_colors = std::move(outline_colors);
+                        }
+                    }
+                }
+            }
+        } else {
+            clearZoningGpuBuffers();
+            clearZoningGpuDrawState();
+            zoning_gpu_uploaded_signature.clear();
+            zoning_gpu_uploaded_layer_idx = -1;
+            zoning_gpu_color_state_key = 0;
+            zoning_gpu_outline_state_key = 0;
+            zoning_gpu_last_base_colors.clear();
+            zoning_gpu_last_outline_colors.clear();
+            zoning_gpu_render_blob = ParcelRenderCacheBlob{};
+        }
+
         auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
             if (real_property_layer_idx < 0 || (size_t)real_property_layer_idx >= layers.size()) return nullptr;
             std::string blocklot = featureBlockLotJoinKey(parcel);
@@ -2383,6 +3107,7 @@ int runWorldSim3App(int argc, char** argv) {
                 right_panel_w,
                 layout_margin,
                 main_panel_h,
+                map_w,
                 &layers,
                 &unified_parcels,
                 &map_filter_state,
@@ -2401,6 +3126,8 @@ int runWorldSim3App(int argc, char** argv) {
                 &center_lon,
                 &center_lat,
                 &zoom,
+                kMinZoom,
+                kMaxZoom,
                 parcel_layer_idx,
                 zoning_layer_idx,
                 real_property_layer_idx,
@@ -2505,6 +3232,7 @@ int runWorldSim3App(int argc, char** argv) {
             &show_selected_zone_details,
             &selected_zone_idx,
             &element_info_state,
+            &hover_debug_state,
             real_property_layer_idx,
             parcel_layer_idx,
             zoning_layer_idx,
@@ -2679,6 +3407,11 @@ int runWorldSim3App(int argc, char** argv) {
             app_settings.dark_mode
         });
     }
+    if (color_editor_process_alive()) {
+        kill(color_editor_pid, SIGTERM);
+        waitpid(color_editor_pid, nullptr, 0);
+        color_editor_pid = -1;
+    }
     vkDeviceWaitIdle(g_Device);
     if (download_queue_imgui_context) {
         ImGui::SetCurrentContext(download_queue_imgui_context);
@@ -2756,6 +3489,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.crime_year_max = &crime_year_max;
     shutdown_input.owner_search_query = owner_search_query;
     shutdown_input.selected_owners = &selected_owners;
+    shutdown_input.event_sector_enabled = &map_filter_state.event_sector_enabled;
     shutdown_input.center_lon = &center_lon;
     shutdown_input.center_lat = &center_lat;
     shutdown_input.zoom = &zoom;

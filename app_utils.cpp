@@ -139,6 +139,10 @@ std::string toLowerAscii(std::string s) {
     return s;
 }
 
+std::string normalizeGeographyToken(const std::string& s) {
+    return toLowerAscii(trimDisplayValue(s));
+}
+
 bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
     if (needle.empty()) return true;
     const std::string h = toLowerAscii(haystack);
@@ -397,6 +401,42 @@ std::string trimDisplayValue(std::string s) {
     while (!s.empty() && is_ws((unsigned char)s.front())) s.erase(s.begin());
     while (!s.empty() && is_ws((unsigned char)s.back())) s.pop_back();
     return s;
+}
+
+bool layerUsesPointGeometry(const LayerDef& layer) {
+    if (layer.scale == "point") return true;
+    if (layer.duckdb_role == "point_event") return true;
+    if (!layer.import_lon_field.empty() && !layer.import_lat_field.empty()) return true;
+    if (containsCaseInsensitive(layer.import_type, "point")) return true;
+    if (!layer.features.empty()) {
+        return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
+            return fg.rings.empty();
+        });
+    }
+    return false;
+}
+
+bool geographyViewPreset(
+    const std::string& selected_nation_state,
+    const std::string& selected_state_region,
+    double& center_lon,
+    double& center_lat,
+    int& suggested_zoom) {
+    const std::string nation = normalizeGeographyToken(selected_nation_state);
+    const std::string region = normalizeGeographyToken(selected_state_region);
+    if (nation == "us" && region == "md") {
+        center_lon = -76.61;
+        center_lat = 39.29;
+        suggested_zoom = 11;
+        return true;
+    }
+    if (nation == "ng" && region == "anambra") {
+        center_lon = 7.02;
+        center_lat = 6.17;
+        suggested_zoom = 10;
+        return true;
+    }
+    return false;
 }
 
 std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {

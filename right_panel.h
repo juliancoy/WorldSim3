@@ -35,6 +35,7 @@ struct RightPanelContext {
     float right_panel_w = 0.0f;
     float layout_margin = 0.0f;
     float main_panel_h = 0.0f;
+    float map_w = 0.0f;
 
     std::vector<LayerDef>* layers = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
@@ -55,7 +56,9 @@ struct RightPanelContext {
     size_t* selected_zone_idx = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
+    int min_zoom = 0;
+    int max_zoom = 0;
 
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;

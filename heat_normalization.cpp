@@ -90,6 +90,13 @@ bool HeatNormalizationState::normalizedValue(
         }
         return true;
     }
+    if (normalize_mode == 3) {
+        out_t = percentileRank(heat_values, value);
+        constexpr int kEqualCountZones = 8;
+        const int zone_idx = std::clamp((int)std::floor(out_t * (float)kEqualCountZones), 0, kEqualCountZones - 1);
+        out_t = (float)zone_idx / (float)(kEqualCountZones - 1);
+        return true;
+    }
     if (!heat_range_valid) return false;
     out_t = std::clamp((value - heat_min) / (heat_max - heat_min), 0.0f, 1.0f);
     return true;

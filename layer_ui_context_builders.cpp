@@ -12,6 +12,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.enqueue_layer_download_request = input.enqueue_layer_download_request;
     ctx.mark_local_layer_exists = input.mark_local_layer_exists;
     ctx.enqueue_hydration = input.enqueue_hydration;
+    ctx.open_layer_color_editor = input.open_layer_color_editor;
     ctx.heatmap_input_float_enter = input.heatmap_input_float_enter;
     ctx.layer_spatial = input.layer_spatial;
     ctx.layer_states = input.layer_states;
@@ -28,6 +29,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.layer_heatmap_bandwidth_px = input.layer_heatmap_bandwidth_px;
     ctx.layer_heatmap_blur_sigma_px = input.layer_heatmap_blur_sigma_px;
     ctx.layer_heatmap_percentile_clip = input.layer_heatmap_percentile_clip;
+    ctx.layer_choropleth_gamma = input.layer_choropleth_gamma;
     ctx.layer_heatmap_multires_blend = input.layer_heatmap_multires_blend;
     ctx.layer_heatmap_zoom_adaptive_bandwidth = input.layer_heatmap_zoom_adaptive_bandwidth;
     ctx.layer_heatmap_multires_enabled = input.layer_heatmap_multires_enabled;

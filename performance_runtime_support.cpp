@@ -244,6 +244,17 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                 (ctx.vacant_rehab_layer_idx >= 0 && (size_t)ctx.vacant_rehab_layer_idx < ctx.layers->size() && (*ctx.layers)[(size_t)ctx.vacant_rehab_layer_idx].enabled);
             for (size_t i = 0; i < ctx.layers->size(); ++i) {
                 if ((*ctx.layers)[i].features.empty()) continue;
+                if ((int)i == ctx.parcel_layer_idx) {
+                    std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
+                    if (i < ctx.layer_states->size()) {
+                        (*ctx.layer_states)[i].status = LayerPipelineStatus::Ready;
+                        (*ctx.layer_states)[i].triangulation_source_signature =
+                            (*ctx.layer_states)[i].hydration_source_signature;
+                        (*ctx.layer_states)[i].triangulation_phase = "render_blob_mode";
+                        (*ctx.layer_states)[i].triangulation_loaded_from_cache = false;
+                    }
+                    continue;
+                }
                 const bool parcel_dep_priority = vac_layer_active_now && ctx.parcel_layer_idx >= 0 && (int)i == ctx.parcel_layer_idx;
                 if (!(*ctx.layers)[i].enabled && !parcel_dep_priority) continue;
                 TriJob tj;

@@ -1,6 +1,7 @@
 #include "render_policy.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "worldsim_app_internal.h"
 
 #include <algorithm>
@@ -33,7 +34,9 @@ LayerDisplayPolicy resolveLayerDisplayPolicy(const HeatmapLayerPolicyContext& ct
         layer_idx < ctx.layer_heatmap_enabled->size() &&
         layer_idx < ctx.layer_heatmap_max_zoom->size() &&
         (*ctx.layer_heatmap_enabled)[layer_idx] &&
-        (isHeatmapAggregateMethod(policy.aggregate_algo) || policy.aggregate_algo == kAggregateLodGeometry);
+        (isHeatmapAggregateMethod(policy.aggregate_algo) ||
+         policy.aggregate_algo == kAggregateLodGeometry ||
+         (isPointClusterAggregateMethod(policy.aggregate_algo) && layerUsesPointGeometry(layer)));
 
     if (policy.value_parcel_layer && policy.aggregate_configured) {
         policy.effective_parcel_detail_min_zoom =
@@ -52,9 +55,13 @@ LayerDisplayPolicy resolveLayerDisplayPolicy(const HeatmapLayerPolicyContext& ct
         return policy;
     }
 
-    policy.mode = policy.aggregate_algo == kAggregateLodGeometry
-        ? LayerDisplayMode::LodGeometry
-        : LayerDisplayMode::Aggregate;
+    if (policy.aggregate_algo == kAggregateLodGeometry) {
+        policy.mode = LayerDisplayMode::LodGeometry;
+    } else if (isPointClusterAggregateMethod(policy.aggregate_algo)) {
+        policy.mode = LayerDisplayMode::PointCluster;
+    } else {
+        policy.mode = LayerDisplayMode::Aggregate;
+    }
     return policy;
 }
 
@@ -72,6 +79,10 @@ bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t laye
 
 bool layerUsesLodGeometry(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
     return resolveLayerDisplayPolicy(ctx, layer_idx).mode == LayerDisplayMode::LodGeometry;
+}
+
+bool layerUsesPointClustering(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
+    return resolveLayerDisplayPolicy(ctx, layer_idx).mode == LayerDisplayMode::PointCluster;
 }
 
 void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer_idx, HeatSample& hs) {

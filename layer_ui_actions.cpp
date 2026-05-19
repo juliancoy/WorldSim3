@@ -64,6 +64,11 @@ void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
         (size_t)layer_idx < ctx.layers->size() &&
         (*ctx.layers)[(size_t)layer_idx].file == "property_value_parcels.geojson") {
         setParcelParameterMode(ctx, 2);
+        (*ctx.layers)[(size_t)layer_idx].enabled = true;
+        if (ctx.layer_heatmap_enabled && (size_t)layer_idx < ctx.layer_heatmap_enabled->size()) {
+            (*ctx.layer_heatmap_enabled)[(size_t)layer_idx] = true;
+        }
+        if (ctx.enqueue_hydration) ctx.enqueue_hydration((size_t)layer_idx, true);
         return;
     }
     setParcelParameterMode(ctx, 0);
@@ -76,6 +81,24 @@ void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
         (*ctx.layer_heatmap_algo)[(size_t)layer_idx] = kAggregateMedianChoropleth;
     }
     if (ctx.enqueue_hydration) ctx.enqueue_hydration((size_t)layer_idx, true);
+    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
+}
+
+void activateParcelValuePerAreaMode(LayerUiSharedContext& ctx) {
+    const int property_value_layer_idx = findLayerFile(ctx, "property_value_parcels.geojson");
+    setParcelParameterMode(ctx, 3);
+    if (!ctx.layers || property_value_layer_idx < 0 || (size_t)property_value_layer_idx >= ctx.layers->size()) return;
+    (*ctx.layers)[(size_t)property_value_layer_idx].enabled = true;
+    if (ctx.layer_heatmap_enabled && (size_t)property_value_layer_idx < ctx.layer_heatmap_enabled->size()) {
+        (*ctx.layer_heatmap_enabled)[(size_t)property_value_layer_idx] = true;
+    }
+    if (ctx.layer_heatmap_use_gradient && (size_t)property_value_layer_idx < ctx.layer_heatmap_use_gradient->size()) {
+        (*ctx.layer_heatmap_use_gradient)[(size_t)property_value_layer_idx] = true;
+    }
+    if (ctx.layer_heatmap_algo && (size_t)property_value_layer_idx < ctx.layer_heatmap_algo->size()) {
+        (*ctx.layer_heatmap_algo)[(size_t)property_value_layer_idx] = kAggregateMedianChoropleth;
+    }
+    if (ctx.enqueue_hydration) ctx.enqueue_hydration((size_t)property_value_layer_idx, true);
     if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
 }
 

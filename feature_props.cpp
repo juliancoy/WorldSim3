@@ -120,6 +120,70 @@ static void rgbToHsv(const ImVec4& rgb, float& hue_deg, float& sat, float& val) 
     if (hue_deg < 0.0f) hue_deg += 360.0f;
 }
 
+enum class ZoningFamily {
+    Residential,
+    Commercial,
+    Industrial,
+    MixedUse,
+    OfficeEmployment,
+    CivicInstitutional,
+    OpenSpaceConservation,
+    AgricultureRural,
+    DowntownCenter,
+    OverlaySpecial,
+    Other
+};
+
+static bool hasAnyToken(const std::string& value, std::initializer_list<const char*> needles) {
+    for (const char* needle : needles) {
+        if (value.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+static ZoningFamily classifyZoningFamily(const std::string& zone_key_upper) {
+    const std::string& u = zone_key_upper;
+    if (u.empty() || u == "UNSPECIFIED") return ZoningFamily::Other;
+
+    if (hasAnyToken(u, {"OV", "OVERLAY", "SP", "SPECIAL", "FLOOD", "HIST", "AIR", "CHES", "BUFFER"})) {
+        return ZoningFamily::OverlaySpecial;
+    }
+    if (hasAnyToken(u, {"OS", "OPEN", "PARK", "REC", "GREEN", "CONSERV", "PRESERV", "RESOURCE", "WETLAND"})) {
+        return ZoningFamily::OpenSpaceConservation;
+    }
+    if (hasAnyToken(u, {"AG", "AGR", "AGRIC", "RURAL", "RR", "AR", "RC", "RA"})) {
+        return ZoningFamily::AgricultureRural;
+    }
+    if (hasAnyToken(u, {"MX", "MU", "MIXED", "TOD", "TRANSIT", "TC", "TOWNCENTER", "VILLAGE", "VC", "CORRIDOR"})) {
+        return ZoningFamily::MixedUse;
+    }
+    if (hasAnyToken(u, {"DT", "CBD", "DOWNTOWN", "CENTER", "MAINST", "URBANCORE"})) {
+        return ZoningFamily::DowntownCenter;
+    }
+    if (hasAnyToken(u, {"IND", "INDUSTRIAL", "WARE", "LOG", "FLEX", "HI", "HEAVY", "LI", "LIGHT", "IH", "IL", "M-"})) {
+        return ZoningFamily::Industrial;
+    }
+    if (hasAnyToken(u, {"OFFICE", "OFF", "EMP", "EMPLOY", "BUSPARK", "BP", "RESEARCH", "CORP", "EO", "EC"})) {
+        return ZoningFamily::OfficeEmployment;
+    }
+    if (hasAnyToken(u, {"INST", "INSTIT", "CIV", "PUBLIC", "SCHOOL", "CAMPUS", "GOV", "HOSP", "MED"})) {
+        return ZoningFamily::CivicInstitutional;
+    }
+    if (hasAnyToken(u, {"COM", "COMMERCIAL", "BUS", "RETAIL", "SHOP", "CC", "CG", "CN", "CR", "B-", "B1", "B2", "B3", "BL", "BM", "BR"})) {
+        return ZoningFamily::Commercial;
+    }
+    if (hasAnyToken(u, {"RES", "RESIDENTIAL", "APT", "APART", "MULTI", "SINGLE", "TOWNHOUSE", "ROW", "RM", "RH", "RE", "RO", "RS", "DR", "R-"})) {
+        return ZoningFamily::Residential;
+    }
+    if (!u.empty()) {
+        if (u[0] == 'R') return ZoningFamily::Residential;
+        if (u[0] == 'C' || u[0] == 'B') return ZoningFamily::Commercial;
+        if (u[0] == 'I' || u[0] == 'M') return ZoningFamily::Industrial;
+        if (u[0] == 'O' || u[0] == 'E') return ZoningFamily::OfficeEmployment;
+    }
+    return ZoningFamily::Other;
+}
+
 ImVec4 zoningColorFromConvention(const std::string& zone_key) {
     std::string u;
     u.reserve(zone_key.size());
@@ -129,35 +193,31 @@ ImVec4 zoningColorFromConvention(const std::string& zone_key) {
     for (unsigned char c : u) h = (h ^ c) * 16777619u;
     const float sat_jitter = (float)((h >> 9) % 12u) / 100.0f;
     const float val_jitter = (float)((h >> 17) % 14u) / 100.0f;
-
-    // SimCity convention: residential=green, commercial=blue, industrial=yellow.
-    bool residential = false;
-    bool commercial = false;
-    bool industrial = false;
-    if (!u.empty()) {
-        residential = (u[0] == 'R') || (u.find("RES") != std::string::npos);
-        commercial = (u[0] == 'C') || (u.find("COM") != std::string::npos) || (u.find("BUS") != std::string::npos);
-        industrial = (u[0] == 'I') || (u.find("IND") != std::string::npos) || (u[0] == 'M');
+    switch (classifyZoningFamily(u)) {
+        case ZoningFamily::Residential:
+            return hsvToRgb(128.0f + (float)(h % 10u), 0.62f + sat_jitter, 0.66f + val_jitter);
+        case ZoningFamily::Commercial:
+            return hsvToRgb(210.0f + (float)(h % 12u), 0.64f + sat_jitter, 0.70f + val_jitter);
+        case ZoningFamily::Industrial:
+            return hsvToRgb(53.0f + (float)(h % 8u), 0.70f + sat_jitter, 0.78f + val_jitter);
+        case ZoningFamily::MixedUse:
+            return hsvToRgb(282.0f + (float)(h % 10u), 0.54f + sat_jitter, 0.73f + val_jitter);
+        case ZoningFamily::OfficeEmployment:
+            return hsvToRgb(190.0f + (float)(h % 10u), 0.56f + sat_jitter, 0.72f + val_jitter);
+        case ZoningFamily::CivicInstitutional:
+            return hsvToRgb(24.0f + (float)(h % 10u), 0.60f + sat_jitter, 0.78f + val_jitter);
+        case ZoningFamily::OpenSpaceConservation:
+            return hsvToRgb(150.0f + (float)(h % 8u), 0.42f + sat_jitter, 0.66f + val_jitter);
+        case ZoningFamily::AgricultureRural:
+            return hsvToRgb(82.0f + (float)(h % 10u), 0.52f + sat_jitter, 0.68f + val_jitter);
+        case ZoningFamily::DowntownCenter:
+            return hsvToRgb(336.0f + (float)(h % 10u), 0.58f + sat_jitter, 0.76f + val_jitter);
+        case ZoningFamily::OverlaySpecial:
+            return hsvToRgb(6.0f + (float)(h % 10u), 0.40f + sat_jitter, 0.78f + val_jitter);
+        case ZoningFamily::Other:
+            break;
     }
-
-    if (residential) return hsvToRgb(128.0f + (float)(h % 10u), 0.62f + sat_jitter, 0.66f + val_jitter);
-    if (commercial) return hsvToRgb(210.0f + (float)(h % 12u), 0.64f + sat_jitter, 0.70f + val_jitter);
-    if (industrial) return hsvToRgb(53.0f + (float)(h % 8u), 0.70f + sat_jitter, 0.78f + val_jitter);
-
-    // Remaining zoning buckets get distinct conventional planning hues.
-    if (u.find("MX") != std::string::npos || u.find("MU") != std::string::npos) {
-        return hsvToRgb(282.0f + (float)(h % 10u), 0.54f + sat_jitter, 0.73f + val_jitter); // mixed-use
-    }
-    if (u.find("OS") != std::string::npos || u.find("OPEN") != std::string::npos || u.find("PARK") != std::string::npos) {
-        return hsvToRgb(150.0f + (float)(h % 8u), 0.42f + sat_jitter, 0.66f + val_jitter); // open space
-    }
-    if (u.find("DT") != std::string::npos || u.find("DOWNTOWN") != std::string::npos) {
-        return hsvToRgb(336.0f + (float)(h % 10u), 0.58f + sat_jitter, 0.76f + val_jitter); // downtown/overlay
-    }
-    if (u.find("CIV") != std::string::npos || u.find("INS") != std::string::npos || u.find("INST") != std::string::npos) {
-        return hsvToRgb(24.0f + (float)(h % 10u), 0.60f + sat_jitter, 0.78f + val_jitter); // civic/institutional
-    }
-    return hsvToRgb(0.0f, 0.0f, 0.58f + val_jitter * 0.5f); // other/unspecified neutral gray
+    return hsvToRgb(0.0f, 0.0f, 0.58f + val_jitter * 0.5f);
 }
 
 ImVec4 zoningShadeVariant(const ImVec4& base_color, const std::string& zone_key) {

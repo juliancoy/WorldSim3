@@ -63,6 +63,7 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.crime_year_max = input.crime_year_max;
     ctx.owner_search_query = input.owner_search_query;
     ctx.selected_owners = input.selected_owners;
+    ctx.event_sector_enabled = input.event_sector_enabled;
     ctx.center_lon = input.center_lon;
     ctx.center_lat = input.center_lat;
     ctx.zoom = input.zoom;

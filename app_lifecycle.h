@@ -117,9 +117,10 @@ struct AppShutdownContext {
     int* crime_year_max = nullptr;
     char* owner_search_query = nullptr;
     std::unordered_set<std::string>* selected_owners = nullptr;
+    std::unordered_map<std::string, bool>* event_sector_enabled = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     size_t* selected_parcel_idx = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;

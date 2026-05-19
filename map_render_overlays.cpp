@@ -1,5 +1,6 @@
 #include "map_render_overlays.h"
 
+#include "choropleth_histogram.h"
 #include "map_render_utils.h"
 #include "worldsim_app.h"
 
@@ -61,6 +62,15 @@ double parcelParameterValue(const MapRenderContext& ctx, size_t parcel_idx, cons
             const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
             return rec ? rec->current_value : 0.0;
         }
+        case 3: {
+            if (!ctx.unified_parcels) return 0.0;
+            const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
+            const double area = parcelAreaSqM(fg);
+            if (!rec || !(area > 0.0) || !std::isfinite(area)) return 0.0;
+            return rec->current_value > 0.0 && std::isfinite(rec->current_value)
+                ? rec->current_value / area
+                : 0.0;
+        }
         default:
             return 0.0;
     }
@@ -100,40 +110,50 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
     auto& parcel_layer = (*ctx.layers)[ctx.parcel_layer_idx];
 
     if (ctx.parcel_parameter_mode > 0 && ctx.should_fill_layer_polygon(ctx.parcel_layer_idx)) {
-        double min_v = std::numeric_limits<double>::infinity();
-        double max_v = -std::numeric_limits<double>::infinity();
+        std::vector<double> values;
+        values.reserve(parcel_layer.features.size());
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
             const auto& fg = parcel_layer.features[i];
             if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
             if (fg.rings.empty()) continue;
             const double v = parcelParameterValue(ctx, i, fg);
-            if (v <= 0.0 || !std::isfinite(v)) continue;
-            min_v = std::min(min_v, v);
-            max_v = std::max(max_v, v);
+            if (v > 0.0 && std::isfinite(v)) values.push_back(v);
         }
-        const bool range_valid = std::isfinite(min_v) && std::isfinite(max_v) && max_v > min_v;
-            if (range_valid) {
-                for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
+        const int normalize_mode =
+            ctx.layer_normalize_mode && ctx.parcel_layer_idx < ctx.layer_normalize_mode->size()
+                ? std::clamp((*ctx.layer_normalize_mode)[ctx.parcel_layer_idx], 0, 3)
+                : 1;
+        const float clip_pct =
+            ctx.layer_heatmap_percentile_clip && ctx.parcel_layer_idx < ctx.layer_heatmap_percentile_clip->size()
+                ? (*ctx.layer_heatmap_percentile_clip)[ctx.parcel_layer_idx]
+                : 100.0f;
+        const ApproxHistogram hist = buildApproxHistogram(values, clip_pct);
+        if (hist.rangeValid()) {
+            for (size_t i = 0; i < parcel_layer.features.size(); ++i) {
                 auto& fg = parcel_layer.features[i];
                 if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
                 if (!featureOnScreen(ctx, ctx.parcel_layer_idx, (uint32_t)i, fg)) continue;
                 if (fg.rings.empty()) continue;
                 const double v = parcelParameterValue(ctx, i, fg);
                 if (v <= 0.0 || !std::isfinite(v)) continue;
+                const float normalized =
+                    normalize_mode == 0
+                        ? hist.normalizeLinear(v)
+                        : (normalize_mode == 3 ? hist.normalizeEqualCountZones(v) : hist.normalizeApproxPercentile(v));
                 const float t = applyPowerGamma(
-                    std::clamp((float)((v - min_v) / (max_v - min_v)), 0.0f, 1.0f),
+                    normalized,
                     ctx.parcel_choropleth_gamma);
-                    if (!parcelGpuOverlayDrawActive()) {
-                        ctx.projection->drawTessellatedFill(
-                            ctx.draw,
-                            ctx.parcel_layer_idx,
-                            (uint32_t)i,
-                            fg,
-                            colorWithAlpha(heatColor(t), 150));
-                    }
+                if (!parcelGpuOverlayDrawActive()) {
+                    ctx.projection->drawTessellatedFill(
+                        ctx.draw,
+                        ctx.parcel_layer_idx,
+                        (uint32_t)i,
+                        fg,
+                        colorWithAlpha(heatColor(t), 150));
                 }
             }
         }
+    }
 
     if (ctx.vacant_notice_enabled || ctx.vacant_rehab_enabled) {
         for (size_t i = 0; i < parcel_layer.features.size(); ++i) {

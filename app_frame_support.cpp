@@ -2,6 +2,7 @@
 
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
+#include "layers_panel_ui.h"
 #include "worldsim_app_internal.h"
 
 #include <algorithm>

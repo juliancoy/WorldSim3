@@ -120,7 +120,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.crime_year_min &&
         ctx.crime_year_max &&
         ctx.owner_search_query &&
-        ctx.selected_owners) {
+        ctx.selected_owners &&
+        ctx.event_sector_enabled) {
         saveFilterUiState(
             *ctx.root,
             ctx.selected_nation_state,
@@ -148,7 +149,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
             *ctx.crime_year_min,
             *ctx.crime_year_max,
             ctx.owner_search_query,
-            *ctx.selected_owners);
+            *ctx.selected_owners,
+            *ctx.event_sector_enabled);
     }
     if (ctx.center_lon &&
         ctx.center_lat &&
@@ -157,6 +159,9 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.selected_parcel_indices) {
         saveMapUiState(
             *ctx.root,
+            ctx.selected_nation_state,
+            ctx.selected_state_region,
+            ctx.selected_county_city,
             *ctx.center_lon,
             *ctx.center_lat,
             *ctx.zoom,

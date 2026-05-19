@@ -1,9 +1,11 @@
 #include "render_layer_pass.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "feature_props.h"
 #include "geo.h"
 #include "layer_geometry.h"
+#include "map_render_hover.h"
 #include "map_render_utils.h"
 #include "worldsim_app.h"
 
@@ -19,7 +21,6 @@ constexpr size_t kFallbackScanBudgetPerFrame = 4096;
 constexpr size_t kMaxLargeParcelCpuFallbackFeatures = 100000;
 constexpr float kPointMarkerRadiusPx = 5.0f;
 constexpr float kPointMarkerOutlinePx = 1.6f;
-constexpr int kPointClusterMaxMathZoom = 15;
 constexpr float kPointClusterCellPx = 28.0f;
 constexpr float kPointClusterRadiusPx = 12.0f;
 
@@ -52,11 +53,36 @@ struct PointClusterBucket {
     ImU32 color = 0;
     PointMarkerGlyph glyph = PointMarkerGlyph::Circle;
     size_t count = 0;
+    size_t representative_feature_idx = (size_t)-1;
+    const LayerDef::FeatureGeom* representative_feature = nullptr;
     float min_lon = 0.0f;
     float max_lon = 0.0f;
     float min_lat = 0.0f;
     float max_lat = 0.0f;
 };
+
+struct DeferredPointRenderJob {
+    size_t layer_idx = 0;
+    size_t feature_idx = (size_t)-1;
+    const LayerDef* layer = nullptr;
+    const LayerDef::FeatureGeom* feature = nullptr;
+    ImU32 color = 0;
+    uint64_t order_key = 0;
+};
+
+bool isHoveredPointFeature(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg) {
+    if (!ctx.hover_state) return false;
+    if (ctx.hover_state->hovered_point_layer_idx < 0) return false;
+    if ((size_t)ctx.hover_state->hovered_point_layer_idx != layer_idx) return false;
+    if (ctx.hover_state->hovered_point_idx != (size_t)-1) {
+        return ctx.hover_state->hovered_point_idx == feature_idx;
+    }
+    return ctx.hover_state->hovered_point == &fg;
+}
 
 uint64_t heatNormalizationCacheKey(uint64_t heatmap_data_key, size_t layer_idx) {
     return (heatmap_data_key * 1099511628211ULL) ^ (uint64_t(layer_idx) + 0x9e3779b97f4a7c15ULL);
@@ -129,7 +155,12 @@ ImU32 computeFeatureColor(
     feature_heat_value = 0.0f;
     feature_normalized_value = 0.0f;
     feature_heat_value_valid = false;
-    if (is_heat_layer) {
+    const bool use_gradient =
+        ctx.layer_heatmap_use_gradient &&
+        layer_idx < ctx.layer_heatmap_use_gradient->size()
+            ? (*ctx.layer_heatmap_use_gradient)[layer_idx]
+            : true;
+    if (is_heat_layer && use_gradient) {
         feature_heat_value_valid = tryGetFeaturePropertyFloat(fg, layer.heatmap_field, feature_heat_value);
         if (feature_heat_value_valid &&
             heat_normalization.normalizedValue(fg, feature_heat_value, normalization_group_key, feature_normalized_value)) {
@@ -184,6 +215,11 @@ PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer) {
     if (containsCaseInsensitive(layer.name, "church")) return PointMarkerGlyph::Plus;
     if (containsCaseInsensitive(layer.name, "industry")) return PointMarkerGlyph::Square;
     if (containsCaseInsensitive(layer.name, "filling")) return PointMarkerGlyph::Square;
+    if (containsCaseInsensitive(layer.name, "event") ||
+        containsCaseInsensitive(layer.subcategory, "event") ||
+        containsCaseInsensitive(layer.duckdb_role, "point_event")) {
+        return PointMarkerGlyph::Droplet;
+    }
     switch (layer.category) {
         case LayerDef::Category::PublicHealth: return PointMarkerGlyph::Cross;
         case LayerDef::Category::Infrastructure: return PointMarkerGlyph::Square;
@@ -312,12 +348,19 @@ bool pointInsideCircle(const ImVec2& p, const ImVec2& center, float radius) {
 
 bool shouldClusterPointLayer(
     const RenderLayerPassContext& ctx,
+    size_t layer_idx,
     const LayerDef& layer,
     bool layer_uses_heatmap,
     bool layer_uses_lod_for_draw) {
     if (layer_uses_heatmap || layer_uses_lod_for_draw) return false;
-    if (ctx.math_zoom > kPointClusterMaxMathZoom) return false;
-    return layer.scale == "point";
+    if (ctx.hover_state &&
+        ctx.hover_state->hovered_point_layer_idx >= 0 &&
+        (size_t)ctx.hover_state->hovered_point_layer_idx == layer_idx) {
+        return false;
+    }
+    return ctx.heatmap_policy &&
+           layerUsesPointGeometry(layer) &&
+           layerUsesPointClustering(*ctx.heatmap_policy, layer_idx);
 }
 
 bool resolveFeatureRenderStyle(
@@ -456,6 +499,8 @@ void renderClusteredPointCandidates(
         if (bucket.count == 0) {
             bucket.color = feature_c;
             bucket.glyph = pointMarkerGlyphForLayer(layer);
+            bucket.representative_feature_idx = (size_t)fidx;
+            bucket.representative_feature = &fg;
             bucket.min_lon = fg.extent.min_lon;
             bucket.max_lon = fg.extent.max_lon;
             bucket.min_lat = fg.extent.min_lat;
@@ -475,7 +520,20 @@ void renderClusteredPointCandidates(
         if (bucket.count == 0) continue;
         const ImVec2 center(bucket.center_sum.x / (float)bucket.count, bucket.center_sum.y / (float)bucket.count);
         if (bucket.count == 1) {
-            drawPointMarker(ctx.draw, center, bucket.color, bucket.glyph, kPointMarkerRadiusPx);
+            const bool hovered =
+                bucket.representative_feature &&
+                bucket.representative_feature_idx != (size_t)-1 &&
+                isHoveredPointFeature(
+                    ctx,
+                    layer_idx,
+                    bucket.representative_feature_idx,
+                    *bucket.representative_feature);
+            drawPointMarker(
+                ctx.draw,
+                center,
+                bucket.color,
+                bucket.glyph,
+                hovered ? (kPointMarkerRadiusPx + 1.8f) : kPointMarkerRadiusPx);
         } else {
             drawPointClusterBadge(ctx.draw, center, bucket.color, bucket.count);
             if (pointInsideCircle(mouse, center, kPointClusterRadiusPx + 3.0f)) {
@@ -488,7 +546,7 @@ void renderClusteredPointCandidates(
                 if (ctx.center_lon && ctx.center_lat && ctx.zoom && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     *ctx.center_lon = 0.5 * ((double)bucket.min_lon + (double)bucket.max_lon);
                     *ctx.center_lat = 0.5 * ((double)bucket.min_lat + (double)bucket.max_lat);
-                    *ctx.zoom = std::min(ctx.max_zoom, std::max(*ctx.zoom + 2, ctx.math_zoom + 1));
+                    *ctx.zoom = std::min((double)ctx.max_zoom, std::max(*ctx.zoom + 2.0, (double)ctx.math_zoom + 1.0));
                 }
             }
         }
@@ -564,14 +622,21 @@ void drawFeatureGeometry(
     const LayerDef& layer,
     const LayerDef::FeatureGeom& fg,
     ImU32 feature_c,
-    bool layer_uses_lod_for_draw) {
+    bool layer_uses_lod_for_draw,
+    std::vector<DeferredPointRenderJob>* deferred_point_jobs) {
     if (!fg.rings.empty()) {
+        const ImU32 outline_c = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
         const auto& world_rings = ctx.projection->getWorldRings(layer_idx, (uint32_t)feature_idx, fg);
         const bool fill_enabled_for_layer =
             layer_idx < ctx.layer_fill_enabled->size() && (*ctx.layer_fill_enabled)[layer_idx];
+        const bool suppress_base_parcel_outlines =
+            (int)layer_idx == ctx.parcel_layer_idx &&
+            ctx.zoom_value < 14.0;
         const bool use_gpu_parcel_fill =
             (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
-        if (!use_gpu_parcel_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
+        const bool use_gpu_zoning_fill =
+            (int)layer_idx == ctx.zoning_layer_idx && zoningGpuDrawActive();
+        if (!use_gpu_parcel_fill && !use_gpu_zoning_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
             const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
             const uint32_t fill_alpha = (uint32_t)std::clamp(
                 (int)std::lround((float)src_alpha * std::clamp(ctx.map_polygon_fill_opacity, 0.0f, 1.0f)),
@@ -618,10 +683,12 @@ void drawFeatureGeometry(
         }
 
         for (const auto& r : world_rings) {
-            if ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) {
+            if (!suppress_base_parcel_outlines &&
+                ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) &&
+                ((int)layer_idx != ctx.zoning_layer_idx || !zoningGpuOutlineDrawActive())) {
                 ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
                 const auto& line = ctx.projection->scratchLine();
-                ctx.draw->AddPolyline(line.data(), (int)line.size(), feature_c, ImDrawFlags_Closed, 1.0f);
+                ctx.draw->AddPolyline(line.data(), (int)line.size(), outline_c, ImDrawFlags_Closed, 1.0f);
             }
         }
         return;
@@ -631,7 +698,50 @@ void drawFeatureGeometry(
     ImVec2 ps = ctx.project_world(pw);
     if (ps.x >= ctx.origin.x && ps.x <= ctx.origin.x + ctx.size.x &&
         ps.y >= ctx.origin.y && ps.y <= ctx.origin.y + ctx.size.y) {
-        drawPointMarker(ctx.draw, ps, feature_c, pointMarkerGlyphForLayer(layer), kPointMarkerRadiusPx);
+        if (deferred_point_jobs) {
+            DeferredPointRenderJob job;
+            job.layer_idx = layer_idx;
+            job.feature_idx = feature_idx;
+            job.layer = &layer;
+            job.feature = &fg;
+            job.color = feature_c;
+            job.order_key = stablePointFeatureOrderKey(layer_idx, feature_idx, fg);
+            deferred_point_jobs->push_back(job);
+        } else {
+            const bool hovered = isHoveredPointFeature(ctx, layer_idx, feature_idx, fg);
+            drawPointMarker(
+                ctx.draw,
+                ps,
+                feature_c,
+                pointMarkerGlyphForLayer(layer),
+                hovered ? (kPointMarkerRadiusPx + 1.8f) : kPointMarkerRadiusPx);
+            if (ctx.prof_features_drawn_frame) {
+                ++(*ctx.prof_features_drawn_frame);
+            }
+        }
+    }
+}
+
+void flushDeferredPointRenderJobs(
+    const RenderLayerPassContext& ctx,
+    const std::vector<DeferredPointRenderJob>& deferred_point_jobs) {
+    for (const DeferredPointRenderJob& job : deferred_point_jobs) {
+        if (!job.layer || !job.feature) continue;
+        ImVec2 pw = lonLatToWorldPx(job.feature->extent.min_lon, job.feature->extent.min_lat, ctx.math_zoom);
+        ImVec2 ps = ctx.project_world(pw);
+        if (ps.x < ctx.origin.x || ps.x > ctx.origin.x + ctx.size.x ||
+            ps.y < ctx.origin.y || ps.y > ctx.origin.y + ctx.size.y) {
+            continue;
+        }
+        const bool hovered =
+            job.feature &&
+            isHoveredPointFeature(ctx, job.layer_idx, job.feature_idx, *job.feature);
+        drawPointMarker(
+            ctx.draw,
+            ps,
+            job.color,
+            pointMarkerGlyphForLayer(*job.layer),
+            hovered ? (kPointMarkerRadiusPx + 1.8f) : kPointMarkerRadiusPx);
         if (ctx.prof_features_drawn_frame) {
             ++(*ctx.prof_features_drawn_frame);
         }
@@ -652,7 +762,8 @@ void renderFeature(
     bool layer_uses_heatmap,
     bool layer_uses_lod_for_draw,
     bool apply_smooth_stride,
-    size_t smooth_sample_stride) {
+    size_t smooth_sample_stride,
+    std::vector<DeferredPointRenderJob>* deferred_point_jobs) {
     if (ctx.prof_features_considered_frame) {
         ++(*ctx.prof_features_considered_frame);
     }
@@ -697,7 +808,7 @@ void renderFeature(
         return;
     }
 
-    drawFeatureGeometry(ctx, layer_idx, feature_idx, layer, fg, feature_c, layer_uses_lod_for_draw);
+    drawFeatureGeometry(ctx, layer_idx, feature_idx, layer, fg, feature_c, layer_uses_lod_for_draw, deferred_point_jobs);
 }
 
 } // namespace
@@ -707,7 +818,7 @@ bool shouldBypassCpuParcelFeaturePass(
     bool layer_uses_heatmap_for_cache,
     bool layer_uses_lod_for_draw,
     bool should_recompute_heatmap) {
-    if (!parcel_gpu_draw_active) return false;
+    if (!parcel_gpu_draw_active) return true;
     if (layer_uses_lod_for_draw) return false;
     if (layer_uses_heatmap_for_cache && should_recompute_heatmap) return false;
     return true;
@@ -715,26 +826,28 @@ bool shouldBypassCpuParcelFeaturePass(
 
 void runRenderLayerPass(const RenderLayerPassContext& ctx) {
     std::vector<uint32_t> render_candidates;
+    std::vector<DeferredPointRenderJob> deferred_point_jobs;
     for (size_t layer_idx : ctx.render_plan->draw_layer_order) {
         auto& l = (*ctx.layers)[layer_idx];
         if (!l.enabled) continue;
+        if (ctx.layer_passes_filters && !ctx.layer_passes_filters(layer_idx)) continue;
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
         const bool use_gpu_parcel_draw = (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
         if (use_gpu_parcel_draw) {
             enqueueParcelGpuDraw(ctx.draw);
         }
-        if ((int)layer_idx == ctx.parcel_layer_idx &&
-            shouldBypassCpuParcelFeaturePass(
-                use_gpu_parcel_draw,
-                layer_uses_heatmap_for_cache,
-                layer_uses_lod_for_draw,
-                ctx.should_recompute_heatmap)) {
+        const bool use_gpu_zoning_draw = (int)layer_idx == ctx.zoning_layer_idx && zoningGpuDrawActive();
+        if (use_gpu_zoning_draw) {
+            enqueueZoningGpuDraw(ctx.draw);
+            if (zoningGpuOutlineDrawActive()) {
+                enqueueZoningGpuOutlineDraw(ctx.draw);
+            }
+        }
+        if ((int)layer_idx == ctx.parcel_layer_idx) {
             continue;
         }
-        if ((int)layer_idx == ctx.parcel_layer_idx &&
-            !use_gpu_parcel_draw &&
-            l.features.size() > kMaxLargeParcelCpuFallbackFeatures) {
+        if ((int)layer_idx == ctx.zoning_layer_idx && use_gpu_zoning_draw) {
             continue;
         }
 
@@ -801,7 +914,7 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
 
         ImU32 base_color = ImGui::ColorConvertFloat4ToU32(l.color);
         const bool should_cluster_point_layer =
-            shouldClusterPointLayer(ctx, l, is_heat_layer, layer_uses_lod_for_draw);
+            shouldClusterPointLayer(ctx, layer_idx, l, is_heat_layer, layer_uses_lod_for_draw);
         bool have_candidates = !ctx.should_recompute_heatmap || !layer_uses_heatmap_for_cache;
         if (ctx.high_quality_gpu_aggregate && ctx.should_recompute_heatmap && layer_uses_heatmap_for_cache) {
             have_candidates = false;
@@ -854,7 +967,8 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                     layer_uses_heatmap,
                     layer_uses_lod_for_draw,
                     false,
-                    1);
+                    1,
+                    &deferred_point_jobs);
             }
             continue;
         }
@@ -896,7 +1010,8 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                     layer_uses_heatmap,
                     layer_uses_lod_for_draw,
                     true,
-                    smooth_sample_stride);
+                    smooth_sample_stride,
+                    &deferred_point_jobs);
             }
             (*ctx.layer_fallback_scan_cursor)[layer_idx] = (cursor + budget) % total;
             continue;
@@ -931,10 +1046,25 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                 is_zoning_layer,
                 heat_normalization,
                 normalization_group_key,
-                layer_uses_heatmap,
-                layer_uses_lod_for_draw,
-                true,
-                smooth_sample_stride);
+                    layer_uses_heatmap,
+                    layer_uses_lod_for_draw,
+                    true,
+                    smooth_sample_stride,
+                    &deferred_point_jobs);
         }
     }
+    std::sort(
+        deferred_point_jobs.begin(),
+        deferred_point_jobs.end(),
+        [&](const DeferredPointRenderJob& a, const DeferredPointRenderJob& b) {
+            const int hovered_point_layer_idx =
+                ctx.hover_state ? ctx.hover_state->hovered_point_layer_idx : -1;
+            const bool a_hovered_layer =
+                hovered_point_layer_idx >= 0 && a.layer_idx == (size_t)hovered_point_layer_idx;
+            const bool b_hovered_layer =
+                hovered_point_layer_idx >= 0 && b.layer_idx == (size_t)hovered_point_layer_idx;
+            if (a_hovered_layer != b_hovered_layer) return !a_hovered_layer && b_hovered_layer;
+            return a.order_key < b.order_key;
+        });
+    flushDeferredPointRenderJobs(ctx, deferred_point_jobs);
 }

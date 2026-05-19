@@ -21,7 +21,7 @@ struct GradientTabContext {
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
     float heatmap_percentile_clip = 99.0f;
     int heatmap_algo = 0;
-    int zoom = 0;
+    double zoom = 0.0;
 };
 
 void drawGradientTab(const GradientTabContext& ctx);

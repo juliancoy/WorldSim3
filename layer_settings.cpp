@@ -1,6 +1,7 @@
 #include "layer_settings.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "layer_import.h"
 #include "render_policy.h"
 #include "layer_ui_actions.h"
@@ -91,9 +92,9 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     }
 
     const bool is_value_parcel_layer = l.scale == "parcel" && !l.heatmap_field.empty();
-    ImGui::SeparatorText(is_value_parcel_layer ? "Value visualization" : "Heatmap");
+    ImGui::SeparatorText(is_value_parcel_layer ? "Value visualization" : (layerUsesPointGeometry(l) ? "Aggregation" : "Heatmap"));
     const char* layer_algo_items[] = {
-        "None", "KDE (Gaussian)", "GPU Splat + Blur", "LOD Geometry", "Hex Binning", "Multi-res Pyramid", "Median Choropleth"
+        "None", "KDE (Gaussian)", "GPU Splat + Blur", "GPU Splat Hue", "LOD Geometry", "Hex Binning", "Multi-res Pyramid", "Median Choropleth", "Point Clustering"
     };
     int layer_algo_ui = 0;
     const bool layer_heatmap_on = ctx.idx < shared.layer_heatmap_enabled->size() ? (*shared.layer_heatmap_enabled)[ctx.idx] : true;
@@ -119,18 +120,10 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     const int resolved_layer_algo = display_policy.aggregate_algo;
 
     if (display_policy.mode == LayerDisplayMode::ParcelChoroplethDetail) ImGui::TextDisabled("Resolved display: parcel choropleth by %s", l.heatmap_field.c_str());
-    else if (display_policy.mode == LayerDisplayMode::Aggregate || display_policy.mode == LayerDisplayMode::LodGeometry) ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
+    else if (display_policy.mode == LayerDisplayMode::Aggregate ||
+             display_policy.mode == LayerDisplayMode::LodGeometry ||
+             display_policy.mode == LayerDisplayMode::PointCluster) ImGui::TextDisabled("Resolved display: aggregate %s", aggregateStrategyName(resolved_layer_algo));
     else ImGui::TextDisabled("Resolved display: per-feature fill");
-
-    if (!l.heatmap_field.empty()) {
-        const char* normalize_items[] = {"Absolute clipped range", "Layer percentile", "Group/Zoning percentile"};
-        int normalize_mode = ctx.idx < shared.layer_normalize_mode->size() ? (*shared.layer_normalize_mode)[ctx.idx] : 0;
-        normalize_mode = std::clamp(normalize_mode, 0, (int)IM_ARRAYSIZE(normalize_items) - 1);
-        if (ImGui::Combo("Normalize", &normalize_mode, normalize_items, IM_ARRAYSIZE(normalize_items)) && ctx.idx < shared.layer_normalize_mode->size()) {
-            (*shared.layer_normalize_mode)[ctx.idx] = normalize_mode;
-            *shared.layer_heatmap_state_changed = true;
-        }
-    }
 
     if (is_value_parcel_layer) ImGui::TextDisabled("Parcel detail draws per-parcel value fill.");
     ImGui::BeginDisabled(aggregate_none);
@@ -163,6 +156,26 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
             }
         }
         *shared.heatmap_controls_active |= ImGui::IsItemActive();
+    } else if (resolved_layer_algo == kAggregateGpuSplatHue) {
+        *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Splat radius", (*shared.layer_heatmap_bandwidth_px)[ctx.idx], 2.0f, 96.0f, "%.1f");
+        *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Blur sigma", (*shared.layer_heatmap_blur_sigma_px)[ctx.idx], 0.0f, 32.0f, "%.1f");
+        bool adaptive = (*shared.layer_heatmap_zoom_adaptive_bandwidth)[ctx.idx];
+        if (ImGui::Checkbox("Adaptive hue splat radius", &adaptive)) {
+            (*shared.layer_heatmap_zoom_adaptive_bandwidth)[ctx.idx] = adaptive;
+            *shared.layer_heatmap_state_changed = true;
+        }
+        if (shared.heatmap_allow_cpu_fallback) {
+            bool allow_fallback = *shared.heatmap_allow_cpu_fallback;
+            if (ImGui::Checkbox("Allow CPU fallback if GPU path fails", &allow_fallback)) {
+                *shared.heatmap_allow_cpu_fallback = allow_fallback;
+                *shared.layer_heatmap_state_changed = true;
+            }
+            if (!allow_fallback) {
+                ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
+            }
+        }
+        ImGui::TextDisabled("Preserves average source hue while density drives brightness and alpha.");
+        *shared.heatmap_controls_active |= ImGui::IsItemActive();
     } else if (resolved_layer_algo == kAggregateLodGeometry) {
         ImGui::TextWrapped("LOD Geometry no longer skips parcel/polygon vertices by default; it draws exact outlines instead of generating heatmap cells.");
     } else if (resolved_layer_algo == kAggregateHexBinning) {
@@ -171,6 +184,8 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     } else if (resolved_layer_algo == kAggregateMedianChoropleth) {
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Choropleth cell size", (*shared.layer_heatmap_cell_px)[ctx.idx], 2.0f, 80.0f, "%.0f");
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Value clip", (*shared.layer_heatmap_percentile_clip)[ctx.idx], 50.0f, 100.0f, "%.0f");
+    } else if (resolved_layer_algo == kAggregatePointClustering) {
+        ImGui::TextWrapped("Clusters point icons while zoomed out. Hovering that icon type temporarily expands it back into individual icons on top.");
     } else {
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Fine cell size", (*shared.layer_heatmap_cell_px)[ctx.idx], 2.0f, 80.0f, "%.0f");
         bool multires_enabled = (*shared.layer_heatmap_multires_enabled)[ctx.idx];
@@ -202,10 +217,8 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
             ImGui::TextDisabled("Effective parcel detail starts at zoom %d to avoid an aggregate/detail gap.", display_policy.effective_parcel_detail_min_zoom);
         }
     }
-    bool use_gradient = (ctx.idx < shared.layer_heatmap_use_gradient->size()) ? (*shared.layer_heatmap_use_gradient)[ctx.idx] : true;
-    if (ImGui::Checkbox("Apply gradient colors", &use_gradient) && ctx.idx < shared.layer_heatmap_use_gradient->size()) {
-        (*shared.layer_heatmap_use_gradient)[ctx.idx] = use_gradient;
-        *shared.layer_heatmap_state_changed = true;
+    if (!l.heatmap_field.empty()) {
+        ImGui::TextDisabled("Color mode, normalization, and histogram live in the fill-color menu.");
     }
     ImGui::EndPopup();
 }

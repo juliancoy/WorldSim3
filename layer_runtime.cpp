@@ -58,6 +58,9 @@ std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std:
         }
     }
     if (state.status == LayerPipelineStatus::TriQueued) return "queued for triangulation";
+    if (state.status == LayerPipelineStatus::Ready && state.triangulation_phase == "render_blob_mode") {
+        return "ready via parcel render blob";
+    }
     return statusToString(state.status);
 }
 

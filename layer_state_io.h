@@ -113,7 +113,8 @@ void loadFilterUiState(
     int* crime_year_max = nullptr,
     char* owner_search_query = nullptr,
     size_t owner_search_query_size = 0,
-    std::unordered_set<std::string>* selected_owners = nullptr);
+    std::unordered_set<std::string>* selected_owners = nullptr,
+    std::unordered_map<std::string, bool>* event_sector_enabled = nullptr);
 
 void saveFilterUiState(
     const std::filesystem::path& root,
@@ -142,20 +143,27 @@ void saveFilterUiState(
     int crime_year_min,
     int crime_year_max,
     const char* owner_search_query,
-    const std::unordered_set<std::string>& selected_owners);
+    const std::unordered_set<std::string>& selected_owners,
+    const std::unordered_map<std::string, bool>& event_sector_enabled);
 
 void loadMapUiState(
     const std::filesystem::path& root,
+    const std::string* selected_nation_state = nullptr,
+    const std::string* selected_state_region = nullptr,
+    const std::string* selected_county_city = nullptr,
     double* center_lon = nullptr,
     double* center_lat = nullptr,
-    int* zoom = nullptr,
+    double* zoom = nullptr,
     size_t* selected_parcel_idx = nullptr,
     std::vector<size_t>* selected_parcel_indices = nullptr);
 
 void saveMapUiState(
     const std::filesystem::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
+    const std::string* selected_county_city,
     double center_lon,
     double center_lat,
-    int zoom,
+    double zoom,
     size_t selected_parcel_idx,
     const std::vector<size_t>& selected_parcel_indices);

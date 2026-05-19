@@ -5,6 +5,8 @@
 #include "basemap_panel.h"
 #include "data_library_panel.h"
 #include "dataset_library.h"
+#include "event_sector_filters_panel.h"
+#include "event_sectors.h"
 #include "imgui.h"
 #include "layer_import.h"
 #include "layer_state_io.h"
@@ -25,15 +27,27 @@ struct GeographyPreset {
     const char* nation_label;
     const char* region_code;
     const char* region_label;
-    double center_lon;
-    double center_lat;
-    int suggested_zoom;
 };
 
 constexpr std::array<GeographyPreset, 2> kGeographyPresets{{
-    {"us", "USA", "md", "Maryland", -76.61, 39.29, 11},
-    {"ng", "Nigeria", "anambra", "Anambra", 7.02, 6.17, 10},
+    {"us", "USA", "md", "Maryland"},
+    {"ng", "Nigeria", "anambra", "Anambra"},
 }};
+
+struct HoverInspectorOption {
+    int mode = 0;
+    const char* label = "";
+};
+
+const char* hoverInspectorModeLabel(int mode) {
+    switch (mode) {
+        case 1: return "Parcels";
+        case 2: return "Zoning";
+        case 3: return "All Supported";
+        case 0:
+        default: return "None";
+    }
+}
 
 std::string geographyNationLabel(std::string_view code) {
     for (const auto& preset : kGeographyPresets) {
@@ -160,7 +174,8 @@ void persistGeographyFilterState(const LeftPanelContext& ctx) {
         ctx.map_filter_state->crime.year_min,
         ctx.map_filter_state->crime.year_max,
         nullptr,
-        ctx.map_filter_state->selected_owners);
+        ctx.map_filter_state->selected_owners,
+        ctx.map_filter_state->event_sector_enabled);
 }
 
 bool heatmapInputFloatEnter(
@@ -273,13 +288,18 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     }
 
     auto apply_geography_selection = [&](bool center_map) {
-        if (const GeographyPreset* preset = presetForGeography(selected_nation, selected_region)) {
-            if (center_map) {
-                *ctx.center_lon = preset->center_lon;
-                *ctx.center_lat = preset->center_lat;
-                *ctx.zoom = std::max(*ctx.zoom, preset->suggested_zoom);
+        if (center_map) {
+            double preset_lon = *ctx.center_lon;
+            double preset_lat = *ctx.center_lat;
+            int preset_zoom = (int)std::floor(*ctx.zoom);
+            if (geographyViewPreset(selected_nation, selected_region, preset_lon, preset_lat, preset_zoom)) {
+                *ctx.center_lon = preset_lon;
+                *ctx.center_lat = preset_lat;
+                *ctx.zoom = std::max(*ctx.zoom, (double)preset_zoom);
             }
         }
+        ctx.map_filter_state->selected_owners.clear();
+        ctx.map_filter_state->owner[0] = '\0';
         clearParcelGpuBuffers();
         persistGeographyFilterState(ctx);
         result.geography_changed = true;
@@ -383,7 +403,25 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::TextDisabled("Local data: %zu/%zu", local_layer_count, visible_layer_total);
     result.downloadable_missing_layer_count = downloadable_missing_layer_count;
     result.queueable_missing_layer_count = queueable_missing_layer_count;
-    ImGui::SliderInt("Zoom", ctx.zoom, ctx.min_zoom, ctx.max_zoom);
+    double zoom_ui = *ctx.zoom;
+    double zoom_min = (double)ctx.min_zoom;
+    double zoom_max = (double)ctx.max_zoom;
+    if (ImGui::SliderScalar("Zoom", ImGuiDataType_Double, &zoom_ui, &zoom_min, &zoom_max, "%.2f")) {
+        *ctx.zoom = std::clamp(zoom_ui, (double)ctx.min_zoom, (double)ctx.max_zoom);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("-")) {
+        *ctx.zoom = std::max((double)ctx.min_zoom, *ctx.zoom - std::clamp(ctx.app_settings->zoom_step, 0.05, 4.0));
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+")) {
+        *ctx.zoom = std::min((double)ctx.max_zoom, *ctx.zoom + std::clamp(ctx.app_settings->zoom_step, 0.05, 4.0));
+    }
+    double zoom_step_ui = ctx.app_settings->zoom_step;
+    if (ImGui::InputDouble("Zoom Step", &zoom_step_ui, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue)) {
+        ctx.app_settings->zoom_step = std::clamp(zoom_step_ui, 0.05, 4.0);
+        saveAppSettings(*ctx.root, *ctx.app_settings);
+    }
     double lon_min = -180.0;
     double lon_max = 180.0;
     double lat_min = -85.0;
@@ -409,11 +447,34 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
             selected_county_city.empty() ? "all areas" : selected_county_city.c_str());
     }
 
-    const char* hover_inspector_mode_options[] = {"None", "Parcels", "Zoning", "All Supported"};
-    if (ImGui::Combo("Hover Inspector", ctx.hover_inspector_mode, hover_inspector_mode_options, IM_ARRAYSIZE(hover_inspector_mode_options))) {
-        *ctx.hover_inspector_mode = std::clamp(*ctx.hover_inspector_mode, 0, 3);
-        *ctx.hover_inspector_enabled = *ctx.hover_inspector_mode != 0;
+    const bool parcel_hover_supported = ctx.parcel_layer_idx >= 0;
+    const bool zoning_hover_supported = ctx.zoning_layer_idx >= 0;
+    std::vector<HoverInspectorOption> hover_options;
+    hover_options.push_back({0, "None"});
+    if (parcel_hover_supported) hover_options.push_back({1, "Parcels"});
+    if (zoning_hover_supported) hover_options.push_back({2, "Zoning"});
+    hover_options.push_back({3, "All Supported"});
+
+    const auto mode_supported = [&](int mode) {
+        if (mode == 1) return parcel_hover_supported;
+        if (mode == 2) return zoning_hover_supported;
+        if (mode == 3) return true;
+        return mode == 0;
+    };
+    if (!mode_supported(*ctx.hover_inspector_mode)) {
+        *ctx.hover_inspector_mode = parcel_hover_supported ? 1 : 3;
     }
+    if (ImGui::BeginCombo("Hover Inspector", hoverInspectorModeLabel(*ctx.hover_inspector_mode))) {
+        for (const HoverInspectorOption& option : hover_options) {
+            const bool selected = *ctx.hover_inspector_mode == option.mode;
+            if (ImGui::Selectable(option.label, selected)) {
+                *ctx.hover_inspector_mode = option.mode;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    *ctx.hover_inspector_enabled = *ctx.hover_inspector_mode != 0;
 
     ImGui::SeparatorText("Heatmap");
     ImGui::TextDisabled("Global heatmap controls removed.");
@@ -501,6 +562,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.enqueue_layer_download_request = ctx.enqueue_layer_download_request;
     layer_ui_input.mark_local_layer_exists = ctx.mark_local_layer_exists;
     layer_ui_input.enqueue_hydration = ctx.enqueue_hydration;
+    layer_ui_input.open_layer_color_editor = ctx.open_layer_color_editor;
     layer_ui_input.heatmap_input_float_enter = [&](const char* label, float& value, float min_value, float max_value, const char* format) {
         return heatmapInputFloatEnter(*ctx.heatmap_controls_active, label, value, min_value, max_value, format);
     };
@@ -519,6 +581,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.layer_heatmap_bandwidth_px = ctx.layer_heatmap_bandwidth_px;
     layer_ui_input.layer_heatmap_blur_sigma_px = ctx.layer_heatmap_blur_sigma_px;
     layer_ui_input.layer_heatmap_percentile_clip = ctx.layer_heatmap_percentile_clip;
+    layer_ui_input.layer_choropleth_gamma = ctx.layer_choropleth_gamma;
     layer_ui_input.layer_heatmap_multires_blend = ctx.layer_heatmap_multires_blend;
     layer_ui_input.layer_heatmap_zoom_adaptive_bandwidth = ctx.layer_heatmap_zoom_adaptive_bandwidth;
     layer_ui_input.layer_heatmap_multires_enabled = ctx.layer_heatmap_multires_enabled;
@@ -557,6 +620,8 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     LayersPanelUiContext layers_panel_ctx = makeLayersPanelUiContext(layers_panel_input);
     drawLayerCategoriesPanel(layers_panel_ctx);
 
+    if (ctx.map_filter_state) ensureCommunitySectorFilterDefaults(ctx.map_filter_state->event_sector_enabled);
+
     ZoningFiltersPanelContext zoning_filters_ctx;
     zoning_filters_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     zoning_filters_ctx.root = ctx.root;
@@ -570,6 +635,10 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     zoning_filters_ctx.zoning_group_zones = ctx.zoning_group_zones;
     zoning_filters_ctx.zoning_group_order = ctx.zoning_group_order;
     result.zoning_filters_changed = drawZoningFiltersPanel(zoning_filters_ctx);
+    EventSectorFiltersPanelContext event_sector_filters_ctx;
+    event_sector_filters_ctx.layers = ctx.layers;
+    event_sector_filters_ctx.map_filter_state = ctx.map_filter_state;
+    result.event_sector_filters_changed = drawEventSectorFiltersPanel(event_sector_filters_ctx);
     ImGui::End();
     return result;
 }

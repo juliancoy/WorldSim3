@@ -126,6 +126,18 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                     (*ctx.layer_states)[ready.index].hydration_phase = ready.loaded_from_cache ? "cache_hit" : "source_parse";
                 }
             }
+            if ((int)ready.index == ctx.parcel_layer_idx) {
+                ctx.triangulated_count->fetch_add(1, std::memory_order_relaxed);
+                std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
+                if (ready.index < ctx.layer_states->size()) {
+                    (*ctx.layer_states)[ready.index].status = LayerPipelineStatus::Ready;
+                    (*ctx.layer_states)[ready.index].triangulation_source_signature = ready.source_signature;
+                    (*ctx.layer_states)[ready.index].triangulation_loaded_from_cache = false;
+                    (*ctx.layer_states)[ready.index].triangulation_phase = "render_blob_mode";
+                }
+                if (ctx.trim_process_heap) ctx.trim_process_heap();
+                continue;
+            }
             TriJob tj;
             tj.index = ready.index;
             tj.file = (*ctx.layers)[ready.index].file;

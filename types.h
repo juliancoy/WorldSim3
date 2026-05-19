@@ -27,6 +27,7 @@ struct LayerDef {
     std::string import_service_url;
     std::string import_normalizer;
     std::string import_sheet_name;
+    std::string import_item_path;
     std::string import_lon_field;
     std::string import_lat_field;
     std::string import_artifact_file;
@@ -35,12 +36,17 @@ struct LayerDef {
     std::string provenance_nation_state;
     std::string provenance_state_region;
     std::string provenance_county_city;
+    mutable bool normalized_geography_cache_valid = false;
+    mutable std::string normalized_provenance_nation_state;
+    mutable std::string normalized_provenance_state_region;
+    mutable std::string normalized_provenance_county_city;
     std::string description;
     std::string heatmap_field;
     std::string subcategory;
     std::string region;
     std::string scale;
     ImVec4 color;
+    ImVec4 outline_color;
     bool enabled = false;
     bool runtime_load = true;
     bool duckdb_ingest = true;

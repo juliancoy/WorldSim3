@@ -66,6 +66,9 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("map_polygon_fill_opacity") && j["map_polygon_fill_opacity"].is_number()) {
         out.map_polygon_fill_opacity = std::clamp(j["map_polygon_fill_opacity"].get<float>(), 0.0f, 1.0f);
     }
+    if (j.contains("zoom_step") && j["zoom_step"].is_number()) {
+        out.zoom_step = std::clamp(j["zoom_step"].get<double>(), 0.05, 4.0);
+    }
     if (!out.basemap_osm_enabled && !out.basemap_topographic_enabled &&
         !out.basemap_satellite_enabled && !out.basemap_dark_satellite_enabled &&
         !out.basemap_night_satellite_enabled) {
@@ -100,6 +103,7 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     j["basemap_dark_satellite_opacity"] = std::clamp(settings.basemap_dark_satellite_opacity, 0.0f, 1.0f);
     j["basemap_night_satellite_opacity"] = std::clamp(settings.basemap_night_satellite_opacity, 0.0f, 1.0f);
     j["map_polygon_fill_opacity"] = std::clamp(settings.map_polygon_fill_opacity, 0.0f, 1.0f);
+    j["zoom_step"] = std::clamp(settings.zoom_step, 0.05, 4.0);
     j["topo_vector_enabled"] = settings.topo_vector_enabled;
     j["zoning_use_simcity_colors"] = settings.zoning_use_simcity_colors;
     j["reserve_cpu_cores"] = std::max(0, settings.reserve_cpu_cores);

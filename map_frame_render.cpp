@@ -51,7 +51,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
         if (!layerUsesHeatmapAggregate(heatmap_policy, i)) continue;
         any_active_heatmap = true;
         const int aggregate_algo = resolveLayerAggregateAlgo(heatmap_policy, i);
-        if (aggregate_algo == kAggregateGpuSplatBlur) any_active_gpu_splat = true;
+        if (aggregate_algo == kAggregateGpuSplatBlur || aggregate_algo == kAggregateGpuSplatHue) any_active_gpu_splat = true;
         if (!isSmoothHeatmapAggregateMethod(aggregate_algo)) smooth_only_heatmap = false;
     }
     if (!any_active_heatmap) smooth_only_heatmap = false;
@@ -182,6 +182,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.zoom = ctx.zoom_ptr;
     layer_pass_ctx.max_zoom = ctx.max_zoom;
     layer_pass_ctx.math_zoom = ctx.math_zoom;
+    layer_pass_ctx.zoom_value = ctx.zoom;
     layer_pass_ctx.zoom_scale = ctx.zoom_scale;
     layer_pass_ctx.lod_ring_step = ctx.lod_ring_step;
     layer_pass_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
@@ -220,6 +221,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.raw_source_layer_policy = raw_source_layer_policy;
     layer_pass_ctx.heat_samples = &heat_samples;
     layer_pass_ctx.projection = ctx.projection;
+    layer_pass_ctx.hover_state = ctx.hover_state;
+    layer_pass_ctx.layer_passes_filters = ctx.layer_passes_filters;
     layer_pass_ctx.feature_passes_filters = ctx.feature_passes_filters;
     layer_pass_ctx.query_map_color = ctx.query_map_color;
     layer_pass_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
@@ -305,6 +308,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     render_tail_ctx.parcel_tax_lien_by_feature = ctx.parcel_tax_lien_by_feature;
     render_tail_ctx.parcel_tax_sale_by_feature = ctx.parcel_tax_sale_by_feature;
     render_tail_ctx.unified_parcels = ctx.unified_parcels;
+    render_tail_ctx.layer_heatmap_percentile_clip = ctx.layer_heatmap_percentile_clip;
+    render_tail_ctx.layer_normalize_mode = ctx.layer_normalize_mode;
     render_tail_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
     render_tail_ctx.projection = ctx.projection;
     render_tail_ctx.feature_passes_filters = ctx.feature_passes_filters;

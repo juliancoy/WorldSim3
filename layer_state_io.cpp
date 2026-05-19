@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "app_utils.h"
+#include "event_sectors.h"
 
 #include <algorithm>
 #include <cctype>
@@ -16,6 +17,31 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+ImVec4 defaultOutlineColor(const ImVec4& fill) {
+    return ImVec4(
+        std::clamp(fill.x * 0.72f, 0.0f, 1.0f),
+        std::clamp(fill.y * 0.72f, 0.0f, 1.0f),
+        std::clamp(fill.z * 0.72f, 0.0f, 1.0f),
+        1.0f);
+}
+
+std::string mapViewKey(
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
+    const std::string* selected_county_city) {
+    const std::string nation = selected_nation_state ? *selected_nation_state : std::string();
+    const std::string region = selected_state_region ? *selected_state_region : std::string();
+    const std::string county_city = selected_county_city ? *selected_county_city : std::string();
+    return nation + "/" + region + "/" + county_city;
+}
+
+std::string filterProfileKey(
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
+    const std::string* selected_county_city) {
+    return mapViewKey(selected_nation_state, selected_state_region, selected_county_city);
+}
+
 int manifestPriority(const fs::path& manifest_path) {
     const std::string name = manifest_path.filename().string();
     if (name == "layers_manifest.json") return 0;
@@ -102,6 +128,22 @@ void saveLayerSettingsToObject(
         }
         root_json[setting.key] = std::move(obj);
     }
+}
+
+bool parseHexLayerColor(const std::string& color_hex, ImVec4& out) {
+    if ((color_hex.size() != 7 && color_hex.size() != 9) || color_hex[0] != '#') return false;
+    auto hex = [&](int s) { return std::stoi(color_hex.substr(s, 2), nullptr, 16) / 255.0f; };
+    out = ImVec4(hex(1), hex(3), hex(5), color_hex.size() == 9 ? hex(7) : 1.0f);
+    return true;
+}
+
+std::string encodeHexLayerColor(const ImVec4& color) {
+    auto chan = [](float v) {
+        return std::clamp((int)std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f), 0, 255);
+    };
+    char buf[10];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x%02x", chan(color.x), chan(color.y), chan(color.z), chan(color.w));
+    return std::string(buf);
 }
 }
 
@@ -197,6 +239,7 @@ static void appendManifestEntries(
             ld.import_service_url = import.value("service_url", std::string());
             ld.import_normalizer = import.value("normalizer", std::string());
             ld.import_sheet_name = import.value("sheet_name", std::string());
+            ld.import_item_path = import.value("item_path", std::string());
             ld.import_lon_field = import.value("lon_field", std::string());
             ld.import_lat_field = import.value("lat_field", std::string());
             ld.import_artifact_file = import.value("artifact_file", std::string());
@@ -215,8 +258,8 @@ static void appendManifestEntries(
         ld.scale = arr[i].contains("scale") ? arr[i]["scale"].get<std::string>() : "";
         ld.duckdb_role = arr[i].contains("duckdb_role") ? arr[i]["duckdb_role"].get<std::string>() : "";
         std::string c = arr[i].value("color", std::string("#999999"));
-        auto hex = [&](int s) { return std::stoi(c.substr(s, 2), nullptr, 16) / 255.0f; };
-        ld.color = ImVec4(hex(1), hex(3), hex(5), 1.0f);
+        parseHexLayerColor(c, ld.color);
+        ld.outline_color = defaultOutlineColor(ld.color);
         ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : false;
         ld.runtime_load = arr[i].contains("runtime_load") ? arr[i]["runtime_load"].get<bool>() : true;
         ld.duckdb_ingest = arr[i].contains("duckdb_ingest") ? arr[i]["duckdb_ingest"].get<bool>() : true;
@@ -301,7 +344,7 @@ void loadLayerUiState(
         if (hover_inspector_mode) *hover_inspector_mode = hover_inspector_enabled ? 3 : 0;
     }
     if (parcel_parameter_mode && j.contains("parcel_parameter_mode") && j["parcel_parameter_mode"].is_number_integer()) {
-        *parcel_parameter_mode = std::clamp(j["parcel_parameter_mode"].get<int>(), 0, 2);
+        *parcel_parameter_mode = std::clamp(j["parcel_parameter_mode"].get<int>(), 0, 3);
     }
     if (j.contains("layers") && j["layers"].is_object()) {
         const auto& obj = j["layers"];
@@ -310,6 +353,23 @@ void loadLayerUiState(
                 l.enabled = obj[l.file].get<bool>();
             }
         }
+    }
+    if (j.contains("layer_colors") && j["layer_colors"].is_object()) {
+        const auto& obj = j["layer_colors"];
+        for (auto& l : layers) {
+            auto it = obj.find(l.file);
+            if (it != obj.end() && it->is_string()) parseHexLayerColor(it->get<std::string>(), l.color);
+        }
+    }
+    if (j.contains("layer_outline_colors") && j["layer_outline_colors"].is_object()) {
+        const auto& obj = j["layer_outline_colors"];
+        for (auto& l : layers) {
+            auto it = obj.find(l.file);
+            if (it != obj.end() && it->is_string() && parseHexLayerColor(it->get<std::string>(), l.outline_color)) continue;
+            l.outline_color = defaultOutlineColor(l.color);
+        }
+    } else {
+        for (auto& l : layers) l.outline_color = defaultOutlineColor(l.color);
     }
     if (zoning_zone_enabled && j.contains("zoning_zones") && j["zoning_zones"].is_object()) {
         zoning_zone_enabled->clear();
@@ -333,7 +393,7 @@ void loadLayerUiState(
         {"layer_normalize_mode", layer_normalize_mode, 0},
     });
     if (layer_normalize_mode) {
-        for (int& mode : *layer_normalize_mode) mode = std::clamp(mode, 0, 2);
+        for (int& mode : *layer_normalize_mode) mode = std::clamp(mode, 0, 3);
     }
     loadLayerSettingsFromObject<float>(j, layers, {
         {"layer_heatmap_cell_px", layer_heatmap_cell_px, 24.0f},
@@ -399,10 +459,18 @@ void saveLayerUiState(
     json j;
     j["hover_inspector_enabled"] = hover_inspector_enabled;
     if (hover_inspector_mode) j["hover_inspector_mode"] = std::clamp(*hover_inspector_mode, 0, 3);
-    if (parcel_parameter_mode) j["parcel_parameter_mode"] = std::clamp(*parcel_parameter_mode, 0, 2);
+    if (parcel_parameter_mode) j["parcel_parameter_mode"] = std::clamp(*parcel_parameter_mode, 0, 3);
     json flags = json::object();
     for (const auto& l : layers) flags[l.file] = l.enabled;
     j["layers"] = flags;
+    json fill_colors = json::object();
+    json outline_colors = json::object();
+    for (const auto& l : layers) {
+        fill_colors[l.file] = encodeHexLayerColor(l.color);
+        outline_colors[l.file] = encodeHexLayerColor(l.outline_color);
+    }
+    j["layer_colors"] = std::move(fill_colors);
+    j["layer_outline_colors"] = std::move(outline_colors);
     if (zoning_zone_enabled) {
         json zf = json::object();
         for (const auto& kv : *zoning_zone_enabled) zf[kv.first] = kv.second;
@@ -483,7 +551,8 @@ void loadFilterUiState(
     int* crime_year_max,
     char* owner_search_query,
     size_t owner_search_query_size,
-    std::unordered_set<std::string>* selected_owners) {
+    std::unordered_set<std::string>* selected_owners,
+    std::unordered_map<std::string, bool>* event_sector_enabled) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -493,16 +562,23 @@ void loadFilterUiState(
         return;
     }
     if (!j.contains("filters") || !j["filters"].is_object()) return;
-    const json& f = j["filters"];
-    if (selected_nation_state && f.contains("selected_nation_state") && f["selected_nation_state"].is_string()) {
-        *selected_nation_state = f["selected_nation_state"].get<std::string>();
+    const json& persisted_filters = j["filters"];
+    if (selected_nation_state && persisted_filters.contains("selected_nation_state") && persisted_filters["selected_nation_state"].is_string()) {
+        *selected_nation_state = persisted_filters["selected_nation_state"].get<std::string>();
     }
-    if (selected_state_region && f.contains("selected_state_region") && f["selected_state_region"].is_string()) {
-        *selected_state_region = f["selected_state_region"].get<std::string>();
+    if (selected_state_region && persisted_filters.contains("selected_state_region") && persisted_filters["selected_state_region"].is_string()) {
+        *selected_state_region = persisted_filters["selected_state_region"].get<std::string>();
     }
-    if (selected_county_city && f.contains("selected_county_city") && f["selected_county_city"].is_string()) {
-        *selected_county_city = f["selected_county_city"].get<std::string>();
+    if (selected_county_city && persisted_filters.contains("selected_county_city") && persisted_filters["selected_county_city"].is_string()) {
+        *selected_county_city = persisted_filters["selected_county_city"].get<std::string>();
     }
+    const json* active_filters = &persisted_filters;
+    const std::string profile_key = filterProfileKey(selected_nation_state, selected_state_region, selected_county_city);
+    if (j.contains("filter_profiles") && j["filter_profiles"].is_object()) {
+        const json& profiles = j["filter_profiles"];
+        if (profiles.contains(profile_key) && profiles[profile_key].is_object()) active_filters = &profiles[profile_key];
+    }
+    const json& f = *active_filters;
     if (filter_enabled && f.contains("enabled") && f["enabled"].is_boolean()) *filter_enabled = f["enabled"].get<bool>();
     if (filter_use_date && f.contains("use_date") && f["use_date"].is_boolean()) *filter_use_date = f["use_date"].get<bool>();
     if (filter_year_min && f.contains("year_min") && f["year_min"].is_number_integer()) *filter_year_min = f["year_min"].get<int>();
@@ -533,6 +609,13 @@ void loadFilterUiState(
             if (v.is_string()) selected_owners->insert(v.get<std::string>());
         }
     }
+    if (event_sector_enabled && f.contains("event_sector_enabled") && f["event_sector_enabled"].is_object()) {
+        event_sector_enabled->clear();
+        for (auto it = f["event_sector_enabled"].begin(); it != f["event_sector_enabled"].end(); ++it) {
+            if (it.value().is_boolean()) (*event_sector_enabled)[it.key()] = it.value().get<bool>();
+        }
+    }
+    if (event_sector_enabled) ensureCommunitySectorFilterDefaults(*event_sector_enabled);
 }
 
 void saveFilterUiState(
@@ -562,7 +645,8 @@ void saveFilterUiState(
     int crime_year_min,
     int crime_year_max,
     const char* owner_search_query,
-    const std::unordered_set<std::string>& selected_owners) {
+    const std::unordered_set<std::string>& selected_owners,
+    const std::unordered_map<std::string, bool>& event_sector_enabled) {
     fs::create_directories(root / "data");
     json j = json::object();
     {
@@ -610,16 +694,24 @@ void saveFilterUiState(
     json owners = json::array();
     for (const auto& owner : selected_owners) owners.push_back(owner);
     f["selected_owners"] = std::move(owners);
-    j["filters"] = std::move(f);
+    json sectors = json::object();
+    for (const auto& kv : event_sector_enabled) sectors[kv.first] = kv.second;
+    f["event_sector_enabled"] = std::move(sectors);
+    j["filters"] = f;
+    if (!j.contains("filter_profiles") || !j["filter_profiles"].is_object()) j["filter_profiles"] = json::object();
+    j["filter_profiles"][filterProfileKey(selected_nation_state, selected_state_region, selected_county_city)] = f;
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);
 }
 
 void loadMapUiState(
     const fs::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
+    const std::string* selected_county_city,
     double* center_lon,
     double* center_lat,
-    int* zoom,
+    double* zoom,
     size_t* selected_parcel_idx,
     std::vector<size_t>* selected_parcel_indices) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
@@ -630,11 +722,23 @@ void loadMapUiState(
     } catch (...) {
         return;
     }
-    if (j.contains("map_view") && j["map_view"].is_object()) {
-        const json& v = j["map_view"];
+    const json* map_view = nullptr;
+    const std::string key = mapViewKey(selected_nation_state, selected_state_region, selected_county_city);
+    if (j.contains("map_views") && j["map_views"].is_object()) {
+        const json& map_views = j["map_views"];
+        if (map_views.contains(key) && map_views[key].is_object()) map_view = &map_views[key];
+    }
+    if (!map_view &&
+        (!selected_nation_state || selected_nation_state->empty()) &&
+        (!selected_state_region || selected_state_region->empty()) &&
+        j.contains("map_view") && j["map_view"].is_object()) {
+        map_view = &j["map_view"];
+    }
+    if (map_view) {
+        const json& v = *map_view;
         if (center_lon && v.contains("center_lon") && v["center_lon"].is_number()) *center_lon = v["center_lon"].get<double>();
         if (center_lat && v.contains("center_lat") && v["center_lat"].is_number()) *center_lat = v["center_lat"].get<double>();
-        if (zoom && v.contains("zoom") && v["zoom"].is_number_integer()) *zoom = v["zoom"].get<int>();
+        if (zoom && v.contains("zoom") && v["zoom"].is_number()) *zoom = v["zoom"].get<double>();
     }
     if (j.contains("parcel_selection") && j["parcel_selection"].is_object()) {
         const json& s = j["parcel_selection"];
@@ -652,9 +756,12 @@ void loadMapUiState(
 
 void saveMapUiState(
     const fs::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region,
+    const std::string* selected_county_city,
     double center_lon,
     double center_lat,
-    int zoom,
+    double zoom,
     size_t selected_parcel_idx,
     const std::vector<size_t>& selected_parcel_indices) {
     fs::create_directories(root / "data");
@@ -669,11 +776,14 @@ void saveMapUiState(
             }
         }
     }
-    j["map_view"] = {
+    const json map_view = {
         {"center_lon", center_lon},
         {"center_lat", center_lat},
         {"zoom", zoom}
     };
+    j["map_view"] = map_view;
+    if (!j.contains("map_views") || !j["map_views"].is_object()) j["map_views"] = json::object();
+    j["map_views"][mapViewKey(selected_nation_state, selected_state_region, selected_county_city)] = map_view;
     json selection = json::object();
     if (selected_parcel_idx == (size_t)-1) selection["active_idx"] = nullptr;
     else selection["active_idx"] = selected_parcel_idx;

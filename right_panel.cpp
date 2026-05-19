@@ -213,6 +213,10 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.center_lon,
             ctx.center_lat,
             ctx.zoom,
+            ctx.min_zoom,
+            ctx.max_zoom,
+            ctx.map_w,
+            ctx.main_panel_h,
             clear_parcel_selection,
             select_parcel_idx,
             ctx.real_property_for_parcel

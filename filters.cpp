@@ -1,12 +1,21 @@
 #include "filters.h"
 
 #include "app_utils.h"
+#include "event_sectors.h"
 #include "feature_props.h"
 
 #include <initializer_list>
 
 namespace {
 const MapFilterState kEmptyMapFilterState;
+
+void ensureNormalizedLayerGeographyCache(const LayerDef& layer) {
+    if (layer.normalized_geography_cache_valid) return;
+    layer.normalized_provenance_nation_state = normalizeGeographyToken(layer.provenance_nation_state);
+    layer.normalized_provenance_state_region = normalizeGeographyToken(layer.provenance_state_region);
+    layer.normalized_provenance_county_city = normalizeGeographyToken(layer.provenance_county_city);
+    layer.normalized_geography_cache_valid = true;
+}
 
 const MapFilterState& mapFilters(const FeatureFilterContext& ctx) {
     return ctx.map_filters ? *ctx.map_filters : kEmptyMapFilterState;
@@ -22,7 +31,10 @@ std::string firstProp(const LayerDef::FeatureGeom& fg, std::initializer_list<con
 
 std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
     if (!rp) return "";
-    std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
+    std::string o = firstDisplayProperty(*rp, {
+        "owner", "owner_name",
+        "OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"
+    });
     return toLowerAscii(trimDisplayValue(o));
 }
 
@@ -111,20 +123,50 @@ bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
 }
 
 bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters) {
-    const std::string selected_nation = toLowerAscii(trimDisplayValue(filters.selected_nation_state));
-    const std::string selected_region = toLowerAscii(trimDisplayValue(filters.selected_state_region));
-    const std::string selected_county_city = toLowerAscii(trimDisplayValue(filters.selected_county_city));
+    ensureNormalizedLayerGeographyCache(layer);
+    const std::string selected_nation = normalizeGeographyToken(filters.selected_nation_state);
+    const std::string selected_region = normalizeGeographyToken(filters.selected_state_region);
+    const std::string selected_county_city = normalizeGeographyToken(filters.selected_county_city);
     if (!selected_nation.empty()) {
-        const std::string layer_nation = toLowerAscii(trimDisplayValue(layer.provenance_nation_state));
-        if (!layer_nation.empty() && layer_nation != selected_nation) return false;
+        if (!layer.normalized_provenance_nation_state.empty() &&
+            layer.normalized_provenance_nation_state != selected_nation) {
+            return false;
+        }
     }
     if (!selected_region.empty()) {
-        const std::string layer_region = toLowerAscii(trimDisplayValue(layer.provenance_state_region));
-        if (!layer_region.empty() && layer_region != selected_region) return false;
+        if (!layer.normalized_provenance_state_region.empty() &&
+            layer.normalized_provenance_state_region != selected_region) {
+            return false;
+        }
     }
     if (!selected_county_city.empty()) {
-        const std::string layer_county_city = toLowerAscii(trimDisplayValue(layer.provenance_county_city));
-        if (layer_county_city.empty() || layer_county_city != selected_county_city) return false;
+        if (layer.normalized_provenance_county_city.empty() ||
+            layer.normalized_provenance_county_city != selected_county_city) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool layerMatchesSelectedGeography(const LayerDef& layer, const FeatureFilterContext& ctx) {
+    ensureNormalizedLayerGeographyCache(layer);
+    if (!ctx.selected_nation_state_normalized.empty()) {
+        if (!layer.normalized_provenance_nation_state.empty() &&
+            layer.normalized_provenance_nation_state != ctx.selected_nation_state_normalized) {
+            return false;
+        }
+    }
+    if (!ctx.selected_state_region_normalized.empty()) {
+        if (!layer.normalized_provenance_state_region.empty() &&
+            layer.normalized_provenance_state_region != ctx.selected_state_region_normalized) {
+            return false;
+        }
+    }
+    if (!ctx.selected_county_city_normalized.empty()) {
+        if (layer.normalized_provenance_county_city.empty() ||
+            layer.normalized_provenance_county_city != ctx.selected_county_city_normalized) {
+            return false;
+        }
     }
     return true;
 }
@@ -136,7 +178,7 @@ bool featurePassesFilters(
     const LayerDef::FeatureGeom& fg) {
     const MapFilterState& filters = mapFilters(ctx);
     if (ctx.layers && layer_idx < ctx.layers->size() &&
-        !layerMatchesSelectedGeography((*ctx.layers)[layer_idx], filters)) {
+        !layerMatchesSelectedGeography((*ctx.layers)[layer_idx], ctx)) {
         return false;
     }
     if (!resultSetAllows(ctx, layer_idx, feature_idx, fg)) return false;
@@ -144,6 +186,14 @@ bool featurePassesFilters(
     if (isCrimeLayer(ctx, layer_idx)) {
         if (!filters.enabled && !filters.crime.enabled) return true;
         return crimeFeatureMatches(ctx, fg);
+    }
+
+    if (ctx.layers && layer_idx < ctx.layers->size() && isCommunitySectorEventLayer((*ctx.layers)[layer_idx])) {
+        if (!filters.event_sector_enabled.empty()) {
+            const std::string sector = classifyCommunitySector(fg);
+            auto it = filters.event_sector_enabled.find(sector);
+            if (it != filters.event_sector_enabled.end() && !it->second) return false;
+        }
     }
 
     const bool parcel_related_layer = isParcelRelatedLayer(ctx, layer_idx);

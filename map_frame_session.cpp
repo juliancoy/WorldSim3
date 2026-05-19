@@ -138,7 +138,14 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.selected_owners = &ctx.map_filter_state->selected_owners;
     render_frame_ctx.heatmap_runtime = ctx.heatmap_runtime;
     render_frame_ctx.projection = ctx.projection;
+    render_frame_ctx.hover_state = ctx.hover_state;
     render_frame_ctx.is_parcel_related_layer = [&](size_t layer_idx) { return isParcelRelatedLayer(filter_ctx, layer_idx); };
+    render_frame_ctx.layer_passes_filters =
+        [&](size_t layer_idx) {
+            return !filter_ctx.layers ||
+                layer_idx >= filter_ctx.layers->size() ||
+                layerMatchesSelectedGeography((*filter_ctx.layers)[layer_idx], filter_ctx);
+        };
     render_frame_ctx.feature_passes_filters =
         [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) {
             return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
@@ -189,6 +196,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.crime_filter_auto_theft = ctx.map_filter_state->crime.auto_theft;
     render_frame_ctx.crime_filter_drug = ctx.map_filter_state->crime.drug;
     render_frame_ctx.crime_filter_shooting = ctx.map_filter_state->crime.shooting;
+    render_frame_ctx.zoom = ctx.zoom;
     return render_frame_ctx;
 }
 }

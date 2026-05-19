@@ -95,6 +95,8 @@ add_executable(worldsim3
   aggregate_visualization_strategies.cpp
   app_lifecycle.cpp
   app_settings.cpp
+  color_editor_ipc.cpp
+  color_editor_window.cpp
   app_utils.cpp
   app_frame_support.cpp
   frame_prelude.cpp
@@ -188,6 +190,8 @@ add_executable(worldsim3
   parcel_info_tab.cpp
   filters_tab.cpp
   right_panel.cpp
+  event_sectors.cpp
+  event_sector_filters_panel.cpp
   zoning_filters_panel.cpp
   graph_model_tab.cpp
   star_schema_tab.cpp
@@ -365,6 +369,7 @@ add_executable(worldsim3_duckdb_owner_dump
   cache_io.cpp
   cpu_affinity.cpp
   duckdb_analytics.cpp
+  event_sectors.cpp
   feature_props.cpp
   geo.cpp
   headless_layer_hydration.cpp

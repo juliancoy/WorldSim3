@@ -36,6 +36,7 @@ struct WorldsimCliOptions {
     bool run_inspect_duckdb_geography_tables = false;
     bool run_build_parcel_matched_layers = false;
     bool force_build_parcel_matched_layers = false;
+    bool run_color_editor = false;
     bool include_large_downloads = false;
     int reserve_cores = 0;
     bool reserve_cores_set = false;
@@ -45,6 +46,7 @@ struct WorldsimCliOptions {
     std::string warm_parcel_render_cache_file;
     std::string warm_parcel_runtime_stack_file;
     std::string canonical_parcel_binary_file;
+    std::string color_editor_session_file;
 };
 
 WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv);

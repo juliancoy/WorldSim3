@@ -15,6 +15,7 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.active_filter_status = input.active_filter_status;
     ctx.time_cube_service = input.time_cube_service;
     ctx.screenshot = input.screenshot;
+    ctx.hover_debug_state = input.hover_debug_state;
     ctx.status_mutex = input.status_mutex;
     ctx.layer_states = input.layer_states;
     ctx.layer_fill_mutex = input.layer_fill_mutex;

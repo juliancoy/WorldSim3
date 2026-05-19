@@ -20,13 +20,14 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         !ctx.heatmap_multires_enabled || !ctx.heatmap_multires_blend ||
         !ctx.heatmap_allow_cpu_fallback || !ctx.filter_blocklot || !ctx.filter_status ||
         !ctx.filter_owner || !ctx.filter_address || !ctx.filter_zip || !ctx.owner_search_query ||
-        !ctx.selected_owners) {
+        !ctx.selected_owners || !ctx.event_sector_enabled) {
         return result;
     }
 
     result.ui_state_changed =
         (ctx.hover_inspector_mode != *ctx.last_hover_inspector_mode) ||
         ctx.zoning_filters_changed ||
+        ctx.event_sector_filters_changed ||
         ctx.layer_fill_state_changed ||
         ctx.layer_hover_state_changed ||
         ctx.layer_inspect_state_changed ||
@@ -141,7 +142,8 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         ctx.crime_year_min,
         ctx.crime_year_max,
         ctx.owner_search_query,
-        *ctx.selected_owners);
+        *ctx.selected_owners,
+        *ctx.event_sector_enabled);
 
     ctx.last_enabled_state->clear();
     ctx.last_enabled_state->reserve(ctx.layers->size());

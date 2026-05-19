@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <unordered_map>
@@ -16,6 +18,24 @@ using json = nlohmann::json;
 namespace {
 bool isPropertyOnlySupplementalLayer(const LayerDef& layer) {
     return layer.import_type == "socrata_csv_properties";
+}
+
+bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
+    if (!needle || !*needle) return false;
+    std::string hs = haystack;
+    std::string nd = needle;
+    std::transform(hs.begin(), hs.end(), hs.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    std::transform(nd.begin(), nd.end(), nd.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return hs.find(nd) != std::string::npos;
+}
+
+int zoningLayerMatchScore(const LayerDef& layer) {
+    const bool non_point = !layerUsesPointGeometry(layer);
+    if (layer.category == LayerDef::Category::Zoning && non_point) return 4;
+    if (layer.file == "zoning.geojson") return 3;
+    if (non_point && containsCaseInsensitive(layer.file, "zoning")) return 2;
+    if (non_point && containsCaseInsensitive(layer.name, "zoning")) return 1;
+    return 0;
 }
 
 std::vector<LayerDef::FeatureGeom> loadPropertyOnlyFeaturesFromGeoJson(const fs::path& path) {
@@ -83,6 +103,7 @@ WorldsimLayerIndices detectWorldsimLayerIndices(
         fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
         fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
     const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
+    int best_zoning_match = 0;
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices.parcel_layer_idx = (int)i;
         else if (layers[i].file == "parcel.geojson" && indices.parcel_layer_idx < 0) indices.parcel_layer_idx = (int)i;
@@ -97,10 +118,13 @@ WorldsimLayerIndices detectWorldsimLayerIndices(
             indices.tax_lien_layer_idx = (int)i;
         } else if (layers[i].file == "tax_sale_list_2021.geojson") {
             indices.tax_sale_layer_idx = (int)i;
-        } else if (layers[i].file == "zoning.geojson") {
-            indices.zoning_layer_idx = (int)i;
         } else if (layers[i].file == "crime_nibrs_group_a_2022_present.geojson") {
             indices.crime_nibrs_layer_idx = (int)i;
+        }
+        const int zoning_match = zoningLayerMatchScore(layers[i]);
+        if (zoning_match > best_zoning_match) {
+            best_zoning_match = zoning_match;
+            indices.zoning_layer_idx = (int)i;
         }
     }
     return indices;

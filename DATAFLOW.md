@@ -30,6 +30,36 @@ The startup rule is intentionally simple:
 - DuckDB is for explicit query/search/detail workflows, not for render readiness.
 - Expensive analytics rebuilds are user-initiated, not automatic frame-loop work.
 
+## Single High-Grade Pipeline Rule
+
+Best practice is to keep exactly one canonical domain pipeline per feature family, then allow optional derived materializations to accelerate specific workflows.
+
+For WorldSim3 that means:
+
+- Runtime hydrated layer records are the canonical geometry and per-feature domain state available during the session.
+- Derived caches are canonical only for their own narrowly defined derived facts, such as unified parcel joins or parcel vacancy/tax rollups.
+- DuckDB is a secondary analytics materialization over already-derived runtime data, not a second source of truth for whether a feature "exists."
+- UI features should read from the canonical runtime/derived pipeline first, then optionally use DuckDB as an accelerator or richer query backend.
+
+The anti-pattern is a split-brain feature:
+
+- geometry and basic parcel/domain facts come from runtime caches
+- but one panel or workflow refuses to function unless DuckDB was rebuilt separately
+
+That is lower-grade than a single pipeline because it creates contradictory readiness states, stale UX text, and duplicated business logic.
+
+The preferred pattern is:
+
+```text
+source files
+  -> hydration cache / runtime layer records
+  -> derived domain joins
+  -> UI-visible domain feature
+  -> optional DuckDB materialization for search, SQL, and acceleration
+```
+
+DuckDB may enrich or speed up a workflow, but it should not be the only path for a feature that can already be answered from runtime and derived state.
+
 The main artifacts are:
 
 | Path | Kind | Producer | Consumer | Notes |
@@ -224,6 +254,15 @@ If DuckDB is missing or stale:
 - map rendering and parcel hydration still proceed from geometry caches
 - DuckDB-backed search/detail/query features report that the cache is unavailable or stale
 - the user can rebuild the analytics cache when interactive startup is no longer on the critical path
+
+Applied rule for parcel history:
+
+- parcel history should be defined by a canonical parcel-event domain pipeline
+- a local runtime/derived builder may produce that event stream directly from loaded parcel-related layers
+- DuckDB may mirror the same event stream for SQL/query/search convenience
+- the UI should not claim that parcel history "requires DuckDB analytics" if the event stream can be assembled from already loaded runtime layers
+
+In other words, DuckDB can be the fast path for parcel history, but not the only legitimate path.
 
 ## Clear Cache Behavior
 

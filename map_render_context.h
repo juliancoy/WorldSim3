@@ -38,6 +38,8 @@ struct MapRenderContext {
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     int parcel_parameter_mode = 0;
     float parcel_choropleth_gamma = 1.0f;
+    const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    const std::vector<int>* layer_normalize_mode = nullptr;
 
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;

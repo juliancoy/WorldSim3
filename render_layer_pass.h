@@ -5,6 +5,7 @@
 #include "heatmap_render.h"
 #include "imgui.h"
 #include "layer_runtime.h"
+#include "map_render_hover.h"
 #include "map_render_projection.h"
 #include "render_plan_builder.h"
 #include "render_policy.h"
@@ -21,9 +22,10 @@ struct RenderLayerPassContext {
     ImVec2 size = ImVec2(0.0f, 0.0f);
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int max_zoom = 0;
     int math_zoom = 0;
+    double zoom_value = 0.0;
     float zoom_scale = 1.0f;
     int lod_ring_step = 1;
     int parcel_layer_idx = -1;
@@ -62,6 +64,8 @@ struct RenderLayerPassContext {
     RawSourceLayerPolicy raw_source_layer_policy;
     std::vector<HeatSample>* heat_samples = nullptr;
     MapProjectionCache* projection = nullptr;
+    const MapHoverState* hover_state = nullptr;
+    std::function<bool(size_t)> layer_passes_filters;
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
     std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&, ImU32&)> query_map_color;
     std::function<bool(size_t)> should_fill_layer_polygon;

@@ -32,6 +32,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
         ctx.center_lon,
         ctx.center_lat,
         ctx.zoom,
+        ctx.app_settings->zoom_step,
         ctx.min_zoom,
         ctx.max_zoom,
         ctx.max_internal_math_zoom,
@@ -84,6 +85,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     hover_query.math_zoom = session.math_zoom;
     hover_query.project_world = session.project_world;
     session.hover_state = findMapHoverTargets(hover_query);
+    session.mouse_ll = map_viewport.mouse_ll;
 
     const auto tile_prof_begin = std::chrono::steady_clock::now();
     const MapBasemapRenderResult basemap_result = renderMapBasemap(MapBasemapRenderContext{
@@ -132,8 +134,11 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
             ? (*ctx.layers)[(size_t)ctx.vacant_rehab_layer_idx].color
             : ImVec4(0, 1, 1, 1);
 
-    session.lod_ring_step = lodRingStepForZoom(session.math_zoom);
-    const bool allow_parcel_scale_fill = session.math_zoom >= 14;
+    session.zoom = ctx.zoom ? *ctx.zoom : (double)session.math_zoom;
+    session.lod_ring_step = lodRingStepForZoom((int)std::floor(session.zoom));
+    // Parcel detail should reveal as filled mass before cadastral edges.
+    // This reduces low-zoom jaggedness without reintroducing triangle AA seams.
+    const bool allow_parcel_scale_fill = session.zoom >= 13.0;
     session.should_fill_layer_polygon = [layers = ctx.layers, allow_parcel_scale_fill](size_t layer_idx) {
         if (!layers || layer_idx >= layers->size()) return false;
         const LayerDef& layer = (*layers)[layer_idx];

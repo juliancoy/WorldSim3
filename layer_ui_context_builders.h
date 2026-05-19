@@ -16,6 +16,7 @@ struct LayerUiContextFactoryInput {
     std::function<bool(size_t)> enqueue_layer_download_request;
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
+    std::function<void(size_t, bool)> open_layer_color_editor;
     std::function<bool(const char*, float&, float, float, const char*)> heatmap_input_float_enter;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
@@ -32,6 +33,7 @@ struct LayerUiContextFactoryInput {
     std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
     std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    std::vector<float>* layer_choropleth_gamma = nullptr;
     std::vector<float>* layer_heatmap_multires_blend = nullptr;
     std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth = nullptr;
     std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
