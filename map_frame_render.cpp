@@ -187,6 +187,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.lod_ring_step = ctx.lod_ring_step;
     layer_pass_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
     layer_pass_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
+    layer_pass_ctx.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
     layer_pass_ctx.vacant_notice_layer_idx = ctx.vacant_notice_layer_idx;
     layer_pass_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
     layer_pass_ctx.map_polygon_fill_opacity = ctx.map_polygon_fill_opacity;

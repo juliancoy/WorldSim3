@@ -136,14 +136,9 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
 
     session.zoom = ctx.zoom ? *ctx.zoom : (double)session.math_zoom;
     session.lod_ring_step = lodRingStepForZoom((int)std::floor(session.zoom));
-    // Parcel detail should reveal as filled mass before cadastral edges.
-    // This reduces low-zoom jaggedness without reintroducing triangle AA seams.
-    const bool allow_parcel_scale_fill = session.zoom >= 13.0;
-    session.should_fill_layer_polygon = [layers = ctx.layers, allow_parcel_scale_fill](size_t layer_idx) {
+    session.should_fill_layer_polygon = [layers = ctx.layers](size_t layer_idx) {
         if (!layers || layer_idx >= layers->size()) return false;
-        const LayerDef& layer = (*layers)[layer_idx];
-        if (layer.category == LayerDef::Category::Zoning) return true;
-        return layer.scale != "parcel" || allow_parcel_scale_fill;
+        return true;
     };
     if (*ctx.persistent_projection_generation != ctx.projection_generation) {
         ctx.persistent_projection_cache->reset();

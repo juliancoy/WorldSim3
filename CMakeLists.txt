@@ -226,6 +226,8 @@ target_compile_definitions(worldsim3 PRIVATE
   WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp"
   WS3_PARCEL_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert"
   WS3_PARCEL_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
+  WS3_CRIME_POINT_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert"
+  WS3_CRIME_POINT_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag"
 )
 
 target_include_directories(worldsim3 PRIVATE
@@ -241,6 +243,8 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   set(WS3_GPU_SPLAT_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat.comp.spv")
   set(WS3_PARCEL_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.vert.spv")
   set(WS3_PARCEL_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.frag.spv")
+  set(WS3_CRIME_POINT_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/point_marker.vert.spv")
+  set(WS3_CRIME_POINT_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/point_marker.frag.spv")
   add_custom_command(
     OUTPUT "${WS3_GPU_SPLAT_SHADER_SPV}"
     COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp" -o "${WS3_GPU_SPLAT_SHADER_SPV}"
@@ -262,16 +266,34 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     COMMENT "Compiling parcel_fill.frag -> SPIR-V"
     VERBATIM
   )
+  add_custom_command(
+    OUTPUT "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert" -o "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert"
+    COMMENT "Compiling point_marker.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag" -o "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag"
+    COMMENT "Compiling point_marker.frag -> SPIR-V"
+    VERBATIM
+  )
   add_custom_target(worldsim3_shaders DEPENDS
     "${WS3_GPU_SPLAT_SHADER_SPV}"
     "${WS3_PARCEL_GPU_VERT_SPV}"
     "${WS3_PARCEL_GPU_FRAG_SPV}"
+    "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
   )
   add_dependencies(worldsim3 worldsim3_shaders)
   target_compile_definitions(worldsim3 PRIVATE
     WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}"
     WS3_PARCEL_GPU_VERT_SPV="${WS3_PARCEL_GPU_VERT_SPV}"
     WS3_PARCEL_GPU_FRAG_SPV="${WS3_PARCEL_GPU_FRAG_SPV}"
+    WS3_CRIME_POINT_GPU_VERT_SPV="${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    WS3_CRIME_POINT_GPU_FRAG_SPV="${WS3_CRIME_POINT_GPU_FRAG_SPV}"
   )
 endif()
 

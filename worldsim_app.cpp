@@ -259,6 +259,44 @@ struct ParcelGpuUploadContext {
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
 };
 
+struct CrimePointGpuBuffers {
+    ParcelGpuBuffer positions;
+    ParcelGpuBuffer feature_refs;
+    ParcelGpuBuffer colors;
+    uint32_t render_features = 0;
+    std::string source_signature;
+};
+
+struct CrimePointGpuDrawState {
+    bool active = false;
+    int math_zoom = 0;
+    float zoom_scale = 1.0f;
+    ImVec2 center_world = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_origin = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_size = ImVec2(0.0f, 0.0f);
+    ImVec2 framebuffer_size = ImVec2(0.0f, 0.0f);
+};
+
+struct CrimePointGpuPipeline {
+    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> descriptor_sets_by_frame;
+    std::vector<bool> descriptor_dirty_by_frame;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    bool descriptor_dirty = true;
+};
+
+struct CrimePointGpuPushConstants {
+    float center_world[2];
+    float viewport_origin[2];
+    float viewport_size[2];
+    float framebuffer_size[2];
+    float math_zoom;
+    float zoom_scale;
+    float marker_radius_px;
+};
+
 struct ParcelGpuUploadPayload {
     ParcelGpuBuffers buffers;
 };
@@ -296,6 +334,9 @@ static ParcelGpuBuffers g_ZoningGpuBuffers;
 static bool g_ZoningGpuOutlineHasVisibleColors = false;
 static ParcelGpuDrawState g_ZoningGpuDrawState;
 static ParcelGpuPipeline g_ZoningGpuPipeline;
+static CrimePointGpuBuffers g_CrimePointGpuBuffers;
+static CrimePointGpuDrawState g_CrimePointGpuDrawState;
+static CrimePointGpuPipeline g_CrimePointGpuPipeline;
 static VkCommandBuffer g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
 static VkRenderPass g_CurrentFrameRenderPass = VK_NULL_HANDLE;
 static uint32_t g_CurrentFrameRenderIndex = 0;
@@ -408,6 +449,18 @@ static const char* kParcelGpuVertShaderPath = nullptr;
 static const char* kParcelGpuFragShaderPath = WS3_PARCEL_GPU_FRAG_SPV;
 #else
 static const char* kParcelGpuFragShaderPath = nullptr;
+#endif
+
+#if defined(WS3_CRIME_POINT_GPU_VERT_SPV)
+static const char* kCrimePointGpuVertShaderPath = WS3_CRIME_POINT_GPU_VERT_SPV;
+#else
+static const char* kCrimePointGpuVertShaderPath = nullptr;
+#endif
+
+#if defined(WS3_CRIME_POINT_GPU_FRAG_SPV)
+static const char* kCrimePointGpuFragShaderPath = WS3_CRIME_POINT_GPU_FRAG_SPV;
+#else
+static const char* kCrimePointGpuFragShaderPath = nullptr;
 #endif
 
 struct ParcelGpuPushConstants {
@@ -1258,6 +1311,25 @@ static void destroyZoningGpuPipeline() {
     g_ZoningGpuPipeline.descriptor_dirty_by_frame.clear();
     g_ZoningGpuPipeline.render_pass = VK_NULL_HANDLE;
     g_ZoningGpuPipeline.descriptor_dirty = true;
+}
+
+static void destroyCrimePointGpuPipeline() {
+    if (g_CrimePointGpuPipeline.pipeline) {
+        vkDestroyPipeline(g_Device, g_CrimePointGpuPipeline.pipeline, g_Allocator);
+        g_CrimePointGpuPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (g_CrimePointGpuPipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_CrimePointGpuPipeline.pipeline_layout, g_Allocator);
+        g_CrimePointGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (g_CrimePointGpuPipeline.descriptor_set_layout) {
+        vkDestroyDescriptorSetLayout(g_Device, g_CrimePointGpuPipeline.descriptor_set_layout, g_Allocator);
+        g_CrimePointGpuPipeline.descriptor_set_layout = VK_NULL_HANDLE;
+    }
+    g_CrimePointGpuPipeline.descriptor_sets_by_frame.clear();
+    g_CrimePointGpuPipeline.descriptor_dirty_by_frame.clear();
+    g_CrimePointGpuPipeline.render_pass = VK_NULL_HANDLE;
+    g_CrimePointGpuPipeline.descriptor_dirty = true;
 }
 
 static uint32_t parcelGpuDescriptorFrameCount() {
@@ -2349,6 +2421,405 @@ void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list) {
     draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
 }
 
+bool ensureCrimePointGpuBuffersResident(
+    const std::string& source_signature,
+    const std::vector<ImVec2>& lonlat_positions,
+    std::string* error) {
+    if (!g_Device || !g_UploadCommandBuffer) {
+        if (error) *error = "Vulkan device/upload command buffer is not ready";
+        return false;
+    }
+    if (lonlat_positions.empty()) {
+        if (error) *error = "crime point GPU positions are empty";
+        return false;
+    }
+    if (g_CrimePointGpuBuffers.source_signature == source_signature &&
+        g_CrimePointGpuBuffers.render_features == lonlat_positions.size() &&
+        g_CrimePointGpuBuffers.positions.buffer &&
+        g_CrimePointGpuBuffers.feature_refs.buffer &&
+        g_CrimePointGpuBuffers.colors.buffer) {
+        return true;
+    }
+    clearCrimePointGpuBuffers();
+    std::vector<uint32_t> refs(lonlat_positions.size());
+    for (uint32_t i = 0; i < refs.size(); ++i) refs[i] = i;
+    const VkDeviceSize positions_size = sizeof(ImVec2) * lonlat_positions.size();
+    const VkDeviceSize refs_size = sizeof(uint32_t) * refs.size();
+    const VkDeviceSize colors_size = sizeof(ImU32) * lonlat_positions.size();
+    if (!uploadDeviceLocalParcelBuffer(
+            lonlat_positions.data(),
+            positions_size,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            g_CrimePointGpuBuffers.positions,
+            error) ||
+        !uploadDeviceLocalParcelBuffer(
+            refs.data(),
+            refs_size,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            g_CrimePointGpuBuffers.feature_refs,
+            error) ||
+        !createHostVisibleParcelBuffer(
+            colors_size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            g_CrimePointGpuBuffers.colors,
+            error)) {
+        clearCrimePointGpuBuffers();
+        return false;
+    }
+    std::vector<ImU32> default_colors(lonlat_positions.size(), IM_COL32(0, 0, 0, 0));
+    std::memcpy(g_CrimePointGpuBuffers.colors.mapped, default_colors.data(), (size_t)colors_size);
+    g_CrimePointGpuBuffers.render_features = (uint32_t)lonlat_positions.size();
+    g_CrimePointGpuBuffers.source_signature = source_signature;
+    g_CrimePointGpuPipeline.descriptor_dirty = true;
+    return true;
+}
+
+bool updateCrimePointGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error) {
+    if (!g_CrimePointGpuBuffers.colors.mapped || g_CrimePointGpuBuffers.render_features == 0) {
+        if (error) *error = "crime point GPU color buffer is not resident";
+        return false;
+    }
+    if (colors_rgba.size() != g_CrimePointGpuBuffers.render_features) {
+        if (error) *error = "crime point GPU color buffer size mismatch";
+        return false;
+    }
+    std::memcpy(g_CrimePointGpuBuffers.colors.mapped, colors_rgba.data(), colors_rgba.size() * sizeof(ImU32));
+    return true;
+}
+
+void clearCrimePointGpuBuffers() {
+    waitForParcelGpuDeviceIdle();
+    destroyParcelGpuBuffer(g_CrimePointGpuBuffers.positions);
+    destroyParcelGpuBuffer(g_CrimePointGpuBuffers.feature_refs);
+    destroyParcelGpuBuffer(g_CrimePointGpuBuffers.colors);
+    g_CrimePointGpuBuffers = CrimePointGpuBuffers{};
+    g_CrimePointGpuPipeline.descriptor_dirty = true;
+    clearCrimePointGpuDrawState();
+}
+
+static bool ensureCrimePointGpuDescriptorSetsAllocated(std::string* error) {
+    if (!g_Device || !g_DescriptorPool || !g_CrimePointGpuBuffers.colors.buffer) {
+        if (error) *error = "crime point GPU descriptor prerequisites are not ready";
+        return false;
+    }
+    if (!g_CrimePointGpuPipeline.descriptor_set_layout) {
+        VkDescriptorSetLayoutBinding color_binding{};
+        color_binding.binding = 0;
+        color_binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        color_binding.descriptorCount = 1;
+        color_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        VkDescriptorSetLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layout_info.bindingCount = 1;
+        layout_info.pBindings = &color_binding;
+        if (vkCreateDescriptorSetLayout(g_Device, &layout_info, g_Allocator, &g_CrimePointGpuPipeline.descriptor_set_layout) != VK_SUCCESS) {
+            if (error) *error = "vkCreateDescriptorSetLayout failed for crime point GPU pipeline";
+            return false;
+        }
+    }
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    if (g_CrimePointGpuPipeline.descriptor_sets_by_frame.size() != frame_count) {
+        std::vector<VkDescriptorSetLayout> layouts((size_t)frame_count, g_CrimePointGpuPipeline.descriptor_set_layout);
+        std::vector<VkDescriptorSet> sets(layouts.size(), VK_NULL_HANDLE);
+        VkDescriptorSetAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = g_DescriptorPool;
+        alloc_info.descriptorSetCount = (uint32_t)layouts.size();
+        alloc_info.pSetLayouts = layouts.data();
+        if (vkAllocateDescriptorSets(g_Device, &alloc_info, sets.data()) != VK_SUCCESS) {
+            if (error) *error = "vkAllocateDescriptorSets failed for crime point GPU pipeline";
+            return false;
+        }
+        g_CrimePointGpuPipeline.descriptor_sets_by_frame = std::move(sets);
+        g_CrimePointGpuPipeline.descriptor_dirty_by_frame.assign(frame_count, true);
+        g_CrimePointGpuPipeline.descriptor_dirty = true;
+    }
+    if (g_CrimePointGpuPipeline.descriptor_dirty) {
+        if (g_CrimePointGpuPipeline.descriptor_dirty_by_frame.size() != frame_count) {
+            g_CrimePointGpuPipeline.descriptor_dirty_by_frame.assign(frame_count, true);
+        } else {
+            std::fill(
+                g_CrimePointGpuPipeline.descriptor_dirty_by_frame.begin(),
+                g_CrimePointGpuPipeline.descriptor_dirty_by_frame.end(),
+                true);
+        }
+        g_CrimePointGpuPipeline.descriptor_dirty = false;
+    }
+    return true;
+}
+
+static bool ensureCrimePointGpuDescriptorSet(std::string* error, VkDescriptorSet* out_set) {
+    if (!ensureCrimePointGpuDescriptorSetsAllocated(error)) return false;
+    if (!out_set || g_CrimePointGpuPipeline.descriptor_sets_by_frame.empty()) {
+        if (error) *error = "crime point GPU descriptor set output is unavailable";
+        return false;
+    }
+    const uint32_t frame_count = (uint32_t)g_CrimePointGpuPipeline.descriptor_sets_by_frame.size();
+    const uint32_t frame_index = frame_count > 0 ? (g_CurrentFrameRenderIndex % frame_count) : 0;
+    *out_set = g_CrimePointGpuPipeline.descriptor_sets_by_frame[frame_index];
+    if (frame_index >= g_CrimePointGpuPipeline.descriptor_dirty_by_frame.size() ||
+        !g_CrimePointGpuPipeline.descriptor_dirty_by_frame[frame_index]) {
+        return true;
+    }
+    VkDescriptorBufferInfo color_info{};
+    color_info.buffer = g_CrimePointGpuBuffers.colors.buffer;
+    color_info.offset = 0;
+    color_info.range = g_CrimePointGpuBuffers.colors.size_bytes;
+    VkWriteDescriptorSet write{};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = *out_set;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    write.pBufferInfo = &color_info;
+    vkUpdateDescriptorSets(g_Device, 1, &write, 0, nullptr);
+    g_CrimePointGpuPipeline.descriptor_dirty_by_frame[frame_index] = false;
+    return true;
+}
+
+static bool ensureCrimePointGpuPipeline(VkRenderPass render_pass, std::string* error) {
+    if (!g_Device || !render_pass) {
+        if (error) *error = "crime point GPU render pass/device is not ready";
+        return false;
+    }
+    if (!ensureCrimePointGpuDescriptorSetsAllocated(error)) return false;
+    if (g_CrimePointGpuPipeline.pipeline && g_CrimePointGpuPipeline.render_pass == render_pass) return true;
+    if (g_CrimePointGpuPipeline.pipeline) {
+        vkDestroyPipeline(g_Device, g_CrimePointGpuPipeline.pipeline, g_Allocator);
+        g_CrimePointGpuPipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (g_CrimePointGpuPipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_CrimePointGpuPipeline.pipeline_layout, g_Allocator);
+        g_CrimePointGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+
+    const std::vector<uint32_t> vert_code = loadSpirvFile(kCrimePointGpuVertShaderPath);
+    const std::vector<uint32_t> frag_code = loadSpirvFile(kCrimePointGpuFragShaderPath);
+    if (vert_code.empty() || frag_code.empty()) {
+        if (error) *error = "crime point GPU shader SPIR-V is unavailable";
+        return false;
+    }
+
+    VkShaderModuleCreateInfo shader_info{};
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.codeSize = vert_code.size() * sizeof(uint32_t);
+    shader_info.pCode = vert_code.data();
+    VkShaderModule vert_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &vert_shader) != VK_SUCCESS) {
+        if (error) *error = "vkCreateShaderModule failed for crime point vertex shader";
+        return false;
+    }
+    shader_info.codeSize = frag_code.size() * sizeof(uint32_t);
+    shader_info.pCode = frag_code.data();
+    VkShaderModule frag_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &frag_shader) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        if (error) *error = "vkCreateShaderModule failed for crime point fragment shader";
+        return false;
+    }
+
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(CrimePointGpuPushConstants);
+
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &g_CrimePointGpuPipeline.descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_range;
+    if (vkCreatePipelineLayout(g_Device, &pipeline_layout_info, g_Allocator, &g_CrimePointGpuPipeline.pipeline_layout) != VK_SUCCESS) {
+        vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+        vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+        if (error) *error = "vkCreatePipelineLayout failed for crime point GPU pipeline";
+        return false;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert_shader;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag_shader;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription bindings[2]{};
+    bindings[0].binding = 0;
+    bindings[0].stride = sizeof(ImVec2);
+    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+    bindings[1].binding = 1;
+    bindings[1].stride = sizeof(uint32_t);
+    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+    VkVertexInputAttributeDescription attrs[2]{};
+    attrs[0].location = 0;
+    attrs[0].binding = 0;
+    attrs[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attrs[0].offset = 0;
+    attrs[1].location = 1;
+    attrs[1].binding = 1;
+    attrs[1].format = VK_FORMAT_R32_UINT;
+    attrs[1].offset = 0;
+
+    VkPipelineVertexInputStateCreateInfo vertex_input{};
+    vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount = 2;
+    vertex_input.pVertexBindingDescriptions = bindings;
+    vertex_input.vertexAttributeDescriptionCount = 2;
+    vertex_input.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo assembly{};
+    assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineViewportStateCreateInfo viewport_state{};
+    viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport_state.viewportCount = 1;
+    viewport_state.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = VK_CULL_MODE_NONE;
+    raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa{};
+    msaa.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blend_attachment{};
+    blend_attachment.blendEnable = VK_TRUE;
+    blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blend_attachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT |
+        VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT |
+        VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blend_attachment;
+
+    const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic{};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = (uint32_t)IM_ARRAYSIZE(dynamic_states);
+    dynamic.pDynamicStates = dynamic_states;
+
+    VkGraphicsPipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipeline_info.stageCount = 2;
+    pipeline_info.pStages = stages;
+    pipeline_info.pVertexInputState = &vertex_input;
+    pipeline_info.pInputAssemblyState = &assembly;
+    pipeline_info.pViewportState = &viewport_state;
+    pipeline_info.pRasterizationState = &raster;
+    pipeline_info.pMultisampleState = &msaa;
+    pipeline_info.pColorBlendState = &blend;
+    pipeline_info.pDynamicState = &dynamic;
+    pipeline_info.layout = g_CrimePointGpuPipeline.pipeline_layout;
+    pipeline_info.renderPass = render_pass;
+    pipeline_info.subpass = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    const VkResult result =
+        vkCreateGraphicsPipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &pipeline);
+    vkDestroyShaderModule(g_Device, vert_shader, g_Allocator);
+    vkDestroyShaderModule(g_Device, frag_shader, g_Allocator);
+    if (result != VK_SUCCESS || !pipeline) {
+        if (error) *error = "vkCreateGraphicsPipelines failed for crime point GPU pipeline";
+        vkDestroyPipelineLayout(g_Device, g_CrimePointGpuPipeline.pipeline_layout, g_Allocator);
+        g_CrimePointGpuPipeline.pipeline_layout = VK_NULL_HANDLE;
+        return false;
+    }
+    g_CrimePointGpuPipeline.pipeline = pipeline;
+    g_CrimePointGpuPipeline.render_pass = render_pass;
+    return true;
+}
+
+bool configureCrimePointGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error) {
+    g_CrimePointGpuDrawState = CrimePointGpuDrawState{};
+    if (!config.active) return true;
+    if (!g_CrimePointGpuBuffers.positions.buffer || !g_CrimePointGpuBuffers.feature_refs.buffer || !g_CrimePointGpuBuffers.colors.buffer) {
+        if (error) *error = "crime point GPU buffers are not resident";
+        return false;
+    }
+    g_CrimePointGpuDrawState.active = true;
+    g_CrimePointGpuDrawState.math_zoom = config.math_zoom;
+    g_CrimePointGpuDrawState.zoom_scale = config.zoom_scale;
+    g_CrimePointGpuDrawState.center_world = config.center_world;
+    g_CrimePointGpuDrawState.viewport_origin = config.viewport_origin;
+    g_CrimePointGpuDrawState.viewport_size = config.viewport_size;
+    g_CrimePointGpuDrawState.framebuffer_size = config.framebuffer_size;
+    return true;
+}
+
+void clearCrimePointGpuDrawState() {
+    g_CrimePointGpuDrawState = CrimePointGpuDrawState{};
+}
+
+bool crimePointGpuDrawActive() {
+    return g_CrimePointGpuDrawState.active &&
+        g_CrimePointGpuBuffers.positions.buffer &&
+        g_CrimePointGpuBuffers.feature_refs.buffer &&
+        g_CrimePointGpuBuffers.colors.buffer &&
+        g_CrimePointGpuBuffers.render_features > 0;
+}
+
+static void renderCrimePointGpuDrawCallback(const ImDrawList*, const ImDrawCmd*) {
+    if (!crimePointGpuDrawActive() || !g_CurrentFrameRenderCommandBuffer) return;
+    std::string pipeline_error;
+    if (!ensureCrimePointGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) return;
+    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+    if (!ensureCrimePointGpuDescriptorSet(&pipeline_error, &descriptor_set)) return;
+    CrimePointGpuPushConstants push{};
+    push.center_world[0] = g_CrimePointGpuDrawState.center_world.x;
+    push.center_world[1] = g_CrimePointGpuDrawState.center_world.y;
+    push.viewport_origin[0] = g_CrimePointGpuDrawState.viewport_origin.x;
+    push.viewport_origin[1] = g_CrimePointGpuDrawState.viewport_origin.y;
+    push.viewport_size[0] = g_CrimePointGpuDrawState.viewport_size.x;
+    push.viewport_size[1] = g_CrimePointGpuDrawState.viewport_size.y;
+    push.framebuffer_size[0] = std::max(1.0f, g_CrimePointGpuDrawState.framebuffer_size.x);
+    push.framebuffer_size[1] = std::max(1.0f, g_CrimePointGpuDrawState.framebuffer_size.y);
+    push.math_zoom = (float)g_CrimePointGpuDrawState.math_zoom;
+    push.zoom_scale = g_CrimePointGpuDrawState.zoom_scale;
+    push.marker_radius_px = 5.0f;
+    VkViewport viewport{0.0f, 0.0f, push.framebuffer_size[0], push.framebuffer_size[1], 0.0f, 1.0f};
+    vkCmdSetViewport(g_CurrentFrameRenderCommandBuffer, 0, 1, &viewport);
+    VkRect2D scissor{};
+    scissor.offset.x = std::max(0, (int32_t)std::floor(g_CrimePointGpuDrawState.viewport_origin.x));
+    scissor.offset.y = std::max(0, (int32_t)std::floor(g_CrimePointGpuDrawState.viewport_origin.y));
+    const uint32_t max_width = (uint32_t)std::max(0.0f, push.framebuffer_size[0] - (float)scissor.offset.x);
+    const uint32_t max_height = (uint32_t)std::max(0.0f, push.framebuffer_size[1] - (float)scissor.offset.y);
+    scissor.extent.width = std::min((uint32_t)std::max(0.0f, std::ceil(g_CrimePointGpuDrawState.viewport_size.x)), max_width);
+    scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_CrimePointGpuDrawState.viewport_size.y)), max_height);
+    if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
+    vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+    const VkBuffer vertex_buffers[] = {g_CrimePointGpuBuffers.positions.buffer, g_CrimePointGpuBuffers.feature_refs.buffer};
+    const VkDeviceSize offsets[] = {0, 0};
+    vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_CrimePointGpuPipeline.pipeline);
+    vkCmdBindDescriptorSets(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_CrimePointGpuPipeline.pipeline_layout, 0, 1, &descriptor_set, 0, nullptr);
+    vkCmdPushConstants(g_CurrentFrameRenderCommandBuffer, g_CrimePointGpuPipeline.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
+    vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
+    vkCmdDraw(g_CurrentFrameRenderCommandBuffer, 6, g_CrimePointGpuBuffers.render_features, 0, 0);
+}
+
+void enqueueCrimePointGpuDraw(ImDrawList* draw_list) {
+    if (!draw_list || !crimePointGpuDrawActive()) return;
+    draw_list->AddCallback(renderCrimePointGpuDrawCallback, nullptr);
+    draw_list->AddCallback(ImDrawCallback_ResetRenderState, nullptr);
+}
+
 static uint32_t calcMipLevels(uint32_t w, uint32_t h) {
     uint32_t levels = 1;
     while (w > 1 || h > 1) {
@@ -2905,9 +3376,11 @@ void CleanupVulkan() {
     CleanupTileCache();
     shutdownGpuSplatAggregate();
     stopParcelGpuUploadWorker();
+    clearCrimePointGpuBuffers();
     clearZoningGpuBuffers();
     clearParcelGpuBuffers();
     drainRetiredParcelGpuPayloads(true);
+    destroyCrimePointGpuPipeline();
     destroyZoningGpuPipeline();
     destroyParcelGpuPipeline();
     if (g_UploadCommandPool) vkDestroyCommandPool(g_Device, g_UploadCommandPool, g_Allocator);

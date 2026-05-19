@@ -4,6 +4,10 @@
 #include "owner_info.h"
 #include "worldsim_app.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 namespace {
 struct MapCornerControlState {
     bool hovered = false;
@@ -110,6 +114,17 @@ void drawMapCornerControlsVisual(const MapTabContext& ctx, const MapCanvasSessio
     mapCornerControlPositions(session, fullscreen_min, camera_min);
     drawMapFullscreenIcon(session.draw, fullscreen_min, state.fullscreen_hovered);
     drawMapCameraIcon(session.draw, camera_min, state.snapshot_hovered);
+}
+
+bool isZoningPolygonLayerForGpu(const LayerDef& layer) {
+    if (layer.scale == "point") return false;
+    if (layer.category == LayerDef::Category::Zoning) return true;
+    std::string file_lower = layer.file;
+    std::string name_lower = layer.name;
+    std::transform(file_lower.begin(), file_lower.end(), file_lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    return file_lower.find("zoning") != std::string::npos ||
+           name_lower.find("zoning") != std::string::npos;
 }
 }
 
@@ -230,9 +245,14 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 parcel_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
                 configureParcelGpuDrawState(parcel_draw_cfg);
             }
-            if (ctx.zoning_layer_idx >= 0 &&
-                (size_t)ctx.zoning_layer_idx < ctx.layers->size() &&
-                (*ctx.layers)[(size_t)ctx.zoning_layer_idx].enabled) {
+            bool any_zoning_gpu_layer_enabled = false;
+            for (const LayerDef& layer : *ctx.layers) {
+                if (layer.enabled && isZoningPolygonLayerForGpu(layer)) {
+                    any_zoning_gpu_layer_enabled = true;
+                    break;
+                }
+            }
+            if (any_zoning_gpu_layer_enabled) {
                 const ImGuiIO& io = ImGui::GetIO();
                 const ImVec2 fb_scale = io.DisplayFramebufferScale;
                 ParcelGpuDrawConfig zoning_draw_cfg;
@@ -253,6 +273,30 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 configureZoningGpuDrawState(zoning_draw_cfg);
             } else {
                 clearZoningGpuDrawState();
+            }
+            if (ctx.crime_nibrs_layer_idx >= 0 &&
+                (size_t)ctx.crime_nibrs_layer_idx < ctx.layers->size() &&
+                (*ctx.layers)[(size_t)ctx.crime_nibrs_layer_idx].enabled) {
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImVec2 fb_scale = io.DisplayFramebufferScale;
+                ParcelGpuDrawConfig crime_draw_cfg;
+                crime_draw_cfg.active = true;
+                crime_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                crime_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                crime_draw_cfg.center_world = map_canvas_session.center_world;
+                crime_draw_cfg.viewport_origin =
+                    ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                crime_draw_cfg.viewport_size =
+                    ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                crime_draw_cfg.framebuffer_size =
+                    ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                crime_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                crime_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                crime_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                crime_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                configureCrimePointGpuDrawState(crime_draw_cfg);
+            } else {
+                clearCrimePointGpuDrawState();
             }
 
             MapFrameSessionContext map_frame_session_ctx;

@@ -346,6 +346,13 @@ bool pointInsideCircle(const ImVec2& p, const ImVec2& center, float radius) {
     return dx * dx + dy * dy <= radius * radius;
 }
 
+bool isZoningPolygonLayer(const LayerDef& layer) {
+    if (layerUsesPointGeometry(layer)) return false;
+    if (layer.category == LayerDef::Category::Zoning) return true;
+    return containsCaseInsensitive(layer.file, "zoning") ||
+           containsCaseInsensitive(layer.name, "zoning");
+}
+
 bool shouldClusterPointLayer(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
@@ -361,6 +368,38 @@ bool shouldClusterPointLayer(
     return ctx.heatmap_policy &&
            layerUsesPointGeometry(layer) &&
            layerUsesPointClustering(*ctx.heatmap_policy, layer_idx);
+}
+
+bool layerHasPrimaryGpuDraw(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    const LayerDef& layer) {
+    if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) return true;
+    if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) return true;
+    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive()) return true;
+    return false;
+}
+
+void enqueuePrimaryGpuDrawForLayer(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    const LayerDef& layer,
+    bool& zoning_draw_enqueued) {
+    if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
+        enqueueParcelGpuDraw(ctx.draw);
+        return;
+    }
+    if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) {
+        enqueueCrimePointGpuDraw(ctx.draw);
+        return;
+    }
+    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive() && !zoning_draw_enqueued) {
+        enqueueZoningGpuDraw(ctx.draw);
+        if (zoningGpuOutlineDrawActive()) {
+            enqueueZoningGpuOutlineDraw(ctx.draw);
+        }
+        zoning_draw_enqueued = true;
+    }
 }
 
 bool resolveFeatureRenderStyle(
@@ -635,7 +674,7 @@ void drawFeatureGeometry(
         const bool use_gpu_parcel_fill =
             (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
         const bool use_gpu_zoning_fill =
-            (int)layer_idx == ctx.zoning_layer_idx && zoningGpuDrawActive();
+            isZoningPolygonLayer(layer) && zoningGpuDrawActive();
         if (!use_gpu_parcel_fill && !use_gpu_zoning_fill && fill_enabled_for_layer && ctx.should_fill_layer_polygon(layer_idx)) {
             const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
             const uint32_t fill_alpha = (uint32_t)std::clamp(
@@ -685,7 +724,7 @@ void drawFeatureGeometry(
         for (const auto& r : world_rings) {
             if (!suppress_base_parcel_outlines &&
                 ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) &&
-                ((int)layer_idx != ctx.zoning_layer_idx || !zoningGpuOutlineDrawActive())) {
+                (!isZoningPolygonLayer(layer) || !zoningGpuOutlineDrawActive())) {
                 ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
                 const auto& line = ctx.projection->scratchLine();
                 ctx.draw->AddPolyline(line.data(), (int)line.size(), outline_c, ImDrawFlags_Closed, 1.0f);
@@ -827,27 +866,16 @@ bool shouldBypassCpuParcelFeaturePass(
 void runRenderLayerPass(const RenderLayerPassContext& ctx) {
     std::vector<uint32_t> render_candidates;
     std::vector<DeferredPointRenderJob> deferred_point_jobs;
+    bool zoning_draw_enqueued = false;
     for (size_t layer_idx : ctx.render_plan->draw_layer_order) {
         auto& l = (*ctx.layers)[layer_idx];
         if (!l.enabled) continue;
         if (ctx.layer_passes_filters && !ctx.layer_passes_filters(layer_idx)) continue;
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
-        const bool use_gpu_parcel_draw = (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
-        if (use_gpu_parcel_draw) {
-            enqueueParcelGpuDraw(ctx.draw);
-        }
-        const bool use_gpu_zoning_draw = (int)layer_idx == ctx.zoning_layer_idx && zoningGpuDrawActive();
-        if (use_gpu_zoning_draw) {
-            enqueueZoningGpuDraw(ctx.draw);
-            if (zoningGpuOutlineDrawActive()) {
-                enqueueZoningGpuOutlineDraw(ctx.draw);
-            }
-        }
-        if ((int)layer_idx == ctx.parcel_layer_idx) {
-            continue;
-        }
-        if ((int)layer_idx == ctx.zoning_layer_idx && use_gpu_zoning_draw) {
+        const bool is_zoning_layer = isZoningPolygonLayer(l);
+        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l, zoning_draw_enqueued);
+        if (layerHasPrimaryGpuDraw(ctx, layer_idx, l)) {
             continue;
         }
 
@@ -856,8 +884,6 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
             !layer_uses_lod_for_draw) {
             continue;
         }
-
-        const bool is_zoning_layer = (int)layer_idx == ctx.zoning_layer_idx;
         const bool is_heat_layer = !l.heatmap_field.empty();
         auto normalization_group_key = [&](const LayerDef::FeatureGeom& fg) {
             std::string key = firstProp(fg, {

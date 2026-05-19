@@ -157,9 +157,6 @@ bool MapProjectionCache::drawTessellatedFill(
         fill_stats_.no_triangles++;
         return false;
     }
-    // Very dense parcel polygons dominate CPU at low zoom, but zoning is a semantic
-    // area layer and must keep filled class color at every zoom.
-    if (math_zoom_ <= 12 && fg.triangles.size() > 6000 && !low_zoom_dense_fill_layers_.count(layer_idx)) return false;
     const auto& cached = getWorldFillGeometry(layer_idx, feature_idx, fg);
     const size_t vcount = projectWorldVerticesForFill(cached.vertices);
     if (vcount < 3) return false;

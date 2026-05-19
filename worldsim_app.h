@@ -103,3 +103,14 @@ bool zoningGpuDrawActive();
 void enqueueZoningGpuDraw(ImDrawList* draw_list);
 bool zoningGpuOutlineDrawActive();
 void enqueueZoningGpuOutlineDraw(ImDrawList* draw_list);
+
+bool ensureCrimePointGpuBuffersResident(
+    const std::string& source_signature,
+    const std::vector<ImVec2>& lonlat_positions,
+    std::string* error = nullptr);
+bool updateCrimePointGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+void clearCrimePointGpuBuffers();
+bool configureCrimePointGpuDrawState(const ParcelGpuDrawConfig& config, std::string* error = nullptr);
+void clearCrimePointGpuDrawState();
+bool crimePointGpuDrawActive();
+void enqueueCrimePointGpuDraw(ImDrawList* draw_list);

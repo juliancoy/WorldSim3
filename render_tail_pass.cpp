@@ -5,6 +5,14 @@
 #include "map_render_selection.h"
 #include "worldsim_app.h"
 
+namespace {
+
+bool parcelOverlayHasPrimaryGpuDraw() {
+    return parcelGpuOverlayDrawActive() || parcelGpuOutlineDrawActive();
+}
+
+} // namespace
+
 RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     MapRenderContext overlay_ctx;
     overlay_ctx.draw = ctx.draw;
@@ -39,8 +47,7 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     MapOverlayResult overlay_result;
     const bool gpu_overlay_active = parcelGpuOverlayDrawActive();
     const bool gpu_outline_active = parcelGpuOutlineDrawActive();
-    const bool parcel_layer_present = ctx.parcel_layer_idx >= 0;
-    if (!parcel_layer_present && !gpu_overlay_active && !gpu_outline_active) {
+    if (!parcelOverlayHasPrimaryGpuDraw()) {
         overlay_result = renderParcelSourceOverlays(overlay_ctx);
     }
     if (gpu_overlay_active) {

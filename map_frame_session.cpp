@@ -81,6 +81,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.lod_ring_step = ctx.lod_ring_step;
     render_frame_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     render_frame_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
+    render_frame_ctx.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
     render_frame_ctx.vacant_notice_layer_idx = ctx.vacant_notice_layer_idx;
     render_frame_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
     render_frame_ctx.tax_lien_layer_idx = ctx.tax_lien_layer_idx;

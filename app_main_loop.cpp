@@ -548,7 +548,6 @@ int runWorldSim3App(int argc, char** argv) {
     std::string parcel_render_requested_signature;
     std::string parcel_gpu_upload_requested_signature;
     std::string zoning_gpu_uploaded_signature;
-    int zoning_gpu_uploaded_layer_idx = -1;
     uint64_t parcel_gpu_filter_state_key = 0;
     uint64_t parcel_gpu_overlay_state_key = 0;
     uint64_t parcel_gpu_outline_state_key = 0;
@@ -558,9 +557,13 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<ImU32> parcel_gpu_last_overlay_colors;
     std::vector<ImU32> parcel_gpu_last_outline_colors;
     ParcelRenderCacheBlob parcel_gpu_render_blob;
+    std::vector<FeatureKey> zoning_gpu_feature_refs;
     std::vector<ImU32> zoning_gpu_last_base_colors;
     std::vector<ImU32> zoning_gpu_last_outline_colors;
     ParcelRenderCacheBlob zoning_gpu_render_blob;
+    std::string crime_point_gpu_uploaded_signature;
+    uint64_t crime_point_gpu_color_state_key = 0;
+    std::vector<ImVec2> crime_point_gpu_positions;
     std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
     std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
     std::atomic<size_t> prof_projection_cache_generation{0};
@@ -2906,41 +2909,61 @@ int runWorldSim3App(int argc, char** argv) {
             }
         }
 
-        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size() &&
-            (size_t)zoning_layer_idx < layer_states.size()) {
-            const LayerDef& zoning_layer = layers[(size_t)zoning_layer_idx];
-            const LayerRuntimeState& zoning_state = layer_states[(size_t)zoning_layer_idx];
-            const bool zoning_ready =
-                zoning_layer.enabled &&
-                zoning_state.status == LayerPipelineStatus::Ready &&
-                !zoning_state.hydration_source_signature.empty();
-            if (!zoning_ready) {
+        {
+            auto is_zoning_polygon_layer = [&](const LayerDef& layer) {
+                if (layerUsesPointGeometry(layer)) return false;
+                if (layer.category == LayerDef::Category::Zoning) return true;
+                const std::string file_lower = toLowerAscii(layer.file);
+                const std::string name_lower = toLowerAscii(layer.name);
+                return file_lower.find("zoning") != std::string::npos ||
+                       name_lower.find("zoning") != std::string::npos;
+            };
+            std::vector<size_t> active_zoning_layers;
+            std::vector<LayerDef::FeatureGeom> merged_zoning_features;
+            std::vector<FeatureKey> merged_zoning_refs;
+            std::string zoning_signature;
+            for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
+                const LayerDef& layer = layers[li];
+                const LayerRuntimeState& state = layer_states[li];
+                if (!layer.enabled || !is_zoning_polygon_layer(layer)) continue;
+                if (state.status != LayerPipelineStatus::Ready || state.hydration_source_signature.empty()) continue;
+                active_zoning_layers.push_back(li);
+                zoning_signature += std::to_string(li);
+                zoning_signature.push_back(':');
+                zoning_signature += state.hydration_source_signature;
+                zoning_signature.push_back(';');
+            }
+
+            if (active_zoning_layers.empty()) {
                 clearZoningGpuBuffers();
                 clearZoningGpuDrawState();
                 zoning_gpu_uploaded_signature.clear();
-                zoning_gpu_uploaded_layer_idx = -1;
                 zoning_gpu_color_state_key = 0;
                 zoning_gpu_outline_state_key = 0;
+                zoning_gpu_feature_refs.clear();
                 zoning_gpu_last_base_colors.clear();
                 zoning_gpu_last_outline_colors.clear();
                 zoning_gpu_render_blob = ParcelRenderCacheBlob{};
             } else {
-                const std::string& sig = zoning_state.hydration_source_signature;
-                if (zoning_gpu_uploaded_signature != sig || zoning_gpu_uploaded_layer_idx != zoning_layer_idx) {
-                    ParcelRenderCacheBlob blob;
-                    const fs::path render_cache_path =
-                        root / "data" / "cache" / "render" / (zoning_layer.file + ".parcel-render.bin");
-                    bool blob_ok = loadBinaryParcelRenderCache(render_cache_path, sig, blob);
-                    if (!blob_ok) {
-                        blob_ok = buildParcelRenderCacheBlob(zoning_layer.features, sig, blob, 2048);
-                        if (blob_ok) saveBinaryParcelRenderCache(render_cache_path, blob);
+                if (zoning_gpu_uploaded_signature != zoning_signature) {
+                    size_t total_features = 0;
+                    for (size_t li : active_zoning_layers) total_features += layers[li].features.size();
+                    merged_zoning_features.reserve(total_features);
+                    merged_zoning_refs.reserve(total_features);
+                    for (size_t li : active_zoning_layers) {
+                        const LayerDef& layer = layers[li];
+                        for (size_t fi = 0; fi < layer.features.size(); ++fi) {
+                            merged_zoning_features.push_back(layer.features[fi]);
+                            merged_zoning_refs.push_back(FeatureKey{li, fi});
+                        }
                     }
-                    if (blob_ok) {
+                    ParcelRenderCacheBlob blob;
+                    if (buildParcelRenderCacheBlob(merged_zoning_features, zoning_signature, blob, 2048)) {
                         std::string zoning_error;
                         if (ensureZoningGpuBuffersResident(blob, &zoning_error)) {
                             zoning_gpu_render_blob = std::move(blob);
-                            zoning_gpu_uploaded_signature = sig;
-                            zoning_gpu_uploaded_layer_idx = zoning_layer_idx;
+                            zoning_gpu_feature_refs = std::move(merged_zoning_refs);
+                            zoning_gpu_uploaded_signature = zoning_signature;
                             zoning_gpu_color_state_key = 0;
                             zoning_gpu_outline_state_key = 0;
                             zoning_gpu_last_base_colors.assign(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
@@ -2950,12 +2973,15 @@ int runWorldSim3App(int argc, char** argv) {
                             clearZoningGpuBuffers();
                             clearZoningGpuDrawState();
                             zoning_gpu_uploaded_signature.clear();
-                            zoning_gpu_uploaded_layer_idx = -1;
+                            zoning_gpu_feature_refs.clear();
                             zoning_gpu_render_blob = ParcelRenderCacheBlob{};
                         }
                     }
                 }
-                if (zoning_gpu_uploaded_signature == sig && !zoning_gpu_render_blob.features.empty()) {
+
+                if (zoning_gpu_uploaded_signature == zoning_signature &&
+                    !zoning_gpu_render_blob.features.empty() &&
+                    zoning_gpu_feature_refs.size() == zoning_gpu_render_blob.features.size()) {
                     auto hash_mix = [](uint64_t& h, uint64_t v) {
                         h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
                     };
@@ -2973,9 +2999,7 @@ int runWorldSim3App(int argc, char** argv) {
                     };
 
                     uint64_t color_state_key = 1469598103934665603ULL;
-                    hash_mix(color_state_key, (uint64_t)zoning_layer_idx);
-                    hash_mix(color_state_key, (uint64_t)zoning_layer.enabled);
-                    hash_mix(color_state_key, (uint64_t)layer_fill_enabled[(size_t)zoning_layer_idx]);
+                    hash_cstr(color_state_key, zoning_signature.c_str());
                     hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
                     hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
                     hash_mix(color_state_key, (uint64_t)map_filter_state.year_min);
@@ -3010,12 +3034,21 @@ int runWorldSim3App(int argc, char** argv) {
                         hash_f32(color_state_key, color.z);
                         hash_f32(color_state_key, color.w);
                     }
+                    for (size_t li : active_zoning_layers) {
+                        hash_mix(color_state_key, (uint64_t)layer_fill_enabled[li]);
+                        hash_f32(color_state_key, layers[li].color.x);
+                        hash_f32(color_state_key, layers[li].color.y);
+                        hash_f32(color_state_key, layers[li].color.z);
+                        hash_f32(color_state_key, layers[li].color.w);
+                    }
                     hash_f32(color_state_key, app_settings.map_polygon_fill_opacity);
                     uint64_t outline_state_key = color_state_key;
-                    hash_f32(outline_state_key, zoning_layer.outline_color.x);
-                    hash_f32(outline_state_key, zoning_layer.outline_color.y);
-                    hash_f32(outline_state_key, zoning_layer.outline_color.z);
-                    hash_f32(outline_state_key, zoning_layer.outline_color.w);
+                    for (size_t li : active_zoning_layers) {
+                        hash_f32(outline_state_key, layers[li].outline_color.x);
+                        hash_f32(outline_state_key, layers[li].outline_color.y);
+                        hash_f32(outline_state_key, layers[li].outline_color.z);
+                        hash_f32(outline_state_key, layers[li].outline_color.w);
+                    }
 
                     FeatureFilterContextFactoryInput filter_input;
                     filter_input.layers = &layers;
@@ -3034,20 +3067,21 @@ int runWorldSim3App(int argc, char** argv) {
 
                     if (color_state_key != zoning_gpu_color_state_key) {
                         std::vector<ImU32> zoning_colors(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(zoning_layer.color);
-                        for (size_t i = 0; i < zoning_gpu_render_blob.features.size(); ++i) {
-                            const uint32_t feature_idx = zoning_gpu_render_blob.features[i].feature_idx;
-                            if (feature_idx >= zoning_layer.features.size()) continue;
-                            const LayerDef::FeatureGeom& fg = zoning_layer.features[feature_idx];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg)) continue;
-                            ImU32 color = base_color;
+                        for (size_t i = 0; i < zoning_gpu_feature_refs.size(); ++i) {
+                            const FeatureKey ref = zoning_gpu_feature_refs[i];
+                            if (ref.layer_idx >= layers.size() || ref.feature_idx >= layers[ref.layer_idx].features.size()) continue;
+                            const LayerDef& layer = layers[ref.layer_idx];
+                            const LayerDef::FeatureGeom& fg = layer.features[ref.feature_idx];
+                            if (!(ref.layer_idx < layer_fill_enabled.size() && layer_fill_enabled[ref.layer_idx])) continue;
+                            if (!featurePassesFilters(gpu_filter_ctx, ref.layer_idx, ref.feature_idx, fg)) continue;
+                            ImU32 color = ImGui::ColorConvertFloat4ToU32(layer.color);
                             const std::string zkey = zoningClassKey(fg);
                             auto it_col = zoning_zone_color.find(zkey);
                             if (it_col != zoning_zone_color.end()) {
                                 color = ImGui::ColorConvertFloat4ToU32(it_col->second);
                             }
                             float query_color[4] = {0, 0, 0, 0};
-                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg, query_color)) {
+                            if (queryMapColorForFeature(gpu_filter_ctx, ref.layer_idx, ref.feature_idx, fg, query_color)) {
                                 color = ImGui::ColorConvertFloat4ToU32(
                                     ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
                             }
@@ -3061,13 +3095,13 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                     if (outline_state_key != zoning_gpu_outline_state_key) {
                         std::vector<ImU32> outline_colors(zoning_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const ImU32 outline_color = ImGui::ColorConvertFloat4ToU32(zoning_layer.outline_color);
-                        for (size_t i = 0; i < zoning_gpu_render_blob.features.size(); ++i) {
-                            const uint32_t feature_idx = zoning_gpu_render_blob.features[i].feature_idx;
-                            if (feature_idx >= zoning_layer.features.size()) continue;
-                            const LayerDef::FeatureGeom& fg = zoning_layer.features[feature_idx];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)zoning_layer_idx, feature_idx, fg)) continue;
-                            outline_colors[i] = outline_color;
+                        for (size_t i = 0; i < zoning_gpu_feature_refs.size(); ++i) {
+                            const FeatureKey ref = zoning_gpu_feature_refs[i];
+                            if (ref.layer_idx >= layers.size() || ref.feature_idx >= layers[ref.layer_idx].features.size()) continue;
+                            const LayerDef& layer = layers[ref.layer_idx];
+                            const LayerDef::FeatureGeom& fg = layer.features[ref.feature_idx];
+                            if (!featurePassesFilters(gpu_filter_ctx, ref.layer_idx, ref.feature_idx, fg)) continue;
+                            outline_colors[i] = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
                         }
                         std::string outline_error;
                         if (updateZoningGpuOutlineColorBuffer(outline_colors, &outline_error)) {
@@ -3077,16 +3111,128 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                 }
             }
+        }
+
+        if (crime_nibrs_layer_idx >= 0 &&
+            (size_t)crime_nibrs_layer_idx < layers.size() &&
+            (size_t)crime_nibrs_layer_idx < layer_states.size()) {
+            const LayerDef& crime_layer = layers[(size_t)crime_nibrs_layer_idx];
+            const LayerRuntimeState& crime_state = layer_states[(size_t)crime_nibrs_layer_idx];
+            const bool crime_ready =
+                crime_layer.enabled &&
+                crime_state.status == LayerPipelineStatus::Ready &&
+                !crime_state.hydration_source_signature.empty();
+            if (!crime_ready) {
+                clearCrimePointGpuBuffers();
+                clearCrimePointGpuDrawState();
+                crime_point_gpu_uploaded_signature.clear();
+                crime_point_gpu_color_state_key = 0;
+                crime_point_gpu_positions.clear();
+            } else {
+                const std::string& sig = crime_state.hydration_source_signature;
+                if (crime_point_gpu_uploaded_signature != sig) {
+                    std::vector<ImVec2> point_positions;
+                    point_positions.reserve(crime_layer.features.size());
+                    for (const LayerDef::FeatureGeom& fg : crime_layer.features) {
+                        point_positions.push_back(ImVec2(fg.extent.min_lon, fg.extent.min_lat));
+                    }
+                    std::string gpu_error;
+                    if (ensureCrimePointGpuBuffersResident(sig, point_positions, &gpu_error)) {
+                        crime_point_gpu_positions = std::move(point_positions);
+                        crime_point_gpu_uploaded_signature = sig;
+                        crime_point_gpu_color_state_key = 0;
+                    } else {
+                        std::fprintf(stderr, "[worldsim3] Crime point GPU upload failed: %s\n", gpu_error.c_str());
+                        clearCrimePointGpuBuffers();
+                        clearCrimePointGpuDrawState();
+                        crime_point_gpu_uploaded_signature.clear();
+                        crime_point_gpu_positions.clear();
+                    }
+                }
+                if (crime_point_gpu_uploaded_signature == sig &&
+                    crime_point_gpu_positions.size() == crime_layer.features.size()) {
+                    auto hash_mix = [](uint64_t& h, uint64_t v) {
+                        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+                    };
+                    auto hash_cstr = [&](uint64_t& h, const char* s) {
+                        const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
+                        while (*p) {
+                            hash_mix(h, *p);
+                            ++p;
+                        }
+                    };
+                    auto hash_f32 = [&](uint64_t& h, float value) {
+                        uint32_t bits = 0;
+                        std::memcpy(&bits, &value, sizeof(bits));
+                        hash_mix(h, bits);
+                    };
+                    uint64_t color_state_key = 1469598103934665603ULL;
+                    hash_mix(color_state_key, (uint64_t)crime_nibrs_layer_idx);
+                    hash_mix(color_state_key, (uint64_t)crime_layer.enabled);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.enabled);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.homicide);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.robbery);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.assault);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.burglary);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.theft);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.auto_theft);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.drug);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.shooting);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.use_year);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.year_min);
+                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.year_max);
+                    hash_mix(color_state_key, (uint64_t)query_layers.size());
+                    for (const auto& ql : query_layers) {
+                        hash_mix(color_state_key, (uint64_t)ql.enabled);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.active);
+                        hash_mix(color_state_key, (uint64_t)ql.row_count);
+                        hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
+                        for (float c : ql.color) hash_f32(color_state_key, c);
+                    }
+
+                    FeatureFilterContextFactoryInput filter_input;
+                    filter_input.layers = &layers;
+                    filter_input.map_filters = &map_filter_state;
+                    filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
+                        ? &parcel_jurisdiction_filter_state.result_set
+                        : nullptr;
+                    filter_input.query_layers = &query_layers;
+                    filter_input.real_property_by_blocklot = &real_property_by_blocklot;
+                    filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+                    filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+                    filter_input.real_property_layer_idx = real_property_layer_idx;
+                    filter_input.parcel_layer_idx = parcel_layer_idx;
+                    filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+                    const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+
+                    if (color_state_key != crime_point_gpu_color_state_key) {
+                        std::vector<ImU32> point_colors(crime_layer.features.size(), IM_COL32(0, 0, 0, 0));
+                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(crime_layer.color);
+                        for (size_t i = 0; i < crime_layer.features.size(); ++i) {
+                            const LayerDef::FeatureGeom& fg = crime_layer.features[i];
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)crime_nibrs_layer_idx, i, fg)) continue;
+                            ImU32 color = base_color;
+                            float query_color[4] = {0, 0, 0, 0};
+                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)crime_nibrs_layer_idx, i, fg, query_color)) {
+                                color = ImGui::ColorConvertFloat4ToU32(
+                                    ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                            }
+                            point_colors[i] = color;
+                        }
+                        std::string color_error;
+                        if (updateCrimePointGpuColorBuffer(point_colors, &color_error)) {
+                            crime_point_gpu_color_state_key = color_state_key;
+                        }
+                    }
+                }
+            }
         } else {
-            clearZoningGpuBuffers();
-            clearZoningGpuDrawState();
-            zoning_gpu_uploaded_signature.clear();
-            zoning_gpu_uploaded_layer_idx = -1;
-            zoning_gpu_color_state_key = 0;
-            zoning_gpu_outline_state_key = 0;
-            zoning_gpu_last_base_colors.clear();
-            zoning_gpu_last_outline_colors.clear();
-            zoning_gpu_render_blob = ParcelRenderCacheBlob{};
+            clearCrimePointGpuBuffers();
+            clearCrimePointGpuDrawState();
+            crime_point_gpu_uploaded_signature.clear();
+            crime_point_gpu_color_state_key = 0;
+            crime_point_gpu_positions.clear();
         }
 
         auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
