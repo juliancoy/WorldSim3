@@ -10,6 +10,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.data_freshness_msg = input.data_freshness_msg;
     ctx.data_library_status_msg = input.data_library_status_msg;
     ctx.enqueue_layer_download_request = input.enqueue_layer_download_request;
+    ctx.layer_download_pending = input.layer_download_pending;
     ctx.mark_local_layer_exists = input.mark_local_layer_exists;
     ctx.enqueue_hydration = input.enqueue_hydration;
     ctx.open_layer_color_editor = input.open_layer_color_editor;

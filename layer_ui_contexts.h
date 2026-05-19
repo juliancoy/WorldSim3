@@ -24,6 +24,7 @@ struct LayerUiSharedContext {
     std::string* data_library_status_msg = nullptr;
 
     std::function<bool(size_t)> enqueue_layer_download_request;
+    std::function<bool(size_t)> layer_download_pending;
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
     std::function<void(size_t, bool)> open_layer_color_editor;

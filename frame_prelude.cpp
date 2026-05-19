@@ -1,6 +1,8 @@
 #include "frame_prelude.h"
 
+#include <algorithm>
 #include <cmath>
+#include <thread>
 
 FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     FramePreludeResult result;
@@ -9,7 +11,11 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
         !ctx.local_layer_exists_cache || !ctx.data_freshness_state || !ctx.data_freshness_msg ||
         !ctx.data_library_status_msg || !ctx.layer_download_queue || !ctx.layer_download_inflight ||
         !ctx.layer_download_active_idx || !ctx.layer_download_future || !ctx.layer_download_active_file ||
-        !ctx.layer_download_last_event || !ctx.layer_download_queue_loaded || !ctx.lan_peers ||
+        !ctx.layer_download_active_tasks || !ctx.layer_download_item_state_mutex ||
+        !ctx.layer_download_item_progress || !ctx.layer_download_item_started_at || !ctx.layer_download_item_eta_state ||
+        !ctx.layer_download_item_status ||
+        !ctx.layer_download_item_failed || !ctx.layer_download_last_event ||
+        !ctx.layer_download_queue_loaded || !ctx.lan_peers ||
         !ctx.lan_scan_status || !ctx.lan_last_scan_at || !ctx.center_lon || !ctx.center_lat ||
         !ctx.zoom || !ctx.current_zoom_state || !ctx.current_lon_state || !ctx.current_lat_state ||
         !ctx.api_layer_mutex || !ctx.api_layer_enable_cmds || !ctx.api_layer_fill_cmds ||
@@ -39,11 +45,21 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
 
     result.layer_download.root = *ctx.root;
     result.layer_download.layers = ctx.layers;
+    result.layer_download.local_layer_exists_cache = ctx.local_layer_exists_cache;
     result.layer_download.queue = ctx.layer_download_queue;
     result.layer_download.inflight = ctx.layer_download_inflight;
     result.layer_download.active_idx = ctx.layer_download_active_idx;
     result.layer_download.future = ctx.layer_download_future;
     result.layer_download.active_file = ctx.layer_download_active_file;
+    result.layer_download.active_tasks = ctx.layer_download_active_tasks;
+    const unsigned hc = std::thread::hardware_concurrency();
+    result.layer_download.max_parallel_downloads = std::clamp<size_t>(hc > 0 ? (size_t)hc / 2 : 4ull, 2ull, 8ull);
+    result.layer_download.item_state_mutex = ctx.layer_download_item_state_mutex;
+    result.layer_download.item_progress = ctx.layer_download_item_progress;
+    result.layer_download.item_started_at = ctx.layer_download_item_started_at;
+    result.layer_download.item_eta_state = ctx.layer_download_item_eta_state;
+    result.layer_download.item_status = ctx.layer_download_item_status;
+    result.layer_download.item_failed = ctx.layer_download_item_failed;
     result.layer_download.last_event = ctx.layer_download_last_event;
     result.layer_download.queue_loaded = ctx.layer_download_queue_loaded;
     result.layer_download.data_library_status_msg = ctx.data_library_status_msg;

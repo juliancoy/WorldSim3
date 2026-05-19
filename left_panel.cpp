@@ -565,6 +565,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.data_library_status_msg = ctx.data_library_status_msg;
     layer_ui_input.parcel_parameter_mode = ctx.parcel_parameter_mode;
     layer_ui_input.enqueue_layer_download_request = ctx.enqueue_layer_download_request;
+    layer_ui_input.layer_download_pending = ctx.layer_download_pending;
     layer_ui_input.mark_local_layer_exists = ctx.mark_local_layer_exists;
     layer_ui_input.enqueue_hydration = ctx.enqueue_hydration;
     layer_ui_input.open_layer_color_editor = ctx.open_layer_color_editor;

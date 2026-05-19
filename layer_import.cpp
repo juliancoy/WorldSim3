@@ -1343,9 +1343,13 @@ bool layerHasImportSource(const LayerDef& layer) {
         !layer.import_url.empty();
 }
 
-VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::path& out_path, const fs::path& root) {
+VersionedDownloadResult downloadOrImportLayer(
+    const LayerDef& layer,
+    const fs::path& out_path,
+    const fs::path& root,
+    const DownloadProgressCallback& on_progress) {
     if (!layer.source_url.empty()) {
-        return downloadUrlVersioned(layer.source_url, out_path, root / "data" / "versions");
+        return downloadUrlVersioned(layer.source_url, out_path, root / "data" / "versions", on_progress);
     }
     VersionedDownloadResult res;
     if (!layerHasImportSource(layer)) {
@@ -1357,7 +1361,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
     }
     if (layer.import_type == "socrata_csv_properties") {
         const fs::path csv_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.csv");
-        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, csv_path, root / "data" / "versions");
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, csv_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
         try {
             writeSocrataHowardPropertyGeoJson(csv_path, out_path);
@@ -1390,7 +1394,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
                 ? fs::path(layer.import_artifact_file)
                 : fs::path(out_path.stem().string() + ".xlsx");
         const fs::path xlsx_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
-        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, xlsx_path, root / "data" / "versions");
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, xlsx_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
         try {
             writeXlsxPointTableGeoJson(
@@ -1415,7 +1419,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
                 ? fs::path(layer.import_artifact_file)
                 : fs::path(out_path.stem().string() + ".json");
         const fs::path json_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
-        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, json_path, root / "data" / "versions");
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, json_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
         try {
             writeJsonPointFeedGeoJson(
@@ -1444,7 +1448,7 @@ VersionedDownloadResult downloadOrImportLayer(const LayerDef& layer, const fs::p
         return res;
     }
     const fs::path archive_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.zip");
-    VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, archive_path, root / "data" / "versions");
+    VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, archive_path, root / "data" / "versions", on_progress);
     if (!dl.ok) return dl;
     try {
         const auto members = extractShapefileMembers(archive_path, layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile);

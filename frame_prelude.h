@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct FramePreludeResult {
@@ -40,6 +42,13 @@ struct FramePreludeContext {
     size_t* layer_download_active_idx = nullptr;
     std::future<VersionedDownloadResult>* layer_download_future = nullptr;
     std::string* layer_download_active_file = nullptr;
+    std::vector<LayerDownloadTask>* layer_download_active_tasks = nullptr;
+    std::mutex* layer_download_item_state_mutex = nullptr;
+    std::unordered_map<size_t, float>* layer_download_item_progress = nullptr;
+    std::unordered_map<size_t, std::chrono::steady_clock::time_point>* layer_download_item_started_at = nullptr;
+    std::unordered_map<size_t, LayerDownloadEtaState>* layer_download_item_eta_state = nullptr;
+    std::unordered_map<size_t, std::string>* layer_download_item_status = nullptr;
+    std::unordered_set<size_t>* layer_download_item_failed = nullptr;
     std::string* layer_download_last_event = nullptr;
     bool* layer_download_queue_loaded = nullptr;
     std::vector<LanPeerInfo>* lan_peers = nullptr;

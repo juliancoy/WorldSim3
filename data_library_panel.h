@@ -2,6 +2,7 @@
 
 #include "data_library_coordinator.h"
 #include "dataset_library.h"
+#include "layer_download_queue.h"
 #include "imgui.h"
 #include "types.h"
 
@@ -42,6 +43,7 @@ struct DataLibraryUiContext {
     size_t* rendered_rows_last = nullptr;
     std::function<bool(size_t)> enqueue_layer_download_request;
     std::function<size_t()> queue_all_missing_layer_downloads;
+    std::function<LayerDownloadItemSnapshot(size_t)> get_layer_download_snapshot;
     size_t downloadable_missing_layer_count = 0;
     size_t queueable_missing_layer_count = 0;
 };
