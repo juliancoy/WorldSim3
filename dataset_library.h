@@ -36,11 +36,14 @@ struct LayerDownloadSummary {
     std::vector<std::string> messages;
 };
 
+using DownloadProgressCallback = std::function<void(uint64_t, uint64_t)>;
+
 bool downloadUrlToFile(const std::string& url, const std::filesystem::path& out_path, std::string& err);
 VersionedDownloadResult downloadUrlVersioned(
     const std::string& url,
     const std::filesystem::path& out_path,
-    const std::filesystem::path& versions_root);
+    const std::filesystem::path& versions_root,
+    const DownloadProgressCallback& on_progress = {});
 FreshnessCheckResult checkUrlFreshnessVersioned(
     const std::string& url,
     const std::filesystem::path& out_path,

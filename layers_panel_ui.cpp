@@ -442,7 +442,9 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         (size_t)ctx.parcel_layer_idx < ctx.shared->local_layer_exists_cache->size()
             ? (*ctx.shared->local_layer_exists_cache)[(size_t)ctx.parcel_layer_idx]
             : false;
-    const bool show_download_button = !local_layer_exists && !active_parcel_layer_exists;
+    const bool download_pending =
+        ctx.shared->layer_download_pending ? ctx.shared->layer_download_pending(idx) : false;
+    const bool show_download_button = !local_layer_exists && !active_parcel_layer_exists && !download_pending;
     if (show_download_button) {
         pushButtonPalette(ButtonPalette::Download);
         const bool can_download = ctx.shared->layer_registry
@@ -501,6 +503,7 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         ImGui::TextWrapped("Filters the active Maryland parcel layer through DuckDB before Vulkan rendering.");
         ImGui::Text("Jurisdiction: %s", jurisdiction);
         ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
+        ImGui::Text("Download queued/active: %s", download_pending ? "yes" : "no");
         if (active_parcel_layer_exists) {
             ImGui::TextDisabled("Download hidden because the Maryland parcel layer is already available locally.");
         }
@@ -681,7 +684,9 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
                 ? (*ctx.shared->local_layer_exists_cache)[idx]
                 : false;
-        if (!local_layer_exists) {
+        const bool download_pending =
+            ctx.shared->layer_download_pending ? ctx.shared->layer_download_pending(idx) : false;
+        if (!local_layer_exists && !download_pending) {
             pushButtonPalette(ButtonPalette::Download);
             const bool can_download = ctx.shared->layer_registry
                 ? ctx.shared->layer_registry->canDownload(idx)
@@ -706,6 +711,15 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
                     "%s",
                     can_download ? (layer.source_url.empty() ? "Import source available" : "Direct download URL available") :
                     (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+        }
+        if (!local_layer_exists && download_pending) {
+            ImGui::TextDisabled("Q");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Layer download is queued or active");
                 ImGui::EndTooltip();
             }
             ImGui::SameLine();

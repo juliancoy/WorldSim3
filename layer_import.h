@@ -9,4 +9,5 @@ bool layerHasImportSource(const LayerDef& layer);
 VersionedDownloadResult downloadOrImportLayer(
     const LayerDef& layer,
     const std::filesystem::path& out_path,
-    const std::filesystem::path& root);
+    const std::filesystem::path& root,
+    const DownloadProgressCallback& on_progress = {});

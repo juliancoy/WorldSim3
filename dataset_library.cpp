@@ -234,6 +234,11 @@ struct HeaderCapture {
     std::string last_modified;
 };
 
+struct DownloadProgressBridge {
+    DownloadProgressCallback callback;
+    uint64_t resume_bytes = 0;
+};
+
 static size_t curlHeaderCapture(void* ptr, size_t size, size_t nmemb, void* userdata) {
     const size_t n = size * nmemb;
     if (!userdata || n == 0) return n;
@@ -252,10 +257,21 @@ static size_t curlHeaderCapture(void* ptr, size_t size, size_t nmemb, void* user
     return n;
 }
 
+static int curlDownloadProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t) {
+    if (!clientp) return 0;
+    DownloadProgressBridge* bridge = static_cast<DownloadProgressBridge*>(clientp);
+    if (!bridge->callback) return 0;
+    const uint64_t total = dltotal > 0 ? bridge->resume_bytes + static_cast<uint64_t>(dltotal) : 0ull;
+    const uint64_t now = bridge->resume_bytes + (dlnow > 0 ? static_cast<uint64_t>(dlnow) : 0ull);
+    bridge->callback(now, total);
+    return 0;
+}
+
 VersionedDownloadResult downloadUrlVersioned(
     const std::string& url,
     const fs::path& out_path,
-    const fs::path& versions_root) {
+    const fs::path& versions_root,
+    const DownloadProgressCallback& on_progress) {
     VersionedDownloadResult res;
     const fs::path meta_path = versions_root / "metadata" / (out_path.filename().string() + ".json");
     fs::create_directories(meta_path.parent_path());
@@ -272,44 +288,74 @@ VersionedDownloadResult downloadUrlVersioned(
     fs::create_directories(out_path.parent_path());
     fs::path tmp = out_path;
     tmp += ".part";
-    FILE* fp = std::fopen(tmp.string().c_str(), "wb");
-    if (!fp) {
-        res.message = "failed to open output file";
-        return res;
-    }
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        std::fclose(fp);
-        res.message = "curl init failed";
-        return res;
-    }
-    struct curl_slist* hdrs = nullptr;
-    if (!prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
-    if (!prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
     HeaderCapture hc{};
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hc);
-    if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-    CURLcode rc = curl_easy_perform(curl);
-    long code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     curl_off_t content_length = -1;
-    curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
-    curl_easy_cleanup(curl);
-    if (hdrs) curl_slist_free_all(hdrs);
-    std::fclose(fp);
+    long code = 0;
+    CURLcode rc = CURLE_OK;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        const bool try_resume = (attempt == 0);
+        uint64_t resume_bytes = 0;
+        if (try_resume) {
+            std::error_code szec;
+            if (fs::exists(tmp, szec) && !szec) resume_bytes = fs::file_size(tmp, szec);
+            if (szec) resume_bytes = 0;
+        }
+        const char* open_mode = resume_bytes > 0 ? "ab" : "wb";
+        FILE* fp = std::fopen(tmp.string().c_str(), open_mode);
+        if (!fp) {
+            res.message = "failed to open output file";
+            return res;
+        }
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            std::fclose(fp);
+            res.message = "curl init failed";
+            return res;
+        }
+        struct curl_slist* hdrs = nullptr;
+        if (resume_bytes > 0) {
+            const std::string validator = !prev_etag.empty() ? prev_etag : prev_lm;
+            if (!validator.empty()) hdrs = curl_slist_append(hdrs, ("If-Range: " + validator).c_str());
+            curl_easy_setopt(curl, CURLOPT_RANGE, (std::to_string(resume_bytes) + "-").c_str());
+        } else {
+            if (!prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
+            if (!prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
+        }
+        DownloadProgressBridge progress_bridge{on_progress, resume_bytes};
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hc);
+        if (on_progress) {
+            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, curlDownloadProgressCallback);
+            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress_bridge);
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        }
+        if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+        rc = curl_easy_perform(curl);
+        code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        content_length = -1;
+        curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
+        curl_easy_cleanup(curl);
+        if (hdrs) curl_slist_free_all(hdrs);
+        std::fclose(fp);
+
+        if (resume_bytes > 0 && code == 200 && attempt == 0) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            continue;
+        }
+        break;
+    }
 
     if (rc != CURLE_OK) {
-        std::error_code ec;
-        fs::remove(tmp, ec);
         res.message = std::string("http failed: ") + curl_easy_strerror(rc);
         return res;
     }

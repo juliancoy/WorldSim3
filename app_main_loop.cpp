@@ -1050,6 +1050,7 @@ int runWorldSim3App(int argc, char** argv) {
         if (idx < local_layer_exists_cache.size()) local_layer_exists_cache[idx] = exists;
     };
     refresh_local_layer_exists_cache();
+    auto last_local_layer_exists_refresh_at = std::chrono::steady_clock::now();
     auto& data_library_download_phase = data_library_state.download_phase;
     auto& data_library_include_large = data_library_state.include_large;
     auto& data_library_bulk_inflight = data_library_state.bulk_inflight;
@@ -1063,6 +1064,13 @@ int runWorldSim3App(int argc, char** argv) {
     size_t layer_download_active_idx = (size_t)-1;
     std::future<VersionedDownloadResult> layer_download_future;
     std::string layer_download_active_file;
+    std::vector<LayerDownloadTask> layer_download_active_tasks;
+    std::mutex layer_download_item_state_mutex;
+    std::unordered_map<size_t, float> layer_download_item_progress;
+    std::unordered_map<size_t, std::chrono::steady_clock::time_point> layer_download_item_started_at;
+    std::unordered_map<size_t, LayerDownloadEtaState> layer_download_item_eta_state;
+    std::unordered_map<size_t, std::string> layer_download_item_status;
+    std::unordered_set<size_t> layer_download_item_failed;
     std::string layer_download_last_event;
     bool layer_download_queue_loaded = false;
     auto& filter_enabled = map_filter_state.enabled;
@@ -1791,6 +1799,13 @@ int runWorldSim3App(int argc, char** argv) {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_local_layer_exists_refresh_at >= std::chrono::seconds(2)) {
+                refresh_local_layer_exists_cache();
+                last_local_layer_exists_refresh_at = now;
+            }
+        }
         const bool color_editor_alive = color_editor_process_alive();
         ColorEditorCommand color_editor_command;
         if (loadColorEditorCommand(color_editor_command_path, color_editor_command) &&
@@ -1886,6 +1901,13 @@ int runWorldSim3App(int argc, char** argv) {
             &layer_download_active_idx,
             &layer_download_future,
             &layer_download_active_file,
+            &layer_download_active_tasks,
+            &layer_download_item_state_mutex,
+            &layer_download_item_progress,
+            &layer_download_item_started_at,
+            &layer_download_item_eta_state,
+            &layer_download_item_status,
+            &layer_download_item_failed,
             &layer_download_last_event,
             &layer_download_queue_loaded,
             &lan_peers,
@@ -2126,6 +2148,9 @@ int runWorldSim3App(int argc, char** argv) {
         };
         data_library_ui_ctx.queue_all_missing_layer_downloads = [&]() {
             return frame_prelude.queue_all_missing_layer_downloads();
+        };
+        data_library_ui_ctx.get_layer_download_snapshot = [&](size_t idx) {
+            return layerDownloadItemSnapshot(frame_prelude.layer_download, idx);
         };
         data_library_ui_ctx.downloadable_missing_layer_count = downloadable_missing_layer_count;
         data_library_ui_ctx.queueable_missing_layer_count = queueable_missing_layer_count;
