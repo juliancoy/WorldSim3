@@ -77,6 +77,9 @@ struct DerivedLayerCachesContext {
     std::atomic<size_t>* vacant_parcels_triangulated_renderable_total = nullptr;
 
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    std::vector<std::string>* parcel_owner_search_by_feature = nullptr;
+    std::vector<std::string>* real_property_owner_search_by_feature = nullptr;
+    std::vector<std::string>* parcel_address_search_by_feature = nullptr;
     size_t* unified_parcel_cached_size = nullptr;
     std::string* unified_parcel_cached_signature = nullptr;
     std::string* last_refresh_inputs_signature = nullptr;

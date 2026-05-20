@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imgui.h"
+#include "worldsim_app_internal.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -27,10 +28,19 @@ struct HeatmapRaster {
     std::vector<unsigned char> rgba;
 };
 
+struct HeatmapRasterLayer {
+    HeatmapRaster raster;
+    TileTexture gpu_texture;
+    bool has_gpu_texture = false;
+};
+
 struct HeatmapRenderData {
     std::vector<CachedHeatCell> cells;
     HeatmapRaster raster;
     bool has_raster = false;
+    TileTexture gpu_texture;
+    bool has_gpu_texture = false;
+    std::vector<HeatmapRasterLayer> raster_layers;
 };
 
 struct HeatSample {

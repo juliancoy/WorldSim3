@@ -98,6 +98,11 @@ struct MapTabContext {
     std::vector<double>* parcel_tax_lien_amount_by_feature = nullptr;
     std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    std::vector<std::string>* parcel_owner_search_by_feature = nullptr;
+    std::vector<std::string>* real_property_owner_search_by_feature = nullptr;
+    std::vector<std::string>* parcel_address_search_by_feature = nullptr;
+    const FilterResultSet* owner_text_filter_result_set = nullptr;
+    const FilterResultSet* address_text_filter_result_set = nullptr;
 
     float global_heat_cell_px = 24.0f;
     int heatmap_algo = 0;
@@ -128,7 +133,10 @@ struct MapTabContext {
     size_t* prof_features_drawn_frame = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
     std::atomic<bool>* prof_heatmap_high_quality = nullptr;

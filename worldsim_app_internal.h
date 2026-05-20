@@ -81,6 +81,7 @@ void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild
 void drainRetiredTextures(bool force = false);
 void destroyTileTexture(TileTexture& tex);
 void destroyTileTextureNow(TileTexture& tex);
+bool finalizeTileTextureDescriptor(TileTexture& tex);
 bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, TileTexture& tex);
 TileSample getTileSample(
     const std::filesystem::path& root,

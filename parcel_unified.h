@@ -22,7 +22,9 @@ struct UnifiedParcelRecord {
 
     std::string owner;
     std::string owner_display;
+    std::string owner_search;
     std::string address;
+    std::string address_search;
     std::string zip;
     std::string status;
 

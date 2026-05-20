@@ -81,12 +81,15 @@ struct FrameSupportFinalizationContext {
     std::atomic<double>* prof_owner_ms_last = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
     std::atomic<double>* prof_overlay_ms_last = nullptr;
     std::atomic<double>* prof_present_ms_last = nullptr;
     std::atomic<size_t>* prof_tiles_drawn_last = nullptr;
     std::atomic<size_t>* prof_features_considered_last = nullptr;
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
     std::atomic<size_t>* prof_tile_cache_size = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;

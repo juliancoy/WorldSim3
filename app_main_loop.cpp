@@ -80,6 +80,8 @@
 #include "owner_info.h"
 #include "owners_tab.h"
 #include "owner_aggregates.h"
+#include "owner_text_filter.h"
+#include "address_text_filter.h"
 #include "gradient_tab.h"
 #include "vacancy_parcel_tab.h"
 #include "parcel_info_tab.h"
@@ -484,6 +486,9 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<double> parcel_tax_sale_amount_by_feature;
     int parcel_parameter_mode = 0;
     std::vector<UnifiedParcelRecord> unified_parcels;
+    std::vector<std::string> parcel_owner_search_by_feature;
+    std::vector<std::string> real_property_owner_search_by_feature;
+    std::vector<std::string> parcel_address_search_by_feature;
     int vacancy_maps_generation = 0;
     int parcel_vacancy_generation_applied = -1;
     int tax_maps_generation = 0;
@@ -502,6 +507,8 @@ int runWorldSim3App(int argc, char** argv) {
     size_t cached_tax_sale_size = 0;
     std::string cached_tax_sale_signature;
     std::string unified_parcel_cached_signature;
+    OwnerTextFilterState owner_text_filter_state;
+    AddressTextFilterState address_text_filter_state;
     std::string derived_layer_refresh_inputs_signature;
     std::mutex hydrated_mutex;
     std::deque<HydratedLayer> hydrated_queue;
@@ -528,12 +535,15 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<double> prof_owner_ms_last{0.0};
     std::atomic<double> prof_tile_ms_last{0.0};
     std::atomic<double> prof_layer_ms_last{0.0};
+    std::atomic<double> prof_owner_filter_ms_last{0.0};
     std::atomic<double> prof_heatmap_ms_last{0.0};
     std::atomic<double> prof_overlay_ms_last{0.0};
     std::atomic<double> prof_present_ms_last{0.0};
     std::atomic<size_t> prof_tiles_drawn_last{0};
     std::atomic<size_t> prof_features_considered_last{0};
     std::atomic<size_t> prof_features_drawn_last{0};
+    std::atomic<size_t> prof_owner_filter_candidates_last{0};
+    std::atomic<size_t> prof_owner_filter_matches_last{0};
     std::atomic<size_t> prof_heat_samples_last{0};
     std::atomic<size_t> prof_retired_textures{0};
     std::atomic<bool> prof_heatmap_gpu_splat_active{false};
@@ -959,12 +969,15 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.prof_owner_ms_last = &prof_owner_ms_last;
     status_api_input.prof_tile_ms_last = &prof_tile_ms_last;
     status_api_input.prof_layer_ms_last = &prof_layer_ms_last;
+    status_api_input.prof_owner_filter_ms_last = &prof_owner_filter_ms_last;
     status_api_input.prof_heatmap_ms_last = &prof_heatmap_ms_last;
     status_api_input.prof_overlay_ms_last = &prof_overlay_ms_last;
     status_api_input.prof_present_ms_last = &prof_present_ms_last;
     status_api_input.prof_tiles_drawn_last = &prof_tiles_drawn_last;
     status_api_input.prof_features_considered_last = &prof_features_considered_last;
     status_api_input.prof_features_drawn_last = &prof_features_drawn_last;
+    status_api_input.prof_owner_filter_candidates_last = &prof_owner_filter_candidates_last;
+    status_api_input.prof_owner_filter_matches_last = &prof_owner_filter_matches_last;
     status_api_input.prof_heat_samples_last = &prof_heat_samples_last;
     status_api_input.prof_retired_textures = &prof_retired_textures;
     status_api_input.prof_projection_world_ring_cache_entries = &prof_projection_world_ring_cache_entries;
@@ -2376,6 +2389,9 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total;
         derived_layer_caches_ctx.vacant_parcels_triangulated_renderable_total = &vacant_parcels_triangulated_renderable_total;
         derived_layer_caches_ctx.unified_parcels = &unified_parcels;
+        derived_layer_caches_ctx.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
+        derived_layer_caches_ctx.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
+        derived_layer_caches_ctx.parcel_address_search_by_feature = &parcel_address_search_by_feature;
         derived_layer_caches_ctx.unified_parcel_cached_size = &unified_parcel_cached_size;
         derived_layer_caches_ctx.unified_parcel_cached_signature = &unified_parcel_cached_signature;
         derived_layer_caches_ctx.last_refresh_inputs_signature = &derived_layer_refresh_inputs_signature;
@@ -2384,6 +2400,24 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.unified_tax_generation_applied = &unified_tax_generation_applied;
         derived_layer_caches_ctx.owner_aggregates_dirty = &owner_aggregates_dirty;
         refreshDerivedLayerCaches(derived_layer_caches_ctx);
+        refreshOwnerTextFilterState(owner_text_filter_state, OwnerTextFilterRefreshContext{
+            &map_filter_state,
+            &unified_parcels,
+            &parcel_owner_search_by_feature,
+            parcel_layer_idx,
+            real_property_layer_idx,
+            &unified_parcel_cached_signature,
+            &harmonized_real_property_signature,
+            harmonized_real_property_features.size()
+        });
+        refreshAddressTextFilterState(address_text_filter_state, AddressTextFilterRefreshContext{
+            &map_filter_state,
+            &unified_parcels,
+            &parcel_address_search_by_feature,
+            parcel_layer_idx,
+            real_property_layer_idx,
+            &unified_parcel_cached_signature
+        });
         for (size_t li = 0; li < layers.size(); ++li) {
             LayerPipelineStatus st = LayerPipelineStatus::Queued;
             std::string hydration_signature;
@@ -2628,13 +2662,25 @@ int runWorldSim3App(int argc, char** argv) {
                     filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
                         ? &parcel_jurisdiction_filter_state.result_set
                         : nullptr;
+                    filter_input.secondary_result_set = owner_text_filter_state.result_set.active
+                        ? &owner_text_filter_state.result_set
+                        : nullptr;
+                    filter_input.tertiary_result_set = address_text_filter_state.result_set.active
+                        ? &address_text_filter_state.result_set
+                        : nullptr;
                     filter_input.query_layers = &query_layers;
+                    filter_input.unified_parcels = &unified_parcels;
+                    filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
+                    filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
+                    filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
                     filter_input.real_property_by_blocklot = &real_property_by_blocklot;
                     filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
                     filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
                     filter_input.real_property_layer_idx = real_property_layer_idx;
                     filter_input.parcel_layer_idx = parcel_layer_idx;
                     filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+                    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+                    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
                     const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
                     const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
 
@@ -2956,13 +3002,25 @@ int runWorldSim3App(int argc, char** argv) {
             filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
                 ? &parcel_jurisdiction_filter_state.result_set
                 : nullptr;
+            filter_input.secondary_result_set = owner_text_filter_state.result_set.active
+                ? &owner_text_filter_state.result_set
+                : nullptr;
+            filter_input.tertiary_result_set = address_text_filter_state.result_set.active
+                ? &address_text_filter_state.result_set
+                : nullptr;
             filter_input.query_layers = &query_layers;
+            filter_input.unified_parcels = &unified_parcels;
+            filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
+            filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
+            filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
             filter_input.real_property_by_blocklot = &real_property_by_blocklot;
             filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
             filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
             filter_input.real_property_layer_idx = real_property_layer_idx;
             filter_input.parcel_layer_idx = parcel_layer_idx;
             filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+            filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+            filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
             const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
 
             auto hash_mix = [](uint64_t& h, uint64_t v) {
@@ -3215,13 +3273,25 @@ int runWorldSim3App(int argc, char** argv) {
                     filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
                         ? &parcel_jurisdiction_filter_state.result_set
                         : nullptr;
+                    filter_input.secondary_result_set = owner_text_filter_state.result_set.active
+                        ? &owner_text_filter_state.result_set
+                        : nullptr;
+                    filter_input.tertiary_result_set = address_text_filter_state.result_set.active
+                        ? &address_text_filter_state.result_set
+                        : nullptr;
                     filter_input.query_layers = &query_layers;
+                    filter_input.unified_parcels = &unified_parcels;
+                    filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
+                    filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
+                    filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
                     filter_input.real_property_by_blocklot = &real_property_by_blocklot;
                     filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
                     filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
                     filter_input.real_property_layer_idx = real_property_layer_idx;
                     filter_input.parcel_layer_idx = parcel_layer_idx;
                     filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+                    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+                    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
                     const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
 
                     if (color_state_key != crime_point_gpu_color_state_key) {
@@ -3314,6 +3384,8 @@ int runWorldSim3App(int argc, char** argv) {
                 &parcel_vac_notice_by_feature,
                 &parcel_vac_rehab_by_feature,
                 &parcel_jurisdiction_filter_state,
+                &owner_text_filter_state.result_set,
+                &address_text_filter_state.result_set,
                 &owner_class_overrides,
                 &owner_class_overrides_loaded,
                 &owner_class_overrides_dirty,
@@ -3432,6 +3504,11 @@ int runWorldSim3App(int argc, char** argv) {
             &parcel_tax_lien_amount_by_feature,
             &parcel_tax_sale_amount_by_feature,
             &unified_parcels,
+            &parcel_owner_search_by_feature,
+            &real_property_owner_search_by_feature,
+            &parcel_address_search_by_feature,
+            &owner_text_filter_state.result_set,
+            &address_text_filter_state.result_set,
             global_heat_cell_px,
             heatmap_algo,
             heatmap_quality_preset,
@@ -3458,7 +3535,10 @@ int runWorldSim3App(int argc, char** argv) {
             &prof_features_drawn_frame,
             &prof_tile_ms_last,
             &prof_layer_ms_last,
+            &prof_owner_filter_ms_last,
             &prof_heatmap_ms_last,
+            &prof_owner_filter_candidates_last,
+            &prof_owner_filter_matches_last,
             &prof_heat_samples_last,
             &prof_heatmap_gpu_splat_active,
             &prof_heatmap_high_quality,
@@ -3533,12 +3613,15 @@ int runWorldSim3App(int argc, char** argv) {
             &prof_owner_ms_last,
             &prof_tile_ms_last,
             &prof_layer_ms_last,
+            &prof_owner_filter_ms_last,
             &prof_heatmap_ms_last,
             &prof_overlay_ms_last,
             &prof_present_ms_last,
             &prof_tiles_drawn_last,
             &prof_features_considered_last,
             &prof_features_drawn_last,
+            &prof_owner_filter_candidates_last,
+            &prof_owner_filter_matches_last,
             &prof_retired_textures,
             &prof_tile_cache_size,
             &prof_heat_samples_last,

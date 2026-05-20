@@ -226,6 +226,25 @@ HttpResponse httpPostForm(const std::string& url, const std::vector<std::pair<st
     return res;
 }
 
+HttpResponse httpGet(const std::string& url) {
+    CURL* curl = curl_easy_init();
+    if (!curl) throw std::runtime_error("curl init failed");
+    HttpResponse res;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 180L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToString);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &res.body);
+    CURLcode rc = curl_easy_perform(curl);
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res.code);
+    curl_easy_cleanup(curl);
+    if (rc != CURLE_OK) throw std::runtime_error(std::string("http failed: ") + curl_easy_strerror(rc));
+    if (res.code < 200 || res.code >= 300) throw std::runtime_error("http code " + std::to_string(res.code));
+    return res;
+}
+
 std::vector<std::vector<std::string>> parseCsv(const std::vector<uint8_t>& bytes) {
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> row;

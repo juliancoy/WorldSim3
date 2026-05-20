@@ -33,7 +33,11 @@ void refreshParcelJurisdictionFilter(const MapFrameSessionContext& ctx) {
     }
 }
 
-FeatureFilterContext buildFrameFilterContext(const MapFrameSessionContext& ctx) {
+FeatureFilterContext buildFrameFilterContext(
+    const MapFrameSessionContext& ctx,
+    double& owner_filter_ms_frame,
+    size_t& owner_filter_candidates_frame,
+    size_t& owner_filter_matches_frame) {
     FeatureFilterContextFactoryInput filter_input;
     filter_input.layers = ctx.layers;
     filter_input.map_filters = ctx.map_filter_state;
@@ -41,13 +45,30 @@ FeatureFilterContext buildFrameFilterContext(const MapFrameSessionContext& ctx) 
         ctx.parcel_jurisdiction_filter_state && ctx.parcel_jurisdiction_filter_state->result_set.active
             ? &ctx.parcel_jurisdiction_filter_state->result_set
             : nullptr;
+    filter_input.secondary_result_set =
+        ctx.owner_text_filter_result_set && ctx.owner_text_filter_result_set->active
+            ? ctx.owner_text_filter_result_set
+            : nullptr;
+    filter_input.tertiary_result_set =
+        ctx.address_text_filter_result_set && ctx.address_text_filter_result_set->active
+            ? ctx.address_text_filter_result_set
+            : nullptr;
     filter_input.real_property_by_blocklot = ctx.real_property_by_blocklot;
+    filter_input.unified_parcels = ctx.unified_parcels;
+    filter_input.parcel_owner_search_by_feature = ctx.parcel_owner_search_by_feature;
+    filter_input.real_property_owner_search_by_feature = ctx.real_property_owner_search_by_feature;
+    filter_input.parcel_address_search_by_feature = ctx.parcel_address_search_by_feature;
     filter_input.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
     filter_input.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;
     filter_input.real_property_layer_idx = ctx.real_property_layer_idx;
     filter_input.parcel_layer_idx = ctx.parcel_layer_idx;
     filter_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
     filter_input.query_layers = ctx.query_layers;
+    filter_input.owner_filter_ms_accum = &owner_filter_ms_frame;
+    filter_input.owner_filter_candidates_accum = &owner_filter_candidates_frame;
+    filter_input.owner_filter_matches_accum = &owner_filter_matches_frame;
+    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
     return makeFeatureFilterContext(filter_input);
 }
 
@@ -209,8 +230,24 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
     }
 
     refreshParcelJurisdictionFilter(ctx);
-    const FeatureFilterContext filter_ctx = buildFrameFilterContext(ctx);
+    double owner_filter_ms_frame = 0.0;
+    size_t owner_filter_candidates_frame = 0;
+    size_t owner_filter_matches_frame = 0;
+    const FeatureFilterContext filter_ctx = buildFrameFilterContext(
+        ctx,
+        owner_filter_ms_frame,
+        owner_filter_candidates_frame,
+        owner_filter_matches_frame);
     orchestrateMapFrameRender(buildRenderFrameContext(ctx, filter_ctx));
+    if (ctx.prof_owner_filter_ms_last) {
+        ctx.prof_owner_filter_ms_last->store(owner_filter_ms_frame, std::memory_order_relaxed);
+    }
+    if (ctx.prof_owner_filter_candidates_last) {
+        ctx.prof_owner_filter_candidates_last->store(owner_filter_candidates_frame, std::memory_order_relaxed);
+    }
+    if (ctx.prof_owner_filter_matches_last) {
+        ctx.prof_owner_filter_matches_last->store(owner_filter_matches_frame, std::memory_order_relaxed);
+    }
     if (ctx.projection) {
         if (ctx.prof_projection_world_ring_cache_entries) {
             ctx.prof_projection_world_ring_cache_entries->store(ctx.projection->cachedWorldRingEntries(), std::memory_order_relaxed);

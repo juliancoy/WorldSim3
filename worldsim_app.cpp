@@ -3025,6 +3025,13 @@ void destroyTileTexture(TileTexture& tex) {
     tex = {};
 }
 
+bool finalizeTileTextureDescriptor(TileTexture& tex) {
+    if (!tex.view) return false;
+    if (tex.descriptor) return true;
+    tex.descriptor = ImGui_ImplVulkan_AddTexture(g_TileSampler, tex.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    return tex.descriptor != VK_NULL_HANDLE;
+}
+
 void drainRetiredTextures(bool force) {
     if (force) {
         if (g_Device != VK_NULL_HANDLE) check_vk_result(vkDeviceWaitIdle(g_Device));
@@ -3074,8 +3081,7 @@ bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, Tile
     vkFreeMemory(g_Device, staging_mem, g_Allocator);
 
     tex.view = createImageView(tex.image, tex.mip_levels);
-    tex.descriptor = ImGui_ImplVulkan_AddTexture(g_TileSampler, tex.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    return tex.descriptor != VK_NULL_HANDLE;
+    return finalizeTileTextureDescriptor(tex);
 }
 
 static void touchLRU(const std::string& key) {

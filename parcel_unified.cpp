@@ -99,7 +99,9 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
 
         row.owner_display = ownerDisplay(row.real_property, parcel);
         row.owner = toLowerAscii(row.owner_display);
+        row.owner_search = row.owner;
         row.address = addressFor(row.real_property, parcel);
+        row.address_search = normalizeAddressSearchText(row.address);
         row.zip = row.real_property ? prop(*row.real_property, {"zip", "ZIP", "ZIPCODE", "POSTAL_CODE"}) : "";
         if (row.zip.empty()) row.zip = prop(parcel, {"zip", "ZIP", "ZIPCODE", "POSTAL_CODE"});
         row.status = row.real_property ? prop(*row.real_property, {"STATUS", "STATE", "CASE_STATUS"}) : "";

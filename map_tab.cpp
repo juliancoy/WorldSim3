@@ -364,6 +364,11 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.parcel_tax_lien_amount_by_feature = ctx.parcel_tax_lien_amount_by_feature;
             map_frame_session_ctx.parcel_tax_sale_amount_by_feature = ctx.parcel_tax_sale_amount_by_feature;
             map_frame_session_ctx.unified_parcels = ctx.unified_parcels;
+            map_frame_session_ctx.parcel_owner_search_by_feature = ctx.parcel_owner_search_by_feature;
+            map_frame_session_ctx.real_property_owner_search_by_feature = ctx.real_property_owner_search_by_feature;
+            map_frame_session_ctx.parcel_address_search_by_feature = ctx.parcel_address_search_by_feature;
+            map_frame_session_ctx.owner_text_filter_result_set = ctx.owner_text_filter_result_set;
+            map_frame_session_ctx.address_text_filter_result_set = ctx.address_text_filter_result_set;
             map_frame_session_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
             map_frame_session_ctx.zoning_metadata = ctx.zoning_metadata;
             map_frame_session_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
@@ -396,7 +401,10 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.open_parcel_element = [&](size_t idx) { openElementParcelPage(*ctx.element_info_state, idx); };
             map_frame_session_ctx.real_property_for_parcel = ctx.real_property_for_parcel;
             map_frame_session_ctx.prof_layer_ms_last = ctx.prof_layer_ms_last;
+            map_frame_session_ctx.prof_owner_filter_ms_last = ctx.prof_owner_filter_ms_last;
             map_frame_session_ctx.prof_heatmap_ms_last = ctx.prof_heatmap_ms_last;
+            map_frame_session_ctx.prof_owner_filter_candidates_last = ctx.prof_owner_filter_candidates_last;
+            map_frame_session_ctx.prof_owner_filter_matches_last = ctx.prof_owner_filter_matches_last;
             map_frame_session_ctx.prof_heat_samples_last = ctx.prof_heat_samples_last;
             map_frame_session_ctx.prof_heatmap_gpu_splat_active = ctx.prof_heatmap_gpu_splat_active;
             map_frame_session_ctx.prof_heatmap_high_quality = ctx.prof_heatmap_high_quality;

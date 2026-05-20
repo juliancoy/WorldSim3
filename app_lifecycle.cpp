@@ -46,6 +46,7 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     sample.frame_ms = frame_ms;
     sample.ui_total_ms = ctx.prof_ui_ms_last->load(std::memory_order_relaxed);
     sample.owner_aggregate_ms = ctx.prof_owner_ms_last->load(std::memory_order_relaxed);
+    sample.owner_filter_ms = ctx.prof_owner_filter_ms_last->load(std::memory_order_relaxed);
     sample.tiles_ms = ctx.prof_tile_ms_last->load(std::memory_order_relaxed);
     sample.layers_ms = ctx.prof_layer_ms_last->load(std::memory_order_relaxed);
     sample.heatmap_ms = ctx.prof_heatmap_ms_last->load(std::memory_order_relaxed);
@@ -54,6 +55,8 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     sample.tiles_drawn = ctx.tiles_drawn_frame;
     sample.features_considered = ctx.features_considered_frame;
     sample.features_drawn_points = ctx.features_drawn_frame;
+    sample.owner_filter_candidates = ctx.prof_owner_filter_candidates_last->load(std::memory_order_relaxed);
+    sample.owner_filter_matches = ctx.prof_owner_filter_matches_last->load(std::memory_order_relaxed);
     sample.heat_samples = ctx.prof_heat_samples_last->load(std::memory_order_relaxed);
     sample.retired_textures = g_RetiredTextures.size();
     std::lock_guard<std::mutex> lk(*ctx.profile_mutex);

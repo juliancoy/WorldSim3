@@ -43,6 +43,10 @@ constexpr uint32_t kMaxParcelRenderFeatures = 10000000u;
 constexpr uint32_t kMaxParcelRenderChunks = 100000u;
 constexpr std::array<char, 8> kCanonicalFeatureBinaryMagic{{'W', 'S', '3', 'C', 'A', 'N', '1', '\0'}};
 constexpr uint32_t kCanonicalFeatureBinaryVersion = 1;
+constexpr std::array<char, 8> kOwnerSearchBinaryMagic{{'W', 'S', '3', 'O', 'S', 'C', '1', '\0'}};
+constexpr uint32_t kOwnerSearchBinaryVersion = 1;
+constexpr std::array<char, 8> kAddressSearchBinaryMagic{{'W', 'S', '3', 'A', 'S', 'C', '1', '\0'}};
+constexpr uint32_t kAddressSearchBinaryVersion = 1;
 constexpr size_t kCanonicalFeatureSignatureBytes = 256;
 constexpr size_t kRegionalParcelCompactionPropertyThreshold = 24;
 
@@ -881,4 +885,187 @@ bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std:
         out.push_back(std::move(fg));
     }
     return true;
+}
+
+bool loadBinaryOwnerSearchCache(
+    const fs::path& cache_path,
+    const std::string& parcel_sig,
+    const std::string& real_property_sig,
+    std::vector<std::string>& parcel_owner_search,
+    std::vector<std::string>& real_property_owner_search) {
+    std::ifstream in(cache_path, std::ios::binary);
+    if (!in) return false;
+
+    std::array<char, 8> magic{};
+    uint32_t version = 0;
+    uint32_t endian = 0;
+    uint64_t parcel_count = 0;
+    uint64_t real_property_count = 0;
+    std::string stored_parcel_sig;
+    std::string stored_real_property_sig;
+    if (!readExact(in, magic.data(), magic.size()) ||
+        magic != kOwnerSearchBinaryMagic ||
+        !readU32(in, version) ||
+        version != kOwnerSearchBinaryVersion ||
+        !readU32(in, endian) ||
+        endian != 0x01020304u ||
+        !readU64(in, parcel_count) ||
+        !readU64(in, real_property_count) ||
+        !readString(in, stored_parcel_sig) ||
+        !readString(in, stored_real_property_sig) ||
+        stored_parcel_sig != parcel_sig ||
+        stored_real_property_sig != real_property_sig) {
+        return false;
+    }
+    if (parcel_count > kMaxBinaryHydrationFeatures ||
+        real_property_count > kMaxBinaryHydrationFeatures) {
+        return false;
+    }
+
+    parcel_owner_search.clear();
+    real_property_owner_search.clear();
+    parcel_owner_search.reserve(static_cast<size_t>(parcel_count));
+    real_property_owner_search.reserve(static_cast<size_t>(real_property_count));
+
+    for (uint64_t i = 0; i < parcel_count; ++i) {
+        std::string value;
+        if (!readString(in, value)) return false;
+        parcel_owner_search.push_back(std::move(value));
+    }
+    for (uint64_t i = 0; i < real_property_count; ++i) {
+        std::string value;
+        if (!readString(in, value)) return false;
+        real_property_owner_search.push_back(std::move(value));
+    }
+    return true;
+}
+
+void saveBinaryOwnerSearchCache(
+    const fs::path& cache_path,
+    const std::string& parcel_sig,
+    const std::string& real_property_sig,
+    const std::vector<std::string>& parcel_owner_search,
+    const std::vector<std::string>& real_property_owner_search) {
+    if (!hostIsLittleEndian()) return;
+    if (parcel_owner_search.size() > std::numeric_limits<uint64_t>::max() ||
+        real_property_owner_search.size() > std::numeric_limits<uint64_t>::max()) {
+        return;
+    }
+
+    fs::create_directories(cache_path.parent_path());
+    const fs::path tmp_path = tempCachePathFor(cache_path);
+    bool ok = false;
+    {
+        TrimHeapOnScopeExit trim_on_exit;
+        std::ofstream out(tmp_path, std::ios::binary);
+        if (!out) return;
+        ok = writeExact(out, kOwnerSearchBinaryMagic.data(), kOwnerSearchBinaryMagic.size()) &&
+             writeU32(out, kOwnerSearchBinaryVersion) &&
+             writeU32(out, 0x01020304u) &&
+             writeU64(out, static_cast<uint64_t>(parcel_owner_search.size())) &&
+             writeU64(out, static_cast<uint64_t>(real_property_owner_search.size())) &&
+             writeString(out, parcel_sig) &&
+             writeString(out, real_property_sig);
+        for (const std::string& value : parcel_owner_search) {
+            if (!ok) break;
+            ok = writeString(out, value);
+        }
+        for (const std::string& value : real_property_owner_search) {
+            if (!ok) break;
+            ok = writeString(out, value);
+        }
+        out.flush();
+        ok = ok && bool(out);
+    }
+    if (!ok) {
+        std::error_code remove_ec;
+        fs::remove(tmp_path, remove_ec);
+        return;
+    }
+    std::error_code rename_ec;
+    fs::rename(tmp_path, cache_path, rename_ec);
+    if (rename_ec) {
+        std::error_code remove_ec;
+        fs::remove(cache_path, remove_ec);
+        rename_ec.clear();
+        fs::rename(tmp_path, cache_path, rename_ec);
+        if (rename_ec) fs::remove(tmp_path, remove_ec);
+    }
+}
+
+bool loadBinaryAddressSearchCache(
+    const fs::path& cache_path,
+    const std::string& parcel_sig,
+    std::vector<std::string>& parcel_address_search) {
+    std::ifstream in(cache_path, std::ios::binary);
+    if (!in) return false;
+
+    std::array<char, 8> magic{};
+    uint32_t version = 0;
+    uint32_t endian = 0;
+    uint64_t parcel_count = 0;
+    std::string stored_parcel_sig;
+    if (!readExact(in, magic.data(), magic.size()) ||
+        magic != kAddressSearchBinaryMagic ||
+        !readU32(in, version) ||
+        version != kAddressSearchBinaryVersion ||
+        !readU32(in, endian) ||
+        endian != 0x01020304u ||
+        !readU64(in, parcel_count) ||
+        !readString(in, stored_parcel_sig) ||
+        stored_parcel_sig != parcel_sig ||
+        parcel_count > kMaxBinaryHydrationFeatures) {
+        return false;
+    }
+
+    parcel_address_search.clear();
+    parcel_address_search.reserve(static_cast<size_t>(parcel_count));
+    for (uint64_t i = 0; i < parcel_count; ++i) {
+        std::string value;
+        if (!readString(in, value)) return false;
+        parcel_address_search.push_back(std::move(value));
+    }
+    return true;
+}
+
+void saveBinaryAddressSearchCache(
+    const fs::path& cache_path,
+    const std::string& parcel_sig,
+    const std::vector<std::string>& parcel_address_search) {
+    if (!hostIsLittleEndian()) return;
+    if (parcel_address_search.size() > std::numeric_limits<uint64_t>::max()) return;
+
+    fs::create_directories(cache_path.parent_path());
+    const fs::path tmp_path = tempCachePathFor(cache_path);
+    bool ok = false;
+    {
+        TrimHeapOnScopeExit trim_on_exit;
+        std::ofstream out(tmp_path, std::ios::binary);
+        if (!out) return;
+        ok = writeExact(out, kAddressSearchBinaryMagic.data(), kAddressSearchBinaryMagic.size()) &&
+             writeU32(out, kAddressSearchBinaryVersion) &&
+             writeU32(out, 0x01020304u) &&
+             writeU64(out, static_cast<uint64_t>(parcel_address_search.size())) &&
+             writeString(out, parcel_sig);
+        for (const std::string& value : parcel_address_search) {
+            if (!ok) break;
+            ok = writeString(out, value);
+        }
+        out.flush();
+        ok = ok && bool(out);
+    }
+    if (!ok) {
+        std::error_code remove_ec;
+        fs::remove(tmp_path, remove_ec);
+        return;
+    }
+    std::error_code rename_ec;
+    fs::rename(tmp_path, cache_path, rename_ec);
+    if (rename_ec) {
+        std::error_code remove_ec;
+        fs::remove(cache_path, remove_ec);
+        rename_ec.clear();
+        fs::rename(tmp_path, cache_path, rename_ec);
+        if (rename_ec) fs::remove(tmp_path, remove_ec);
+    }
 }

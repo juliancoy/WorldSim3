@@ -25,7 +25,11 @@ struct LayerDef {
     std::string import_source_crs;
     std::string import_shapefile;
     std::string import_service_url;
+    std::string import_where;
     std::string import_normalizer;
+    std::string import_table;
+    std::string import_year;
+    std::string import_survey;
     std::string import_sheet_name;
     std::string import_item_path;
     std::string import_lon_field;

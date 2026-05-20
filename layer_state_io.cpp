@@ -237,7 +237,11 @@ static void appendManifestEntries(
             ld.import_source_crs = import.value("source_crs", std::string());
             ld.import_shapefile = import.value("shapefile", std::string());
             ld.import_service_url = import.value("service_url", std::string());
+            ld.import_where = import.value("where", std::string());
             ld.import_normalizer = import.value("normalizer", std::string());
+            ld.import_table = import.value("table", std::string());
+            ld.import_year = import.value("year", std::string());
+            ld.import_survey = import.value("survey", std::string());
             ld.import_sheet_name = import.value("sheet_name", std::string());
             ld.import_item_path = import.value("item_path", std::string());
             ld.import_lon_field = import.value("lon_field", std::string());

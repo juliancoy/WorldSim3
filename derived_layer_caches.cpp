@@ -1,6 +1,7 @@
 #include "derived_layer_caches.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
 #include "feature_props.h"
 #include "parcel_consolidation.h"
 #include "vacancy_overlay.h"
@@ -74,6 +75,15 @@ std::string derivedLayerRefreshInputsSignature(const DerivedLayerCachesContext& 
     sig += ctx.app_settings->zoning_use_simcity_colors ? "1" : "0";
     return sig;
 }
+
+std::string ownerSearchValueFor(const LayerDef::FeatureGeom& fg) {
+    return toLowerAscii(trimDisplayValue(firstDisplayProperty(fg, {
+        "owner", "owner_name",
+        "OWNER_1", "OWNER_2", "OWNER_3",
+        "OWNERNME1", "OWNER", "OWNER_NAME",
+        "AR_OWNER", "OWNER_ABBR"
+    })));
+}
 }
 
 void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
@@ -98,6 +108,8 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.vacant_notice_rows_matched_total || !ctx.vacant_rehab_rows_matched_total ||
         !ctx.vacant_parcels_matched_total || !ctx.vacant_parcels_with_geometry_total ||
         !ctx.vacant_parcels_triangulated_renderable_total || !ctx.unified_parcels ||
+        !ctx.parcel_owner_search_by_feature || !ctx.real_property_owner_search_by_feature ||
+        !ctx.parcel_address_search_by_feature ||
         !ctx.unified_parcel_cached_size || !ctx.unified_parcel_cached_signature ||
         !ctx.last_refresh_inputs_signature ||
         !ctx.unified_real_property_cached_size ||
@@ -333,6 +345,57 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             *ctx.unified_tax_generation_applied = *ctx.parcel_tax_generation_applied;
             *ctx.owner_aggregates_dirty = true;
         }
+        const std::string real_property_sig =
+            (ctx.real_property_layer_idx >= 0 &&
+             (size_t)ctx.real_property_layer_idx < layers.size())
+                ? hydratedLayerSignature(layers, ctx.layer_states, ctx.real_property_layer_idx)
+                : "missing";
+        const std::filesystem::path owner_search_cache_path =
+            *ctx.root / "data" / "cache" / "derived" / "owner_search_cache.bin";
+        bool owner_search_cache_ok = loadBinaryOwnerSearchCache(
+            owner_search_cache_path,
+            parcel_sig,
+            real_property_sig,
+            *ctx.parcel_owner_search_by_feature,
+            *ctx.real_property_owner_search_by_feature);
+        if (!owner_search_cache_ok ||
+            ctx.parcel_owner_search_by_feature->size() != pfeats.size() ||
+            ctx.real_property_owner_search_by_feature->size() != ctx.harmonized_real_property_features->size()) {
+            ctx.parcel_owner_search_by_feature->clear();
+            ctx.real_property_owner_search_by_feature->clear();
+            ctx.parcel_owner_search_by_feature->reserve(ctx.unified_parcels->size());
+            for (const UnifiedParcelRecord& row : *ctx.unified_parcels) {
+                ctx.parcel_owner_search_by_feature->push_back(row.owner_search);
+            }
+            ctx.real_property_owner_search_by_feature->reserve(ctx.harmonized_real_property_features->size());
+            for (const LayerDef::FeatureGeom& fg : *ctx.harmonized_real_property_features) {
+                ctx.real_property_owner_search_by_feature->push_back(ownerSearchValueFor(fg));
+            }
+            saveBinaryOwnerSearchCache(
+                owner_search_cache_path,
+                parcel_sig,
+                real_property_sig,
+                *ctx.parcel_owner_search_by_feature,
+                *ctx.real_property_owner_search_by_feature);
+        }
+        const std::filesystem::path address_search_cache_path =
+            *ctx.root / "data" / "cache" / "derived" / "address_search_cache.bin";
+        const bool address_search_cache_ok = loadBinaryAddressSearchCache(
+            address_search_cache_path,
+            parcel_sig,
+            *ctx.parcel_address_search_by_feature);
+        if (!address_search_cache_ok ||
+            ctx.parcel_address_search_by_feature->size() != pfeats.size()) {
+            ctx.parcel_address_search_by_feature->clear();
+            ctx.parcel_address_search_by_feature->reserve(ctx.unified_parcels->size());
+            for (const UnifiedParcelRecord& row : *ctx.unified_parcels) {
+                ctx.parcel_address_search_by_feature->push_back(row.address_search);
+            }
+            saveBinaryAddressSearchCache(
+                address_search_cache_path,
+                parcel_sig,
+                *ctx.parcel_address_search_by_feature);
+        }
         size_t matched_total = 0;
         size_t with_geometry_total = 0;
         size_t triangulated_renderable_total = 0;
@@ -347,5 +410,9 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         ctx.vacant_parcels_matched_total->store(matched_total, std::memory_order_relaxed);
         ctx.vacant_parcels_with_geometry_total->store(with_geometry_total, std::memory_order_relaxed);
         ctx.vacant_parcels_triangulated_renderable_total->store(triangulated_renderable_total, std::memory_order_relaxed);
+    } else {
+        ctx.parcel_owner_search_by_feature->clear();
+        ctx.real_property_owner_search_by_feature->clear();
+        ctx.parcel_address_search_by_feature->clear();
     }
 }

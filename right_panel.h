@@ -84,6 +84,8 @@ struct RightPanelContext {
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
     ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
+    const FilterResultSet* owner_text_filter_result_set = nullptr;
+    const FilterResultSet* address_text_filter_result_set = nullptr;
 
     std::unordered_map<std::string, std::string>* owner_class_overrides = nullptr;
     bool* owner_class_overrides_loaded = nullptr;

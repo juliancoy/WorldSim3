@@ -33,3 +33,4 @@
 - School catchments and public facilities
 - Hospital/clinic and food access
 - Census tract/block-group ACS demographics and income
+- National ACS demographic source layers should live under `sources/world/earth/nation_state/us/`, with Maryland and Baltimore consuming filtered or derived slices instead of redefining the upstream national source.

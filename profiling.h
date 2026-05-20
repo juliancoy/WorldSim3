@@ -7,6 +7,7 @@ struct ProfileFrameSample {
     double frame_ms = 0.0;
     double ui_total_ms = 0.0;
     double owner_aggregate_ms = 0.0;
+    double owner_filter_ms = 0.0;
     double tiles_ms = 0.0;
     double layers_ms = 0.0;
     double heatmap_ms = 0.0;
@@ -15,6 +16,8 @@ struct ProfileFrameSample {
     size_t tiles_drawn = 0;
     size_t features_considered = 0;
     size_t features_drawn_points = 0;
+    size_t owner_filter_candidates = 0;
+    size_t owner_filter_matches = 0;
     size_t heat_samples = 0;
     size_t retired_textures = 0;
 };

@@ -18,6 +18,7 @@ struct MapHeatmapDrawContext {
     uint64_t heatmap_key = 0;
     const TileTexture* heatmap_raster_texture = nullptr;
     const HeatmapRaster* heatmap_raster = nullptr;
+    const std::vector<HeatmapRasterLayer>* heatmap_raster_layers = nullptr;
     const std::vector<CachedHeatCell>* draw_cells = nullptr;
     std::function<ImVec2(const ImVec2&)> project_world;
 };

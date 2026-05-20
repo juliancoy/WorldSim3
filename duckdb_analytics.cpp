@@ -344,6 +344,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 owner VARCHAR,
                 owner_display VARCHAR,
                 address VARCHAR,
+                address_search VARCHAR,
                 zipcode VARCHAR,
                 status VARCHAR,
                 current_land DOUBLE,
@@ -379,6 +380,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_appender.Append<const char*>(parcel.owner.c_str());
                 parcel_appender.Append<const char*>(parcel.owner_display.c_str());
                 parcel_appender.Append<const char*>(parcel.address.c_str());
+                parcel_appender.Append<const char*>(parcel.address_search.c_str());
                 parcel_appender.Append<const char*>(parcel.zip.c_str());
                 parcel_appender.Append<const char*>(parcel.status.c_str());
                 parcel_appender.Append<double>(parcel.current_land);
@@ -407,6 +409,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_geography ON layer_features(provenance_nation_state, provenance_state_region)", "index layer_features geography");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)", "index unified_parcels blocklot");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)", "index unified_parcels owner");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_address_search ON unified_parcels(address_search)", "index unified_parcels address_search");
         exec_or_throw(R"SQL(
             CREATE TABLE analytics_build_info (
                 built_at_utc VARCHAR,
@@ -1004,7 +1007,9 @@ std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& q
     try {
         duckdb::DuckDB db(status_.db_path);
         duckdb::Connection con(db);
+        const std::string normalized_address_query = normalizeAddressSearchText(q);
         const std::string needle = "%" + sqlQuote(toLowerAscii(q)) + "%";
+        const std::string address_needle = "%" + sqlQuote(normalized_address_query) + "%";
         const std::string compact = "%" + sqlQuote(normalizeJoinKey(q)) + "%";
         std::ostringstream sql;
         sql << R"SQL(
@@ -1012,7 +1017,7 @@ std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& q
             FROM unified_parcels
             WHERE lower(coalesce(owner, '')) LIKE ')SQL" << needle << R"SQL('
                OR lower(coalesce(owner_display, '')) LIKE ')SQL" << needle << R"SQL('
-               OR lower(coalesce(address, '')) LIKE ')SQL" << needle << R"SQL('
+               OR coalesce(address_search, '') LIKE ')SQL" << address_needle << R"SQL('
                OR regexp_replace(upper(coalesce(blocklot, '')), '[^A-Z0-9]', '', 'g') LIKE ')SQL" << compact << R"SQL('
             LIMIT )SQL" << std::max<size_t>(max_rows * 8, 200) << ";";
         auto result = con.Query(sql.str());

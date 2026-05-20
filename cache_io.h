@@ -114,3 +114,27 @@ bool loadBinaryCanonicalFeatureCollection(
     const std::filesystem::path& cache_path,
     const std::string& sig,
     std::vector<LayerDef::FeatureGeom>& out);
+
+bool loadBinaryOwnerSearchCache(
+    const std::filesystem::path& cache_path,
+    const std::string& parcel_sig,
+    const std::string& real_property_sig,
+    std::vector<std::string>& parcel_owner_search,
+    std::vector<std::string>& real_property_owner_search);
+
+void saveBinaryOwnerSearchCache(
+    const std::filesystem::path& cache_path,
+    const std::string& parcel_sig,
+    const std::string& real_property_sig,
+    const std::vector<std::string>& parcel_owner_search,
+    const std::vector<std::string>& real_property_owner_search);
+
+bool loadBinaryAddressSearchCache(
+    const std::filesystem::path& cache_path,
+    const std::string& parcel_sig,
+    std::vector<std::string>& parcel_address_search);
+
+void saveBinaryAddressSearchCache(
+    const std::filesystem::path& cache_path,
+    const std::string& parcel_sig,
+    const std::vector<std::string>& parcel_address_search);

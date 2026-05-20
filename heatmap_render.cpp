@@ -314,6 +314,44 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                 auto build_raster_group = [&](const std::vector<HeatSample>& group) {
                     if (group.empty()) return;
                     const HeatSample& settings = group.front();
+                    if (isGpuSplatFamilyAlgo(settings.algo) &&
+                        !settings.allow_cpu_fallback) {
+                        std::string gpu_err;
+                        TileTexture gpu_texture;
+                        const float zf = settings.zoom_adaptive_bandwidth
+                            ? std::clamp(1.0f + 0.12f * (float)(max_zoom - zoom), 1.0f, 3.0f)
+                            : 1.0f;
+                        float sigma = std::max(1.0f, settings.bandwidth_px * zf);
+                        sigma = std::sqrt(sigma * sigma + settings.blur_sigma_px * settings.blur_sigma_px);
+                        if (buildGpuSplatAggregateTexture(
+                                group,
+                                rw,
+                                rh,
+                                raster_min_lon,
+                                raster_min_lat,
+                                raster_max_lon,
+                                raster_max_lat,
+                                sigma,
+                                settings.percentile_clip,
+                                gpu_texture,
+                                &gpu_err)) {
+                            out.has_raster = true;
+                            HeatmapRasterLayer raster_layer;
+                            raster_layer.raster = {
+                                rw,
+                                rh,
+                                raster_min_lon,
+                                raster_min_lat,
+                                raster_max_lon,
+                                raster_max_lat,
+                                {}
+                            };
+                            raster_layer.gpu_texture = std::move(gpu_texture);
+                            raster_layer.has_gpu_texture = true;
+                            out.raster_layers.push_back(std::move(raster_layer));
+                            return;
+                        }
+                    }
                     const float sx = (float)rw / std::max(0.0001f, raster_max_lon - raster_min_lon);
                     const float sy = (float)rh / std::max(0.0001f, raster_max_lat - raster_min_lat);
                     const bool preserved_gpu_splat =

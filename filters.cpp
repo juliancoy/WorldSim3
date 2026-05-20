@@ -4,6 +4,7 @@
 #include "event_sectors.h"
 #include "feature_props.h"
 
+#include <chrono>
 #include <initializer_list>
 
 namespace {
@@ -41,18 +42,78 @@ std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
 const LayerDef::FeatureGeom* joinedRealProperty(const FeatureFilterContext& ctx, const LayerDef::FeatureGeom& fg) {
     if (!ctx.layers ||
         ctx.real_property_layer_idx < 0 ||
-        (size_t)ctx.real_property_layer_idx >= ctx.layers->size() ||
-        !ctx.real_property_by_blocklot) {
+        (size_t)ctx.real_property_layer_idx >= ctx.layers->size()) {
         return nullptr;
     }
+    const size_t joined_idx = [&]() -> size_t {
+        if (!ctx.real_property_by_blocklot) return (size_t)-1;
+        std::string bl = featureBlockLotJoinKey(fg);
+        if (bl.empty()) return (size_t)-1;
+        auto itrp = ctx.real_property_by_blocklot->find(bl);
+        if (itrp == ctx.real_property_by_blocklot->end()) return (size_t)-1;
+        return itrp->second;
+    }();
+    if (joined_idx >= (*ctx.layers)[(size_t)ctx.real_property_layer_idx].features.size()) return nullptr;
+    return &(*ctx.layers)[(size_t)ctx.real_property_layer_idx].features[joined_idx];
+}
+
+size_t joinedRealPropertyIndex(const FeatureFilterContext& ctx, const LayerDef::FeatureGeom& fg) {
+    if (!ctx.layers ||
+        ctx.real_property_layer_idx < 0 ||
+        (size_t)ctx.real_property_layer_idx >= ctx.layers->size() ||
+        !ctx.real_property_by_blocklot) {
+        return (size_t)-1;
+    }
     std::string bl = featureBlockLotJoinKey(fg);
-    if (bl.empty()) return nullptr;
+    if (bl.empty()) return (size_t)-1;
     auto itrp = ctx.real_property_by_blocklot->find(bl);
     if (itrp == ctx.real_property_by_blocklot->end() ||
         itrp->second >= (*ctx.layers)[(size_t)ctx.real_property_layer_idx].features.size()) {
-        return nullptr;
+        return (size_t)-1;
     }
-    return &(*ctx.layers)[(size_t)ctx.real_property_layer_idx].features[itrp->second];
+    return itrp->second;
+}
+
+std::string ownerSearchText(
+    const FeatureFilterContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureGeom* rp_join,
+    size_t rp_join_idx) {
+    if (ctx.parcel_layer_idx >= 0 &&
+        (int)layer_idx == ctx.parcel_layer_idx &&
+        ctx.parcel_owner_search_by_feature &&
+        feature_idx < ctx.parcel_owner_search_by_feature->size()) {
+        return (*ctx.parcel_owner_search_by_feature)[feature_idx];
+    }
+    if (ctx.real_property_layer_idx >= 0 &&
+        (int)layer_idx == ctx.real_property_layer_idx &&
+        ctx.real_property_owner_search_by_feature &&
+        feature_idx < ctx.real_property_owner_search_by_feature->size()) {
+        return (*ctx.real_property_owner_search_by_feature)[feature_idx];
+    }
+    if (rp_join_idx != (size_t)-1 &&
+        ctx.real_property_owner_search_by_feature &&
+        rp_join_idx < ctx.real_property_owner_search_by_feature->size()) {
+        return (*ctx.real_property_owner_search_by_feature)[rp_join_idx];
+    }
+
+    std::string owner = firstDisplayProperty(fg, {
+        "owner", "owner_name",
+        "OWNER_1", "OWNER_2", "OWNER_3",
+        "OWNERNME1", "OWNER", "OWNER_NAME",
+        "AR_OWNER", "OWNER_ABBR"
+    });
+    if (owner.empty() && rp_join) {
+        owner = firstDisplayProperty(*rp_join, {
+            "owner", "owner_name",
+            "OWNER_1", "OWNER_2", "OWNER_3",
+            "OWNERNME1", "OWNER", "OWNER_NAME",
+            "AR_OWNER", "OWNER_ABBR"
+        });
+    }
+    return toLowerAscii(trimDisplayValue(owner));
 }
 
 bool isCrimeLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
@@ -114,13 +175,17 @@ bool resultSetMatches(const FeatureFilterContext& ctx, const FilterResultSet& re
 }
 
 bool resultSetAllows(const FeatureFilterContext& ctx, size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) {
-    const FilterResultSet* result_set = ctx.result_set;
-    if (!result_set || !result_set->active) return true;
-    const bool layer_targeted =
-        result_set->layers.empty() ||
-        result_set->layers.find(layer_idx) != result_set->layers.end();
-    if (!layer_targeted && !isParcelRelatedLayer(ctx, layer_idx)) return true;
-    return resultSetMatches(ctx, *result_set, layer_idx, feature_idx, fg);
+    auto allows_one = [&](const FilterResultSet* result_set) {
+        if (!result_set || !result_set->active) return true;
+        const bool layer_targeted =
+            result_set->layers.empty() ||
+            result_set->layers.find(layer_idx) != result_set->layers.end();
+        if (!layer_targeted && !isParcelRelatedLayer(ctx, layer_idx)) return true;
+        return resultSetMatches(ctx, *result_set, layer_idx, feature_idx, fg);
+    };
+    return allows_one(ctx.result_set) &&
+        allows_one(ctx.secondary_result_set) &&
+        allows_one(ctx.tertiary_result_set);
 }
 }
 
@@ -216,7 +281,10 @@ bool featurePassesFilters(
         (size_t)ctx.real_property_layer_idx < ctx.layers->size();
     if (!filters.enabled && !selected_owner_filter_active) return true;
 
-    const LayerDef::FeatureGeom* rp_join = joinedRealProperty(ctx, fg);
+    const size_t rp_join_idx = joinedRealPropertyIndex(ctx, fg);
+    const LayerDef::FeatureGeom* rp_join =
+        rp_join_idx == (size_t)-1 ? nullptr
+                                  : &(*ctx.layers)[(size_t)ctx.real_property_layer_idx].features[rp_join_idx];
 
     if (selected_owner_filter_active) {
         std::string owner = ownerNameFor(rp_join);
@@ -249,7 +317,7 @@ bool featurePassesFilters(
         }
         if (!containsCaseInsensitive(st, filters.status)) return false;
     }
-    if (filters.address[0] != '\0') {
+    if (filters.address[0] != '\0' && !ctx.compiled_address_filter_active) {
         std::string ad = firstProp(fg, {
             "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
             "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
@@ -264,10 +332,22 @@ bool featurePassesFilters(
         }
         if (!addressMatchesSearch(ad, filters.address)) return false;
     }
-    if (parcel_related_layer && filters.owner[0] != '\0') {
-        std::string ow = firstProp(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
-        if (ow.empty() && rp_join) ow = firstProp(*rp_join, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
-        if (!containsCaseInsensitive(ow, filters.owner)) return false;
+    if (parcel_related_layer && !ctx.owner_filter_normalized.empty() && !ctx.compiled_owner_filter_active) {
+        const auto owner_filter_begin = std::chrono::steady_clock::now();
+        const std::string owner_search = ownerSearchText(ctx, layer_idx, feature_idx, fg, rp_join, rp_join_idx);
+        if (ctx.owner_filter_candidates_accum) {
+            *ctx.owner_filter_candidates_accum += 1;
+        }
+        const bool matched = !owner_search.empty() &&
+            owner_search.find(ctx.owner_filter_normalized) != std::string::npos;
+        if (ctx.owner_filter_matches_accum && matched) {
+            *ctx.owner_filter_matches_accum += 1;
+        }
+        if (ctx.owner_filter_ms_accum) {
+            *ctx.owner_filter_ms_accum += std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - owner_filter_begin).count();
+        }
+        if (!matched) return false;
     }
     if (filters.zip[0] != '\0') {
         std::string zp = firstProp(fg, {"ZIP", "ZIPCODE", "POSTAL_CODE"});

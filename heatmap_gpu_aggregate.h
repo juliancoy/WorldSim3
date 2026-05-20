@@ -26,4 +26,19 @@ bool buildGpuSplatAggregate(
     std::vector<float>& out_sv,
     std::string* error);
 
+bool buildGpuSplatAggregateTexture(
+    const std::vector<HeatSample>& group,
+    int rw,
+    int rh,
+    float raster_min_lon,
+    float raster_min_lat,
+    float raster_max_lon,
+    float raster_max_lat,
+    float sigma_r,
+    float percentile_clip,
+    TileTexture& out_texture,
+    std::string* error);
+
+bool recycleGpuAggregateTexture(TileTexture& texture, uint32_t width, uint32_t height);
+
 void shutdownGpuSplatAggregate();

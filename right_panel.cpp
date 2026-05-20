@@ -169,7 +169,15 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         gradient_filter_input.result_set = ctx.parcel_jurisdiction_filter_state->result_set.active
             ? &ctx.parcel_jurisdiction_filter_state->result_set
             : nullptr;
+        gradient_filter_input.secondary_result_set = ctx.owner_text_filter_result_set && ctx.owner_text_filter_result_set->active
+            ? ctx.owner_text_filter_result_set
+            : nullptr;
+        gradient_filter_input.tertiary_result_set = ctx.address_text_filter_result_set && ctx.address_text_filter_result_set->active
+            ? ctx.address_text_filter_result_set
+            : nullptr;
         gradient_filter_input.real_property_by_blocklot = ctx.real_property_by_blocklot;
+        gradient_filter_input.compiled_owner_filter_active = gradient_filter_input.secondary_result_set != nullptr;
+        gradient_filter_input.compiled_address_filter_active = gradient_filter_input.tertiary_result_set != nullptr;
         gradient_filter_input.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
         gradient_filter_input.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;
         gradient_filter_input.real_property_layer_idx = ctx.real_property_layer_idx;

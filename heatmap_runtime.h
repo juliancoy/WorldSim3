@@ -17,6 +17,7 @@ struct CachedAggregateTexture {
     std::vector<CachedHeatCell> cells;
     HeatmapRaster raster;
     TileTexture texture;
+    std::vector<HeatmapRasterLayer> raster_layers;
     uint64_t last_used_frame = 0;
 };
 

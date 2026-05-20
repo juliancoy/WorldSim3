@@ -636,7 +636,11 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_source_crs = import.value("source_crs", std::string());
             layer.import_shapefile = import.value("shapefile", std::string());
             layer.import_service_url = import.value("service_url", std::string());
+            layer.import_where = import.value("where", std::string());
             layer.import_normalizer = import.value("normalizer", std::string());
+            layer.import_table = import.value("table", std::string());
+            layer.import_year = import.value("year", std::string());
+            layer.import_survey = import.value("survey", std::string());
             layer.import_sheet_name = import.value("sheet_name", std::string());
             layer.import_lon_field = import.value("lon_field", std::string());
             layer.import_lat_field = import.value("lat_field", std::string());
