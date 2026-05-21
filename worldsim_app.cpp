@@ -4065,6 +4065,12 @@ bool updateCrimePointGpuGlyphBuffer(const std::vector<uint32_t>& glyph_codes, st
 }
 
 void clearCrimePointGpuBuffers() {
+    if (!g_CrimePointGpuBuffers.positions.buffer &&
+        !g_CrimePointGpuBuffers.feature_refs.buffer &&
+        !g_CrimePointGpuBuffers.colors.buffer &&
+        !g_CrimePointGpuBuffers.glyph_codes.buffer) {
+        return;
+    }
     waitForParcelGpuDeviceIdle();
     destroyParcelGpuBuffer(g_CrimePointGpuBuffers.positions);
     destroyParcelGpuBuffer(g_CrimePointGpuBuffers.feature_refs);

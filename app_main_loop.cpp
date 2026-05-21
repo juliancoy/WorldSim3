@@ -3220,6 +3220,40 @@ int runWorldSim3App(int argc, char** argv) {
                             parcel_gpu_last_base_colors = parcel_colors;
                         }
                     }
+                    const ImVec4 lien_c =
+                        (tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size())
+                            ? layers[(size_t)tax_lien_layer_idx].color
+                            : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
+                    const ImVec4 sale_c =
+                        (tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size())
+                            ? layers[(size_t)tax_sale_layer_idx].color
+                            : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
+                    const ImVec4 notice_c =
+                        (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size())
+                            ? layers[(size_t)vacant_notice_layer_idx].color
+                            : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+                    const ImVec4 rehab_c =
+                        (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
+                            ? layers[(size_t)vacant_rehab_layer_idx].color
+                            : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                    hash_state_f32(overlay_state_key, notice_c.x);
+                    hash_state_f32(overlay_state_key, notice_c.y);
+                    hash_state_f32(overlay_state_key, notice_c.z);
+                    hash_state_f32(overlay_state_key, notice_c.w);
+                    hash_state_f32(overlay_state_key, rehab_c.x);
+                    hash_state_f32(overlay_state_key, rehab_c.y);
+                    hash_state_f32(overlay_state_key, rehab_c.z);
+                    hash_state_f32(overlay_state_key, rehab_c.w);
+                    hash_state_f32(overlay_state_key, lien_c.x);
+                    hash_state_f32(overlay_state_key, lien_c.y);
+                    hash_state_f32(overlay_state_key, lien_c.z);
+                    hash_state_f32(overlay_state_key, lien_c.w);
+                    hash_state_f32(overlay_state_key, sale_c.x);
+                    hash_state_f32(overlay_state_key, sale_c.y);
+                    hash_state_f32(overlay_state_key, sale_c.z);
+                    hash_state_f32(overlay_state_key, sale_c.w);
+                    outline_state_key = overlay_state_key;
+
                     if (overlay_state_key != parcel_gpu_overlay_state_key) {
                         auto layer_fill_enabled_at = [&](int idx) -> bool {
                             return idx >= 0 && (size_t)idx < layer_fill_enabled.size() && layer_fill_enabled[(size_t)idx];
@@ -3280,39 +3314,6 @@ int runWorldSim3App(int argc, char** argv) {
                                 : 1;
                         const ApproxHistogram parameter_hist = buildApproxHistogram(parameter_samples, parameter_clip);
                         const bool parameter_range_valid = parameter_fill_enabled && parameter_hist.rangeValid();
-                        const ImVec4 lien_c =
-                            (tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size())
-                                ? layers[(size_t)tax_lien_layer_idx].color
-                                : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
-                        const ImVec4 sale_c =
-                            (tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size())
-                                ? layers[(size_t)tax_sale_layer_idx].color
-                                : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
-                        const ImVec4 notice_c =
-                            (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size())
-                                ? layers[(size_t)vacant_notice_layer_idx].color
-                                : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-                        const ImVec4 rehab_c =
-                            (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
-                                ? layers[(size_t)vacant_rehab_layer_idx].color
-                                : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
-                        hash_state_f32(overlay_state_key, notice_c.x);
-                        hash_state_f32(overlay_state_key, notice_c.y);
-                        hash_state_f32(overlay_state_key, notice_c.z);
-                        hash_state_f32(overlay_state_key, notice_c.w);
-                        hash_state_f32(overlay_state_key, rehab_c.x);
-                        hash_state_f32(overlay_state_key, rehab_c.y);
-                        hash_state_f32(overlay_state_key, rehab_c.z);
-                        hash_state_f32(overlay_state_key, rehab_c.w);
-                        hash_state_f32(overlay_state_key, lien_c.x);
-                        hash_state_f32(overlay_state_key, lien_c.y);
-                        hash_state_f32(overlay_state_key, lien_c.z);
-                        hash_state_f32(overlay_state_key, lien_c.w);
-                        hash_state_f32(overlay_state_key, sale_c.x);
-                        hash_state_f32(overlay_state_key, sale_c.y);
-                        hash_state_f32(overlay_state_key, sale_c.z);
-                        hash_state_f32(overlay_state_key, sale_c.w);
-                        outline_state_key = overlay_state_key;
                         const ImU32 selected_overlay = IM_COL32(255, 230, 0, 112);
                         const float parcel_gamma =
                             (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
