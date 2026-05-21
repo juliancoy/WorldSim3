@@ -56,8 +56,9 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                 }
 
                 const fs::path layer_path = resolveStoredLayerPath(root, layers[i]);
-                const fs::path binary_cache_path = root / "data" / "cache" / "hydration" / (layers[i].file + ".bin");
-                const fs::path canonical_binary_path = layer_path.parent_path() / (layers[i].file + ".canonical.bin");
+                const std::string artifact_basename = layerArtifactBasenameForFile(layers[i].file);
+                const fs::path binary_cache_path = root / "data" / "cache" / "hydration" / (artifact_basename + ".bin");
+                const fs::path canonical_binary_path = layer_path.parent_path() / (artifact_basename + ".canonical.bin");
                 std::string sig;
                 std::string source_kind;
                 if (!resolveLayerSourceSignature(layer_path, sig, &source_kind)) {

@@ -2,23 +2,18 @@
 
 ## Current State
 
-The statewide parcel stack is being migrated so the canonical parcel binary is the sole primary runtime artifact.
+The statewide parcel stack now runs directly from per-jurisdiction SSOT-backed layers.
 
 Target persisted artifacts:
 
-- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
-- `data/cache/hydration/regional_parcels.geojson.bin`
-- `data/cache/triangulation/regional_parcels.geojson.tri.bin`
-- `data/cache/render/regional_parcels.geojson.parcel-render.bin`
+- per-jurisdiction canonical layer binaries under `data/world/.../layers/*.canonical.bin`
+- per-jurisdiction compiled geometry artifacts under `data/cache/geometry/`
 - `data/worldsim.duckdb`
 
 Implemented support:
 
-- Hydration can read the binary hydration cache.
-- `regional_parcels.geojson.canonical.bin` is now the authoritative source-signature provider for statewide parcels.
-- Hydration can read the canonical parcel binary when the hydration cache is missing or stale.
-- Parcel render sidecar can be warmed from binary hydration and triangulation caches.
-- Hydration, triangulation, and parcel render cache warming operate under the canonical statewide parcel signature.
+- Hydration can read canonical per-layer binaries directly.
+- Compiled geometry artifacts are the intended runtime geometry path.
 - `--parcel-artifact-health` reports parcel artifact presence, signatures, counts, sizes, and recommended rebuild steps.
 - DuckDB is treated as analytics/search/detail cache, not render geometry.
 - Runtime status text identifies which hydration/triangulation artifact is being read.
@@ -26,21 +21,14 @@ Implemented support:
 
 ## Highest Priority
 
-- Keep `regional_parcels.geojson` out of the runtime/analytics path entirely.
-- Do not produce `regional_parcels.geojson` from current builders.
-  - canonical parcel binary
-  - DuckDB analytics cache
 - Keep runtime-cache refreshes non-destructive by default: hydration, triangulation, and parcel render sidecar are rebuildable performance artifacts; canonical binary and DuckDB require explicit rebuild intent.
 - Update docs/status output with final statewide parcel count, jurisdiction counts, and artifact sizes.
 
-## Parcel Build Pipeline
+## Build IO
 
-- Refactor `worldsim_regional_parcel_builder` into explicit stages:
-  - normalize county/state inputs into per-jurisdiction shards
-  - merge shards deterministically into canonical statewide output
 - Remove whole-file DOM parsing where practical.
-- Prefer streaming readers/writers for large county inputs and statewide outputs.
-- Use temp-file plus atomic-rename behavior for every statewide output.
+- Prefer streaming readers/writers for large county inputs and direct per-jurisdiction outputs.
+- Use temp-file plus atomic-rename behavior for every accepted output.
 - Do not leave partially written `.geojson`, `.canonical.bin`, or shard files in accepted paths after interruption.
 - Add dedicated CLI modes:
   - build shards
@@ -68,7 +56,7 @@ Implemented support:
 
 ## Runtime Hydration
 
-- Require canonical parcel binary for `regional_parcels.geojson` cache rebuilds.
+- Do not reintroduce any synthetic statewide parcel aggregate into the runtime cache dependency graph.
 - Avoid parsing GeoJSON during normal interactive startup.
 - Make `/status` clearly report canonical-binary source use and cache source use.
 - Add a headless validation command that compares:

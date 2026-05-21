@@ -387,11 +387,7 @@ The sixteenth implemented step is session-static parcel GPU geometry. Parcel geo
 
 This is the correct professional boundary for the current product model. DuckDB filters and query state can continue to restyle parcels by writing color, but parcel geometry itself is now session-static.
 
-The seventeenth implemented step is a compact canonical parcel binary for the statewide parcel layer. `worldsim_regional_parcel_builder` now emits:
-
-- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
-
-The canonical binary is the required runtime artifact and the only maintained parcel-layer build output. The binary stores parcel feature content in a dense layout keyed by embedded source signature rather than GeoJSON file metadata.
+Per-jurisdiction canonical parcel binaries are the required runtime parcel artifacts. They store parcel feature content in a dense layout keyed by embedded source signature rather than GeoJSON file metadata.
 
 The tenth implemented step is independent retained parcel color storage. `MapProjectionCache` now stores a per-feature style record keyed by layer, feature index, and style generation, with a feature-wide color plus a subpolygon color vector. The current feature model still represents a parcel as one polygon-with-holes, so the subpolygon vector presently defaults to one entry for polygonal parcel features. The storage boundary is now explicit, though: geometry and color are retained separately, and color storage survives pan/zoom projection churn until a real source replacement resets the cache owner.
 

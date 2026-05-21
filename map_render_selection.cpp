@@ -43,7 +43,8 @@ void drawParcelSelectionArtifactFill(
 void drawParcelSelectionArtifactOutline(
     const MapSelectionRenderContext& ctx,
     const ParcelRenderFeatureRecord& rec,
-    ImU32 outline) {
+    ImU32 outline,
+    float thickness) {
     const uint32_t end = rec.line_index_offset + rec.line_index_count;
     if (!ctx.parcel_render_blob || end > ctx.parcel_render_blob->line_indices.size()) return;
     for (uint32_t i = rec.line_index_offset; i + 1 < end; i += 2) {
@@ -54,7 +55,7 @@ void drawParcelSelectionArtifactOutline(
             projectArtifactLonLat(ctx, ctx.parcel_render_blob->vertices[ia]),
             projectArtifactLonLat(ctx, ctx.parcel_render_blob->vertices[ib]),
             outline,
-            3.0f);
+            thickness);
     }
 }
 } // namespace
@@ -64,8 +65,9 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
     if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return;
     if (ctx.selected_parcel_indices->empty()) return;
 
-    const ImU32 selected_fill = IM_COL32(255, 230, 0, 58);
-    const ImU32 selected_outline = IM_COL32(255, 230, 0, 255);
+    const ImU32 selected_fill = IM_COL32(255, 230, 0, 108);
+    const ImU32 selected_outline_halo = IM_COL32(32, 24, 0, 255);
+    const ImU32 selected_outline = IM_COL32(255, 240, 64, 255);
     const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
     if (!parcel_layer.enabled) return;
 
@@ -74,6 +76,7 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
         const ParcelRenderFeatureRecord* rec = parcelRenderFeature(ctx, idx);
         if (!rec) continue;
         drawParcelSelectionArtifactFill(ctx, *rec, selected_fill);
-        drawParcelSelectionArtifactOutline(ctx, *rec, selected_outline);
+        drawParcelSelectionArtifactOutline(ctx, *rec, selected_outline_halo, 6.0f);
+        drawParcelSelectionArtifactOutline(ctx, *rec, selected_outline, 3.0f);
     }
 }

@@ -475,14 +475,6 @@ target_include_directories(worldsim_hud_pit_builder PRIVATE
 )
 target_link_libraries(worldsim_hud_pit_builder PRIVATE nlohmann_json::nlohmann_json)
 
-add_executable(worldsim_regional_parcel_builder
-  tools/regional_parcel_builder.cpp
-)
-target_include_directories(worldsim_regional_parcel_builder PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_link_libraries(worldsim_regional_parcel_builder PRIVATE nlohmann_json::nlohmann_json)
-
 add_executable(worldsim3_duckdb_owner_dump
   tools/duckdb_owner_dump.cpp
   aggregate_visualization_strategies.cpp

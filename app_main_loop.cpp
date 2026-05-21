@@ -241,7 +241,7 @@ int runWorldSim3App(int argc, char** argv) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     preloadLayersFromEnvironment(root);
-    ensureParcelMatchedEventLayers(root, false, &std::cerr);
+    ensureParcelMatchedEventLayers(root, false, &std::cerr, false);
 
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
     if (!glfwInit()) return 1;
@@ -660,7 +660,6 @@ int runWorldSim3App(int argc, char** argv) {
                 layers[i].enabled = false;
                 continue;
             }
-            if ((int)i != parcel_layer_idx && layers[i].scale == "parcel") layers[i].enabled = false;
         }
     }
     TimeCubeService time_cube_service(root);
@@ -743,7 +742,7 @@ int runWorldSim3App(int argc, char** argv) {
         if (parcel_layer_idx >= 0 && (int)idx == parcel_layer_idx) return 0;
         if (zoning_layer_idx >= 0 && (int)idx == zoning_layer_idx) return 1;
         const uintmax_t sz = layer_file_size(idx);
-        if (layers[idx].file == "regional_parcels.geojson" || sz > 250ull * 1024ull * 1024ull) return 4;
+        if (sz > 250ull * 1024ull * 1024ull) return 4;
         if (layers[idx].scale == "parcel") return 3;
         return 2;
     };
@@ -862,6 +861,7 @@ int runWorldSim3App(int argc, char** argv) {
         resetLoadedLayerState(idx);
         layers[idx].features = std::move(loaded_features);
         layers[idx].feature_properties = std::move(loaded_feature_properties);
+        refreshLayerGeometryUsageCache(layers[idx]);
         rebuildFeaturePropertyRegistryForLayer(layers[idx]);
         populateLayerProfileAccumulator(idx);
         layer_profile_dirty[idx] = true;
@@ -2575,7 +2575,9 @@ int runWorldSim3App(int argc, char** argv) {
                 }
             } else {
                 const std::string& sig = parcel_state.hydration_source_signature;
-                const fs::path render_cache_path = root / "data" / "cache" / "render" / (parcel_layer.file + ".parcel-render.bin");
+                const fs::path render_cache_path =
+                    root / "data" / "cache" / "render" /
+                    (layerArtifactBasenameForFile(parcel_layer.file) + ".parcel-render.bin");
                 const bool parcel_geometry_refresh_allowed =
                     parcel_geometry_locked_signature.empty() || sig == parcel_geometry_locked_signature;
                 if (!parcel_geometry_refresh_allowed) {

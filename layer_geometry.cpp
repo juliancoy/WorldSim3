@@ -201,7 +201,6 @@ bool implausibleHydrationCache(const std::string& file, size_t feature_count) {
     // These guards reject previously observed duplicated cache payloads. They are
     // intentionally loose so legitimate source updates still load from cache.
     if (file == "parcel.geojson") return feature_count > 300000;
-    if (file == "regional_parcels.geojson") return feature_count > 5000000;
     if (file == "zoning.geojson") return feature_count > 10000;
     if (file == "vacant_building_notices.geojson") return feature_count > 20000;
     if (file == "vacant_building_rehabs.geojson") return feature_count > 20000;
@@ -363,6 +362,7 @@ void hydrateLayerBatches(
 
 void loadLayerPoints(LayerDef& layer, const fs::path& root) {
     layer.features = loadLayerPointsFromFile(resolveStoredLayerPath(root, layer), &layer.feature_properties);
+    refreshLayerGeometryUsageCache(layer);
     rebuildFeaturePropertyRegistryForLayer(layer);
 }
 

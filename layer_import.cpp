@@ -75,6 +75,11 @@ void buildArcgisFeatureLayerFeatures(
     const std::string& normalizer,
     std::vector<LayerDef::FeatureRecord>& features,
     std::vector<LayerDef::FeatureProperties>& feature_properties);
+void buildCensusAcsGeoJsonFeatures(
+    const fs::path& geojson_path,
+    const std::unordered_map<std::string, json>& acs_rows_by_geoid,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
 struct CensusAcsJoinStats;
 CensusAcsJoinStats buildCensusAcsArcgisLayerFeatures(
     const std::string& service_url,
@@ -101,6 +106,10 @@ void buildSocrataHowardPropertyFeatures(
     const fs::path& csv_path,
     std::vector<LayerDef::FeatureRecord>& features,
     std::vector<LayerDef::FeatureProperties>& feature_properties);
+std::string jsonText(const json& obj, std::initializer_list<const char*> keys);
+json buildJoinedCensusAcsProperties(
+    const json& feature_props,
+    const json& acs_props);
 std::vector<std::pair<std::string, std::string>> parcelPropertyPairs(
     const std::map<std::string, std::string>& props,
     const std::string& jurisdiction,
@@ -114,6 +123,31 @@ void appendFeatureWithProperties(
 uint16_t le16(const std::vector<uint8_t>& b, size_t off) {
     if (off + 2 > b.size()) throw std::runtime_error("unexpected EOF");
     return (uint16_t)b[off] | ((uint16_t)b[off + 1] << 8);
+}
+
+void buildCensusAcsGeoJsonFeatures(
+    const fs::path& geojson_path,
+    const std::unordered_map<std::string, json>& acs_rows_by_geoid,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    std::ifstream in(geojson_path);
+    if (!in) throw std::runtime_error("failed to open census geometry source " + geojson_path.string());
+    json root;
+    in >> root;
+    const json* source_features =
+        root.contains("features") && root["features"].is_array() ? &root["features"] : nullptr;
+    if (!source_features) throw std::runtime_error("census geometry source is not a feature collection");
+    for (auto feature : *source_features) {
+        if (!feature.is_object() || !feature.contains("properties")) continue;
+        json& props = feature["properties"];
+        const std::string geoid = jsonText(props, {"GEOID", "GEOID20", "GEOID10"});
+        if (geoid.empty()) continue;
+        const auto it = acs_rows_by_geoid.find(geoid);
+        if (it == acs_rows_by_geoid.end()) continue;
+        props = buildJoinedCensusAcsProperties(props, it->second);
+        appendGeoJsonFeatureRecords(feature, features, feature_properties);
+    }
+    if (features.empty()) throw std::runtime_error("joined Census/ACS import produced no features");
 }
 
 uint32_t le32(const std::vector<uint8_t>& b, size_t off) {
@@ -1658,10 +1692,14 @@ void buildArcgisFeatureLayerFeatures(
     if (features.empty()) throw std::runtime_error("ArcGIS service returned no features");
 }
 
-void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path, const std::string& normalizer) {
+void writeArcgisFeatureLayerGeoJson(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const fs::path& out_path,
+    const std::string& normalizer) {
     if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
     json ids = json::parse(httpPostForm(service_url + "/query", {
-        {"where", "1=1"},
+        {"where", where_clause.empty() ? "1=1" : where_clause},
         {"returnIdsOnly", "true"},
         {"f", "json"}
     }).body);
@@ -1720,194 +1758,6 @@ std::string shellQuote(const fs::path& path) {
     }
     out.push_back('\'');
     return out;
-}
-
-std::string regionalParcelJurisdictionForFile(const std::string& file) {
-    static const std::unordered_map<std::string, std::string> kJurisdictions = {
-        {"parcel.geojson", "Baltimore City"},
-        {"allegany_county_parcels.geojson", "Allegany County"},
-        {"anne_arundel_county_parcels.geojson", "Anne Arundel County"},
-        {"baltimore_county_parcels.geojson", "Baltimore County"},
-        {"calvert_county_parcels.geojson", "Calvert County"},
-        {"caroline_county_parcels.geojson", "Caroline County"},
-        {"carroll_county_parcels.geojson", "Carroll County"},
-        {"cecil_county_parcels.geojson", "Cecil County"},
-        {"charles_county_parcels.geojson", "Charles County"},
-        {"dorchester_county_parcels.geojson", "Dorchester County"},
-        {"frederick_county_parcels.geojson", "Frederick County"},
-        {"garrett_county_parcels.geojson", "Garrett County"},
-        {"harford_county_parcels.geojson", "Harford County"},
-        {"howard_county_parcels.geojson", "Howard County"},
-        {"kent_county_parcels.geojson", "Kent County"},
-        {"montgomery_county_parcels.geojson", "Montgomery County"},
-        {"prince_georges_county_parcels.geojson", "Prince George's County"},
-        {"queen_annes_county_parcels.geojson", "Queen Anne's County"},
-        {"st_marys_county_parcels.geojson", "St. Mary's County"},
-        {"somerset_county_parcels.geojson", "Somerset County"},
-        {"talbot_county_parcels.geojson", "Talbot County"},
-        {"washington_county_parcels.geojson", "Washington County"},
-        {"wicomico_county_parcels.geojson", "Wicomico County"},
-        {"worcester_county_parcels.geojson", "Worcester County"}
-    };
-    auto it = kJurisdictions.find(file);
-    return it == kJurisdictions.end() ? std::string() : it->second;
-}
-
-bool populateRegionalParcelSourceLayer(const std::string& file, LayerDef& layer) {
-    layer = LayerDef{};
-    layer.file = file;
-    layer.provenance_world = "earth";
-    layer.provenance_nation_state = "us";
-    layer.provenance_state_region = "md";
-    if (file == "parcel.geojson") {
-        layer.name = "Baltimore City Parcels";
-        layer.source_url =
-            "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0";
-        layer.provenance_county_city = "baltimore_city";
-        return true;
-    }
-    if (file == "baltimore_county_parcels.geojson") {
-        layer.name = "Baltimore County Parcels";
-        layer.import_type = "arcgis_feature_layer";
-        layer.import_service_url = "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1";
-        layer.import_normalizer = "baltimore_county_parcels";
-        layer.provenance_county_city = "baltimore_county";
-        return true;
-    }
-    if (file == "howard_county_parcels.geojson") {
-        layer.name = "Howard County Parcels";
-        layer.import_type = "zipped_shapefile";
-        layer.import_url = "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip";
-        layer.import_shapefile = "Property.shp";
-        layer.import_source_crs = "EPSG:2248";
-        layer.provenance_county_city = "howard_county";
-        return true;
-    }
-    static const std::unordered_map<std::string, std::pair<std::string, std::string>> kMarylandPlanningCountyZips = {
-        {"allegany_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/0vq8xyexfe2juqcoeclqn/ALLEparcels0226.zip?dl=1&rlkey=6dfrsl38xrpujh6ouczpwnikp", "ALLEPOLY.shp"}},
-        {"anne_arundel_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/4grva91527p7dc7pk96zc/ANNEparcels0226.zip?dl=1&rlkey=3ev0osf81ryh65nc443juweju", "ANNEPOLY.shp"}},
-        {"calvert_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/1d18z9vwbr8o9c329n7hb/CALVparcels0226.zip?dl=1&rlkey=wwjs2awg5nh88leik5upfin4u", "CALVPOLY.shp"}},
-        {"caroline_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/e6070aylp5n5oo4bohodt/CAROparcels0226.zip?dl=1&rlkey=4itc5bvhvrnzsbgsm9wp0v1vi", "CAROPOLY.shp"}},
-        {"carroll_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/g9voz3iu9yzourajhab3k/CARRparcels0226.zip?dl=1&rlkey=y5f6y65zcrh71k9jatb0y7ygz", "CARRPOLY.shp"}},
-        {"cecil_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/5k5lik3jh3ev05dyqxofo/CECIparcels0226.zip?dl=1&rlkey=afnszcr4yc27slnai6xfxp8fn", "CECIPOLY.shp"}},
-        {"charles_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/nplpj2vibo6mfij9yvosd/CHARparcels0226.zip?dl=1&rlkey=zj8b42mxepjs0043exlqyanfi", "CHARPOLY.shp"}},
-        {"dorchester_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/rq5dhlu0ian6x15xiaac7/DORCparcels0226.zip?dl=1&rlkey=b5z8b9de701rd493c21saqa0i", "DORCPOLY.shp"}},
-        {"frederick_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/9wt3rwqv0u23gebgl9tfa/FREDparcels0226.zip?dl=1&rlkey=p59y96s9k1neapw19tgxd7xen", "FREDPOLY.shp"}},
-        {"garrett_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/whplsq4nkd7lh8xbyv6dz/GARRparcels0226.zip?dl=1&rlkey=pb7m5jtmb1qkpvd1toqjj6ggd", "GARRPOLY.shp"}},
-        {"harford_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/h17fdtpi5rlfezmjvrwqa/HARFparcels0226.zip?dl=1&rlkey=bh763wr1s3tz5z6y3b2o7ne32", "HARFPOLY.shp"}},
-        {"kent_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/esnv0nzpk2o0uibmterif/KENTparcels0226.zip?dl=1&rlkey=f7eszhurib9rcaox4g57vghaf", "KENTPOLY.shp"}},
-        {"montgomery_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/cfz86bco1s8lxmqm9b2ux/MONTparcels0226.zip?dl=1&rlkey=7n5o9icvdy83a0b6qhyy68mz3", "MONTPOLY.shp"}},
-        {"prince_georges_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/h74wrhh7e5m3o1rkx51jy/PRINparcels0226.zip?dl=1&rlkey=u5ly9afqgehr3tsp3rtc1fgja", "PRINPOLY.shp"}},
-        {"queen_annes_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/k30hp5aaopaem6kf7kigi/QUEEparcels0226.zip?dl=1&rlkey=rc99o6igbr4ktx561deh0yazv", "QUEEPOLY.shp"}},
-        {"st_marys_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/j7sxbgr2lm4kgpzp027im/STMAparcels0226.zip?dl=1&rlkey=4dl0u5qpjuj6ahrbz2qwq2bi1", "STMAPOLY.shp"}},
-        {"somerset_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/4x0x495lyd9buejgesdq9/SOMEparcels0226.zip?dl=1&rlkey=rus957682qasf063rpgjkchmv", "SOMEPOLY.shp"}},
-        {"talbot_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/mfcan19ls76ftvfb4js6a/TALBparcels0226.zip?dl=1&rlkey=hec1eqadkui5rtj9w260rfjdd", "TALBPOLY.shp"}},
-        {"washington_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/xqp1pwc83o32rxh0tv3re/WASHparcels0226.zip?dl=1&rlkey=mcntcjujf63poxwa6cy610896", "WASHPOLY.shp"}},
-        {"wicomico_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/m38c63axnabt6uzrhl5wg/WICOparcels0226.zip?dl=1&rlkey=cwx7xits93t0batx6w0kngq13", "WICOPOLY.shp"}},
-        {"worcester_county_parcels.geojson", {"https://www.dropbox.com/scl/fi/2yxas503opb7bopi2svls/WORCparcels0226.zip?dl=1&rlkey=57mz9ovyuieorvzlw4gp0hsbq", "WORCPOLY.shp"}}
-    };
-    auto it = kMarylandPlanningCountyZips.find(file);
-    if (it == kMarylandPlanningCountyZips.end()) return false;
-    layer.name = regionalParcelJurisdictionForFile(file) + " Parcels";
-    layer.import_type = "zipped_shapefile";
-    layer.import_url = it->second.first;
-    layer.import_shapefile = it->second.second;
-    layer.import_source_crs = "EPSG:26985";
-    layer.provenance_county_city = toLowerAscii(layer.name.substr(0, layer.name.size() - 8));
-    std::replace(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), ' ', '_');
-    std::replace(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), '.', '_');
-    layer.provenance_county_city.erase(
-        std::remove(layer.provenance_county_city.begin(), layer.provenance_county_city.end(), '\''),
-        layer.provenance_county_city.end());
-    return true;
-}
-
-bool ensureRegionalParcelInputAvailable(const fs::path& root, const std::string& file, std::string* err) {
-    LayerDef source;
-    if (!populateRegionalParcelSourceLayer(file, source)) {
-        if (err) *err = "no configured parcel source for " + file;
-        return false;
-    }
-    const fs::path input = canonicalLayerPathForFile(root, file);
-    if (fs::exists(input)) return true;
-    const fs::path legacy_output = resolveStoredLayerPath(root, source);
-    if (fs::exists(legacy_output)) {
-        persistCanonicalLayerBinaryAndRemoveGeoJson(legacy_output);
-        if (fs::exists(input)) return true;
-    }
-    VersionedDownloadResult res = downloadOrImportLayer(source, legacy_output, root);
-    if (!res.ok) {
-        if (err) *err = "failed to materialize " + file + ": " + res.message;
-        return false;
-    }
-    return fs::exists(input);
-}
-
-VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const fs::path& root) {
-    VersionedDownloadResult res;
-    const fs::path builder = root / "build" / "worldsim_regional_parcel_builder";
-    if (!fs::exists(builder)) {
-        res.message = "regional parcel builder is not built";
-        return res;
-    }
-
-    std::string cmd = shellQuote(builder);
-    size_t input_count = 0;
-    for (const auto& [file, _] : std::unordered_map<std::string, std::string>{
-             {"parcel.geojson", ""},
-             {"allegany_county_parcels.geojson", ""},
-             {"anne_arundel_county_parcels.geojson", ""},
-             {"baltimore_county_parcels.geojson", ""},
-             {"calvert_county_parcels.geojson", ""},
-             {"caroline_county_parcels.geojson", ""},
-             {"carroll_county_parcels.geojson", ""},
-             {"cecil_county_parcels.geojson", ""},
-             {"charles_county_parcels.geojson", ""},
-             {"dorchester_county_parcels.geojson", ""},
-             {"frederick_county_parcels.geojson", ""},
-             {"garrett_county_parcels.geojson", ""},
-             {"harford_county_parcels.geojson", ""},
-             {"howard_county_parcels.geojson", ""},
-             {"kent_county_parcels.geojson", ""},
-             {"montgomery_county_parcels.geojson", ""},
-             {"prince_georges_county_parcels.geojson", ""},
-             {"queen_annes_county_parcels.geojson", ""},
-             {"st_marys_county_parcels.geojson", ""},
-             {"somerset_county_parcels.geojson", ""},
-             {"talbot_county_parcels.geojson", ""},
-             {"washington_county_parcels.geojson", ""},
-             {"wicomico_county_parcels.geojson", ""},
-             {"worcester_county_parcels.geojson", ""}
-         }) {
-        const fs::path input = canonicalLayerPathForFile(root, file);
-        if (!fs::exists(input)) {
-            std::string import_err;
-            ensureRegionalParcelInputAvailable(root, file, &import_err);
-        }
-        if (!fs::exists(input)) continue;
-        const std::string jurisdiction = regionalParcelJurisdictionForFile(file);
-        if (jurisdiction.empty()) continue;
-        cmd += " --input ";
-        cmd += shellQuote(jurisdiction + ":" + input.string());
-        input_count++;
-    }
-    if (input_count == 0) {
-        res.message = "no local county parcel layers are available to build the regional parcel canonical binary";
-        return res;
-    }
-    cmd += " --output ";
-    cmd += shellQuote(out_path);
-
-    const int rc = std::system(cmd.c_str());
-    if (rc != 0) {
-        res.message = "regional parcel builder failed";
-        return res;
-    }
-    res.ok = true;
-    res.changed = true;
-    res.not_modified = false;
-    res.message = "generated canonical parcel binary from " + std::to_string(input_count) + " local parcel layer(s)";
-    return res;
 }
 
 const json* jsonPathValue(const json& root, const std::string& path) {
@@ -2130,7 +1980,6 @@ void buildJsonPointFeedFeatures(
 }
 
 bool layerHasImportSource(const LayerDef& layer) {
-    if (layer.import_type == "regional_parcel_builder") return true;
     if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
     if (layer.import_type == "census_acs_tract_demographics") {
         return !layer.import_service_url.empty() && !layer.import_url.empty() &&
@@ -2141,7 +1990,224 @@ bool layerHasImportSource(const LayerDef& layer) {
     }
     return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties" ||
             layer.import_type == "xlsx_point_table" || layer.import_type == "json_point_feed") &&
-        !layer.import_url.empty();
+           !layer.import_url.empty();
+}
+
+namespace {
+fs::path sourceGeometryArtifactPath(const fs::path& root, const LayerDef& layer) {
+    return provenanceSourceArtifactPath(root, layer, layer.file);
+}
+
+std::vector<fs::path> localImportArtifactCandidates(const fs::path& root, const LayerDef& layer) {
+    std::vector<fs::path> out;
+    auto append_name = [&](const std::string& name) {
+        if (name.empty()) return;
+        out.push_back(provenanceSourceArtifactPath(root, layer, name));
+    };
+    if (!layer.import_artifact_file.empty()) append_name(layer.import_artifact_file);
+    const fs::path stored_path = resolveStoredLayerPath(root, layer);
+    const std::string filename = stored_path.filename().string();
+    const std::string stem = stored_path.stem().string();
+    if (layer.import_type == "socrata_csv_properties") {
+        append_name(filename + ".source.csv");
+        append_name(layer.file + ".source.csv");
+    } else if (layer.import_type == "xlsx_point_table") {
+        append_name(stem + ".xlsx");
+        append_name(filename + ".xlsx");
+        append_name(layer.file + ".source.xlsx");
+    } else if (layer.import_type == "json_point_feed" || layer.import_type == "overpass_json_point_feed") {
+        append_name(stem + ".json");
+        append_name(filename + ".json");
+        append_name(filename + ".source.json");
+        append_name(layer.file + ".json");
+    } else if (layer.import_type == "zipped_shapefile") {
+        append_name(filename + ".source.zip");
+        append_name(stem + ".zip");
+    } else if (layer.import_type == "census_acs_tract_demographics") {
+        append_name(stem + ".acs.json");
+        append_name(filename + ".acs.json");
+    }
+    std::vector<fs::path> deduped;
+    deduped.reserve(out.size());
+    for (const auto& path : out) {
+        if (std::find(deduped.begin(), deduped.end(), path) == deduped.end()) deduped.push_back(path);
+    }
+    return deduped;
+}
+}
+
+std::vector<fs::path> layerLocalSsotArtifactPaths(
+    const fs::path& root,
+    const LayerDef& layer) {
+    std::vector<fs::path> out;
+    if (!layer.source_url.empty() && layer.file.ends_with(".geojson")) {
+        out.push_back(sourceGeometryArtifactPath(root, layer));
+    } else if (layer.import_type == "arcgis_feature_layer") {
+        out.push_back(sourceGeometryArtifactPath(root, layer));
+    } else if (layer.import_type == "census_acs_tract_demographics") {
+        out.push_back(sourceGeometryArtifactPath(root, layer));
+        const auto extras = localImportArtifactCandidates(root, layer);
+        out.insert(out.end(), extras.begin(), extras.end());
+    } else {
+        out = localImportArtifactCandidates(root, layer);
+    }
+    std::vector<fs::path> deduped;
+    deduped.reserve(out.size());
+    for (const auto& path : out) {
+        if (std::find(deduped.begin(), deduped.end(), path) == deduped.end()) deduped.push_back(path);
+    }
+    return deduped;
+}
+
+bool layerHasLocalSsotSource(
+    const fs::path& root,
+    const LayerDef& layer) {
+    const auto paths = layerLocalSsotArtifactPaths(root, layer);
+    if (paths.empty()) return false;
+    std::error_code ec;
+    const bool require_all = layer.import_type == "census_acs_tract_demographics";
+    bool any = false;
+    for (const auto& path : paths) {
+        const bool exists = fs::exists(path, ec) && !ec;
+        if (require_all && !exists) return false;
+        if (exists) any = true;
+        ec.clear();
+    }
+    return any;
+}
+
+bool loadLayerFeaturesFromLocalSsotSource(
+    const fs::path& root,
+    const LayerDef& layer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    features.clear();
+    feature_properties.clear();
+    try {
+        if (!layer.source_url.empty() && layer.file.ends_with(".geojson")) {
+            const fs::path source_path = sourceGeometryArtifactPath(root, layer);
+            features = loadLayerPointsFromFile(source_path, &feature_properties);
+            source_used = "ssot_source_geojson:" + source_path.filename().string();
+            return true;
+        }
+        if (layer.import_type == "arcgis_feature_layer") {
+            const fs::path source_path = sourceGeometryArtifactPath(root, layer);
+            features = loadLayerPointsFromFile(source_path, &feature_properties);
+            source_used = "ssot_arcgis_geojson:" + source_path.filename().string();
+            return true;
+        }
+        if (layer.import_type == "census_acs_tract_demographics") {
+            const fs::path source_path = sourceGeometryArtifactPath(root, layer);
+            fs::path acs_path;
+            for (const auto& candidate : localImportArtifactCandidates(root, layer)) {
+                if (candidate.extension() == ".json" && candidate.filename() != source_path.filename()) {
+                    acs_path = candidate;
+                    break;
+                }
+            }
+            if (acs_path.empty()) {
+                error = "missing census ACS source artifact";
+                return false;
+            }
+            const auto acs_rows = parseCensusAcsRowsByGeoid(
+                acs_path,
+                layer.import_table,
+                layer.import_year,
+                layer.import_survey);
+            buildCensusAcsGeoJsonFeatures(source_path, acs_rows, features, feature_properties);
+            source_used =
+                "ssot_census_sources:" + source_path.filename().string() + "+" + acs_path.filename().string();
+            return true;
+        }
+        return loadLayerFeaturesFromLocalImportArtifact(
+            root, layer, features, feature_properties, source_used, error);
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+bool layerHasLocalImportArtifact(
+    const fs::path& root,
+    const LayerDef& layer,
+    fs::path* out_path) {
+    std::error_code ec;
+    for (const auto& candidate : localImportArtifactCandidates(root, layer)) {
+        if (fs::exists(candidate, ec) && !ec) {
+            if (out_path) *out_path = candidate;
+            return true;
+        }
+        ec.clear();
+    }
+    return false;
+}
+
+bool loadLayerFeaturesFromLocalImportArtifact(
+    const fs::path& root,
+    const LayerDef& layer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    features.clear();
+    feature_properties.clear();
+    fs::path artifact_path;
+    if (!layerHasLocalImportArtifact(root, layer, &artifact_path)) {
+        error = "no local import artifact";
+        return false;
+    }
+    try {
+        if (layer.import_type == "socrata_csv_properties") {
+            buildSocrataHowardPropertyFeatures(artifact_path, features, feature_properties);
+        } else if (layer.import_type == "xlsx_point_table") {
+            buildXlsxPointTableFeatures(
+                artifact_path,
+                layer.import_sheet_name,
+                layer.import_lon_field,
+                layer.import_lat_field,
+                features,
+                feature_properties);
+        } else if (layer.import_type == "json_point_feed" || layer.import_type == "overpass_json_point_feed") {
+            buildJsonPointFeedFeatures(
+                artifact_path,
+                layer.import_item_path,
+                layer.import_lon_field,
+                layer.import_lat_field,
+                layer.import_url,
+                features,
+                feature_properties);
+        } else if (layer.import_type == "zipped_shapefile") {
+            const auto members = extractShapefileMembers(
+                artifact_path,
+                layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile);
+            const auto dbf = parseDbf(members.at(".dbf"));
+            const std::string source_file = layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile;
+            const std::string jurisdiction =
+                layer.name.size() > 8 && layer.name.ends_with(" Parcels")
+                    ? layer.name.substr(0, layer.name.size() - 8)
+                    : layer.name;
+            buildStateplaneParcelShapefileFeatures(
+                members.at(".shp"),
+                dbf,
+                jurisdiction,
+                source_file,
+                layer.import_source_crs == "EPSG:2248" ||
+                    layer.import_source_crs == "EPSG:6488" ||
+                    layer.import_source_crs == "ESRI:103069",
+                features,
+                feature_properties);
+        } else {
+            error = "unsupported local import artifact type";
+            return false;
+        }
+        source_used = "local_import_artifact:" + artifact_path.filename().string();
+        return true;
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
 }
 
 VersionedDownloadResult downloadOrImportLayer(
@@ -2181,9 +2247,6 @@ VersionedDownloadResult downloadOrImportLayer(
         res.message = "no source URL or import source";
         return res;
     }
-    if (layer.import_type == "regional_parcel_builder") {
-        return buildRegionalParcelLayer(out_path, root);
-    }
     if (layer.import_type == "socrata_csv_properties") {
         const fs::path csv_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.csv");
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, csv_path, root / "data" / "versions", on_progress);
@@ -2199,15 +2262,21 @@ VersionedDownloadResult downloadOrImportLayer(
     }
     if (layer.import_type == "arcgis_feature_layer") {
         try {
+            const fs::path source_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string());
+            writeArcgisFeatureLayerGeoJson(
+                layer.import_service_url,
+                layer.import_where,
+                source_path,
+                layer.import_normalizer);
             std::vector<LayerDef::FeatureRecord> features;
             std::vector<LayerDef::FeatureProperties> feature_properties;
-            buildArcgisFeatureLayerFeatures(
-                layer.import_service_url,
-                "1=1",
-                layer.import_normalizer,
+            features = loadLayerPointsFromFile(source_path, &feature_properties);
+            saveCanonicalLayerBinaryForSourceGeometry(
+                source_path,
+                out_path,
+                fileSignature(source_path),
                 features,
                 feature_properties);
-            saveCanonicalLayerBinary(out_path, layer.import_service_url, features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
@@ -2227,28 +2296,32 @@ VersionedDownloadResult downloadOrImportLayer(
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, acs_json_path, root / "data" / "versions");
         if (!dl.ok) return dl;
         try {
+            const fs::path source_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string());
             const auto acs_rows = parseCensusAcsRowsByGeoid(
                 acs_json_path,
                 layer.import_table,
                 layer.import_year,
                 layer.import_survey);
-            std::vector<LayerDef::FeatureRecord> features;
-            std::vector<LayerDef::FeatureProperties> feature_properties;
-            const CensusAcsJoinStats stats = buildCensusAcsArcgisLayerFeatures(
+            writeArcgisFeatureLayerGeoJson(
                 layer.import_service_url,
                 layer.import_where,
-                acs_rows,
+                source_path,
+                "");
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            buildCensusAcsGeoJsonFeatures(source_path, acs_rows, features, feature_properties);
+            saveCanonicalLayerBinaryForSourceGeometry(
+                source_path,
+                out_path,
+                fileSignature(source_path),
                 features,
                 feature_properties);
-            saveCanonicalLayerBinary(out_path, fileSignature(acs_json_path), features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
             std::ostringstream msg;
             msg << "imported Census ACS tract demographics via " << dl.message
-                << " (" << stats.matched << " matched";
-            if (stats.missing > 0) msg << ", " << stats.missing << " missing ACS joins";
-            msg << ")";
+                << " using persisted geometry + ACS source artifacts";
             res.message = msg.str();
         } catch (const std::exception& e) {
             res.ok = false;

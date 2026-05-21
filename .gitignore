@@ -20,3 +20,4 @@ sources/world/**/*.xls
 sources/world/**/*.xlsx
 sources/world/**/*.pdf
 .env*
+*.geojson

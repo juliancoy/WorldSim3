@@ -249,17 +249,12 @@ static LayerDef::Category parseCategory(const json& v, const std::string& layer_
     return inferCategory(layer_name);
 }
 
-static bool isCountyParcelStagingRuntimeLayer(const std::string& file) {
-    return file.size() > std::strlen("_county_parcels.geojson") &&
-           file.ends_with("_county_parcels.geojson");
-}
-
 static void appendManifestEntries(
     const fs::path& manifest_path,
     const fs::path& root,
-    bool regional_parcels_available,
     std::unordered_set<std::string>& seen_files,
-    std::vector<LayerDef>& layers) {
+    std::vector<LayerDef>& layers,
+    bool include_non_runtime) {
     std::ifstream in(manifest_path);
     if (!in) return;
     json arr;
@@ -273,9 +268,10 @@ static void appendManifestEntries(
         if (!arr[i].contains("file") || !arr[i]["file"].is_string()) continue;
         const std::string file = arr[i]["file"].get<std::string>();
         if (file.empty() || seen_files.count(file)) continue;
-        if (isCountyParcelStagingRuntimeLayer(file)) continue;
-        if (regional_parcels_available && file == "parcel.geojson") continue;
-        if (arr[i].contains("runtime_load") && arr[i]["runtime_load"].is_boolean() && !arr[i]["runtime_load"].get<bool>()) {
+        if (!include_non_runtime &&
+            arr[i].contains("runtime_load") &&
+            arr[i]["runtime_load"].is_boolean() &&
+            !arr[i]["runtime_load"].get<bool>()) {
             continue;
         }
 
@@ -329,24 +325,18 @@ static void appendManifestEntries(
         ld.runtime_load = arr[i].contains("runtime_load") ? arr[i]["runtime_load"].get<bool>() : true;
         ld.duckdb_ingest = arr[i].contains("duckdb_ingest") ? arr[i]["duckdb_ingest"].get<bool>() : true;
         ld.category = parseCategory(arr[i], ld.name);
+        refreshLayerGeometryUsageCache(ld);
         layers.push_back(std::move(ld));
         seen_files.insert(file);
     }
 }
 
-std::vector<LayerDef> loadManifest(const fs::path& root) {
+std::vector<LayerDef> loadManifest(const fs::path& root, bool include_non_runtime) {
     std::vector<LayerDef> layers;
-    const fs::path regional_parcels_canonical_path =
-        root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / "regional_parcels.geojson.canonical.bin";
-    const fs::path legacy_regional_parcels_canonical_path =
-        root / "data" / "layers" / "regional_parcels.geojson.canonical.bin";
-    const bool regional_parcels_available =
-        fs::exists(regional_parcels_canonical_path) ||
-        fs::exists(legacy_regional_parcels_canonical_path);
     std::unordered_set<std::string> seen_files;
     const std::vector<fs::path> manifest_paths = discoverManifestPaths(root);
     for (const auto& manifest_path : manifest_paths) {
-        appendManifestEntries(manifest_path, root, regional_parcels_available, seen_files, layers);
+        appendManifestEntries(manifest_path, root, seen_files, layers, include_non_runtime);
     }
     return layers;
 }

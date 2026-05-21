@@ -153,5 +153,3 @@ Most record/analysis tabs now have their own `.cpp`.
 
 - `tools/check_main_size.sh`: Guard that verifies `main.cpp` stays below the configured line limit.
 - `tools/check_file_sizes.sh`: Guard that verifies authored source/header files stay below 2000 lines, excluding build/data/vendor files.
-- `worldsim_regional_parcel_builder`: Builds the canonical Maryland parcel runtime artifact for `regional_parcels`. It now emits only the canonical binary output; the previous text GeoJSON output is retired.
-- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`: Canonical Maryland parcel runtime layer artifact used by the app. Rebuild from SSOT inputs rather than editing manually.

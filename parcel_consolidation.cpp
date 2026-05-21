@@ -39,8 +39,7 @@ bool layerFileMaterialized(const fs::path& root, const std::string& file) {
 
 bool isDirectOperationalParcelLayer(const LayerDef& layer) {
     return layer.scale == "parcel" &&
-           layer.duckdb_role == "parcel_record" &&
-           layer.file != "regional_parcels.geojson";
+           layer.duckdb_role == "parcel_record";
 }
 
 void accumulateBlocklotCounts(

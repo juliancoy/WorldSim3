@@ -13,7 +13,7 @@ This signature is the invalidation key shared by compiled geometry artifacts, de
 WorldSim3 should converge on three broad classes of disk artifacts:
 
 - Authoritative source payloads and metadata under `sources/` and `data/inbox/`.
-- Canonical layer binaries under `data/world/.../layers/*.geojson.canonical.bin`.
+- Canonical layer binaries under `data/world/.../layers/*.canonical.bin`.
 - Compiled geometry artifacts under `data/cache/geometry/`.
 - Attribute/query artifacts under `data/worldsim.duckdb` and analytical outputs under `data/analytics/`.
 - Runtime/user state JSON files under `data/`.
@@ -150,6 +150,7 @@ They must not:
 
 - become a hidden second canonical source system
 - carry facts that need durable auditability unless those facts are also persisted upstream as canonical artifacts
+- become mandatory startup work when their source layers are absent; optional derived joins should fail quiet and remain rebuildable on demand
 
 ### 5. DuckDB Boundary
 
@@ -160,6 +161,7 @@ DuckDB may:
 - be the universal durable store for feature attributes, normalized fields, and query-oriented denormalizations
 - accelerate search, filtering, reporting, and ad hoc analysis
 - store derived tables such as `unified_parcels` when those joins are query-facing
+- store generic repository/source metadata keyed by provenance rather than region-specific one-off tables
 
 DuckDB must not:
 
@@ -167,6 +169,7 @@ DuckDB must not:
 - be treated as the render-geometry source
 - be bypassed by large parallel property bags persisted inside geometry caches
 - redefine canonical truth through DB-only transforms that cannot be rebuilt from persisted inputs
+- materialize geography-named special tables such as one region per table; geography belongs in rows and provenance columns, not in schema names
 
 The correct flow is:
 
@@ -392,7 +395,7 @@ The main artifacts are:
 
 | Path | Kind | Producer | Consumer | Notes |
 | --- | --- | --- | --- | --- |
-| `data/world/.../layers/*.geojson.canonical.bin` | Canonical runtime layer binary | Explicit builders/importers | Hydration workers, layer registry, compiled geometry builders, runtime detail/query glue | Required runtime-readable layer artifact. Embedded `source_signature` replaces GeoJSON file metadata as the normal invalidation key. |
+| `data/world/.../layers/*.canonical.bin` | Canonical runtime layer binary | Explicit builders/importers | Hydration workers, layer registry, compiled geometry builders, runtime detail/query glue | Required runtime-readable layer artifact. Embedded `source_signature` replaces GeoJSON file metadata as the normal invalidation key. |
 | `data/world/.../layers/*.geojson` | Legacy removed artifact class | None | None | Deprecated path. These files should not be produced by current builders and must not be required for startup, hydration, signature resolution, or normal layer availability checks. |
 | `data/world/.../layers/*.geojson.part` | In-progress legacy export/download write | Export or download tooling | Download/export finalization only | Temporary artifact; not a valid runtime layer source. |
 | `sources/world/.../**/*` excluding tracked manifests | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV/XLSX/PDF payloads used to generate canonical binaries or document the upstream source. These files are local-only working artifacts and should normally be ignored by git. |

@@ -510,7 +510,7 @@ std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const 
 
 std::filesystem::path canonicalLayerPathForFile(const fs::path& root, const std::string& file) {
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    return layer_path.parent_path() / (file + ".canonical.bin");
+    return layer_path.parent_path() / (layerArtifactBasenameForFile(file) + ".canonical.bin");
 }
 
 bool layerRuntimeSourceMaterializedForFile(const fs::path& root, const std::string& file) {
@@ -542,30 +542,61 @@ bool layerMatchesIdentifier(const LayerDef& layer, std::string_view key) {
     return layer.file == key || layerLogicalId(layer) == key;
 }
 
-bool layerUsesPointGeometry(const LayerDef& layer) {
-    if (layer.scale == "point") return true;
-    if (layer.duckdb_role == "point_event") return true;
-    if (!layer.import_lon_field.empty() && !layer.import_lat_field.empty()) return true;
-    if (containsCaseInsensitive(layer.import_type, "point")) return true;
-    if (containsCaseInsensitive(layer.scale, "line")) return false;
-    if (containsCaseInsensitive(layer.import_type, "line")) return false;
-    if (!layer.features.empty()) {
-        return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureRecord& fg) {
-            return fg.rings.empty() && fg.paths.empty();
-        });
+std::string layerArtifactBasenameForFile(const std::string& file) {
+    return file;
+}
+
+void invalidateLayerGeometryUsageCache(LayerDef& layer) {
+    layer.geometry_usage_cache_valid = false;
+}
+
+void refreshLayerGeometryUsageCache(LayerDef& layer) {
+    bool uses_point_geometry = false;
+    bool uses_polyline_geometry = false;
+
+    if (layer.scale == "point" ||
+        layer.duckdb_role == "point_event" ||
+        (!layer.import_lon_field.empty() && !layer.import_lat_field.empty()) ||
+        containsCaseInsensitive(layer.import_type, "point")) {
+        uses_point_geometry = true;
     }
-    return false;
+
+    if (containsCaseInsensitive(layer.scale, "line") ||
+        containsCaseInsensitive(layer.import_type, "line")) {
+        uses_point_geometry = false;
+        uses_polyline_geometry = true;
+    } else if (!layer.features.empty()) {
+        uses_point_geometry = std::all_of(
+            layer.features.begin(),
+            layer.features.end(),
+            [](const LayerDef::FeatureRecord& fg) {
+                return fg.rings.empty() && fg.paths.empty();
+            });
+        uses_polyline_geometry = std::any_of(
+            layer.features.begin(),
+            layer.features.end(),
+            [](const LayerDef::FeatureRecord& fg) {
+                return !fg.paths.empty();
+            });
+    }
+
+    layer.uses_point_geometry_cache = uses_point_geometry;
+    layer.uses_polyline_geometry_cache = uses_polyline_geometry;
+    layer.geometry_usage_cache_valid = true;
+}
+
+bool layerUsesPointGeometry(const LayerDef& layer) {
+    if (!layer.geometry_usage_cache_valid) {
+        refreshLayerGeometryUsageCache(const_cast<LayerDef&>(layer));
+    }
+    return layer.uses_point_geometry_cache;
 }
 
 bool layerUsesPolylineGeometry(const LayerDef& layer) {
-    if (containsCaseInsensitive(layer.scale, "line")) return true;
-    if (containsCaseInsensitive(layer.import_type, "line")) return true;
-    if (!layer.features.empty()) {
-        return std::any_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureRecord& fg) {
-            return !fg.paths.empty();
-        });
+    if (!layer.geometry_usage_cache_valid) {
+        refreshLayerGeometryUsageCache(const_cast<LayerDef&>(layer));
     }
-    return false;
+    return layer.uses_polyline_geometry_cache;
 }
 
 std::string firstDisplayProperty(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {

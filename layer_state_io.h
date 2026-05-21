@@ -10,7 +10,7 @@
 
 struct QueryHistoryEntry;
 
-std::vector<LayerDef> loadManifest(const std::filesystem::path& root);
+std::vector<LayerDef> loadManifest(const std::filesystem::path& root, bool include_non_runtime = false);
 
 void loadLayerUiState(
     const std::filesystem::path& root,

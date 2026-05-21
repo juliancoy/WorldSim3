@@ -27,6 +27,7 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
@@ -137,6 +138,39 @@ std::string formatElapsedMs(double elapsed_ms) {
     return std::to_string(rounded_ms) + "ms";
 }
 
+void emitCanonicalLayerProgress(
+    const char* mode,
+    size_t index,
+    size_t total,
+    const std::string& layer_id,
+    const std::string& status,
+    const std::string& detail = {}) {
+    std::ostringstream out;
+    out << "[" << mode << "] "
+        << "[" << index << "/" << total << "] "
+        << layer_id << ": " << status;
+    if (!detail.empty()) out << " " << detail;
+    std::cerr << out.str() << std::endl;
+}
+
+std::string canonicalLayerSourceSummary(const LayerDef& layer) {
+    if (!layer.source_url.empty()) return layer.source_url;
+    if (!layer.import_url.empty()) return layer.import_url;
+    if (!layer.import_service_url.empty()) return layer.import_service_url;
+    if (!layer.source_urls.empty()) return layer.source_urls.front();
+    if (!layer.import_type.empty()) return "import:" + layer.import_type;
+    return "source:unknown";
+}
+
+json deprecatedRegionalParcelsAliasError(const char* mode, const std::string& file) {
+    return {
+        {"mode", mode},
+        {"file", file},
+        {"ok", false},
+        {"error", "regional_parcels has been removed; use direct parcel layer ids such as parcel.geojson"}
+    };
+}
+
 struct LocalLayerLoadFailure {
     size_t layer_index = 0;
     std::string layer_file;
@@ -157,30 +191,95 @@ struct LocalLayerLoadSummary {
 
 bool loadLocalLayerFeatures(
     const fs::path& root,
-    const std::string& file,
-    const std::string& sig,
+    const LayerDef& layer,
     std::vector<LayerDef::FeatureRecord>& features,
     std::vector<LayerDef::FeatureProperties>* feature_properties,
     std::string& source_used,
     std::string& error) {
-    if (loadCanonicalLayerFeatureCollection(root, file, sig, features, feature_properties)) {
+    const fs::path layer_path = resolveStoredLayerPath(root, layer);
+    std::string sig;
+    if (resolveLayerSourceSignature(layer_path, sig, nullptr) &&
+        loadCanonicalLayerFeatureCollection(root, layer.file, sig, features, feature_properties)) {
         source_used = "canonical_binary";
         return true;
     }
-    error = "no readable canonical layer binary";
+    std::error_code ec;
+    if (fs::exists(layer_path, ec) && !ec && layer_path.extension() == ".geojson") {
+        try {
+            std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
+            features = loadLayerPointsFromFile(layer_path, &loaded_feature_properties);
+            if (feature_properties) *feature_properties = std::move(loaded_feature_properties);
+            source_used = "legacy_geojson";
+            return true;
+        } catch (const std::exception& e) {
+            error = std::string("legacy geojson load failed: ") + e.what();
+        }
+    }
+    std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
+    if (loadLayerFeaturesFromLocalImportArtifact(
+            root,
+            layer,
+            features,
+            loaded_feature_properties,
+            source_used,
+            error)) {
+        if (feature_properties) *feature_properties = std::move(loaded_feature_properties);
+        return true;
+    }
+    if (error.empty()) error = "no readable canonical layer binary or local import artifact";
     return false;
+}
+
+bool loadLocalLayerFeatures(
+    const fs::path& root,
+    const std::string& file,
+    const std::string&,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>* feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    LayerDef layer;
+    layer.file = file;
+    return loadLocalLayerFeatures(root, layer, features, feature_properties, source_used, error);
+}
+
+bool layerHasLocalAnalyticsSource(const fs::path& root, const LayerDef& layer) {
+    if (layerRuntimeSourceMaterialized(root, layer)) return true;
+    const fs::path layer_path = resolveStoredLayerPath(root, layer);
+    std::error_code ec;
+    if (fs::exists(layer_path, ec) && !ec && layer_path.extension() == ".geojson") return true;
+    return layerHasLocalImportArtifact(root, layer);
+}
+
+bool loadDuckDbLayerFeatures(
+    const fs::path& root,
+    const LayerDef& layer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>* feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
+    if (!loadLayerFeaturesFromLocalSsotSource(
+            root, layer, features, loaded_feature_properties, source_used, error)) {
+        return false;
+    }
+    if (feature_properties) *feature_properties = std::move(loaded_feature_properties);
+    return true;
 }
 
 bool loadLocalLayersForCli(
     const fs::path& root,
     std::vector<LayerDef>& layers,
     bool verbose,
-    LocalLayerLoadSummary& summary) {
+    LocalLayerLoadSummary& summary,
+    bool ssot_only = false) {
     summary = {};
     std::vector<size_t> local_indices;
     local_indices.reserve(layers.size());
     for (size_t i = 0; i < layers.size(); ++i) {
-        const bool exists = layerRuntimeSourceMaterialized(root, layers[i]);
+        const bool exists = ssot_only
+            ? layerHasLocalSsotSource(root, layers[i])
+            : layerHasLocalAnalyticsSource(root, layers[i]);
         if (!exists) {
             summary.skipped_missing_layer_count += 1;
             continue;
@@ -192,15 +291,14 @@ bool loadLocalLayersForCli(
     summary.requested_layer_count = local_indices.size();
     const auto started_at = std::chrono::steady_clock::now();
     for (size_t idx : local_indices) {
-        const fs::path layer_path = resolveStoredLayerPath(root, layers[idx]);
-        std::string sig;
-        std::string sig_source_kind;
         std::vector<LayerDef::FeatureRecord> features;
         std::vector<LayerDef::FeatureProperties> feature_properties;
         std::string source_used;
         std::string error;
-        if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind) ||
-            !loadLocalLayerFeatures(root, layers[idx].file, sig, features, &feature_properties, source_used, error)) {
+        const bool loaded = ssot_only
+            ? loadDuckDbLayerFeatures(root, layers[idx], features, &feature_properties, source_used, error)
+            : loadLocalLayerFeatures(root, layers[idx], features, &feature_properties, source_used, error);
+        if (!loaded) {
             summary.failed_layer_count += 1;
             summary.failures.push_back({idx, layers[idx].file, error.empty() ? "failed to load source features" : error});
             if (verbose) {
@@ -211,6 +309,7 @@ bool loadLocalLayersForCli(
         }
         layers[idx].features = std::move(features);
         layers[idx].feature_properties = std::move(feature_properties);
+        refreshLayerGeometryUsageCache(layers[idx]);
         rebuildFeaturePropertyRegistryForLayer(layers[idx]);
         summary.loaded_layer_count += 1;
         summary.total_feature_count += layers[idx].features.size();
@@ -229,6 +328,7 @@ bool loadLocalLayersForCli(
 LayerDef layerFromManifestItemForCli(const json& item) {
     LayerDef layer;
     layer.name = item.value("name", std::string("unnamed"));
+    layer.logical_id = item.value("id", defaultLayerLogicalIdForFile(item.value("file", std::string())));
     layer.file = item.value("file", std::string());
     if (item.contains("url") && item["url"].is_string()) layer.source_url = item["url"].get<std::string>();
     if (item.contains("import") && item["import"].is_object()) {
@@ -260,7 +360,24 @@ LayerDef layerFromManifestItemForCli(const json& item) {
     return layer;
 }
 
-int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bool include_large) {
+const LayerDef* findManifestLayerByIdentifier(const std::vector<LayerDef>& layers, const std::string& key) {
+    for (const auto& candidate : layers) {
+        if (layerMatchesIdentifier(candidate, key)) return &candidate;
+    }
+    return nullptr;
+}
+
+bool deprecatedRegionalParcelsAlias(const std::string& key) {
+    return key == "regional_parcels.geojson" || key == "regional_parcels";
+}
+
+std::string resolveLayerStorageKey(const fs::path& root, const std::string& key) {
+    std::vector<LayerDef> layers = loadManifest(root);
+    if (const LayerDef* layer = findManifestLayerByIdentifier(layers, key)) return layer->file;
+    return key;
+}
+
+int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bool include_large, int reserve_cores) {
     constexpr const char* kMode = "generate-canonical-files";
     const auto started_at = std::chrono::steady_clock::now();
     const std::string selected_phase = phase.empty() ? "all" : phase;
@@ -283,90 +400,205 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
         return 1;
     }
 
+    struct CanonicalJob {
+        size_t index = 0;
+        LayerDef layer;
+        bool is_large = false;
+    };
+    struct CanonicalJobResult {
+        enum class Status {
+            Generated,
+            Skipped,
+            Failed
+        };
+        Status status = Status::Skipped;
+        std::string file;
+        std::string layer_id;
+        std::string message;
+        fs::path canonical_path;
+        uint64_t feature_count = 0;
+    };
+
+    std::vector<CanonicalJob> jobs;
+    jobs.reserve(items_json.size());
+    size_t considered = 0;
+    for (const auto& item : items_json) {
+        if (!item.is_object()) continue;
+        LayerDef layer = layerFromManifestItemForCli(item);
+        if (layer.file.empty()) continue;
+        CanonicalJob job;
+        job.index = ++considered;
+        job.layer = std::move(layer);
+        job.is_large = item.value("large", false);
+        jobs.push_back(std::move(job));
+    }
+
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned int worker_count = std::max(
+        1u,
+        hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+
     emitCliProgress(
         kMode,
         "start",
         "phase=" + selected_phase +
             " include_large=" + std::string(include_large ? "true" : "false") +
             " manifest_path=" + manifest_path.string() +
-            " manifest_items=" + std::to_string(items_json.size()));
+            " manifest_items=" + std::to_string(items_json.size()) +
+            " jobs=" + std::to_string(jobs.size()) +
+            " worker_count=" + std::to_string(worker_count) +
+            " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
 
-    size_t considered = 0;
     size_t generated = 0;
     size_t skipped = 0;
     size_t failed = 0;
     std::vector<std::string> failures;
+    std::vector<CanonicalJobResult> results(jobs.size());
+    size_t next_job = 0;
+    std::mutex work_mutex;
+    std::mutex result_mutex;
+    std::mutex progress_mutex;
 
-    for (const auto& item : items_json) {
-        if (!item.is_object()) continue;
-        LayerDef layer = layerFromManifestItemForCli(item);
-        if (layer.file.empty()) continue;
-        considered++;
-        emitCliProgress(
-            kMode,
-            "layer",
-            std::to_string(considered) + "/" + std::to_string(items_json.size()) +
-                " " + layer.file);
+    auto run_job = [&](const CanonicalJob& job) -> CanonicalJobResult {
+        CanonicalJobResult result;
+        result.file = job.layer.file;
+        result.layer_id = layerLogicalId(job.layer);
 
-        if (item.value("large", false) && !include_large) {
-            skipped++;
-            emitCliProgress(
-                kMode,
-                "layer-skip",
-                layer.file + " reason=large-source rerun_with=--include-large");
-            std::cout << "skip " << layer.file << " (large source; rerun with --include-large)\n";
-            continue;
+        {
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "waiting");
         }
 
-        const fs::path canonical_path = canonicalLayerPathForFile(root, layer.file);
+        if (job.is_large && !include_large) {
+            result.status = CanonicalJobResult::Status::Skipped;
+            result.message = "large-source rerun_with=--include-large";
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "skipped", result.message);
+            return result;
+        }
+
+        const fs::path canonical_path = canonicalLayerPathForFile(root, job.layer.file);
+        result.canonical_path = canonical_path;
+
+        {
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "checking");
+        }
+
         if (!fs::exists(canonical_path)) {
-            if (!layer.source_url.empty() || layerHasImportSource(layer)) {
-                const fs::path deprecated_layer_path = resolveStoredLayerPath(root, layer);
-                emitCliProgress(
-                    kMode,
-                    "canonical-missing",
-                    layer.file + " action=materialize-canonical-artifact");
-                const VersionedDownloadResult res = downloadOrImportLayer(layer, deprecated_layer_path, root);
+            if (!job.layer.source_url.empty() || layerHasImportSource(job.layer)) {
+                const fs::path deprecated_layer_path = resolveStoredLayerPath(root, job.layer);
+                {
+                    std::lock_guard<std::mutex> lock(progress_mutex);
+                    emitCanonicalLayerProgress(
+                        kMode,
+                        job.index,
+                        jobs.size(),
+                        result.layer_id,
+                        "pulling fs layer",
+                        "from=" + canonicalLayerSourceSummary(job.layer));
+                }
+                const VersionedDownloadResult res = downloadOrImportLayer(job.layer, deprecated_layer_path, root);
                 if (!res.ok) {
-                    failed++;
-                    failures.push_back(layer.file + ": " + res.message);
-                    emitCliProgress(kMode, "layer-fail", layer.file + " error=" + res.message);
-                    std::cout << "fail " << layer.file << " (" << res.message << ")\n";
-                    continue;
+                    result.status = CanonicalJobResult::Status::Failed;
+                    result.message = res.message;
+                    std::lock_guard<std::mutex> lock(progress_mutex);
+                    emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "error", res.message);
+                    return result;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(progress_mutex);
+                    emitCanonicalLayerProgress(
+                        kMode,
+                        job.index,
+                        jobs.size(),
+                        result.layer_id,
+                        "download complete",
+                        res.message);
                 }
             }
         }
 
         if (!fs::exists(canonical_path)) {
-            skipped++;
-            emitCliProgress(
-                kMode,
-                "layer-skip",
-                layer.file + " reason=no-canonical-artifact-materialized");
-            std::cout << "skip " << layer.file << " (no canonical artifact materialized)\n";
-            continue;
+            result.status = CanonicalJobResult::Status::Skipped;
+            result.message = "no canonical artifact materialized";
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "skipped", result.message);
+            return result;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "verifying");
         }
 
         CanonicalFeatureCollectionMetadata meta;
         if (!loadBinaryCanonicalMetadata(canonical_path, meta) ||
             meta.source_signature.empty() ||
             meta.feature_count == 0) {
-            failed++;
-            failures.push_back(layer.file + ": canonical metadata verification failed");
-            emitCliProgress(kMode, "layer-fail", layer.file + " error=canonical-metadata-verification-failed");
-            std::cout << "fail " << layer.file << " (canonical metadata verification failed)\n";
-            continue;
+            result.status = CanonicalJobResult::Status::Failed;
+            result.message = "canonical metadata verification failed";
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "error", result.message);
+            return result;
         }
 
-        generated++;
-        emitCliProgress(
-            kMode,
-            "layer-ok",
-            layer.file +
-                " features=" + std::to_string(meta.feature_count) +
-                " canonical_path=" + canonical_path.string());
-        std::cout << "ok   " << layer.file << " -> " << canonical_path.string()
-                  << " (" << meta.feature_count << " features)\n";
+        result.status = CanonicalJobResult::Status::Generated;
+        result.feature_count = meta.feature_count;
+        result.message = canonical_path.string();
+        {
+            std::lock_guard<std::mutex> lock(progress_mutex);
+            emitCanonicalLayerProgress(
+                kMode,
+                job.index,
+                jobs.size(),
+                result.layer_id,
+                "done",
+                "features=" + std::to_string(meta.feature_count));
+        }
+        return result;
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(worker_count);
+    for (unsigned int worker_idx = 0; worker_idx < worker_count; ++worker_idx) {
+        workers.emplace_back([&]() {
+            for (;;) {
+                CanonicalJob job;
+                {
+                    std::lock_guard<std::mutex> lock(work_mutex);
+                    if (next_job >= jobs.size()) break;
+                    job = jobs[next_job++];
+                }
+                CanonicalJobResult result = run_job(job);
+                {
+                    std::lock_guard<std::mutex> lock(result_mutex);
+                    results[job.index - 1] = std::move(result);
+                }
+            }
+        });
+    }
+    for (auto& worker : workers) {
+        if (worker.joinable()) worker.join();
+    }
+
+    for (const auto& result : results) {
+        switch (result.status) {
+            case CanonicalJobResult::Status::Generated:
+                generated++;
+                std::cout << "done " << result.layer_id << " -> " << result.canonical_path.string()
+                          << " (" << result.feature_count << " features)\n";
+                break;
+            case CanonicalJobResult::Status::Skipped:
+                skipped++;
+                std::cout << "skip " << result.layer_id << " (" << result.message << ")\n";
+                break;
+            case CanonicalJobResult::Status::Failed:
+                failed++;
+                failures.push_back(result.layer_id + ": " + result.message);
+                std::cout << "fail " << result.layer_id << " (" << result.message << ")\n";
+                break;
+        }
     }
 
     const double elapsed_ms = std::chrono::duration<double, std::milli>(
@@ -379,12 +611,14 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
             " generated=" + std::to_string(generated) +
             " skipped=" + std::to_string(skipped) +
             " failed=" + std::to_string(failed) +
+            " worker_count=" + std::to_string(worker_count) +
             " elapsed=" + formatElapsedMs(elapsed_ms));
 
     json out = {
         {"mode", "generate-canonical-files"},
         {"phase", selected_phase},
         {"manifest_path", manifest_path.string()},
+        {"worker_count", worker_count},
         {"considered", considered},
         {"generated", generated},
         {"skipped", skipped},
@@ -876,10 +1110,10 @@ int runLayerRuntimeStatusSelftest() {
     LayerRuntimeState ready;
     ready.status = LayerPipelineStatus::Ready;
 
-    const std::string file = "regional_parcels.geojson";
+    const std::string file = "parcel.geojson";
     const bool ok =
-        layerRuntimeDisplayStatus(hydration_cache, file) == "reading regional_parcels.geojson.bin" &&
-        layerRuntimeDisplayStatus(canonical_binary, file) == "reading regional_parcels.geojson.canonical.bin" &&
+        layerRuntimeDisplayStatus(hydration_cache, file) == "reading hydration cache" &&
+        layerRuntimeDisplayStatus(canonical_binary, file) == "reading canonical parcel binary" &&
         layerRuntimeDisplayStatus(missing_canonical_source, file) == "reading deprecated source layer artifact" &&
         layerRuntimeDisplayStatus(ready, file) == "ready via compiled geometry artifact";
 
@@ -1004,7 +1238,8 @@ int runRenderPolicySelftest() {
 int runRenderPlanSelftest() {
     std::vector<LayerDef> layers(4);
     layers[0].file = "basemap_context.geojson";
-    layers[1].file = "regional_parcels.geojson";
+    layers[1].file = "large_parcels.layer";
+    layers[1].logical_id = "large_parcels";
     layers[1].scale = "parcel";
     layers[2].file = "zoning.geojson";
     layers[2].category = LayerDef::Category::Zoning;
@@ -1240,7 +1475,11 @@ json binaryHeaderJson(const BinaryCacheHeader& h, const std::string& expected_si
 }
 
 int parcelArtifactHealth(const fs::path& root, std::string file) {
-    if (file.empty()) file = "regional_parcels.geojson";
+    if (file.empty()) file = "parcel.geojson";
+    if (deprecatedRegionalParcelsAlias(file)) {
+        std::cout << deprecatedRegionalParcelsAliasError("parcel-artifact-health", file).dump(2) << '\n';
+        return 2;
+    }
     if (!isBareLayerFilename(file)) {
         std::cout << json{
             {"mode", "parcel-artifact-health"},
@@ -1251,9 +1490,12 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
-    const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
+    const std::string storage_key = resolveLayerStorageKey(root, file);
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
+    const fs::path canonical_path = canonicalLayerPathForFile(root, storage_key);
+        const fs::path render_path =
+            root / "data" / "cache" / "render" /
+            (layerArtifactBasenameForFile(storage_key) + ".parcel-render.bin");
     const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
 
     std::string resolved_sig;
@@ -1338,8 +1580,8 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
     feature_properties.push_back({{{"regional_parcel_id", "BaltimoreCity:TEST123"}, {"owner", "Canonical Parcel Test"}}});
 
     const fs::path test_dir = root / "data" / "cache" / "selftest";
-    const fs::path cache_path = test_dir / "regional_parcels.geojson.canonical.bin";
-    const fs::path resolver_canonical_path = test_dir / "regional_parcels.geojson.canonical.bin";
+    const fs::path cache_path = test_dir / "parcel.geojson.canonical.bin";
+    const fs::path resolver_canonical_path = test_dir / "parcel.geojson.canonical.bin";
     const std::string sig = "canonical_selftest_sig";
     saveBinaryCanonicalFeatureCollection(cache_path, sig, features, &feature_properties);
 
@@ -1354,7 +1596,7 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
     std::string resolved_sig;
     std::string resolved_kind;
     const bool resolver_loads_canonical =
-        resolveLayerSourceSignature(test_dir / "regional_parcels.geojson", resolved_sig, &resolved_kind) &&
+        resolveLayerSourceSignature(test_dir / "parcel.geojson", resolved_sig, &resolved_kind) &&
         resolved_sig == sig &&
         resolved_kind == "canonical_binary";
 
@@ -1399,7 +1641,11 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
 }
 
 int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
-    if (file.empty()) file = "regional_parcels.geojson";
+    if (file.empty()) file = "parcel.geojson";
+    if (deprecatedRegionalParcelsAlias(file)) {
+        std::cout << deprecatedRegionalParcelsAliasError("inspect-canonical-parcel-binary", file).dump(2) << '\n';
+        return 2;
+    }
     if (!isBareLayerFilename(file)) {
         std::cout << json{
             {"mode", "inspect-canonical-parcel-binary"},
@@ -1410,7 +1656,7 @@ int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
+    const fs::path canonical_path = canonicalLayerPathForFile(root, resolveLayerStorageKey(root, file));
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(canonical_path, meta)) {
         std::cout << json{
@@ -1441,7 +1687,11 @@ int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
 }
 
 int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
-    if (file.empty()) file = "regional_parcels.geojson";
+    if (file.empty()) file = "parcel.geojson";
+    if (deprecatedRegionalParcelsAlias(file)) {
+        std::cout << deprecatedRegionalParcelsAliasError("validate-canonical-parcel-binary", file).dump(2) << '\n';
+        return 2;
+    }
     if (!isBareLayerFilename(file)) {
         std::cout << json{
             {"mode", "validate-canonical-parcel-binary"},
@@ -1452,8 +1702,9 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    if (!layerRuntimeSourceMaterializedForFile(root, file)) {
+    const std::string storage_key = resolveLayerStorageKey(root, file);
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
+    if (!layerRuntimeSourceMaterializedForFile(root, storage_key)) {
         std::cout << json{
             {"mode", "validate-canonical-parcel-binary"},
             {"file", file},
@@ -1477,7 +1728,7 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
 
     std::vector<LayerDef::FeatureRecord> canonical_features;
     std::vector<LayerDef::FeatureProperties> canonical_feature_properties;
-    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
+    const fs::path canonical_path = canonicalLayerPathForFile(root, storage_key);
     const bool canonical_ok =
         loadBinaryCanonicalFeatureCollection(canonical_path, sig, canonical_features, &canonical_feature_properties);
     CanonicalFeatureCollectionMetadata meta;
@@ -1517,7 +1768,7 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
 int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
     constexpr const char* kMode = "rebuild-duckdb-analytics";
     const auto started_at = std::chrono::steady_clock::now();
-    std::vector<LayerDef> layers = loadManifest(root);
+    std::vector<LayerDef> layers = loadManifest(root, true);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
     const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
     emitCliProgress(
@@ -1567,7 +1818,8 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
 
     LocalLayerLoadSummary load_summary;
     emitCliProgress(kMode, "load", "loading local materialized layers");
-    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary);
+    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary, true);
+    const bool load_any = load_summary.loaded_layer_count > 0;
     emitCliProgress(
         kMode,
         "load-complete",
@@ -1586,9 +1838,9 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         "duckdb",
         "rebuilding analytics database from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
-    const bool reused_existing = load_ok && !analytics.needsRebuild(layers);
+    const bool reused_existing = load_any && !analytics.needsRebuild(layers);
     const bool rebuild_ok =
-        load_ok && (reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
+        load_any && (reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
     const double elapsed_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started_at).count();
     emitCliProgress(
@@ -1689,81 +1941,44 @@ int inspectDuckDbGeographyTablesCli(const fs::path& root) {
 
         out["table_presence"] = {
             {"geography_feature_collections", table_names.contains("geography_feature_collections")},
-            {"anambra_runtime_features", table_names.contains("anambra_runtime_features")},
-            {"anambra_runtime_lga_summary", table_names.contains("anambra_runtime_lga_summary")},
+            {"repository_sources", table_names.contains("repository_sources")},
             {"import_audit", table_names.contains("import_audit")},
             {"layer_features", table_names.contains("layer_features")},
             {"layer_feature_properties", table_names.contains("layer_feature_properties")}
         };
 
         out["base_counts"] = {
-            {"layer_features_anambra", count_one(
+            {"layer_features_geographic_rows", count_one(
                 "SELECT count(*)::BIGINT FROM layer_features "
-                "WHERE provenance_nation_state = 'ng' AND provenance_state_region = 'anambra'")},
-            {"import_audit_anambra", count_one(
+                "WHERE coalesce(provenance_nation_state, '') <> '' "
+                "   OR coalesce(provenance_state_region, '') <> '' "
+                "   OR coalesce(provenance_county_city, '') <> ''")},
+            {"import_audit_geographic_rows", count_one(
                 "SELECT count(*)::BIGINT FROM import_audit "
-                "WHERE provenance_nation_state = 'ng' AND provenance_state_region = 'anambra'")}
+                "WHERE coalesce(provenance_nation_state, '') <> '' "
+                "   OR coalesce(provenance_state_region, '') <> ''")},
+            {"repository_sources", count_one("SELECT count(*)::BIGINT FROM repository_sources")}
         };
-
-        const char* runtime_features_sql = R"SQL(
-            SELECT count(*)::BIGINT
-            FROM (
-                SELECT
-                    layer_file,
-                    layer_name,
-                    duckdb_role,
-                    category,
-                    feature_idx,
-                    min_lon,
-                    min_lat,
-                    max_lon,
-                    max_lat,
-                    coalesce(
-                        json_extract_string(properties_json, '$.name'),
-                        json_extract_string(properties_json, '$.poi_name'),
-                        json_extract_string(properties_json, '$.prmry_name'),
-                        json_extract_string(properties_json, '$.set_name'),
-                        json_extract_string(properties_json, '$.market_nam'),
-                        json_extract_string(properties_json, '$.plc_st_nam'),
-                        json_extract_string(properties_json, '$.fctry_st_n')
-                    ) AS feature_name,
-                    json_extract_string(properties_json, '$.lganame') AS lga_name,
-                    json_extract_string(properties_json, '$.wardname') AS ward_name,
-                    json_extract_string(properties_json, '$.source') AS source_name,
-                    properties_json
-                FROM layer_features
-                WHERE provenance_nation_state = 'ng'
-                  AND provenance_state_region = 'anambra'
-            ) t
-        )SQL";
-        const char* lga_summary_sql = R"SQL(
-            SELECT count(*)::BIGINT
-            FROM (
-                SELECT
-                    layer_file,
-                    layer_name,
-                    coalesce(json_extract_string(properties_json, '$.lganame'), '') AS lga_name,
-                    count(*) AS feature_count
-                FROM layer_features
-                WHERE provenance_nation_state = 'ng'
-                  AND provenance_state_region = 'anambra'
-                GROUP BY layer_file, layer_name, coalesce(json_extract_string(properties_json, '$.lganame'), '')
-            ) t
-        )SQL";
 
         out["derivation_diagnostics"] = {
-            {"anambra_runtime_features_query", count_one(runtime_features_sql)},
-            {"anambra_runtime_lga_summary_query", count_one(lga_summary_sql)}
+            {"geography_feature_collections_query", count_one(
+                "SELECT count(*)::BIGINT FROM ("
+                "  SELECT provenance_world, provenance_nation_state, provenance_state_region, provenance_county_city, "
+                "         layer_file, layer_name, duckdb_role, scale, category, count(*) AS feature_count "
+                "  FROM layer_features "
+                "  GROUP BY provenance_world, provenance_nation_state, provenance_state_region, provenance_county_city, "
+                "           layer_file, layer_name, duckdb_role, scale, category"
+                ") t")}
         };
 
-        if (table_names.contains("anambra_runtime_features")) {
+        if (table_names.contains("geography_feature_collections")) {
             out["materialized_counts"] = {
-                {"anambra_runtime_features", count_one("SELECT count(*)::BIGINT FROM anambra_runtime_features")}
+                {"geography_feature_collections", count_one("SELECT count(*)::BIGINT FROM geography_feature_collections")}
             };
         }
-        if (table_names.contains("anambra_runtime_lga_summary")) {
-            out["materialized_counts"]["anambra_runtime_lga_summary"] =
-                count_one("SELECT count(*)::BIGINT FROM anambra_runtime_lga_summary");
+        if (table_names.contains("repository_sources")) {
+            out["materialized_counts"]["repository_sources"] =
+                count_one("SELECT count(*)::BIGINT FROM repository_sources");
         }
 
         out["ok"] = true;
@@ -1914,6 +2129,10 @@ int reportDuckDbCoverageCli(const fs::path& root) {
 
 json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
     exit_code = 0;
+    if (deprecatedRegionalParcelsAlias(file)) {
+        exit_code = 2;
+        return deprecatedRegionalParcelsAliasError("warm-parcel-render-cache", file);
+    }
     if (!isBareLayerFilename(file)) {
         exit_code = 2;
         return {
@@ -1924,8 +2143,11 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
         };
     }
 
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
+    const std::string storage_key = resolveLayerStorageKey(root, file);
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
+        const fs::path render_path =
+            root / "data" / "cache" / "render" /
+            (layerArtifactBasenameForFile(storage_key) + ".parcel-render.bin");
     std::string sig;
     std::string sig_source_kind;
     if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
@@ -1960,7 +2182,7 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
     std::vector<LayerDef::FeatureRecord> features;
     std::string source_used;
     std::string error;
-    if (!loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+    if (!loadLocalLayerFeatures(root, storage_key, sig, features, nullptr, source_used, error)) {
         exit_code = 1;
         return {
             {"mode", "warm-parcel-render-cache"},
@@ -2035,7 +2257,7 @@ int warmParcelRenderCacheAll(const fs::path& root) {
         if (ec) break;
         if (!entry.is_regular_file()) continue;
         const std::string name = entry.path().filename().string();
-        if (name.ends_with(".geojson.canonical.bin")) {
+        if (name.ends_with(".canonical.bin")) {
             candidates.push_back(name.substr(0, name.size() - std::strlen(".canonical.bin")));
         }
     }
@@ -2401,29 +2623,25 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
             " message=" + analytics.status().message);
 
     const fs::path db_path = root / "data" / "worldsim.duckdb";
-    const std::vector<std::string> duckdb_table_names = {
-        "layer_features",
-        "layer_feature_properties",
-        "unified_parcels",
-        "parcel_events",
-        "analytics_build_info",
-        "analytics_source_contributions",
-        "anambra_repository_sources",
-        "import_audit",
-        "geography_feature_collections",
-        "anambra_runtime_features",
-        "anambra_runtime_lga_summary",
-        "parcel_features",
-        "owner_rollups",
-        "layer_counts"
-    };
+        const std::vector<std::string> duckdb_table_names = {
+            "layer_features",
+            "layer_feature_properties",
+            "unified_parcels",
+            "parcel_events",
+            "analytics_build_info",
+            "analytics_source_contributions",
+            "repository_sources",
+            "import_audit",
+            "geography_feature_collections",
+            "parcel_features",
+            "owner_rollups",
+            "layer_counts"
+        };
     std::unordered_map<std::string, std::vector<std::string>> columns_by_table;
     std::unordered_map<std::string, uint64_t> layer_feature_counts;
     std::unordered_map<std::string, uint64_t> layer_property_counts;
     std::unordered_map<std::string, uint64_t> import_audit_counts;
     std::unordered_map<std::string, uint64_t> geography_collection_counts;
-    std::unordered_map<std::string, uint64_t> anambra_runtime_counts;
-    std::unordered_map<std::string, uint64_t> anambra_lga_summary_counts;
     std::unordered_map<std::string, uint64_t> parcel_event_counts;
     std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> source_contributions;
     std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> unified_parcel_contributions;
@@ -2436,8 +2654,6 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         layer_property_counts = readDuckDbCountsByLayerFile(con, "layer_feature_properties", "layer_file", "count(*)");
         import_audit_counts = readDuckDbCountsByLayerFile(con, "import_audit", "layer_file", "count(*)");
         geography_collection_counts = readDuckDbCountsByLayerFile(con, "geography_feature_collections", "layer_file", "sum(feature_count)");
-        anambra_runtime_counts = readDuckDbCountsByLayerFile(con, "anambra_runtime_features", "layer_file", "count(*)");
-        anambra_lga_summary_counts = readDuckDbCountsByLayerFile(con, "anambra_runtime_lga_summary", "layer_file", "count(*)");
         parcel_event_counts = readDuckDbCountsByLayerFile(con, "parcel_events", "source_layer_file", "count(*)");
         source_contributions = readDuckDbSourceContributionCounts(con);
         unified_parcel_contributions = readUnifiedParcelContributionCounts(con);
@@ -2480,20 +2696,6 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
                 {"table", "geography_feature_collections"},
                 {"rows_created", it->second},
                 {"columns", columns_by_table["geography_feature_collections"]}
-            });
-        }
-        if (auto it = anambra_runtime_counts.find(layer.file); it != anambra_runtime_counts.end()) {
-            duckdb_outputs.push_back({
-                {"table", "anambra_runtime_features"},
-                {"rows_created", it->second},
-                {"columns", columns_by_table["anambra_runtime_features"]}
-            });
-        }
-        if (auto it = anambra_lga_summary_counts.find(layer.file); it != anambra_lga_summary_counts.end()) {
-            duckdb_outputs.push_back({
-                {"table", "anambra_runtime_lga_summary"},
-                {"rows_created", it->second},
-                {"columns", columns_by_table["anambra_runtime_lga_summary"]}
             });
         }
         if (auto it = parcel_event_counts.find(layer.file); it != parcel_event_counts.end()) {
@@ -3516,7 +3718,8 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
         return generateCanonicalFilesCli(
             root,
             options.generate_canonical_phase.empty() ? "all" : options.generate_canonical_phase,
-            options.include_large_downloads);
+            options.include_large_downloads,
+            options.reserve_cores_set ? options.reserve_cores : 0);
     }
     if (options.run_rebuild_duckdb_analytics) {
         return rebuildDuckDbAnalyticsCli(root, options.reserve_cores_set ? options.reserve_cores : 0);

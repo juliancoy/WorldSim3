@@ -29,8 +29,8 @@ The harness loads all matching features, computes the full input extent, emits o
 --repeats 10        # repeat aggregate timing
 --sigma 6           # blur sigma in raster pixels
 --no-cpu-blur       # isolate GPU binning/readback cost
---input PATH        # use regional_parcels.geojson or a staging layer
---jurisdiction NAME # e.g. HowardCounty for regional_parcels.geojson
+--input PATH        # use a direct SSOT-backed layer or staging layer
+--jurisdiction NAME # e.g. HowardCounty for a parcel staging layer
 ```
 
 Baseline on the current machine with `data/world/earth/nation_state/us/state_region/md/county_city/howard_county/layers/howard_county_parcels.geojson` after persistent GPU buffers/descriptor/command-buffer reuse:

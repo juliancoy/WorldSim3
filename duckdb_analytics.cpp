@@ -46,6 +46,60 @@ std::string propsJson(const LayerDef::FeatureRecord& fg) {
     return obj.dump();
 }
 
+std::vector<uint8_t> readBinaryFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("failed to open " + path.string());
+    in.seekg(0, std::ios::end);
+    const auto n = in.tellg();
+    in.seekg(0);
+    std::vector<uint8_t> out((size_t)n);
+    if (!out.empty()) in.read((char*)out.data(), (std::streamsize)out.size());
+    return out;
+}
+
+std::vector<std::vector<std::string>> parseCsvRows(const std::vector<uint8_t>& bytes) {
+    std::vector<std::vector<std::string>> rows;
+    std::vector<std::string> row;
+    std::string field;
+    bool quoted = false;
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        const char ch = (char)bytes[i];
+        if (quoted) {
+            if (ch == '"') {
+                if (i + 1 < bytes.size() && (char)bytes[i + 1] == '"') {
+                    field.push_back('"');
+                    ++i;
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push_back(ch);
+            }
+            continue;
+        }
+        if (ch == '"') {
+            quoted = true;
+        } else if (ch == ',') {
+            row.push_back(std::move(field));
+            field.clear();
+        } else if (ch == '\n') {
+            row.push_back(std::move(field));
+            field.clear();
+            if (!row.empty() && !row.back().empty() && row.back().back() == '\r') row.back().pop_back();
+            rows.push_back(std::move(row));
+            row.clear();
+        } else {
+            field.push_back(ch);
+        }
+    }
+    if (!field.empty() || !row.empty()) {
+        row.push_back(std::move(field));
+        if (!row.empty() && !row.back().empty() && row.back().back() == '\r') row.back().pop_back();
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
 double numericProp(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
     return parseNumericField(firstDisplayProperty(fg, keys));
 }
@@ -71,9 +125,17 @@ fs::path manifestItemOutputPath(const fs::path& root, const json& item) {
     return {};
 }
 
-fs::path anambraRepositoryManifestPath(const fs::path& root) {
-    return root / "sources" / "world" / "earth" / "nation_state" / "ng" / "state_region" / "anambra" /
-        "layers_manifest.repository.json";
+std::vector<fs::path> repositoryManifestPaths(const fs::path& root) {
+    std::vector<fs::path> out;
+    std::error_code ec;
+    const fs::path manifest_root = root / "sources" / "world";
+    if (!fs::exists(manifest_root, ec) || ec) return out;
+    for (fs::recursive_directory_iterator it(manifest_root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file()) continue;
+        if (it->path().filename() == "layers_manifest.repository.json") out.push_back(it->path());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 std::string isoNowUtc() {
@@ -90,6 +152,50 @@ std::string isoNowUtc() {
     return std::string(buf);
 }
 
+std::vector<fs::path> analyticsSourceArtifactPaths(const fs::path& root, const LayerDef& layer) {
+    std::vector<fs::path> out;
+    auto append = [&](const fs::path& path) {
+        if (std::find(out.begin(), out.end(), path) == out.end()) out.push_back(path);
+    };
+    if (!layer.source_url.empty() && layer.file.ends_with(".geojson")) {
+        append(provenanceSourceArtifactPath(root, layer, layer.file));
+        return out;
+    }
+    if (layer.import_type == "arcgis_feature_layer") {
+        append(provenanceSourceArtifactPath(root, layer, layer.file));
+        return out;
+    }
+    if (layer.import_type == "census_acs_tract_demographics") {
+        append(provenanceSourceArtifactPath(root, layer, layer.file));
+        if (!layer.import_artifact_file.empty()) {
+            append(provenanceSourceArtifactPath(root, layer, layer.import_artifact_file));
+        } else {
+            append(provenanceSourceArtifactPath(root, layer, fs::path(layer.file).stem().string() + ".acs.json"));
+            append(provenanceSourceArtifactPath(root, layer, layer.file + ".acs.json"));
+        }
+        return out;
+    }
+    if (!layer.import_artifact_file.empty()) {
+        append(provenanceSourceArtifactPath(root, layer, layer.import_artifact_file));
+        return out;
+    }
+    if (layer.import_type == "socrata_csv_properties") {
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".source.csv"));
+    } else if (layer.import_type == "xlsx_point_table") {
+        append(provenanceSourceArtifactPath(root, layer, fs::path(layer.file).stem().string() + ".xlsx"));
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".xlsx"));
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".source.xlsx"));
+    } else if (layer.import_type == "json_point_feed" || layer.import_type == "overpass_json_point_feed") {
+        append(provenanceSourceArtifactPath(root, layer, fs::path(layer.file).stem().string() + ".json"));
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".json"));
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".source.json"));
+    } else if (layer.import_type == "zipped_shapefile") {
+        append(provenanceSourceArtifactPath(root, layer, layer.file + ".source.zip"));
+        append(provenanceSourceArtifactPath(root, layer, fs::path(layer.file).stem().string() + ".zip"));
+    }
+    return out;
+}
+
 std::string analyticsBuildSignature(const fs::path& root, const std::vector<LayerDef>& layers) {
     std::ostringstream sig;
     sig << "analytics_schema_v" << kAnalyticsSchemaVersion << "|";
@@ -98,22 +204,11 @@ std::string analyticsBuildSignature(const fs::path& root, const std::vector<Laye
             << ":duckdb=" << (layer.duckdb_ingest ? 1 : 0)
             << ":role=" << layer.duckdb_role << "|";
         if (!layer.duckdb_ingest) continue;
-        fs::path sig_path;
-        if (layer.import_type == "socrata_csv_properties") {
-            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.csv");
-        } else if (layer.import_type == "xlsx_point_table") {
-            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.xlsx");
-        } else if (layer.import_type == "json_point_feed") {
-            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".json");
-        } else if (layer.import_type == "overpass_json_point_feed") {
-            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".json");
-        } else if (layer.import_type == "zipped_shapefile") {
-            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.zip");
-        } else {
-            sig_path = canonicalLayerPath(root, layer);
+        const std::vector<fs::path> sig_paths = analyticsSourceArtifactPaths(root, layer);
+        for (const auto& sig_path : sig_paths) {
+            if (!fs::exists(sig_path)) continue;
+            sig << "sig=" << fileSignature(sig_path) << "|";
         }
-        if (!fs::exists(sig_path)) continue;
-        sig << "sig=" << fileSignature(sig_path) << "|";
     }
     return sig.str();
 }
@@ -125,7 +220,7 @@ void appendSocrataHowardPropertyRows(
     const LayerDef& layer,
     const fs::path& csv_path,
     size_t& feature_count) {
-    const auto rows = parseCsv(readFileBytes(csv_path));
+    const auto rows = parseCsvRows(readBinaryFile(csv_path));
     if (rows.empty()) return;
     std::unordered_map<std::string, size_t> col;
     for (size_t i = 0; i < rows.front().size(); ++i) col[rows.front()[i]] = i;
@@ -146,21 +241,21 @@ void appendSocrataHowardPropertyRows(
         props.push_back({"jurisdiction", "Howard County"});
         props.push_back({"source_file", "Maryland Real Property Assessments"});
         for (const auto& [name, idx] : col) {
-            if (idx < row.size()) props.push_back({name, row[idx]});
+            if (idx < row.size()) props.emplace_back(name, row[idx]);
         }
-        props.push_back({"source_parcel_id", acct});
-        props.push_back({"account_id", acct});
-        props.push_back({"blocklot", acct});
-        props.push_back({"address", get(row, "mdp_street_address_mdp_field_address")});
-        props.push_back({"owner", ""});
-        props.push_back({"land_value", get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164")});
-        props.push_back({"improvement_value", get(row, "current_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165")});
-        props.push_back({"current_value", get(row, "current_assessment_year_total_assessment_sdat_field_172")});
-        props.push_back({"sale_price", get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")});
-        props.push_back({"sale_date", get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89")});
-        props.push_back({"year_built", get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")});
-        props.push_back({"sdat_link", get(row, "real_property_search_link")});
-        props.push_back({"finder_online_link", get(row, "finder_online_link")});
+        props.emplace_back("source_parcel_id", acct);
+        props.emplace_back("account_id", acct);
+        props.emplace_back("blocklot", acct);
+        props.emplace_back("address", get(row, "mdp_street_address_mdp_field_address"));
+        props.emplace_back("owner", "");
+        props.emplace_back("land_value", get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164"));
+        props.emplace_back("improvement_value", get(row, "current_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165"));
+        props.emplace_back("current_value", get(row, "current_assessment_year_total_assessment_sdat_field_172"));
+        props.emplace_back("sale_price", get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90"));
+        props.emplace_back("sale_date", get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89"));
+        props.emplace_back("year_built", get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235"));
+        props.emplace_back("sdat_link", get(row, "real_property_search_link"));
+        props.emplace_back("finder_online_link", get(row, "finder_online_link"));
 
         const std::string address = get(row, "mdp_street_address_mdp_field_address");
         const double land_value = parseNumericField(get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164"));
@@ -329,10 +424,11 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("DROP TABLE IF EXISTS layer_feature_properties", "drop layer_feature_properties");
         exec_or_throw("DROP TABLE IF EXISTS unified_parcels", "drop unified_parcels");
         exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
-        exec_or_throw("DROP TABLE IF EXISTS anambra_repository_sources", "drop anambra_repository_sources");
+        exec_or_throw("DROP TABLE IF EXISTS repository_sources", "drop repository_sources");
         exec_or_throw("DROP TABLE IF EXISTS geography_feature_collections", "drop geography_feature_collections");
-        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_features", "drop anambra_runtime_features");
-        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_lga_summary", "drop anambra_runtime_lga_summary");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_repository_sources", "drop legacy anambra_repository_sources");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_features", "drop legacy anambra_runtime_features");
+        exec_or_throw("DROP TABLE IF EXISTS anambra_runtime_lga_summary", "drop legacy anambra_runtime_lga_summary");
         exec_or_throw("DROP TABLE IF EXISTS import_audit", "drop import_audit");
         exec_or_throw("DROP TABLE IF EXISTS analytics_build_info", "drop analytics_build_info");
         exec_or_throw("DROP TABLE IF EXISTS analytics_source_contributions", "drop analytics_source_contributions");
@@ -694,7 +790,8 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             )
         )SQL", "create analytics_source_contributions");
         exec_or_throw(R"SQL(
-            CREATE TABLE anambra_repository_sources (
+            CREATE TABLE repository_sources (
+                manifest_path VARCHAR,
                 name VARCHAR,
                 file VARCHAR,
                 source_url VARCHAR,
@@ -705,10 +802,12 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 file_size_bytes UBIGINT,
                 downloadable BOOLEAN,
                 reason VARCHAR,
+                provenance_world VARCHAR,
                 provenance_nation_state VARCHAR,
-                provenance_state_region VARCHAR
+                provenance_state_region VARCHAR,
+                provenance_county_city VARCHAR
             )
-        )SQL", "create anambra_repository_sources");
+        )SQL", "create repository_sources");
         exec_or_throw(R"SQL(
             CREATE TABLE import_audit (
                 layer_file VARCHAR,
@@ -779,42 +878,49 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             source_appender.Close();
         }
         {
-            std::ifstream in(anambraRepositoryManifestPath(root_));
-            json arr;
-            if (in) {
-                try {
-                    in >> arr;
-                } catch (...) {
-                    arr = json::array();
+            const std::vector<fs::path> manifest_paths = repositoryManifestPaths(root_);
+            if (!manifest_paths.empty()) {
+                auto repository_appender = duckdb::Appender(con, "repository_sources");
+                for (const auto& manifest_path : manifest_paths) {
+                    std::ifstream in(manifest_path);
+                    json arr;
+                    if (in) {
+                        try {
+                            in >> arr;
+                        } catch (...) {
+                            arr = json::array();
+                        }
+                    }
+                    if (!arr.is_array()) continue;
+                    for (const auto& item : arr) {
+                        if (!item.is_object()) continue;
+                        const fs::path local_path = manifestItemOutputPath(root_, item);
+                        std::error_code ec;
+                        const bool local_exists = !local_path.empty() && fs::exists(local_path, ec) && !ec;
+                        const uint64_t file_size_bytes =
+                            local_exists ? (uint64_t)fs::file_size(local_path, ec) : 0ULL;
+                        const auto& provenance = item.contains("provenance") && item["provenance"].is_object()
+                            ? item["provenance"] : json::object();
+                        repository_appender.BeginRow();
+                        repository_appender.Append<const char*>(manifest_path.string().c_str());
+                        repository_appender.Append<const char*>(item.value("name", std::string()).c_str());
+                        repository_appender.Append<const char*>(item.value("file", std::string()).c_str());
+                        repository_appender.Append<const char*>(item.value("url", std::string()).c_str());
+                        repository_appender.Append<const char*>(item.value("source", std::string()).c_str());
+                        repository_appender.Append<const char*>(item.value("description", std::string()).c_str());
+                        repository_appender.Append<const char*>(local_path.string().c_str());
+                        repository_appender.Append<bool>(local_exists);
+                        repository_appender.Append<uint64_t>(file_size_bytes);
+                        repository_appender.Append<bool>(item.value("download", true));
+                        repository_appender.Append<const char*>(item.value("reason", std::string()).c_str());
+                        repository_appender.Append<const char*>(provenance.value("world", std::string()).c_str());
+                        repository_appender.Append<const char*>(provenance.value("nation_state", std::string()).c_str());
+                        repository_appender.Append<const char*>(provenance.value("state_region", std::string()).c_str());
+                        repository_appender.Append<const char*>(provenance.value("county_city", std::string()).c_str());
+                        repository_appender.EndRow();
+                    }
                 }
-            }
-            if (arr.is_array()) {
-                auto anambra_appender = duckdb::Appender(con, "anambra_repository_sources");
-                for (const auto& item : arr) {
-                    if (!item.is_object()) continue;
-                    const fs::path local_path = manifestItemOutputPath(root_, item);
-                    std::error_code ec;
-                    const bool local_exists = !local_path.empty() && fs::exists(local_path, ec) && !ec;
-                    const uint64_t file_size_bytes =
-                        local_exists ? (uint64_t)fs::file_size(local_path, ec) : 0ULL;
-                    const auto& provenance = item.contains("provenance") && item["provenance"].is_object()
-                        ? item["provenance"] : json::object();
-                    anambra_appender.BeginRow();
-                    anambra_appender.Append<const char*>(item.value("name", std::string()).c_str());
-                    anambra_appender.Append<const char*>(item.value("file", std::string()).c_str());
-                    anambra_appender.Append<const char*>(item.value("url", std::string()).c_str());
-                    anambra_appender.Append<const char*>(item.value("source", std::string()).c_str());
-                    anambra_appender.Append<const char*>(item.value("description", std::string()).c_str());
-                    anambra_appender.Append<const char*>(local_path.string().c_str());
-                    anambra_appender.Append<bool>(local_exists);
-                    anambra_appender.Append<uint64_t>(file_size_bytes);
-                    anambra_appender.Append<bool>(item.value("download", true));
-                    anambra_appender.Append<const char*>(item.value("reason", std::string()).c_str());
-                    anambra_appender.Append<const char*>(provenance.value("nation_state", std::string()).c_str());
-                    anambra_appender.Append<const char*>(provenance.value("state_region", std::string()).c_str());
-                    anambra_appender.EndRow();
-                }
-                anambra_appender.Close();
+                repository_appender.Close();
             }
         }
         {
@@ -892,38 +998,6 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 scale,
                 category
         )SQL", "create geography_feature_collections");
-        exec_or_throw(R"SQL(
-            CREATE TABLE anambra_runtime_features AS
-            SELECT
-                layer_file,
-                layer_name,
-                duckdb_role,
-                category,
-                feature_idx,
-                    min_lon,
-                    min_lat,
-                    max_lon,
-                    max_lat,
-                    feature_name,
-                    lga_name,
-                    ward_name,
-                    source_name,
-                    properties_json
-            FROM layer_features
-            WHERE provenance_nation_state = 'ng'
-              AND provenance_state_region = 'anambra'
-        )SQL", "create anambra_runtime_features");
-        exec_or_throw(R"SQL(
-            CREATE TABLE anambra_runtime_lga_summary AS
-            SELECT
-                layer_file,
-                layer_name,
-                coalesce(lga_name, '') AS lga_name,
-                count(*) AS feature_count
-            FROM anambra_runtime_features
-            GROUP BY layer_file, layer_name, coalesce(lga_name, '')
-            ORDER BY layer_file, feature_count DESC, lga_name
-        )SQL", "create anambra_runtime_lga_summary");
         exec_or_throw(R"SQL(
             CREATE TABLE parcel_events AS
             WITH base AS (

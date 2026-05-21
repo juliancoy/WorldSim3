@@ -33,8 +33,7 @@ bool layerFileMaterialized(const fs::path& root, const std::string& file) {
 
 bool isDirectOperationalParcelLayer(const LayerDef& layer) {
     return layer.scale == "parcel" &&
-           layer.duckdb_role == "parcel_record" &&
-           layer.file != "regional_parcels.geojson";
+           layer.duckdb_role == "parcel_record";
 }
 }
 
@@ -74,7 +73,7 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
 int LayerRegistry::findLayerByFile(std::string_view file) const {
     if (!layers_) return -1;
     for (size_t i = 0; i < layers_->size(); ++i) {
-        if ((*layers_)[i].file == file) return (int)i;
+        if (layerMatchesIdentifier((*layers_)[i], file)) return (int)i;
     }
     return -1;
 }

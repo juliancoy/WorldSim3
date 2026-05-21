@@ -1,5 +1,6 @@
 #include "layer_runtime_coordinator.h"
 
+#include "app_utils.h"
 #include "layer_import.h"
 
 #include <mutex>
@@ -18,7 +19,7 @@ int findLayerIndex(const LayerApiCommandCoordinatorContext& ctx, const std::stri
     if (ctx.layer_registry) return ctx.layer_registry->findLayerByFile(file);
     if (!ctx.layers) return -1;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
-        if ((*ctx.layers)[i].file == file) return (int)i;
+        if (layerMatchesIdentifier((*ctx.layers)[i], file)) return (int)i;
     }
     return -1;
 }

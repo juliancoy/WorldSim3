@@ -37,7 +37,7 @@ int findLayerFile(const LayerUiSharedContext& ctx, std::string_view file) {
     if (ctx.layer_registry) return ctx.layer_registry->findLayerByFile(file);
     if (!ctx.layers) return -1;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
-        if ((*ctx.layers)[i].file == file) return (int)i;
+        if (layerMatchesIdentifier((*ctx.layers)[i], file)) return (int)i;
     }
     return -1;
 }
@@ -107,7 +107,6 @@ void setCategoryVisible(LayerUiSharedContext& ctx, int parcel_layer_idx, LayerDe
     bool heatmap_changed = false;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         LayerDef& layer = (*ctx.layers)[i];
-        if (enabled && layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
         if (ctx.layer_browse_state && !layerMatchesBrowseGeography(layer, *ctx.layer_browse_state)) continue;
         if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) {
             layer.enabled = enabled;

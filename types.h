@@ -55,6 +55,9 @@ struct LayerDef {
     std::string provenance_state_region;
     std::string provenance_county_city;
     mutable bool normalized_geography_cache_valid = false;
+    mutable bool geometry_usage_cache_valid = false;
+    mutable bool uses_point_geometry_cache = false;
+    mutable bool uses_polyline_geometry_cache = false;
     mutable std::string normalized_provenance_nation_state;
     mutable std::string normalized_provenance_state_region;
     mutable std::string normalized_provenance_county_city;

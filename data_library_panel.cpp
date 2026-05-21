@@ -24,6 +24,7 @@ void updateDataLibraryVisibleRows(DataLibrarySearchCacheContext& ctx) {
         const bool hit =
             query.empty() ||
             containsCaseInsensitive(layer.name, query) ||
+            containsCaseInsensitive(layerLogicalId(layer), query) ||
             containsCaseInsensitive(layer.file, query) ||
             containsCaseInsensitive(categoryToString(layer.category), query) ||
             containsCaseInsensitive(layer.subcategory, query) ||
@@ -106,7 +107,7 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
         "anambra-repository"
     };
     finalizeDataLibraryBulkDownloadIfReady(*ctx.coordinator);
-    ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
+    ImGui::InputTextWithHint("##data_library_query", "Search by name, layer id, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
     ImGui::SameLine();
     if (ImGui::Button("Clear")) ctx.query_buffer[0] = '\0';
     ImGui::SameLine();

@@ -206,6 +206,21 @@ bool readJsonFile(const fs::path& path, json& out, std::ostream* log) {
     return true;
 }
 
+bool readJsonFile(const fs::path& path, json& out, std::ostream* log, bool log_missing) {
+    std::ifstream in(path);
+    if (!in) {
+        if (log && log_missing) *log << "[parcel-match] missing " << path.string() << "\n";
+        return false;
+    }
+    try {
+        in >> out;
+    } catch (const std::exception& e) {
+        if (log) *log << "[parcel-match] failed to parse " << path.string() << ": " << e.what() << "\n";
+        return false;
+    }
+    return true;
+}
+
 bool outputIsFresh(const fs::path& output, const fs::path& parcel, const fs::path& source) {
     std::error_code ec;
     if (!fs::exists(output, ec)) return false;
@@ -223,12 +238,13 @@ bool outputIsFresh(const fs::path& output, const fs::path& parcel, const fs::pat
 std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
     const fs::path& root,
     bool force,
-    std::ostream* log) {
+    std::ostream* log,
+    bool log_missing_sources) {
     const fs::path parcel_path = resolveStoredLayerPathForFile(root, "parcel.geojson");
     std::vector<ParcelMatchedLayerBuildStat> stats;
 
     json parcel_collection;
-    if (!readJsonFile(parcel_path, parcel_collection, log)) return stats;
+    if (!readJsonFile(parcel_path, parcel_collection, log, true)) return stats;
     auto parcels_it = parcel_collection.find("features");
     if (parcels_it == parcel_collection.end() || !parcels_it->is_array()) return stats;
     const json& parcels = *parcels_it;
@@ -258,7 +274,7 @@ std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
         }
 
         json source_collection;
-        if (!readJsonFile(source_path, source_collection, log)) {
+        if (!readJsonFile(source_path, source_collection, log, log_missing_sources)) {
             stats.push_back(stat);
             continue;
         }

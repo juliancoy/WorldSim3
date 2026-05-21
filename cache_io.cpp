@@ -51,7 +51,6 @@ constexpr uint32_t kOwnerSearchBinaryVersion = 1;
 constexpr std::array<char, 8> kAddressSearchBinaryMagic{{'W', 'S', '3', 'A', 'S', 'C', '1', '\0'}};
 constexpr uint32_t kAddressSearchBinaryVersion = 1;
 constexpr size_t kCanonicalFeatureSignatureBytes = 256;
-constexpr size_t kRegionalParcelCompactionPropertyThreshold = 24;
 
 bool hostIsLittleEndian() {
     const uint16_t v = 1;
@@ -144,71 +143,14 @@ bool writeString(std::ostream& out, const std::string& s) {
     return s.empty() || writeExact(out, s.data(), s.size());
 }
 
-bool isRegionalParcelHydrationCachePath(const fs::path& cache_path) {
-    return cache_path.filename().string() == "regional_parcels.geojson.bin";
-}
-
-bool keepRegionalParcelRuntimeProperty(const std::string& key) {
-    static const std::array<const char*, 31> keep_keys{{
-        "jurisdiction",
-        "source_file",
-        "regional_parcel_id",
-        "source_parcel_id",
-        "account_id",
-        "blocklot",
-        "BLOCKLOT",
-        "BLOCK_LOT",
-        "BlockLot",
-        "PIN",
-        "pin",
-        "BLOCK",
-        "LOT",
-        "block",
-        "lot",
-        "address",
-        "owner",
-        "owner_name",
-        "land_value",
-        "improvement_value",
-        "current_value",
-        "sale_price",
-        "sale_date",
-        "year_built",
-        "sdat_link",
-        "FULLADDR",
-        "PROPERTY_ADDRESS",
-        "OWNER_1",
-        "OWNERNME1",
-        "TAXBASE",
-        "SDATLINK"
-    }};
-    return std::find(keep_keys.begin(), keep_keys.end(), key) != keep_keys.end();
-}
-
-uint32_t hydrationPropertyWriteCount(
-    const fs::path& cache_path,
-    const std::vector<std::pair<std::string, std::string>>& properties) {
-    if (!isRegionalParcelHydrationCachePath(cache_path)) {
-        return static_cast<uint32_t>(properties.size());
-    }
-    uint32_t count = 0;
-    for (const auto& kv : properties) {
-        if (keepRegionalParcelRuntimeProperty(kv.first)) ++count;
-    }
-    return count;
-}
-
 bool writeHydrationProperties(
     std::ostream& out,
-    const fs::path& cache_path,
+    const fs::path&,
     const std::vector<std::pair<std::string, std::string>>& properties) {
     if (properties.size() > std::numeric_limits<uint32_t>::max()) return false;
-    const bool slim_regional_parcels = isRegionalParcelHydrationCachePath(cache_path);
-    const uint32_t count = hydrationPropertyWriteCount(cache_path, properties);
-    bool ok = writeU32(out, count);
+    bool ok = writeU32(out, static_cast<uint32_t>(properties.size()));
     for (const auto& kv : properties) {
         if (!ok) break;
-        if (slim_regional_parcels && !keepRegionalParcelRuntimeProperty(kv.first)) continue;
         ok = writeString(out, kv.first) && writeString(out, kv.second);
     }
     return ok;
@@ -329,7 +271,8 @@ std::filesystem::path geometryArtifactCachePathForLayerFile(
     const fs::path& root,
     const std::string& layer_file,
     GeometryArtifactClass cls) {
-    return root / "data" / "cache" / "geometry" / (layer_file + geometryArtifactFileSuffix(cls));
+    return root / "data" / "cache" / "geometry" /
+           (layerArtifactBasenameForFile(layer_file) + geometryArtifactFileSuffix(cls));
 }
 
 bool buildPointGeometryArtifact(
@@ -1206,11 +1149,9 @@ bool binaryHydrationCacheShouldBeCompacted(
     const fs::path& cache_path,
     const std::vector<LayerDef::FeatureRecord>& features,
     const std::vector<LayerDef::FeatureProperties>* feature_properties) {
-    if (!isRegionalParcelHydrationCachePath(cache_path)) return false;
-    for (size_t fi = 0; fi < features.size(); ++fi) {
-        const FeaturePropertyPairs* props = propertiesForFeatureRecord(features[fi], feature_properties, fi);
-        if (props && props->size() > kRegionalParcelCompactionPropertyThreshold) return true;
-    }
+    (void)cache_path;
+    (void)features;
+    (void)feature_properties;
     return false;
 }
 

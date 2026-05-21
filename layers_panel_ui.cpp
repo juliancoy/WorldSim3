@@ -503,6 +503,7 @@ bool layerMatchesSearch(const LayersPanelUiContext& ctx, const LayerDef& layer) 
            fuzzyTextMatches(layer.description, query) ||
            fuzzyTextMatches(layer.subcategory, query) ||
            fuzzyTextMatches(layer.region, query) ||
+           fuzzyTextMatches(layerLogicalId(layer), query) ||
            fuzzyTextMatches(layer.file, query) ||
            fuzzyTextMatches(scope, query);
 }
@@ -547,15 +548,9 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
             ? (*ctx.shared->local_layer_exists_cache)[idx]
             : false;
-    const bool active_parcel_layer_exists =
-        ctx.shared->local_layer_exists_cache &&
-        ctx.parcel_layer_idx >= 0 &&
-        (size_t)ctx.parcel_layer_idx < ctx.shared->local_layer_exists_cache->size()
-            ? (*ctx.shared->local_layer_exists_cache)[(size_t)ctx.parcel_layer_idx]
-            : false;
     const bool download_pending =
         ctx.shared->layer_download_pending ? ctx.shared->layer_download_pending(idx) : false;
-    const bool show_download_button = !local_layer_exists && !active_parcel_layer_exists && !download_pending;
+    const bool show_download_button = !local_layer_exists && !download_pending;
     if (show_download_button) {
         pushButtonPalette(ButtonPalette::Download);
         const bool can_download = ctx.shared->layer_registry
@@ -616,9 +611,6 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         ImGui::Text("Jurisdiction: %s", jurisdiction);
         ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
         ImGui::Text("Download queued/active: %s", download_pending ? "yes" : "no");
-        if (active_parcel_layer_exists) {
-            ImGui::TextDisabled("Download hidden because the Maryland parcel layer is already available locally.");
-        }
         if (!ctx.parcel_jurisdiction_filter_state->status.empty()) {
             ImGui::TextDisabled("%s", ctx.parcel_jurisdiction_filter_state->status.c_str());
         }
@@ -889,7 +881,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             std::lock_guard<std::mutex> lk(*ctx.shared->status_mutex);
             if (idx < ctx.shared->layer_states->size()) st = (*ctx.shared->layer_states)[idx];
         }
-        const std::string display_status = layerRuntimeDisplayStatus(st, layer.file);
+        const std::string display_status = layerRuntimeDisplayStatus(st, layerLogicalId(layer));
         if (st.status == LayerPipelineStatus::Failed) {
             ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", display_status.c_str());
         } else {
@@ -905,7 +897,8 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             ImGui::TextDisabled("Pipeline: %s", statusToString(st.status));
             if (!st.hydration_phase.empty()) ImGui::TextDisabled("Hydration: %s", st.hydration_phase.c_str());
             ImGui::Text("Features: %zu", st.feature_count);
-            ImGui::Text("File: %s", layer.file.c_str());
+            ImGui::Text("Layer ID: %s", layerLogicalId(layer).c_str());
+            ImGui::TextDisabled("Storage Key: %s", layer.file.c_str());
             ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
             if (!layer.subcategory.empty()) ImGui::Text("Subcategory: %s", layer.subcategory.c_str());
             if (!layer.scale.empty()) ImGui::Text("Scale: %s", layer.scale.c_str());

@@ -5,8 +5,9 @@
 
 namespace {
 std::string artifactReadStatus(const char* prefix, const std::string& layer_file, const char* suffix = "") {
-    if (layer_file.empty()) return prefix;
-    return std::string("reading ") + layer_file + suffix;
+    (void)layer_file;
+    (void)suffix;
+    return prefix;
 }
 }
 
