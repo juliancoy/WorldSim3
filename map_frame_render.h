@@ -1,6 +1,7 @@
 #pragma once
 
 #include "filters.h"
+#include "cache_io.h"
 #include "heatmap_runtime.h"
 #include "layer_runtime.h"
 #include "map_render_hover.h"
@@ -69,6 +70,10 @@ struct RenderFrameOrchestrationContext {
     const ImVec4* vacancy_rehab_color = nullptr;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;

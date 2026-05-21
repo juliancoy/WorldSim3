@@ -32,10 +32,10 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
         ctx.hydrated_now,
         ctx.layer_count,
         ctx.hydrated_frac * 100.0f,
-        ctx.triangulated_now,
+        ctx.ready_now,
         ctx.layer_count,
-        ctx.tri_frac * 100.0f);
-    ImGui::TextDisabled("Background layer queue: %zu | Tri queue: %zu | elapsed: %.1fs", ctx.hydrated_pending, ctx.tri_pending, ctx.elapsed_s);
+        ctx.ready_frac * 100.0f);
+    ImGui::TextDisabled("Background layer queue: %zu | elapsed: %.1fs", ctx.hydrated_pending, ctx.elapsed_s);
     ImGui::TextDisabled("Frame: %.2f ms (last %.2f) | FPS: %.1f", ctx.perf_frame_ms_avg, ctx.perf_frame_ms_last, ctx.perf_fps_avg);
     ImGui::TextDisabled(
         "UI rows: Data Library %zu/%zu (rebuilds %zu) | People & Pay %zu/%zu (rebuilds %zu)",
@@ -79,15 +79,11 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
     if (ctx.enabled_hydrated_now < ctx.enabled_layer_count && ctx.hydrate_idle_s > 15.0) {
         ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Enabled-layer cache loading has not advanced for %.1fs", ctx.hydrate_idle_s);
     }
-    if (ctx.triangulated_now < ctx.layer_count && ctx.tri_idle_s > 15.0) {
-        ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Triangulation has not advanced for %.1fs", ctx.tri_idle_s);
-    }
     ImGui::Separator();
     ImGui::TextDisabled("Tile cache: %zu / %zu", ctx.tile_cache_size, ctx.max_tile_cache);
     if (ImGui::TreeNode("Cache Clear")) {
         if (ImGui::Checkbox("All cache categories", &ctx.cache_clear->clear_cache_all)) {
             ctx.cache_clear->clear_cache_hydration = ctx.cache_clear->clear_cache_all;
-            ctx.cache_clear->clear_cache_triangulation = ctx.cache_clear->clear_cache_all;
             ctx.cache_clear->clear_cache_derived = ctx.cache_clear->clear_cache_all;
             ctx.cache_clear->clear_cache_heatmap_memory = ctx.cache_clear->clear_cache_all;
             ctx.cache_clear->clear_cache_heatmap_disk = ctx.cache_clear->clear_cache_all;
@@ -97,7 +93,6 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
         if (ImGui::BeginChild("cache_clear_children", ImVec2(0, 190), false, ImGuiWindowFlags_HorizontalScrollbar)) {
             if (ImGui::TreeNode("Data cache")) {
                 ImGui::Checkbox("Hydration cache (on-disk)", &ctx.cache_clear->clear_cache_hydration);
-                ImGui::Checkbox("Triangulation cache (on-disk)", &ctx.cache_clear->clear_cache_triangulation);
                 ImGui::Checkbox("Derived cache (on-disk)", &ctx.cache_clear->clear_cache_derived);
                 ImGui::Checkbox("Heatmap aggregate cache (on-disk)", &ctx.cache_clear->clear_cache_heatmap_disk);
                 ImGui::TreePop();
@@ -112,7 +107,6 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
         }
         const bool has_any_selected =
             ctx.cache_clear->clear_cache_hydration ||
-            ctx.cache_clear->clear_cache_triangulation ||
             ctx.cache_clear->clear_cache_derived ||
             ctx.cache_clear->clear_cache_heatmap_memory ||
             ctx.cache_clear->clear_cache_heatmap_disk ||
@@ -120,7 +114,6 @@ void drawPerformanceStatsPanel(PerformanceStatsUiContext& ctx) {
             ctx.cache_clear->clear_cache_tile_disk_presence;
         const bool all_children_selected =
             ctx.cache_clear->clear_cache_hydration &&
-            ctx.cache_clear->clear_cache_triangulation &&
             ctx.cache_clear->clear_cache_derived &&
             ctx.cache_clear->clear_cache_heatmap_memory &&
             ctx.cache_clear->clear_cache_heatmap_disk &&

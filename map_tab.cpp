@@ -297,6 +297,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.basemap_availability_last_check,
                 ctx.max_native_tile_zoom,
                 ctx.layers,
+                ctx.point_geometry_artifacts,
+                ctx.polygon_geometry_artifacts,
+                ctx.parcel_render_blob,
                 ctx.layer_spatial,
                 ctx.layer_hover_enabled,
                 ctx.layer_inspect_enabled,
@@ -464,6 +467,10 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.vacancy_notice_color = &map_canvas_session.vacancy_notice_color;
             map_frame_session_ctx.vacancy_rehab_color = &map_canvas_session.vacancy_rehab_color;
             map_frame_session_ctx.layers = ctx.layers;
+            map_frame_session_ctx.point_geometry_artifacts = ctx.point_geometry_artifacts;
+            map_frame_session_ctx.polyline_geometry_artifacts = ctx.polyline_geometry_artifacts;
+            map_frame_session_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+            map_frame_session_ctx.parcel_render_blob = ctx.parcel_render_blob;
             map_frame_session_ctx.layer_spatial = ctx.layer_spatial;
             map_frame_session_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
             map_frame_session_ctx.map_filter_state = ctx.map_filter_state;

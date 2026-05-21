@@ -2,6 +2,40 @@
 
 This document defines the implementation plan for removing CPU geometry from the WorldSim3 runtime architecture.
 
+## Progress Snapshot
+
+Status as of `2026-05-21`.
+
+Implemented:
+
+- explicit compiled geometry artifact filenames:
+  - `.point.bin`
+  - `.polyline.bin`
+  - `.polygon.bin`
+- stable feature IDs threaded into DuckDB
+- CLI compile/validate commands for point, polyline, and polygon artifacts
+- bulk `--build-geometry-duckdb-artifacts` command
+- point runtime rendering from compiled artifacts
+- point hover from compiled artifacts
+- crime point GPU upload from compiled artifacts
+- generic polyline rendering from compiled artifacts
+- generic polygon rendering from compiled artifacts
+- generic render-time CPU fallback removed for point, polyline, and generic polygon layers
+- zoning polygon artifact loading is active in runtime
+- parcel selection overlays use the parcel render blob instead of CPU rings
+- parcel hover hit-testing uses the parcel render blob instead of CPU polygon tests
+- zoning hover/inspection now prefers polygon artifacts instead of CPU polygon tests
+- hydrated layers now transition directly to `Ready` in artifact mode instead of entering triangulation
+- the live app no longer starts a triangulation worker thread
+
+Not implemented yet:
+
+- GPU picking
+- full parcel workflow cutover away from `LayerDef::FeatureGeom`
+- deletion of hydration workers
+- deletion of triangulation worker codepaths and types
+- removal of CPU feature geometry as a normal runtime structure
+
 Target outcome:
 
 - all renderable geometry is compiled into explicit-type disk artifacts

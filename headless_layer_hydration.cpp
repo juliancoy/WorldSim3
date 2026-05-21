@@ -81,11 +81,6 @@ bool hydrateLocalLayersHeadless(
     std::deque<HydratedLayer> hydrated_queue;
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
-    std::mutex tri_mutex;
-    std::condition_variable tri_cv;
-    std::deque<TriJob> tri_jobs;
-    std::deque<TriResult> tri_results;
-
     for (size_t idx : local_indices) {
         hydrate_requests.push_back(idx);
         hydration_requested[idx] = true;
@@ -107,10 +102,6 @@ bool hydrateLocalLayersHeadless(
         &hydrated_queue,
         &status_mutex,
         &layer_states,
-        &tri_mutex,
-        &tri_cv,
-        &tri_jobs,
-        &tri_results,
         nullptr,
         nullptr,
         nullptr,

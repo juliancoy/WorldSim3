@@ -18,24 +18,6 @@ struct HydratedLayer {
     std::string source_signature;
 };
 
-struct TriJob {
-    size_t index = 0;
-    std::string file;
-    std::string source_signature;
-    std::vector<std::vector<std::vector<ImVec2>>> rings_per_feature;
-};
-
-struct TriResult {
-    size_t index = 0;
-    std::string source_signature;
-    std::vector<std::vector<uint32_t>> triangles_per_feature;
-    size_t apply_offset = 0;
-    bool ok = true;
-    bool loaded_from_cache = false;
-    bool loaded_from_binary_cache = false;
-    std::string error;
-};
-
 struct SpatialIndexJob {
     size_t index = 0;
     std::string source_signature;
@@ -46,8 +28,6 @@ enum class LayerPipelineStatus {
     Queued,
     Hydrating,
     Hydrated,
-    TriQueued,
-    Triangulating,
     Ready,
     Failed
 };
@@ -61,17 +41,14 @@ struct LayerRuntimeState {
     std::string geometry_source_signature;
     std::string geometry_phase;
     std::string hydration_source_signature;
-    std::string triangulation_source_signature;
     std::string spatial_index_source_signature;
     std::string hydration_source_kind;
     std::string hydration_phase;
-    std::string triangulation_phase;
     std::string spatial_index_phase;
     bool geometry_loaded_from_artifact = false;
     bool geometry_gpu_resident = false;
     bool geometry_gpu_pick_ready = false;
     bool hydration_loaded_from_cache = false;
-    bool triangulation_loaded_from_cache = false;
 };
 
 struct LayerSpatialIndex {

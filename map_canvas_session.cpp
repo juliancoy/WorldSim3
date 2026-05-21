@@ -87,6 +87,9 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
     hover_query.zoning_layer_idx = ctx.zoning_layer_idx;
     hover_query.layers = ctx.layers;
+    hover_query.point_geometry_artifacts = ctx.point_geometry_artifacts;
+    hover_query.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+    hover_query.parcel_render_blob = ctx.parcel_render_blob;
     hover_query.layer_spatial = ctx.layer_spatial;
     hover_query.layer_hover_enabled = ctx.layer_hover_enabled;
     hover_query.mouse_ll = map_viewport.mouse_ll;

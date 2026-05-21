@@ -20,6 +20,7 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.size = ctx.size;
     overlay_ctx.layers = ctx.layers;
     overlay_ctx.parcel_layer_idx = ctx.parcel_layer_idx >= 0 ? (size_t)ctx.parcel_layer_idx : (size_t)-1;
+    overlay_ctx.math_zoom = ctx.math_zoom;
     overlay_ctx.vacant_notice_enabled = ctx.vacant_notice_overlay_enabled;
     overlay_ctx.vacant_rehab_enabled = ctx.vacant_rehab_overlay_enabled;
     overlay_ctx.tax_lien_enabled = ctx.tax_lien_overlay_enabled;
@@ -31,6 +32,7 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
     overlay_ctx.vacancy_notice_color = ctx.vacancy_notice_color ? *ctx.vacancy_notice_color : ImVec4(1, 0, 0, 1);
     overlay_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color ? *ctx.vacancy_rehab_color : ImVec4(0, 1, 1, 1);
     overlay_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
+    overlay_ctx.parcel_render_blob = ctx.parcel_render_blob;
     overlay_ctx.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
     overlay_ctx.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;
     overlay_ctx.parcel_tax_lien_by_feature = ctx.parcel_tax_lien_by_feature;
@@ -61,6 +63,8 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
         ctx.origin,
         ctx.size,
         ctx.layers,
+        ctx.polygon_geometry_artifacts,
+        ctx.parcel_render_blob,
         ctx.parcel_layer_idx,
         ctx.selected_parcel_indices,
         ctx.math_zoom,

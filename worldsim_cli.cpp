@@ -27,6 +27,7 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <unordered_map>
 #include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
@@ -41,6 +42,25 @@ bool isBareLayerFilename(const std::string& file) {
     return !file.empty() &&
            file.find('/') == std::string::npos &&
            file.find('\\') == std::string::npos;
+}
+
+GeometryArtifactClass detectGeometryArtifactClass(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureGeom>& features) {
+    bool saw_point = false;
+    bool saw_polyline = false;
+    bool saw_polygon = false;
+    for (const auto& fg : features) {
+        if (!fg.rings.empty()) saw_polygon = true;
+        else if (!fg.paths.empty()) saw_polyline = true;
+        else saw_point = true;
+    }
+    if (saw_polygon) return GeometryArtifactClass::Polygon;
+    if (saw_polyline) return GeometryArtifactClass::Polyline;
+    if (saw_point) return GeometryArtifactClass::Point;
+    if (layerUsesPointGeometry(layer)) return GeometryArtifactClass::Point;
+    if (layerUsesPolylineGeometry(layer)) return GeometryArtifactClass::Polyline;
+    return GeometryArtifactClass::Polygon;
 }
 
 std::string canonicalBinaryPathForLayerFile(const std::string& file) {
@@ -183,42 +203,6 @@ int runHydrationCacheSelftest(const fs::path& root) {
     };
     std::cout << out.dump(2) << '\n';
     return (same && stale_rejected && regional_compacted) ? 0 : 1;
-}
-
-int runTriangulationCacheSelftest(const fs::path& root) {
-    std::vector<std::vector<uint32_t>> tris = {
-        {0, 1, 2, 0, 2, 3},
-        {},
-        {5, 6, 7}
-    };
-    const fs::path test_dir = root / "data" / "cache" / "selftest";
-    const fs::path cache_path = test_dir / "triangulation_cache_selftest.bin";
-    const std::string sig = "tri_selftest_1";
-    saveBinaryTriCache(cache_path, sig, tris);
-
-    std::vector<std::vector<uint32_t>> loaded;
-    const bool loaded_ok = loadBinaryTriCache(cache_path, sig, tris.size(), loaded);
-    const bool same = loaded_ok && loaded == tris;
-
-    std::vector<std::vector<uint32_t>> stale_loaded;
-    const bool stale_rejected = !loadBinaryTriCache(cache_path, "wrong_signature", tris.size(), stale_loaded);
-    std::vector<std::vector<uint32_t>> wrong_count_loaded;
-    const bool wrong_count_rejected = !loadBinaryTriCache(cache_path, sig, tris.size() + 1, wrong_count_loaded);
-
-    std::error_code ec;
-    fs::remove(cache_path, ec);
-    fs::remove(test_dir, ec);
-
-    json out = {
-        {"mode", "triangulation-cache-selftest"},
-        {"ok", same && stale_rejected && wrong_count_rejected},
-        {"loaded", loaded_ok},
-        {"roundtrip_feature_vectors", loaded.size()},
-        {"stale_signature_rejected", stale_rejected},
-        {"wrong_count_rejected", wrong_count_rejected}
-    };
-    std::cout << out.dump(2) << '\n';
-    return (same && stale_rejected && wrong_count_rejected) ? 0 : 1;
 }
 
 int runProjectionCacheSelftest() {
@@ -557,71 +541,6 @@ int runParcelRenderCacheSelftest(const fs::path& root) {
     return out["ok"].get<bool>() ? 0 : 1;
 }
 
-int runTriangulationApplySelftest() {
-    std::vector<LayerDef> layers(1);
-    layers[0].file = "tri_apply_selftest.geojson";
-    layers[0].features.resize(10000);
-    std::vector<LayerRuntimeState> layer_states(1);
-    std::vector<bool> layer_profile_dirty(1, false);
-    std::deque<TriResult> tri_results;
-    std::mutex tri_mutex;
-    std::mutex status_mutex;
-    std::atomic<size_t> triangulated_count{0};
-
-    TriResult tr;
-    tr.index = 0;
-    tr.source_signature = "tri_apply_sig";
-    tr.loaded_from_cache = true;
-    tr.loaded_from_binary_cache = true;
-    tr.triangles_per_feature.resize(layers[0].features.size(), {0, 1, 2, 0, 2, 3});
-    tri_results.push_back(std::move(tr));
-
-    LayerPipelineDrainContext ctx;
-    ctx.layers = &layers;
-    ctx.tri_results = &tri_results;
-    ctx.tri_mutex = &tri_mutex;
-    ctx.layer_states = &layer_states;
-    ctx.status_mutex = &status_mutex;
-    ctx.layer_profile_dirty = &layer_profile_dirty;
-    ctx.triangulated_count = &triangulated_count;
-
-    drainTriangulationResults(ctx);
-    const bool first_pass_partial =
-        !tri_results.empty() &&
-        tri_results.front().apply_offset > 0 &&
-        tri_results.front().apply_offset < tri_results.front().triangles_per_feature.size() &&
-        layer_states[0].status == LayerPipelineStatus::Triangulating &&
-        layer_states[0].triangulation_phase == "applying_binary_cache" &&
-        triangulated_count.load(std::memory_order_relaxed) == 0;
-
-    size_t passes = 1;
-    while (!tri_results.empty() && passes < 16) {
-        drainTriangulationResults(ctx);
-        ++passes;
-    }
-
-    const std::vector<uint32_t> expected{0, 1, 2, 0, 2, 3};
-    const bool complete =
-        tri_results.empty() &&
-        layer_states[0].status == LayerPipelineStatus::Ready &&
-        layer_states[0].triangulation_phase == "binary_cache_hit" &&
-        layer_states[0].triangulation_loaded_from_cache &&
-        triangulated_count.load(std::memory_order_relaxed) == 1 &&
-        layer_profile_dirty[0] &&
-        layers[0].features[0].triangles == expected &&
-        layers[0].features.back().triangles == expected;
-
-    json out = {
-        {"mode", "triangulation-apply-selftest"},
-        {"ok", first_pass_partial && complete},
-        {"first_pass_partial", first_pass_partial},
-        {"passes", passes},
-        {"complete", complete}
-    };
-    std::cout << out.dump(2) << '\n';
-    return out["ok"].get<bool>() ? 0 : 1;
-}
-
 int runSpatialIndexSelftest() {
     std::vector<LayerDef> layers(1);
     layers[0].features.resize(3);
@@ -762,10 +681,6 @@ int runLayerRuntimeStatusSelftest() {
     source_geojson.status = LayerPipelineStatus::Hydrating;
     source_geojson.hydration_phase = "parsing_source_cache_missing";
 
-    LayerRuntimeState tri_cache;
-    tri_cache.status = LayerPipelineStatus::Triangulating;
-    tri_cache.triangulation_phase = "loading_binary_cache";
-
     LayerRuntimeState ready;
     ready.status = LayerPipelineStatus::Ready;
 
@@ -774,8 +689,7 @@ int runLayerRuntimeStatusSelftest() {
         layerRuntimeDisplayStatus(hydration_cache, file) == "reading regional_parcels.geojson.bin" &&
         layerRuntimeDisplayStatus(canonical_binary, file) == "reading regional_parcels.geojson.canonical.bin" &&
         layerRuntimeDisplayStatus(source_geojson, file) == "reading regional_parcels.geojson" &&
-        layerRuntimeDisplayStatus(tri_cache, file) == "reading regional_parcels.geojson.tri.bin" &&
-        layerRuntimeDisplayStatus(ready, file) == "ready";
+        layerRuntimeDisplayStatus(ready, file) == "ready via parcel render blob";
 
     json out = {
         {"mode", "layer-runtime-status-selftest"},
@@ -783,7 +697,6 @@ int runLayerRuntimeStatusSelftest() {
         {"hydration_cache", layerRuntimeDisplayStatus(hydration_cache, file)},
         {"canonical_binary", layerRuntimeDisplayStatus(canonical_binary, file)},
         {"source_geojson", layerRuntimeDisplayStatus(source_geojson, file)},
-        {"triangulation_cache", layerRuntimeDisplayStatus(tri_cache, file)},
         {"ready", layerRuntimeDisplayStatus(ready, file)}
     };
     std::cout << out.dump(2) << '\n';
@@ -1149,7 +1062,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path canonical_path = layer_path.parent_path() / canonicalBinaryPathForLayerFile(file);
     const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
-    const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
     const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
 
@@ -1163,7 +1075,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const std::string expected_sig = resolved ? resolved_sig : canonical_meta.source_signature;
 
     const BinaryCacheHeader hydration = readHydrationCacheHeader(hydration_path);
-    const BinaryCacheHeader tri = readTriCacheHeader(tri_path);
     const BinaryCacheHeader render = readParcelRenderCacheHeader(render_path);
 
     std::error_code geojson_ec;
@@ -1177,9 +1088,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     if (!hydration.ok || hydration.source_signature != expected_sig || (expected_count != 0 && hydration.count != expected_count)) {
         recommendations.push_back("run --warm-hydration-cache " + file);
     }
-    if (!tri.ok || tri.source_signature != expected_sig || (expected_count != 0 && tri.count != expected_count)) {
-        recommendations.push_back("run --warm-triangulation-cache " + file);
-    }
     if (!render.ok || render.source_signature != expected_sig) {
         recommendations.push_back("run --warm-parcel-render-cache " + file);
     }
@@ -1192,7 +1100,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
         resolved &&
         canonical_ok &&
         hydration.ok && hydration.source_signature == expected_sig && (expected_count == 0 || hydration.count == expected_count) &&
-        tri.ok && tri.source_signature == expected_sig && (expected_count == 0 || tri.count == expected_count) &&
         render.ok && render.source_signature == expected_sig &&
         duckdb_present;
 
@@ -1216,7 +1123,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
             {"feature_count", canonical_meta.feature_count}
         }},
         {"hydration_cache", binaryHeaderJson(hydration, expected_sig, expected_count)},
-        {"triangulation_cache", binaryHeaderJson(tri, expected_sig, expected_count)},
         {"parcel_render_cache", binaryHeaderJson(render, expected_sig, 0)},
         {"duckdb", {
             {"present", duckdb_present},
@@ -1740,136 +1646,6 @@ int inspectDuckDbGeographyTablesCli(const fs::path& root) {
     }
 }
 
-json warmTriangulationCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
-    exit_code = 0;
-    if (!isBareLayerFilename(file)) {
-        exit_code = 2;
-        return {
-            {"mode", "warm-triangulation-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "requires a layer filename, not a path"}
-        };
-    }
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path binary_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
-    std::string sig;
-    std::string sig_source_kind;
-    if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-triangulation-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "failed to resolve source signature"}
-        };
-    }
-
-    std::vector<std::vector<uint32_t>> tris;
-    if (fs::exists(binary_path)) {
-        const auto count = readBinaryTriCacheCount(binary_path);
-        if (count && loadBinaryTriCache(binary_path, sig, *count, tris)) {
-            return {
-                {"mode", "warm-triangulation-cache"},
-                {"file", file},
-                {"ok", true},
-                {"source_signature", sig},
-                {"source", "binary"},
-                {"feature_vectors", tris.size()},
-                {"binary_cache", binary_path.string()}
-            };
-        }
-    }
-
-    size_t hydrated_feature_count = 0;
-    std::vector<LayerDef::FeatureGeom> features;
-    std::string hydration_source;
-    std::string hydration_error;
-    if (!ensureHydrationCacheReady(root, file, sig, features, hydration_source, hydration_error)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-triangulation-cache"},
-            {"file", file},
-            {"ok", false},
-            {"source_signature", sig},
-            {"source_signature_kind", sig_source_kind},
-            {"error", hydration_error}
-        };
-    }
-    hydrated_feature_count = features.size();
-    tris.resize(features.size());
-    for (size_t i = 0; i < features.size(); ++i) {
-        if (!features[i].rings.empty()) tris[i] = triangulateRings(features[i].rings);
-    }
-    const std::string source_used = hydration_source == "binary" ? "hydration_binary" : ("hydration_" + hydration_source);
-    saveBinaryTriCache(binary_path, sig, tris);
-    std::vector<std::vector<uint32_t>> verify;
-    const bool verify_ok = loadBinaryTriCache(binary_path, sig, tris.size(), verify);
-    const bool ok = verify_ok && verify == tris;
-    if (!ok) exit_code = 1;
-    return {
-        {"mode", "warm-triangulation-cache"},
-        {"file", file},
-        {"ok", ok},
-        {"source_signature", sig},
-        {"source_signature_kind", sig_source_kind},
-        {"source", source_used},
-        {"hydrated_features", hydrated_feature_count},
-        {"feature_vectors", tris.size()},
-        {"verified_feature_vectors", verify.size()},
-        {"binary_cache", binary_path.string()}
-    };
-}
-
-int warmTriangulationCache(const fs::path& root, const std::string& file) {
-    int exit_code = 0;
-    const json out = warmTriangulationCacheOne(root, file, exit_code);
-    std::cout << out.dump(2) << '\n';
-    return exit_code;
-}
-
-int warmTriangulationCacheAll(const fs::path& root) {
-    const fs::path tri_dir = root / "data" / "cache" / "triangulation";
-    std::error_code ec;
-    if (!fs::exists(tri_dir, ec)) {
-        std::cerr << "triangulation cache directory missing: " << tri_dir << '\n';
-        return 2;
-    }
-    std::vector<std::string> candidates;
-    for (const auto& entry : fs::directory_iterator(tri_dir, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
-        const std::string name = entry.path().filename().string();
-        if (name.ends_with(".tri.bin")) {
-            candidates.push_back(name.substr(0, name.size() - std::strlen(".tri.bin")));
-        }
-    }
-    std::sort(candidates.begin(), candidates.end());
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-
-    json results = json::array();
-    size_t ok_count = 0;
-    size_t failed_count = 0;
-    for (const std::string& file : candidates) {
-        int one_exit = 0;
-        json one = warmTriangulationCacheOne(root, file, one_exit);
-        results.push_back(one);
-        if (one_exit == 0) ok_count += 1;
-        else failed_count += 1;
-    }
-
-    json out = {
-        {"mode", "warm-triangulation-cache-all"},
-        {"ok", failed_count == 0},
-        {"candidate_count", candidates.size()},
-        {"ok_count", ok_count},
-        {"failed_count", failed_count},
-        {"results", std::move(results)}
-    };
-    std::cout << out.dump(2) << '\n';
-    return failed_count == 0 ? 0 : 1;
-}
-
 json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
     exit_code = 0;
     if (!isBareLayerFilename(file)) {
@@ -1884,7 +1660,6 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
 
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
     const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
-    const fs::path tri_path = root / "data" / "cache" / "triangulation" / (file + ".tri.bin");
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
     std::string sig;
     std::string sig_source_kind;
@@ -1914,27 +1689,6 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
             };
         }
     }
-
-    std::vector<std::vector<uint32_t>> tris;
-    if (!loadBinaryTriCache(tri_path, sig, features.size(), tris)) {
-        int warm_exit = 0;
-        json warmed = warmTriangulationCacheOne(root, file, warm_exit);
-        if (warm_exit != 0 || !loadBinaryTriCache(tri_path, sig, features.size(), tris)) {
-            exit_code = 1;
-            return {
-                {"mode", "warm-parcel-render-cache"},
-                {"file", file},
-                {"ok", false},
-                {"source_signature", sig},
-                {"source_signature_kind", sig_source_kind},
-                {"hydrated_features", features.size()},
-                {"error", warmed.value("error", std::string("no valid binary triangulation cache"))}
-            };
-        }
-    }
-
-    const size_t feature_count = std::min(features.size(), tris.size());
-    for (size_t i = 0; i < feature_count; ++i) features[i].triangles = std::move(tris[i]);
 
     ParcelRenderCacheBlob blob;
     const bool built = buildParcelRenderCacheBlob(features, sig, blob);
@@ -1985,19 +1739,19 @@ int warmParcelRenderCache(const fs::path& root, const std::string& file) {
 }
 
 int warmParcelRenderCacheAll(const fs::path& root) {
-    const fs::path tri_dir = root / "data" / "cache" / "triangulation";
+    const fs::path hydration_dir = root / "data" / "cache" / "hydration";
     std::error_code ec;
-    if (!fs::exists(tri_dir, ec)) {
-        std::cerr << "triangulation cache directory missing: " << tri_dir << '\n';
+    if (!fs::exists(hydration_dir, ec)) {
+        std::cerr << "hydration cache directory missing: " << hydration_dir << '\n';
         return 2;
     }
 
     std::vector<std::string> candidates;
-    for (const auto& entry : fs::directory_iterator(tri_dir, ec)) {
+    for (const auto& entry : fs::directory_iterator(hydration_dir, ec)) {
         if (ec) break;
         if (!entry.is_regular_file()) continue;
         const std::string name = entry.path().filename().string();
-        if (name.ends_with(".tri.bin")) candidates.push_back(name.substr(0, name.size() - std::strlen(".tri.bin")));
+        if (name.ends_with(".bin")) candidates.push_back(name.substr(0, name.size() - std::strlen(".bin")));
     }
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
@@ -2035,6 +1789,428 @@ json skippedWarmStep(const std::string& mode, const std::string& file, const std
     };
 }
 
+json buildGeometryArtifactForHydratedLayer(
+    const fs::path& root,
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureGeom>& features,
+    int& exit_code) {
+    exit_code = 0;
+    const fs::path layer_path = resolveStoredLayerPath(root, layer);
+    std::string sig;
+    std::string sig_source_kind;
+    if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
+        std::error_code exists_ec;
+        const bool source_exists = fs::exists(layer_path, exists_ec) && !exists_ec;
+        if (source_exists) exit_code = 1;
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"ok", false},
+            {"skipped", !source_exists},
+            {"reason", !source_exists ? "source layer file is not materialized in this workspace" : std::string()},
+            {"error", source_exists ? "failed to resolve source signature" : std::string()},
+            {"source_path", layer_path.string()}
+        };
+    }
+    if (features.empty()) {
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"ok", false},
+            {"skipped", true},
+            {"reason", "no hydrated features"},
+            {"source_path", layer_path.string()},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind}
+        };
+    }
+
+    const GeometryArtifactClass detected_class = detectGeometryArtifactClass(layer, features);
+
+    if (detected_class == GeometryArtifactClass::Point) {
+        PointGeometryArtifact artifact;
+        if (!buildPointGeometryArtifact(layer, features, sig, artifact)) {
+            exit_code = 1;
+            return {
+                {"layer_file", layer.file},
+                {"layer_name", layer.name},
+                {"geometry_class", "point"},
+                {"ok", false},
+                {"error", "failed to build point geometry artifact"},
+                {"source_path", layer_path.string()},
+                {"source_signature", sig},
+                {"source_signature_kind", sig_source_kind}
+            };
+        }
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Point);
+        saveBinaryPointGeometryArtifact(artifact_path, artifact);
+        PointGeometryArtifact verify;
+        const bool ok = loadBinaryPointGeometryArtifact(artifact_path, sig, verify);
+        if (!ok) exit_code = 1;
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"geometry_class", "point"},
+            {"ok", ok},
+            {"source_path", layer_path.string()},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind},
+            {"created_files", json::array({artifact_path.string()})},
+            {"feature_count", artifact.features.size()},
+            {"vertex_count", artifact.positions.size()},
+            {"chunk_count", artifact.chunks.size()},
+            {"error", ok ? std::string() : std::string("artifact validation failed after write")}
+        };
+    }
+
+    if (detected_class == GeometryArtifactClass::Polyline) {
+        PolylineGeometryArtifact artifact;
+        if (!buildPolylineGeometryArtifact(layer, features, sig, artifact)) {
+            exit_code = 1;
+            return {
+                {"layer_file", layer.file},
+                {"layer_name", layer.name},
+                {"geometry_class", "polyline"},
+                {"ok", false},
+                {"error", "failed to build polyline geometry artifact"},
+                {"source_path", layer_path.string()},
+                {"source_signature", sig},
+                {"source_signature_kind", sig_source_kind}
+            };
+        }
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polyline);
+        saveBinaryPolylineGeometryArtifact(artifact_path, artifact);
+        PolylineGeometryArtifact verify;
+        const bool ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, verify);
+        if (!ok) exit_code = 1;
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"geometry_class", "polyline"},
+            {"ok", ok},
+            {"source_path", layer_path.string()},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind},
+            {"created_files", json::array({artifact_path.string()})},
+            {"feature_count", artifact.features.size()},
+            {"vertex_count", artifact.vertices.size()},
+            {"line_index_count", artifact.line_indices.size()},
+            {"chunk_count", artifact.chunks.size()},
+            {"error", ok ? std::string() : std::string("artifact validation failed after write")}
+        };
+    }
+
+    PolygonGeometryArtifact artifact;
+    if (!buildPolygonGeometryArtifact(layer, features, sig, artifact)) {
+        exit_code = 1;
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"geometry_class", "polygon"},
+            {"ok", false},
+            {"error", "failed to build polygon geometry artifact"},
+            {"source_path", layer_path.string()},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind}
+        };
+    }
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polygon);
+    saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
+    PolygonGeometryArtifact verify;
+    const bool ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, verify);
+    if (!ok) exit_code = 1;
+    return {
+        {"layer_file", layer.file},
+        {"layer_name", layer.name},
+        {"geometry_class", "polygon"},
+        {"ok", ok},
+        {"source_path", layer_path.string()},
+        {"source_signature", sig},
+        {"source_signature_kind", sig_source_kind},
+        {"created_files", json::array({artifact_path.string()})},
+        {"feature_count", artifact.features.size()},
+        {"vertex_count", artifact.vertices.size()},
+        {"fill_index_count", artifact.fill_indices.size()},
+        {"line_index_count", artifact.line_indices.size()},
+        {"chunk_count", artifact.chunks.size()},
+        {"error", ok ? std::string() : std::string("artifact validation failed after write")}
+    };
+}
+
+std::unordered_map<std::string, std::vector<std::string>> readDuckDbColumnsByTable(
+    const fs::path& db_path,
+    const std::vector<std::string>& table_names) {
+    std::unordered_map<std::string, std::vector<std::string>> out;
+    if (table_names.empty()) return out;
+    duckdb::DuckDB db(db_path);
+    duckdb::Connection con(db);
+    std::string in_list;
+    for (size_t i = 0; i < table_names.size(); ++i) {
+        if (i) in_list += ", ";
+        in_list += "'" + table_names[i] + "'";
+    }
+    auto res = con.Query(
+        "SELECT table_name, column_name "
+        "FROM information_schema.columns "
+        "WHERE table_schema = 'main' AND table_name IN (" + in_list + ") "
+        "ORDER BY table_name, ordinal_position");
+    if (!res || res->HasError()) return out;
+    for (auto& name : table_names) out[name] = {};
+    for (size_t row = 0; row < (size_t)res->RowCount(); ++row) {
+        const std::string table_name = res->GetValue(0, row).ToString();
+        const std::string column_name = res->GetValue(1, row).ToString();
+        out[table_name].push_back(column_name);
+    }
+    return out;
+}
+
+std::unordered_map<std::string, uint64_t> readDuckDbCountsByLayerFile(
+    duckdb::Connection& con,
+    const std::string& table_name,
+    const std::string& layer_column,
+    const std::string& count_expr) {
+    std::unordered_map<std::string, uint64_t> out;
+    auto res = con.Query(
+        "SELECT " + layer_column + ", " + count_expr + "::BIGINT "
+        "FROM " + table_name + " "
+        "GROUP BY " + layer_column);
+    if (!res || res->HasError()) return out;
+    for (size_t row = 0; row < (size_t)res->RowCount(); ++row) {
+        out[res->GetValue(0, row).ToString()] = res->GetValue<uint64_t>(1, row);
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> readDuckDbSourceContributionCounts(
+    duckdb::Connection& con) {
+    std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> out;
+    auto res = con.Query(
+        "SELECT source_role, source_file, row_count::BIGINT "
+        "FROM analytics_source_contributions");
+    if (!res || res->HasError()) return out;
+    for (size_t row = 0; row < (size_t)res->RowCount(); ++row) {
+        const std::string role = res->GetValue(0, row).ToString();
+        const std::string file = res->GetValue(1, row).ToString();
+        out[file][role] = res->GetValue<uint64_t>(2, row);
+    }
+    return out;
+}
+
+std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> readUnifiedParcelContributionCounts(
+    duckdb::Connection& con) {
+    std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> out;
+    auto res = con.Query(
+        "SELECT source_role, source_file, row_count::BIGINT FROM ("
+        "  SELECT 'parcel_geometry' AS source_role, parcel_source_file AS source_file, count(*) AS row_count "
+        "  FROM unified_parcels WHERE parcel_source_file IS NOT NULL AND parcel_source_file <> '' "
+        "  GROUP BY parcel_source_file "
+        "  UNION ALL "
+        "  SELECT 'property_record' AS source_role, property_source_file AS source_file, count(*) AS row_count "
+        "  FROM unified_parcels WHERE property_source_file IS NOT NULL AND property_source_file <> '' "
+        "  GROUP BY property_source_file"
+        ")");
+    if (!res || res->HasError()) return out;
+    for (size_t row = 0; row < (size_t)res->RowCount(); ++row) {
+        const std::string role = res->GetValue(0, row).ToString();
+        const std::string file = res->GetValue(1, row).ToString();
+        out[file][role] = res->GetValue<uint64_t>(2, row);
+    }
+    return out;
+}
+
+json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
+    std::vector<LayerDef> layers = loadManifest(root);
+    const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
+    const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+
+    HeadlessLayerHydrationSummary hydration_summary;
+    const bool hydration_ok = hydrateLocalLayersHeadless(
+        root,
+        layers,
+        HeadlessLayerHydrationOptions{worker_count, false},
+        hydration_summary);
+
+    json geometry_results = json::array();
+    std::unordered_map<std::string, json> geometry_result_by_file;
+    size_t geometry_ok_count = 0;
+    size_t geometry_failed_count = 0;
+    size_t geometry_skipped_count = 0;
+    for (size_t li = 0; li < layers.size(); ++li) {
+        int one_exit = 0;
+        json one = buildGeometryArtifactForHydratedLayer(root, layers[li], layers[li].features, one_exit);
+        geometry_result_by_file[layers[li].file] = one;
+        geometry_results.push_back(one);
+        if (one.value("skipped", false)) geometry_skipped_count += 1;
+        else if (one_exit == 0) geometry_ok_count += 1;
+        else geometry_failed_count += 1;
+    }
+
+    WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
+    ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
+
+    DuckDbAnalytics analytics(root);
+    const bool duckdb_ok = hydration_ok && analytics.rebuild(layers, artifacts.unified_parcels);
+
+    const fs::path db_path = root / "data" / "worldsim.duckdb";
+    const std::vector<std::string> duckdb_table_names = {
+        "layer_features",
+        "unified_parcels",
+        "parcel_events",
+        "analytics_build_info",
+        "analytics_source_contributions",
+        "anambra_repository_sources",
+        "import_audit",
+        "geography_feature_collections",
+        "anambra_runtime_features",
+        "anambra_runtime_lga_summary",
+        "parcel_features",
+        "owner_rollups",
+        "layer_counts"
+    };
+    std::unordered_map<std::string, std::vector<std::string>> columns_by_table;
+    std::unordered_map<std::string, uint64_t> layer_feature_counts;
+    std::unordered_map<std::string, uint64_t> import_audit_counts;
+    std::unordered_map<std::string, uint64_t> geography_collection_counts;
+    std::unordered_map<std::string, uint64_t> anambra_runtime_counts;
+    std::unordered_map<std::string, uint64_t> anambra_lga_summary_counts;
+    std::unordered_map<std::string, uint64_t> parcel_event_counts;
+    std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> source_contributions;
+    std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> unified_parcel_contributions;
+
+    if (duckdb_ok) {
+        columns_by_table = readDuckDbColumnsByTable(db_path, duckdb_table_names);
+        duckdb::DuckDB db(db_path);
+        duckdb::Connection con(db);
+        layer_feature_counts = readDuckDbCountsByLayerFile(con, "layer_features", "layer_file", "count(*)");
+        import_audit_counts = readDuckDbCountsByLayerFile(con, "import_audit", "layer_file", "count(*)");
+        geography_collection_counts = readDuckDbCountsByLayerFile(con, "geography_feature_collections", "layer_file", "sum(feature_count)");
+        anambra_runtime_counts = readDuckDbCountsByLayerFile(con, "anambra_runtime_features", "layer_file", "count(*)");
+        anambra_lga_summary_counts = readDuckDbCountsByLayerFile(con, "anambra_runtime_lga_summary", "layer_file", "count(*)");
+        parcel_event_counts = readDuckDbCountsByLayerFile(con, "parcel_events", "source_layer_file", "count(*)");
+        source_contributions = readDuckDbSourceContributionCounts(con);
+        unified_parcel_contributions = readUnifiedParcelContributionCounts(con);
+    }
+
+    json duckdb_tables = json::array();
+    for (const auto& table_name : duckdb_table_names) {
+        duckdb_tables.push_back({
+            {"table", table_name},
+            {"columns", columns_by_table.contains(table_name) ? json(columns_by_table[table_name]) : json::array()}
+        });
+    }
+
+    json layer_outputs = json::array();
+    for (const auto& layer : layers) {
+        json duckdb_outputs = json::array();
+        if (auto it = layer_feature_counts.find(layer.file); it != layer_feature_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "layer_features"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["layer_features"]}
+            });
+        }
+        if (auto it = import_audit_counts.find(layer.file); it != import_audit_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "import_audit"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["import_audit"]}
+            });
+        }
+        if (auto it = geography_collection_counts.find(layer.file); it != geography_collection_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "geography_feature_collections"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["geography_feature_collections"]}
+            });
+        }
+        if (auto it = anambra_runtime_counts.find(layer.file); it != anambra_runtime_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "anambra_runtime_features"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["anambra_runtime_features"]}
+            });
+        }
+        if (auto it = anambra_lga_summary_counts.find(layer.file); it != anambra_lga_summary_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "anambra_runtime_lga_summary"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["anambra_runtime_lga_summary"]}
+            });
+        }
+        if (auto it = parcel_event_counts.find(layer.file); it != parcel_event_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "parcel_events"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["parcel_events"]}
+            });
+        }
+        if (auto it = source_contributions.find(layer.file); it != source_contributions.end()) {
+            for (const auto& [role, row_count] : it->second) {
+                duckdb_outputs.push_back({
+                    {"table", "analytics_source_contributions"},
+                    {"source_role", role},
+                    {"rows_created", row_count},
+                    {"columns", columns_by_table["analytics_source_contributions"]}
+                });
+            }
+        }
+        if (auto it = unified_parcel_contributions.find(layer.file); it != unified_parcel_contributions.end()) {
+            for (const auto& [role, row_count] : it->second) {
+                duckdb_outputs.push_back({
+                    {"table", "unified_parcels"},
+                    {"source_role", role},
+                    {"rows_created", row_count},
+                    {"columns", columns_by_table["unified_parcels"]}
+                });
+            }
+        }
+
+        layer_outputs.push_back({
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"source_path", resolveStoredLayerPath(root, layer).string()},
+            {"geometry_class", geometry_result_by_file.contains(layer.file)
+                ? std::string(geometry_result_by_file[layer.file].value("geometry_class", "unknown"))
+                : std::string("unknown")},
+            {"geometry_output", geometry_result_by_file.contains(layer.file) ? geometry_result_by_file[layer.file] : json::object()},
+            {"duckdb_outputs", std::move(duckdb_outputs)}
+        });
+    }
+
+    return {
+        {"mode", "build-geometry-duckdb-artifacts"},
+        {"ok", hydration_ok && geometry_failed_count == 0 && duckdb_ok},
+        {"worker_count", worker_count},
+        {"hydration", {
+            {"ok", hydration_ok},
+            {"local_layer_count", hydration_summary.local_layer_count},
+            {"requested_layer_count", hydration_summary.requested_layer_count},
+            {"hydrated_layer_count", hydration_summary.hydrated_layer_count},
+            {"failed_layer_count", hydration_summary.failed_layer_count},
+            {"skipped_missing_layer_count", hydration_summary.skipped_missing_layer_count},
+            {"total_feature_count", hydration_summary.total_feature_count},
+            {"elapsed_ms", hydration_summary.elapsed_ms}
+        }},
+        {"geometry", {
+            {"ok_count", geometry_ok_count},
+            {"failed_count", geometry_failed_count},
+            {"skipped_count", geometry_skipped_count},
+            {"results", std::move(geometry_results)}
+        }},
+        {"duckdb", {
+            {"ok", duckdb_ok},
+            {"db_path", db_path.string()},
+            {"available", analytics.status().available},
+            {"last_rebuild_ok", analytics.status().last_rebuild_ok},
+            {"layer_count", analytics.status().layer_count},
+            {"feature_count", analytics.status().feature_count},
+            {"message", analytics.status().message},
+            {"tables", std::move(duckdb_tables)}
+        }},
+        {"layers", std::move(layer_outputs)}
+    };
+}
+
 json warmParcelRuntimeStackOne(const fs::path& root, std::string file, int& exit_code) {
     if (file.empty()) file = "regional_parcels.geojson";
     exit_code = 0;
@@ -2051,24 +2227,18 @@ json warmParcelRuntimeStackOne(const fs::path& root, std::string file, int& exit
     int hydration_exit = 0;
     json hydration = warmHydrationCacheOne(root, file, hydration_exit);
 
-    int tri_exit = 0;
-    json triangulation = hydration_exit == 0
-        ? warmTriangulationCacheOne(root, file, tri_exit)
-        : skippedWarmStep("warm-triangulation-cache", file, "hydration cache warm failed");
-
     int render_exit = 0;
-    json render = (hydration_exit == 0 && tri_exit == 0)
+    json render = hydration_exit == 0
         ? warmParcelRenderCacheOne(root, file, render_exit)
-        : skippedWarmStep("warm-parcel-render-cache", file, "upstream cache warm failed");
+        : skippedWarmStep("warm-parcel-render-cache", file, "hydration cache warm failed");
 
-    const bool ok = hydration_exit == 0 && tri_exit == 0 && render_exit == 0;
+    const bool ok = hydration_exit == 0 && render_exit == 0;
     exit_code = ok ? 0 : 1;
     return {
         {"mode", "warm-parcel-runtime-stack"},
         {"file", file},
         {"ok", ok},
         {"hydration_cache", std::move(hydration)},
-        {"triangulation_cache", std::move(triangulation)},
         {"parcel_render_cache", std::move(render)},
         {"canonical_binary", {
             {"rebuilt", false},
@@ -2088,6 +2258,464 @@ int warmParcelRuntimeStack(const fs::path& root, const std::string& file) {
     std::cout << out.dump(2) << '\n';
     return exit_code;
 }
+
+int compilePointGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"ok", false},
+            {"error", "missing layer file"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "expected bare layer filename"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer file not found in manifest"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!layerUsesPointGeometry(*layer)) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer does not use point geometry"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Point) {
+        json out = {{"mode", "compile-point-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not point"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    PointGeometryArtifact artifact;
+    const std::string sig = fileSignature(layer_path);
+    const bool built = buildPointGeometryArtifact(*layer, features, sig, artifact);
+    if (!built) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"layer_path", layer_path.string()},
+            {"error", "failed to build point geometry artifact"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point);
+    saveBinaryPointGeometryArtifact(artifact_path, artifact);
+    PointGeometryArtifact loaded;
+    const bool roundtrip_ok = loadBinaryPointGeometryArtifact(artifact_path, sig, loaded);
+
+    json out = {
+        {"mode", "compile-point-geometry"},
+        {"file", file},
+        {"ok", roundtrip_ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"features", artifact.features.size()},
+        {"points", artifact.positions.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!roundtrip_ok) out["error"] = "artifact failed validation after write";
+    std::cout << out.dump(2) << '\n';
+    return roundtrip_ok ? 0 : 1;
+}
+
+int validatePointGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {
+            {"mode", "validate-point-geometry"},
+            {"ok", false},
+            {"error", "missing layer file"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {
+            {"mode", "validate-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "expected bare layer filename"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {
+            {"mode", "validate-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer file not found in manifest"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!layerUsesPointGeometry(*layer)) {
+        json out = {
+            {"mode", "validate-point-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer does not use point geometry"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::string sig = fileSignature(layer_path);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point);
+    PointGeometryArtifact artifact;
+    const bool ok = loadBinaryPointGeometryArtifact(artifact_path, sig, artifact);
+
+    json out = {
+        {"mode", "validate-point-geometry"},
+        {"file", file},
+        {"ok", ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"artifact_class", geometryArtifactClassName(artifact.header.geometry_class)},
+        {"features", artifact.features.size()},
+        {"points", artifact.positions.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!ok) out["error"] = "compiled point geometry artifact missing, stale, or invalid";
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"ok", false}, {"error", "missing layer file"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "expected bare layer filename"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "layer file not found in manifest"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!layerUsesPolylineGeometry(*layer)) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "layer does not use polyline geometry"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Polyline) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not polyline"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    PolylineGeometryArtifact artifact;
+    const std::string sig = fileSignature(layer_path);
+    const bool built = buildPolylineGeometryArtifact(*layer, features, sig, artifact);
+    if (!built) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "failed to build polyline geometry artifact"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline);
+    saveBinaryPolylineGeometryArtifact(artifact_path, artifact);
+    PolylineGeometryArtifact loaded;
+    const bool roundtrip_ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, loaded);
+    json out = {
+        {"mode", "compile-polyline-geometry"},
+        {"file", file},
+        {"ok", roundtrip_ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"features", artifact.features.size()},
+        {"vertices", artifact.vertices.size()},
+        {"line_indices", artifact.line_indices.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!roundtrip_ok) out["error"] = "artifact failed validation after write";
+    std::cout << out.dump(2) << '\n';
+    return roundtrip_ok ? 0 : 1;
+}
+
+int validatePolylineGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {{"mode", "validate-polyline-geometry"}, {"ok", false}, {"error", "missing layer file"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {{"mode", "validate-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "expected bare layer filename"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {{"mode", "validate-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "layer file not found in manifest"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!layerUsesPolylineGeometry(*layer)) {
+        json out = {{"mode", "validate-polyline-geometry"}, {"file", file}, {"ok", false}, {"error", "layer does not use polyline geometry"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::string sig = fileSignature(layer_path);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline);
+    PolylineGeometryArtifact artifact;
+    const bool ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact);
+    json out = {
+        {"mode", "validate-polyline-geometry"},
+        {"file", file},
+        {"ok", ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"artifact_class", geometryArtifactClassName(artifact.header.geometry_class)},
+        {"features", artifact.features.size()},
+        {"vertices", artifact.vertices.size()},
+        {"line_indices", artifact.line_indices.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!ok) out["error"] = "compiled polyline geometry artifact missing, stale, or invalid";
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"ok", false},
+            {"error", "missing layer file"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "expected bare layer filename"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer file not found in manifest"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (layerUsesPointGeometry(*layer)) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer uses point geometry"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Polygon) {
+        json out = {{"mode", "compile-polygon-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not polygon"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    PolygonGeometryArtifact artifact;
+    const std::string sig = fileSignature(layer_path);
+    const bool built = buildPolygonGeometryArtifact(*layer, features, sig, artifact);
+    if (!built) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"layer_path", layer_path.string()},
+            {"error", "failed to build polygon geometry artifact"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
+    saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
+    PolygonGeometryArtifact loaded;
+    const bool roundtrip_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, loaded);
+
+    json out = {
+        {"mode", "compile-polygon-geometry"},
+        {"file", file},
+        {"ok", roundtrip_ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"features", artifact.features.size()},
+        {"vertices", artifact.vertices.size()},
+        {"fill_indices", artifact.fill_indices.size()},
+        {"line_indices", artifact.line_indices.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!roundtrip_ok) out["error"] = "artifact failed validation after write";
+    std::cout << out.dump(2) << '\n';
+    return roundtrip_ok ? 0 : 1;
+}
+
+int validatePolygonGeometryArtifact(const fs::path& root, std::string file) {
+    if (file.empty()) {
+        json out = {
+            {"mode", "validate-polygon-geometry"},
+            {"ok", false},
+            {"error", "missing layer file"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (!isBareLayerFilename(file)) {
+        json out = {
+            {"mode", "validate-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "expected bare layer filename"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const auto& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {
+            {"mode", "validate-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer file not found in manifest"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (layerUsesPointGeometry(*layer)) {
+        json out = {
+            {"mode", "validate-polygon-geometry"},
+            {"file", file},
+            {"ok", false},
+            {"error", "layer uses point geometry"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    const std::string sig = fileSignature(layer_path);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
+    PolygonGeometryArtifact artifact;
+    const bool ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact);
+
+    json out = {
+        {"mode", "validate-polygon-geometry"},
+        {"file", file},
+        {"ok", ok},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"source_signature", sig},
+        {"artifact_class", geometryArtifactClassName(artifact.header.geometry_class)},
+        {"features", artifact.features.size()},
+        {"vertices", artifact.vertices.size()},
+        {"fill_indices", artifact.fill_indices.size()},
+        {"line_indices", artifact.line_indices.size()},
+        {"chunks", artifact.chunks.size()}
+    };
+    if (!ok) out["error"] = "compiled polygon geometry artifact missing, stale, or invalid";
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
 }
 
 WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
@@ -2100,10 +2728,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--hydration-cache-selftest") {
             options.run_cache_selftest = true;
-            continue;
-        }
-        if (arg == "--triangulation-cache-selftest") {
-            options.run_triangulation_cache_selftest = true;
             continue;
         }
         if (arg == "--projection-cache-selftest") {
@@ -2124,10 +2748,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--parcel-render-cache-selftest") {
             options.run_parcel_render_cache_selftest = true;
-            continue;
-        }
-        if (arg == "--triangulation-apply-selftest") {
-            options.run_triangulation_apply_selftest = true;
             continue;
         }
         if (arg == "--spatial-index-selftest") {
@@ -2173,6 +2793,40 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') options.canonical_parcel_binary_file = argv[++i];
             continue;
         }
+        if (arg == "--compile-point-geometry") {
+            options.run_compile_point_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.point_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--validate-point-geometry") {
+            options.run_validate_point_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.point_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--compile-polyline-geometry") {
+            options.run_compile_polyline_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.polyline_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--validate-polyline-geometry") {
+            options.run_validate_polyline_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.polyline_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--compile-polygon-geometry") {
+            options.run_compile_polygon_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.polygon_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--validate-polygon-geometry") {
+            options.run_validate_polygon_geometry = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') options.polygon_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--build-geometry-duckdb-artifacts") {
+            options.run_build_geometry_duckdb_artifacts = true;
+            continue;
+        }
         if (arg == "--warm-parcel-runtime-stack") {
             options.run_warm_parcel_runtime_stack = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') options.warm_parcel_runtime_stack_file = argv[++i];
@@ -2189,17 +2843,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_warm_hydration_cache_all = true;
             continue;
         }
-        if (arg == "--warm-triangulation-cache") {
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                options.run_warm_triangulation_cache = true;
-                options.warm_triangulation_cache_file = argv[++i];
-            }
-            continue;
-        }
-        if (arg == "--warm-triangulation-cache-all") {
-            options.run_warm_triangulation_cache_all = true;
-            continue;
-        }
         if (arg == "--warm-parcel-render-cache") {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 options.run_warm_parcel_render_cache = true;
@@ -2214,11 +2857,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--warm-hydration-cache=", 0) == 0) {
             options.run_warm_hydration_cache = true;
             options.warm_hydration_cache_file = arg.substr(std::strlen("--warm-hydration-cache="));
-            continue;
-        }
-        if (arg.rfind("--warm-triangulation-cache=", 0) == 0) {
-            options.run_warm_triangulation_cache = true;
-            options.warm_triangulation_cache_file = arg.substr(std::strlen("--warm-triangulation-cache="));
             continue;
         }
         if (arg.rfind("--warm-parcel-render-cache=", 0) == 0) {
@@ -2244,6 +2882,36 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--parcel-artifact-health=", 0) == 0) {
             options.run_parcel_artifact_health = true;
             options.canonical_parcel_binary_file = arg.substr(std::strlen("--parcel-artifact-health="));
+            continue;
+        }
+        if (arg.rfind("--compile-point-geometry=", 0) == 0) {
+            options.run_compile_point_geometry = true;
+            options.point_geometry_file = arg.substr(std::strlen("--compile-point-geometry="));
+            continue;
+        }
+        if (arg.rfind("--validate-point-geometry=", 0) == 0) {
+            options.run_validate_point_geometry = true;
+            options.point_geometry_file = arg.substr(std::strlen("--validate-point-geometry="));
+            continue;
+        }
+        if (arg.rfind("--compile-polyline-geometry=", 0) == 0) {
+            options.run_compile_polyline_geometry = true;
+            options.polyline_geometry_file = arg.substr(std::strlen("--compile-polyline-geometry="));
+            continue;
+        }
+        if (arg.rfind("--validate-polyline-geometry=", 0) == 0) {
+            options.run_validate_polyline_geometry = true;
+            options.polyline_geometry_file = arg.substr(std::strlen("--validate-polyline-geometry="));
+            continue;
+        }
+        if (arg.rfind("--compile-polygon-geometry=", 0) == 0) {
+            options.run_compile_polygon_geometry = true;
+            options.polygon_geometry_file = arg.substr(std::strlen("--compile-polygon-geometry="));
+            continue;
+        }
+        if (arg.rfind("--validate-polygon-geometry=", 0) == 0) {
+            options.run_validate_polygon_geometry = true;
+            options.polygon_geometry_file = arg.substr(std::strlen("--validate-polygon-geometry="));
             continue;
         }
         if (arg == "--download-layers") {
@@ -2325,8 +2993,6 @@ void printWorldsimUsage() {
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
         << "       worldsim3 --warm-hydration-cache LAYER_FILE\n"
         << "       worldsim3 --warm-hydration-cache-all\n"
-        << "       worldsim3 --warm-triangulation-cache LAYER_FILE\n"
-        << "       worldsim3 --warm-triangulation-cache-all\n"
         << "       worldsim3 --warm-parcel-render-cache LAYER_FILE\n"
         << "       worldsim3 --warm-parcel-render-cache-all\n"
         << "       worldsim3 --warm-parcel-runtime-stack [LAYER_FILE]\n"
@@ -2334,14 +3000,19 @@ void printWorldsimUsage() {
         << "       worldsim3 --inspect-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --validate-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --parcel-artifact-health [LAYER_FILE]\n"
+        << "       worldsim3 --compile-point-geometry LAYER_FILE\n"
+        << "       worldsim3 --validate-point-geometry LAYER_FILE\n"
+        << "       worldsim3 --compile-polyline-geometry LAYER_FILE\n"
+        << "       worldsim3 --validate-polyline-geometry LAYER_FILE\n"
+        << "       worldsim3 --compile-polygon-geometry LAYER_FILE\n"
+        << "       worldsim3 --validate-polygon-geometry LAYER_FILE\n"
+        << "       worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]\n"
         << "       worldsim3 --hydration-cache-selftest\n"
-        << "       worldsim3 --triangulation-cache-selftest\n"
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
         << "       worldsim3 --polygon-hole-selftest\n"
         << "       worldsim3 --parcel-render-cache-selftest\n"
-        << "       worldsim3 --triangulation-apply-selftest\n"
         << "       worldsim3 --spatial-index-selftest\n"
         << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --layer-runtime-status-selftest\n"
@@ -2362,9 +3033,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_cache_selftest) {
         return runHydrationCacheSelftest(root);
     }
-    if (options.run_triangulation_cache_selftest) {
-        return runTriangulationCacheSelftest(root);
-    }
     if (options.run_projection_cache_selftest) {
         return runProjectionCacheSelftest();
     }
@@ -2379,9 +3047,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_parcel_render_cache_selftest) {
         return runParcelRenderCacheSelftest(root);
-    }
-    if (options.run_triangulation_apply_selftest) {
-        return runTriangulationApplySelftest();
     }
     if (options.run_spatial_index_selftest) {
         return runSpatialIndexSelftest();
@@ -2413,6 +3078,29 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_parcel_artifact_health) {
         return parcelArtifactHealth(root, options.canonical_parcel_binary_file);
     }
+    if (options.run_compile_point_geometry) {
+        return compilePointGeometryArtifact(root, options.point_geometry_file);
+    }
+    if (options.run_validate_point_geometry) {
+        return validatePointGeometryArtifact(root, options.point_geometry_file);
+    }
+    if (options.run_compile_polyline_geometry) {
+        return compilePolylineGeometryArtifact(root, options.polyline_geometry_file);
+    }
+    if (options.run_validate_polyline_geometry) {
+        return validatePolylineGeometryArtifact(root, options.polyline_geometry_file);
+    }
+    if (options.run_compile_polygon_geometry) {
+        return compilePolygonGeometryArtifact(root, options.polygon_geometry_file);
+    }
+    if (options.run_validate_polygon_geometry) {
+        return validatePolygonGeometryArtifact(root, options.polygon_geometry_file);
+    }
+    if (options.run_build_geometry_duckdb_artifacts) {
+        const json out = buildGeometryDuckDbArtifacts(root, options.reserve_cores_set ? options.reserve_cores : 0);
+        std::cout << out.dump(2) << '\n';
+        return out.value("ok", false) ? 0 : 1;
+    }
     if (options.run_warm_parcel_runtime_stack) {
         return warmParcelRuntimeStack(root, options.warm_parcel_runtime_stack_file);
     }
@@ -2421,12 +3109,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_warm_hydration_cache_all) {
         return warmHydrationCacheAll(root);
-    }
-    if (options.run_warm_triangulation_cache) {
-        return warmTriangulationCache(root, options.warm_triangulation_cache_file);
-    }
-    if (options.run_warm_triangulation_cache_all) {
-        return warmTriangulationCacheAll(root);
     }
     if (options.run_warm_parcel_render_cache) {
         return warmParcelRenderCache(root, options.warm_parcel_render_cache_file);

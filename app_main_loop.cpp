@@ -188,38 +188,6 @@ bool loadHydratedFeaturesForParcelRender(
     return loadBinaryHydrationCache(hydration_bin, sig, out);
 }
 
-bool loadTrianglesForParcelRender(
-    const fs::path& root,
-    const std::string& layer_file,
-    const std::string& sig,
-    size_t feature_count,
-    std::vector<std::vector<uint32_t>>& out) {
-    const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
-    return loadBinaryTriCache(tri_bin, sig, feature_count, out);
-}
-
-bool ensureTrianglesForParcelRender(
-    const fs::path& root,
-    const std::string& layer_file,
-    const std::string& sig,
-    std::vector<LayerDef::FeatureGeom>& features) {
-    std::vector<std::vector<uint32_t>> triangles;
-    if (!loadTrianglesForParcelRender(root, layer_file, sig, features.size(), triangles)) {
-        triangles.resize(features.size());
-        for (size_t i = 0; i < features.size(); ++i) {
-            if (!features[i].rings.empty()) {
-                triangles[i] = triangulateRings(features[i].rings);
-            }
-        }
-        const fs::path tri_bin = root / "data" / "cache" / "triangulation" / (layer_file + ".tri.bin");
-        saveBinaryTriCache(tri_bin, sig, triangles);
-    }
-    for (size_t i = 0; i < features.size() && i < triangles.size(); ++i) {
-        features[i].triangles = std::move(triangles[i]);
-    }
-    return true;
-}
-
 bool isZoningPolygonLayerApp(const LayerDef& layer) {
     if (layerUsesPointGeometry(layer)) return false;
     if (layer.category == LayerDef::Category::Zoning) return true;
@@ -502,17 +470,12 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex hydrate_req_mutex;
     std::condition_variable hydrate_req_cv;
     std::deque<size_t> hydrate_requests;
-    std::mutex tri_mutex;
-    std::condition_variable tri_cv;
-    std::deque<TriJob> tri_jobs;
-    std::deque<TriResult> tri_results;
     std::mutex spatial_mutex;
     std::condition_variable spatial_cv;
     std::deque<SpatialIndexJob> spatial_jobs;
     std::deque<SpatialIndexResult> spatial_results;
     std::atomic<bool> hydration_stop{false};
     std::atomic<size_t> hydrated_count{0};
-    std::atomic<size_t> triangulated_count{0};
     std::atomic<double> perf_frame_ms_avg{0.0};
     std::atomic<double> perf_frame_ms_last{0.0};
     std::atomic<double> perf_fps_avg{0.0};
@@ -581,7 +544,13 @@ int runWorldSim3App(int argc, char** argv) {
     std::unordered_map<size_t, ParcelRenderCacheBlob> zoning_gpu_render_blobs;
     std::string crime_point_gpu_uploaded_signature;
     uint64_t crime_point_gpu_color_state_key = 0;
-    std::vector<ImVec2> crime_point_gpu_positions;
+    PointGeometryArtifact crime_point_gpu_artifact;
+    std::unordered_map<size_t, PointGeometryArtifact> point_geometry_artifacts;
+    std::unordered_map<size_t, std::string> point_geometry_artifact_signatures;
+    std::unordered_map<size_t, PolylineGeometryArtifact> polyline_geometry_artifacts;
+    std::unordered_map<size_t, std::string> polyline_geometry_artifact_signatures;
+    std::unordered_map<size_t, PolygonGeometryArtifact> polygon_geometry_artifacts;
+    std::unordered_map<size_t, std::string> polygon_geometry_artifact_signatures;
     std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
     std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
     std::atomic<size_t> prof_projection_cache_generation{0};
@@ -745,9 +714,7 @@ int runWorldSim3App(int argc, char** argv) {
     size_t owner_cached_real_property_size = (size_t)-1;
     auto hydration_started_at = std::chrono::steady_clock::now();
     auto last_hydration_progress_at = hydration_started_at;
-    auto last_tri_progress_at = hydration_started_at;
     size_t last_hydrated_seen = 0;
-    size_t last_triangulated_seen = 0;
 
     std::vector<bool> hydration_requested(layers.size(), false);
     std::vector<bool> hydration_required(layers.size(), false);
@@ -794,8 +761,6 @@ int runWorldSim3App(int argc, char** argv) {
         if (idx >= layer_states.size()) return false;
         LayerPipelineStatus st = layer_states[idx].status;
         return st == LayerPipelineStatus::Hydrated ||
-               st == LayerPipelineStatus::TriQueued ||
-               st == LayerPipelineStatus::Triangulating ||
                st == LayerPipelineStatus::Ready;
     };
     auto enqueue_hydration = [&](size_t idx, bool required = false) {
@@ -832,17 +797,12 @@ int runWorldSim3App(int argc, char** argv) {
         &hydrated_queue,
         &status_mutex,
         &layer_states,
-        &tri_mutex,
-        &tri_cv,
-        &tri_jobs,
-        &tri_results,
         &spatial_mutex,
         &spatial_cv,
         &spatial_jobs,
         &spatial_results
     };
     std::vector<std::thread> hydration_workers = startHydrationWorkers(layer_workers_ctx, hydration_worker_count);
-    std::thread triangulation_worker = startTriangulationWorker(layer_workers_ctx);
     std::thread spatial_index_worker = startSpatialIndexWorker(layer_workers_ctx);
     std::atomic<bool> parcel_render_stop{false};
     std::mutex parcel_render_req_mutex;
@@ -870,8 +830,6 @@ int runWorldSim3App(int argc, char** argv) {
                 std::vector<LayerDef::FeatureGeom> hydrated_features;
                 if (!loadHydratedFeaturesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features)) {
                     result.error = "failed to load hydration cache for parcel render build";
-                } else if (!ensureTrianglesForParcelRender(root, req.layer_file, req.source_signature, hydrated_features)) {
-                    result.error = "failed to prepare triangulation cache for parcel render build";
                 } else if (!buildParcelRenderCacheBlob(hydrated_features, req.source_signature, result.blob)) {
                     result.error = "failed to build parcel render cache blob";
                 } else {
@@ -915,7 +873,6 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.layer_heatmap_enabled = &layer_heatmap_enabled;
     status_api_input.hydration_started_at = &hydration_started_at;
     status_api_input.hydrated_count = &hydrated_count;
-    status_api_input.triangulated_count = &triangulated_count;
     status_api_input.prof_tile_cache_size = &prof_tile_cache_size;
     status_api_input.current_zoom_state = &current_zoom_state;
     status_api_input.current_lon_state = &current_lon_state;
@@ -923,7 +880,6 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.visible_vacant_parcels_last_frame = &visible_vacant_parcels_last_frame;
     status_api_input.vacant_parcels_matched_total = &vacant_parcels_matched_total;
     status_api_input.vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total;
-    status_api_input.vacant_parcels_triangulated_renderable_total = &vacant_parcels_triangulated_renderable_total;
     status_api_input.perf_frame_ms_avg = &perf_frame_ms_avg;
     status_api_input.perf_frame_ms_last = &perf_frame_ms_last;
     status_api_input.perf_fps_avg = &perf_fps_avg;
@@ -1199,7 +1155,6 @@ int runWorldSim3App(int argc, char** argv) {
     std::string last_cache_clear_msg;
     bool clear_cache_all = true;
     bool clear_cache_hydration = true;
-    bool clear_cache_triangulation = true;
     bool clear_cache_derived = true;
     bool clear_cache_heatmap_memory = true;
     bool clear_cache_heatmap_disk = true;
@@ -1207,7 +1162,6 @@ int runWorldSim3App(int argc, char** argv) {
     bool clear_cache_tile_disk_presence = true;
     const fs::path cache_root_dir = root / "data" / "cache";
     const fs::path cache_hydration_dir = cache_root_dir / "hydration";
-    const fs::path cache_triangulation_dir = cache_root_dir / "triangulation";
     const fs::path cache_derived_dir = cache_root_dir / "derived";
     const fs::path cache_aggregate_dir = cache_root_dir / "aggregate";
     auto clear_cache_tree = [&](const fs::path& p) {
@@ -1412,28 +1366,57 @@ int runWorldSim3App(int argc, char** argv) {
         }
         return values;
     };
+    auto parcel_render_feature_record_at = [&](size_t parcel_idx) -> const ParcelRenderFeatureRecord* {
+        if (parcel_idx < parcel_gpu_render_blob.features.size() &&
+            parcel_gpu_render_blob.features[parcel_idx].feature_idx == parcel_idx) {
+            return &parcel_gpu_render_blob.features[parcel_idx];
+        }
+        for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
+            if (rec.feature_idx == parcel_idx) return &rec;
+        }
+        return nullptr;
+    };
+    auto triangle_area_sq_m = [](const ImVec2& a, const ImVec2& b, const ImVec2& c) -> double {
+        constexpr double kDegToMetersLat = 111320.0;
+        const double lat0 = ((double)a.y + (double)b.y + (double)c.y) / 3.0;
+        const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
+        const double ax = (double)a.x * sx;
+        const double ay = (double)a.y * kDegToMetersLat;
+        const double bx = (double)b.x * sx;
+        const double by = (double)b.y * kDegToMetersLat;
+        const double cx = (double)c.x * sx;
+        const double cy = (double)c.y * kDegToMetersLat;
+        return std::abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) * 0.5;
+    };
+    auto parcel_area_sq_m = [&](size_t parcel_idx) -> double {
+        if (const ParcelRenderFeatureRecord* rec = parcel_render_feature_record_at(parcel_idx)) {
+            const uint32_t end = rec->index_offset + rec->index_count;
+            if (end <= parcel_gpu_render_blob.indices.size()) {
+                double total = 0.0;
+                for (uint32_t i = rec->index_offset; i + 2 < end; i += 3) {
+                    const uint32_t ia = parcel_gpu_render_blob.indices[i];
+                    const uint32_t ib = parcel_gpu_render_blob.indices[i + 1];
+                    const uint32_t ic = parcel_gpu_render_blob.indices[i + 2];
+                    if (ia >= parcel_gpu_render_blob.vertices.size() ||
+                        ib >= parcel_gpu_render_blob.vertices.size() ||
+                        ic >= parcel_gpu_render_blob.vertices.size()) {
+                        continue;
+                    }
+                    total += triangle_area_sq_m(
+                        parcel_gpu_render_blob.vertices[ia],
+                        parcel_gpu_render_blob.vertices[ib],
+                        parcel_gpu_render_blob.vertices[ic]);
+                }
+                return total;
+            }
+        }
+        return 0.0;
+    };
     auto collect_parcel_area_values = [&](const LayerDef& layer) {
         std::vector<double> values;
-        constexpr double kDegToMetersLat = 111320.0;
         values.reserve(layer.features.size());
-        for (const auto& fg : layer.features) {
-            if (fg.rings.empty()) continue;
-            double total = 0.0;
-            for (const auto& ring : fg.rings) {
-                if (ring.size() < 3) continue;
-                double lat_sum = 0.0;
-                for (const auto& p : ring) lat_sum += (double)p.y;
-                const double lat0 = lat_sum / (double)ring.size();
-                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
-                double area = 0.0;
-                for (size_t i = 0, n = ring.size(); i < n; ++i) {
-                    const auto& p = ring[i];
-                    const auto& q = ring[(i + 1) % n];
-                    area += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                            ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-                }
-                total += std::abs(area) * 0.5;
-            }
+        for (size_t i = 0; i < layer.features.size(); ++i) {
+            const double total = parcel_area_sq_m(i);
             if (total > 0.0 && std::isfinite(total)) values.push_back(total);
         }
         return values;
@@ -1442,26 +1425,8 @@ int runWorldSim3App(int argc, char** argv) {
         std::vector<double> values;
         const size_t n = std::min(parcel_layer.features.size(), property_value_layer.features.size());
         values.reserve(n);
-        constexpr double kDegToMetersLat = 111320.0;
         for (size_t i = 0; i < n; ++i) {
-            const auto& fg = parcel_layer.features[i];
-            if (fg.rings.empty()) continue;
-            double total = 0.0;
-            for (const auto& ring : fg.rings) {
-                if (ring.size() < 3) continue;
-                double lat_sum = 0.0;
-                for (const auto& p : ring) lat_sum += (double)p.y;
-                const double lat0 = lat_sum / (double)ring.size();
-                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
-                double area = 0.0;
-                for (size_t ri = 0, rn = ring.size(); ri < rn; ++ri) {
-                    const auto& p = ring[ri];
-                    const auto& q = ring[(ri + 1) % rn];
-                    area += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                            ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-                }
-                total += std::abs(area) * 0.5;
-            }
+            const double total = parcel_area_sq_m(i);
             if (!(total > 0.0) || !std::isfinite(total)) continue;
             float v = 0.0f;
             if (!tryGetFeaturePropertyFloat(property_value_layer.features[i], property_value_layer.heatmap_field, v) ||
@@ -2063,26 +2028,19 @@ int runWorldSim3App(int argc, char** argv) {
         PipelineProgressContext pipeline_progress_ctx;
         pipeline_progress_ctx.layer_count = layers.size();
         pipeline_progress_ctx.hydrated_count = &hydrated_count;
-        pipeline_progress_ctx.triangulated_count = &triangulated_count;
         pipeline_progress_ctx.last_hydrated_seen = &last_hydrated_seen;
-        pipeline_progress_ctx.last_triangulated_seen = &last_triangulated_seen;
         pipeline_progress_ctx.last_hydration_progress_at = &last_hydration_progress_at;
-        pipeline_progress_ctx.last_tri_progress_at = &last_tri_progress_at;
         pipeline_progress_ctx.hydration_started_at = hydration_started_at;
         pipeline_progress_ctx.hydrated_mutex = &hydrated_mutex;
         pipeline_progress_ctx.hydrated_queue = &hydrated_queue;
-        pipeline_progress_ctx.tri_mutex = &tri_mutex;
-        pipeline_progress_ctx.tri_jobs = &tri_jobs;
         const PipelineProgressSnapshot pipeline_progress = updatePipelineProgress(pipeline_progress_ctx);
         const size_t hydrated_now = pipeline_progress.hydrated_now;
-        const size_t triangulated_now = pipeline_progress.triangulated_now;
+        const size_t ready_now = pipeline_progress.ready_now;
         const size_t hydrated_pending = pipeline_progress.hydrated_pending;
-        const size_t tri_pending = pipeline_progress.tri_pending;
         const float hydrated_frac = pipeline_progress.hydrated_frac;
-        const float tri_frac = pipeline_progress.tri_frac;
+        const float ready_frac = pipeline_progress.ready_frac;
         const double elapsed_s = pipeline_progress.elapsed_s;
         const double hydrate_idle_s = pipeline_progress.hydrate_idle_s;
-        const double tri_idle_s = pipeline_progress.tri_idle_s;
 
         drawGearPanel(&show_sources_panel, root, &app_settings, main_imgui_context, download_queue_imgui_context, bootstrap);
         DataLibraryCoordinatorContext data_library_ctx;
@@ -2133,14 +2091,12 @@ int runWorldSim3App(int argc, char** argv) {
             left_panel_w,
             layers.size(),
             hydrated_now,
-            triangulated_now,
+            ready_now,
             hydrated_pending,
-            tri_pending,
             hydrated_frac,
-            tri_frac,
+            ready_frac,
             elapsed_s,
             hydrate_idle_s,
-            tri_idle_s,
             &perf_frame_ms_avg,
             &perf_frame_ms_last,
             &perf_fps_avg,
@@ -2169,7 +2125,6 @@ int runWorldSim3App(int argc, char** argv) {
             sizeof(arkavo_send_path),
             &clear_cache_all,
             &clear_cache_hydration,
-            &clear_cache_triangulation,
             &clear_cache_derived,
             &clear_cache_heatmap_memory,
             &clear_cache_heatmap_disk,
@@ -2177,7 +2132,6 @@ int runWorldSim3App(int argc, char** argv) {
             &clear_cache_tile_disk_presence,
             &last_cache_clear_msg,
             &cache_hydration_dir,
-            &cache_triangulation_dir,
             &cache_derived_dir,
             &cache_aggregate_dir,
             &layers,
@@ -2188,10 +2142,6 @@ int runWorldSim3App(int argc, char** argv) {
             &layer_states,
             &hydrated_mutex,
             &hydrated_queue,
-            &tri_mutex,
-            &tri_jobs,
-            &tri_results,
-            &tri_cv,
             &spatial_mutex,
             &spatial_jobs,
             &spatial_results,
@@ -2207,7 +2157,6 @@ int runWorldSim3App(int argc, char** argv) {
             vacant_notice_layer_idx,
             vacant_rehab_layer_idx,
             &hydrated_count,
-            &triangulated_count,
             [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
             [&](const fs::path& p) { return clear_cache_tree(p); },
             [&]() { clear_heatmap_runtime_cache(); },
@@ -2301,10 +2250,6 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.layers = &layers;
         pipeline_drain_ctx.hydrated_queue = &hydrated_queue;
         pipeline_drain_ctx.hydrated_mutex = &hydrated_mutex;
-        pipeline_drain_ctx.tri_jobs = &tri_jobs;
-        pipeline_drain_ctx.tri_results = &tri_results;
-        pipeline_drain_ctx.tri_mutex = &tri_mutex;
-        pipeline_drain_ctx.tri_cv = &tri_cv;
         pipeline_drain_ctx.spatial_results = &spatial_results;
         pipeline_drain_ctx.spatial_mutex = &spatial_mutex;
         pipeline_drain_ctx.layer_states = &layer_states;
@@ -2318,13 +2263,11 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.hydrate_req_mutex = &hydrate_req_mutex;
         pipeline_drain_ctx.layer_profile_dirty = &layer_profile_dirty;
         pipeline_drain_ctx.hydrated_count = &hydrated_count;
-        pipeline_drain_ctx.triangulated_count = &triangulated_count;
         pipeline_drain_ctx.projection_cache_generation = &projection_generation;
         pipeline_drain_ctx.parcel_layer_idx = parcel_layer_idx;
         pipeline_drain_ctx.vacant_layer_active = vacant_layer_active;
         pipeline_drain_ctx.trim_process_heap = [&]() { trimProcessHeap(); };
         drainHydratedLayerQueue(pipeline_drain_ctx);
-        drainTriangulationResults(pipeline_drain_ctx);
         drainSpatialIndexResults(pipeline_drain_ctx);
 
         DerivedLayerCachesContext derived_layer_caches_ctx;
@@ -2426,8 +2369,6 @@ int runWorldSim3App(int argc, char** argv) {
             }
             const bool stable =
                 st == LayerPipelineStatus::Hydrated ||
-                st == LayerPipelineStatus::TriQueued ||
-                st == LayerPipelineStatus::Triangulating ||
                 st == LayerPipelineStatus::Ready;
             if (!stable) continue;
             const size_t feature_count = layers[li].features.size();
@@ -2485,8 +2426,7 @@ int runWorldSim3App(int argc, char** argv) {
             }
             const bool parcel_ready =
                 parcel_state.status == LayerPipelineStatus::Ready &&
-                !parcel_state.hydration_source_signature.empty() &&
-                parcel_state.hydration_source_signature == parcel_state.triangulation_source_signature;
+                !parcel_state.hydration_source_signature.empty();
             if (!parcel_ready) {
                 if (parcel_geometry_locked_signature.empty()) {
                     clearParcelGpuBuffers();
@@ -2701,29 +2641,8 @@ int runWorldSim3App(int argc, char** argv) {
                             const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
                             return rec ? rec->current_value : 0.0;
                         };
-                        auto parcel_area_sq_m = [](const LayerDef::FeatureGeom& fg) -> double {
-                            if (fg.rings.empty()) return 0.0;
-                            constexpr double kDegToMetersLat = 111320.0;
-                            double total = 0.0;
-                            for (const auto& ring : fg.rings) {
-                                if (ring.size() < 3) continue;
-                                double lat_sum = 0.0;
-                                for (const auto& p : ring) lat_sum += (double)p.y;
-                                const double lat0 = lat_sum / (double)ring.size();
-                                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
-                                double a = 0.0;
-                                for (size_t ri = 0, n = ring.size(); ri < n; ++ri) {
-                                    const auto& p = ring[ri];
-                                    const auto& q = ring[(ri + 1) % n];
-                                    a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                                         ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-                                }
-                                total += std::abs(a) * 0.5;
-                            }
-                            return total;
-                        };
-                        auto current_value_per_area_at = [&](size_t parcel_idx, const LayerDef::FeatureGeom& fg) -> double {
-                            const double area = parcel_area_sq_m(fg);
+                        auto current_value_per_area_at = [&](size_t parcel_idx) -> double {
+                            const double area = parcel_area_sq_m(parcel_idx);
                             if (!(area > 0.0) || !std::isfinite(area)) return 0.0;
                             const double value = current_value_at(parcel_idx);
                             return value > 0.0 && std::isfinite(value) ? value / area : 0.0;
@@ -2735,9 +2654,9 @@ int runWorldSim3App(int argc, char** argv) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
                                 const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
-                                if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
                                 const double v = parcel_parameter_mode == 3
-                                    ? current_value_per_area_at(feature_idx, fg)
+                                    ? current_value_per_area_at(feature_idx)
                                     : current_value_at(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) value_samples.push_back(v);
                             }
@@ -2754,7 +2673,7 @@ int runWorldSim3App(int argc, char** argv) {
                             }
                             if (value_range_valid) {
                                 const double v = parcel_parameter_mode == 3
-                                    ? current_value_per_area_at(feature_idx, fg)
+                                    ? current_value_per_area_at(feature_idx)
                                     : current_value_at(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) {
                                     const float normalized =
@@ -2796,38 +2715,17 @@ int runWorldSim3App(int argc, char** argv) {
                         auto value_at = [](const std::vector<int>& values, size_t idx) -> int {
                             return idx < values.size() ? values[idx] : 0;
                         };
-                        auto parcel_area_sq_m = [](const LayerDef::FeatureGeom& fg) -> double {
-                            if (fg.rings.empty()) return 0.0;
-                            constexpr double kDegToMetersLat = 111320.0;
-                            double total = 0.0;
-                            for (const auto& ring : fg.rings) {
-                                if (ring.size() < 3) continue;
-                                double lat_sum = 0.0;
-                                for (const auto& p : ring) lat_sum += (double)p.y;
-                                const double lat0 = lat_sum / (double)ring.size();
-                                const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
-                                double a = 0.0;
-                                for (size_t ri = 0, n = ring.size(); ri < n; ++ri) {
-                                    const auto& p = ring[ri];
-                                    const auto& q = ring[(ri + 1) % n];
-                                    a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                                         ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-                                }
-                                total += std::abs(a) * 0.5;
-                            }
-                            return total;
-                        };
-                        auto parameter_value = [&](size_t parcel_idx, const LayerDef::FeatureGeom& fg) -> double {
+                        auto parameter_value = [&](size_t parcel_idx) -> double {
                             switch (parcel_parameter_mode) {
                                 case 1:
-                                    return parcel_area_sq_m(fg);
+                                    return parcel_area_sq_m(parcel_idx);
                                 case 2: {
                                     const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
                                     return rec ? rec->current_value : 0.0;
                                 }
                                 case 3: {
                                     const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
-                                    const double area = parcel_area_sq_m(fg);
+                                    const double area = parcel_area_sq_m(parcel_idx);
                                     if (!rec || !(area > 0.0) || !std::isfinite(area)) return 0.0;
                                     return rec->current_value > 0.0 && std::isfinite(rec->current_value)
                                         ? rec->current_value / area
@@ -2852,8 +2750,8 @@ int runWorldSim3App(int argc, char** argv) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
                                 const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
-                                if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
-                                const double v = parameter_value(feature_idx, fg);
+                                if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                const double v = parameter_value(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) parameter_samples.push_back(v);
                             }
                         }
@@ -2891,12 +2789,12 @@ int runWorldSim3App(int argc, char** argv) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
                             const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
-                            if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
                                 continue;
                             }
                             ImU32 overlay = IM_COL32(0, 0, 0, 0);
                             if (parameter_range_valid) {
-                                const double v = parameter_value(feature_idx, fg);
+                                const double v = parameter_value(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) {
                                     const float normalized =
                                         parameter_normalize_mode == 0
@@ -2952,7 +2850,7 @@ int runWorldSim3App(int argc, char** argv) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
                             const LayerDef::FeatureGeom& fg = parcel_layer.features[feature_idx];
-                            if (fg.rings.empty() || !featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
                                 continue;
                             }
                             ImU32 outline =
@@ -3183,44 +3081,94 @@ int runWorldSim3App(int argc, char** argv) {
             (size_t)crime_nibrs_layer_idx < layers.size() &&
             (size_t)crime_nibrs_layer_idx < layer_states.size()) {
             const LayerDef& crime_layer = layers[(size_t)crime_nibrs_layer_idx];
-            const LayerRuntimeState& crime_state = layer_states[(size_t)crime_nibrs_layer_idx];
+            LayerRuntimeState& crime_state = layer_states[(size_t)crime_nibrs_layer_idx];
+            const fs::path crime_artifact_path =
+                geometryArtifactCachePathForLayerFile(root, crime_layer.file, GeometryArtifactClass::Point);
+            crime_state.geometry_artifact_class = GeometryArtifactClass::Point;
+            crime_state.geometry_artifact_path = crime_artifact_path.string();
             const bool crime_ready =
                 crime_layer.enabled &&
                 crime_state.status == LayerPipelineStatus::Ready &&
                 !crime_state.hydration_source_signature.empty();
             if (!crime_ready) {
+                crime_state.geometry_source_signature.clear();
+                crime_state.geometry_phase.clear();
+                crime_state.geometry_loaded_from_artifact = false;
+                crime_state.geometry_gpu_resident = false;
                 clearCrimePointGpuBuffers();
                 clearCrimePointGpuDrawState();
                 crime_point_gpu_uploaded_signature.clear();
                 crime_point_gpu_color_state_key = 0;
-                crime_point_gpu_positions.clear();
+                crime_point_gpu_artifact = PointGeometryArtifact{};
             } else {
                 const std::string& sig = crime_state.hydration_source_signature;
                 if (crime_point_gpu_uploaded_signature != sig) {
-                    std::vector<ImVec2> point_positions;
+                    PointGeometryArtifact point_artifact;
                     std::vector<uint32_t> point_glyphs;
-                    point_positions.reserve(crime_layer.features.size());
+                    if (!loadBinaryPointGeometryArtifact(crime_artifact_path, sig, point_artifact)) {
+                        crime_state.geometry_source_signature = sig;
+                        crime_state.geometry_phase = "artifact_missing";
+                        crime_state.geometry_loaded_from_artifact = false;
+                        crime_state.geometry_gpu_resident = false;
+                        std::fprintf(stderr,
+                            "[worldsim3] Crime point geometry artifact load failed for %s (%s)\n",
+                            crime_layer.file.c_str(),
+                            crime_artifact_path.string().c_str());
+                        clearCrimePointGpuBuffers();
+                        clearCrimePointGpuDrawState();
+                        crime_point_gpu_uploaded_signature.clear();
+                        crime_point_gpu_color_state_key = 0;
+                        crime_point_gpu_artifact = PointGeometryArtifact{};
+                    } else if (point_artifact.positions.size() != crime_layer.features.size() ||
+                               point_artifact.features.size() != crime_layer.features.size()) {
+                        crime_state.geometry_source_signature = sig;
+                        crime_state.geometry_phase = "artifact_feature_mismatch";
+                        crime_state.geometry_loaded_from_artifact = false;
+                        crime_state.geometry_gpu_resident = false;
+                        std::fprintf(stderr,
+                            "[worldsim3] Crime point geometry artifact feature mismatch for %s: artifact=%zu runtime=%zu\n",
+                            crime_layer.file.c_str(),
+                            point_artifact.features.size(),
+                            crime_layer.features.size());
+                        clearCrimePointGpuBuffers();
+                        clearCrimePointGpuDrawState();
+                        crime_point_gpu_uploaded_signature.clear();
+                        crime_point_gpu_color_state_key = 0;
+                        crime_point_gpu_artifact = PointGeometryArtifact{};
+                    } else {
                     point_glyphs.reserve(crime_layer.features.size());
                     for (const LayerDef::FeatureGeom& fg : crime_layer.features) {
-                        point_positions.push_back(ImVec2(fg.extent.min_lon, fg.extent.min_lat));
                         point_glyphs.push_back(crimePointGlyphCode(fg));
                     }
                     std::string gpu_error;
-                    if (ensureCrimePointGpuBuffersResident(sig, point_positions, &gpu_error) &&
+                    if (ensureCrimePointGpuBuffersResident(sig, point_artifact.positions, &gpu_error) &&
                         updateCrimePointGpuGlyphBuffer(point_glyphs, &gpu_error)) {
-                        crime_point_gpu_positions = std::move(point_positions);
+                        crime_state.geometry_source_signature = sig;
+                        crime_state.geometry_phase = "gpu_ready";
+                        crime_state.geometry_loaded_from_artifact = true;
+                        crime_state.geometry_gpu_resident = true;
+                        crime_point_gpu_artifact = std::move(point_artifact);
                         crime_point_gpu_uploaded_signature = sig;
                         crime_point_gpu_color_state_key = 0;
                     } else {
+                        crime_state.geometry_source_signature = sig;
+                        crime_state.geometry_phase = "gpu_upload_failed";
+                        crime_state.geometry_loaded_from_artifact = false;
+                        crime_state.geometry_gpu_resident = false;
                         std::fprintf(stderr, "[worldsim3] Crime point GPU upload failed: %s\n", gpu_error.c_str());
                         clearCrimePointGpuBuffers();
                         clearCrimePointGpuDrawState();
                         crime_point_gpu_uploaded_signature.clear();
-                        crime_point_gpu_positions.clear();
+                        crime_point_gpu_artifact = PointGeometryArtifact{};
+                    }
                     }
                 }
                 if (crime_point_gpu_uploaded_signature == sig &&
-                    crime_point_gpu_positions.size() == crime_layer.features.size()) {
+                    crime_point_gpu_artifact.positions.size() == crime_layer.features.size()) {
+                    crime_state.geometry_source_signature = sig;
+                    crime_state.geometry_phase = "gpu_ready";
+                    crime_state.geometry_loaded_from_artifact = true;
+                    crime_state.geometry_gpu_resident = true;
                     auto hash_mix = [](uint64_t& h, uint64_t v) {
                         h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
                     };
@@ -3314,7 +3262,174 @@ int runWorldSim3App(int argc, char** argv) {
             clearCrimePointGpuDrawState();
             crime_point_gpu_uploaded_signature.clear();
             crime_point_gpu_color_state_key = 0;
-            crime_point_gpu_positions.clear();
+            crime_point_gpu_artifact = PointGeometryArtifact{};
+        }
+
+        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
+            if ((int)li == crime_nibrs_layer_idx) continue;
+            const LayerDef& layer = layers[li];
+            LayerRuntimeState& state = layer_states[li];
+            if (!layerUsesPointGeometry(layer) ||
+                !layer.enabled ||
+                state.status != LayerPipelineStatus::Ready ||
+                state.hydration_source_signature.empty()) {
+                point_geometry_artifacts.erase(li);
+                point_geometry_artifact_signatures.erase(li);
+                if (state.geometry_artifact_class == GeometryArtifactClass::Point) {
+                    state.geometry_source_signature.clear();
+                    state.geometry_phase.clear();
+                    state.geometry_loaded_from_artifact = false;
+                    state.geometry_gpu_resident = false;
+                }
+                continue;
+            }
+
+            const fs::path artifact_path =
+                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Point);
+            state.geometry_artifact_class = GeometryArtifactClass::Point;
+            state.geometry_artifact_path = artifact_path.string();
+            const std::string& sig = state.hydration_source_signature;
+            auto sig_it = point_geometry_artifact_signatures.find(li);
+            if (sig_it != point_geometry_artifact_signatures.end() &&
+                sig_it->second == sig &&
+                point_geometry_artifacts.find(li) != point_geometry_artifacts.end()) {
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_validated";
+                state.geometry_loaded_from_artifact = true;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            PointGeometryArtifact artifact;
+            if (!loadBinaryPointGeometryArtifact(artifact_path, sig, artifact) ||
+                artifact.positions.size() != layer.features.size() ||
+                artifact.features.size() != layer.features.size()) {
+                point_geometry_artifacts.erase(li);
+                point_geometry_artifact_signatures.erase(li);
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_missing";
+                state.geometry_loaded_from_artifact = false;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            point_geometry_artifacts[li] = std::move(artifact);
+            point_geometry_artifact_signatures[li] = sig;
+            state.geometry_source_signature = sig;
+            state.geometry_phase = "artifact_validated";
+            state.geometry_loaded_from_artifact = true;
+            state.geometry_gpu_resident = false;
+        }
+
+        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
+            const LayerDef& layer = layers[li];
+            LayerRuntimeState& state = layer_states[li];
+            if (!layerUsesPolylineGeometry(layer) ||
+                !layer.enabled ||
+                state.status != LayerPipelineStatus::Ready ||
+                state.hydration_source_signature.empty()) {
+                polyline_geometry_artifacts.erase(li);
+                polyline_geometry_artifact_signatures.erase(li);
+                if (state.geometry_artifact_class == GeometryArtifactClass::Polyline) {
+                    state.geometry_source_signature.clear();
+                    state.geometry_phase.clear();
+                    state.geometry_loaded_from_artifact = false;
+                    state.geometry_gpu_resident = false;
+                }
+                continue;
+            }
+
+            const fs::path artifact_path =
+                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polyline);
+            state.geometry_artifact_class = GeometryArtifactClass::Polyline;
+            state.geometry_artifact_path = artifact_path.string();
+            const std::string& sig = state.hydration_source_signature;
+            auto sig_it = polyline_geometry_artifact_signatures.find(li);
+            if (sig_it != polyline_geometry_artifact_signatures.end() &&
+                sig_it->second == sig &&
+                polyline_geometry_artifacts.find(li) != polyline_geometry_artifacts.end()) {
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_validated";
+                state.geometry_loaded_from_artifact = true;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            PolylineGeometryArtifact artifact;
+            if (!loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact) ||
+                artifact.features.size() != layer.features.size()) {
+                polyline_geometry_artifacts.erase(li);
+                polyline_geometry_artifact_signatures.erase(li);
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_missing";
+                state.geometry_loaded_from_artifact = false;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            polyline_geometry_artifacts[li] = std::move(artifact);
+            polyline_geometry_artifact_signatures[li] = sig;
+            state.geometry_source_signature = sig;
+            state.geometry_phase = "artifact_validated";
+            state.geometry_loaded_from_artifact = true;
+            state.geometry_gpu_resident = false;
+        }
+
+        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
+            const LayerDef& layer = layers[li];
+            LayerRuntimeState& state = layer_states[li];
+            const bool parcel_layer = (int)li == parcel_layer_idx;
+            if (layerUsesPointGeometry(layer) ||
+                layerUsesPolylineGeometry(layer) ||
+                !layer.enabled ||
+                state.status != LayerPipelineStatus::Ready ||
+                state.hydration_source_signature.empty() ||
+                parcel_layer) {
+                polygon_geometry_artifacts.erase(li);
+                polygon_geometry_artifact_signatures.erase(li);
+                if (state.geometry_artifact_class == GeometryArtifactClass::Polygon && !parcel_layer) {
+                    state.geometry_source_signature.clear();
+                    state.geometry_phase.clear();
+                    state.geometry_loaded_from_artifact = false;
+                    state.geometry_gpu_resident = false;
+                }
+                continue;
+            }
+
+            const fs::path artifact_path =
+                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polygon);
+            state.geometry_artifact_class = GeometryArtifactClass::Polygon;
+            state.geometry_artifact_path = artifact_path.string();
+            const std::string& sig = state.hydration_source_signature;
+            auto sig_it = polygon_geometry_artifact_signatures.find(li);
+            if (sig_it != polygon_geometry_artifact_signatures.end() &&
+                sig_it->second == sig &&
+                polygon_geometry_artifacts.find(li) != polygon_geometry_artifacts.end()) {
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_validated";
+                state.geometry_loaded_from_artifact = true;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            PolygonGeometryArtifact artifact;
+            if (!loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact) ||
+                artifact.features.size() != layer.features.size()) {
+                polygon_geometry_artifacts.erase(li);
+                polygon_geometry_artifact_signatures.erase(li);
+                state.geometry_source_signature = sig;
+                state.geometry_phase = "artifact_missing";
+                state.geometry_loaded_from_artifact = false;
+                state.geometry_gpu_resident = false;
+                continue;
+            }
+
+            polygon_geometry_artifacts[li] = std::move(artifact);
+            polygon_geometry_artifact_signatures[li] = sig;
+            state.geometry_source_signature = sig;
+            state.geometry_phase = "artifact_validated";
+            state.geometry_loaded_from_artifact = true;
+            state.geometry_gpu_resident = false;
         }
 
         auto real_property_for_parcel = [&](const LayerDef::FeatureGeom& parcel) -> const LayerDef::FeatureGeom* {
@@ -3451,6 +3566,10 @@ int runWorldSim3App(int argc, char** argv) {
             kMaxZoom,
             kMaxInternalMathZoom,
             &layers,
+            &point_geometry_artifacts,
+            &polyline_geometry_artifacts,
+            &polygon_geometry_artifacts,
+            &parcel_gpu_render_blob,
             &layer_spatial,
             &layer_fallback_scan_cursor,
             &map_filter_state,
@@ -3740,12 +3859,10 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.hydration_stop = &hydration_stop;
     shutdown_input.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_input.hydrate_req_cv = &hydrate_req_cv;
-    shutdown_input.tri_cv = &tri_cv;
     shutdown_input.spatial_cv = &spatial_cv;
     shutdown_input.parcel_render_stop = &parcel_render_stop;
     shutdown_input.parcel_render_cv = &parcel_render_cv;
     shutdown_input.hydration_workers = &hydration_workers;
-    shutdown_input.triangulation_worker = &triangulation_worker;
     shutdown_input.spatial_index_worker = &spatial_index_worker;
     shutdown_input.parcel_render_worker = &parcel_render_worker;
     shutdown_input.status_api_worker = &status_api_worker;

@@ -925,7 +925,6 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             ImGui::Text("Status: %s", display_status.c_str());
             ImGui::TextDisabled("Pipeline: %s", statusToString(st.status));
             if (!st.hydration_phase.empty()) ImGui::TextDisabled("Hydration: %s", st.hydration_phase.c_str());
-            if (!st.triangulation_phase.empty()) ImGui::TextDisabled("Triangulation: %s", st.triangulation_phase.c_str());
             ImGui::Text("Features: %zu", st.feature_count);
             ImGui::Text("File: %s", layer.file.c_str());
             ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");

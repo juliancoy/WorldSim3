@@ -207,7 +207,8 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                 tax_sale_amount = duckdb_detail.tax_sale_amount;
                 current_value_total = duckdb_detail.current_value;
             }
-            const LayerDef::FeatureGeom* selected_rp = selected_unified ? selected_unified->real_property : nullptr;
+            const LayerDef::FeatureGeom* selected_rp =
+                (selected_unified && ctx.layers) ? unifiedRealPropertyGeometry(*selected_unified, *ctx.layers) : nullptr;
             if (!selected_rp && ctx.real_property_for_parcel) selected_rp = ctx.real_property_for_parcel(selected);
 
             ImGui::Separator();

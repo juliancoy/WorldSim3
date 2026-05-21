@@ -15,18 +15,17 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
         !ctx.lan_discovery || !ctx.lan_peers || !ctx.lan_scan_status || !ctx.arkavo_room_id ||
         !ctx.arkavo_status || !ctx.arkavo_err || !ctx.arkavo_client || !ctx.arkavo_rtc ||
         !ctx.arkavo_send_peer || !ctx.arkavo_send_path || !ctx.clear_cache_all ||
-        !ctx.clear_cache_hydration || !ctx.clear_cache_triangulation || !ctx.clear_cache_derived ||
+        !ctx.clear_cache_hydration || !ctx.clear_cache_derived ||
         !ctx.clear_cache_heatmap_memory || !ctx.clear_cache_heatmap_disk ||
         !ctx.clear_cache_tile_memory || !ctx.clear_cache_tile_disk_presence ||
-        !ctx.last_cache_clear_msg || !ctx.cache_hydration_dir || !ctx.cache_triangulation_dir ||
+        !ctx.last_cache_clear_msg || !ctx.cache_hydration_dir ||
         !ctx.cache_derived_dir || !ctx.cache_aggregate_dir || !ctx.layers || !ctx.layer_spatial ||
         !ctx.layer_fallback_scan_cursor || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.hydrated_mutex ||
-        !ctx.hydrated_queue || !ctx.tri_mutex || !ctx.tri_jobs || !ctx.tri_results ||
-        !ctx.tri_cv || !ctx.spatial_mutex || !ctx.spatial_jobs || !ctx.spatial_results ||
+        !ctx.hydrated_queue || !ctx.spatial_mutex || !ctx.spatial_jobs || !ctx.spatial_results ||
         !ctx.spatial_cv || !ctx.spatial_index_requested_feature_count ||
         !ctx.spatial_index_requested_signature || !ctx.hydrate_req_mutex || !ctx.hydrate_requests ||
         !ctx.hydration_requested || !ctx.hydration_required || !ctx.status_mutex ||
-        !ctx.hydrated_count || !ctx.triangulated_count) {
+        !ctx.hydrated_count) {
         return;
     }
 
@@ -40,7 +39,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
     CacheClearUiState cache_clear_ui;
     cache_clear_ui.clear_cache_all = *ctx.clear_cache_all;
     cache_clear_ui.clear_cache_hydration = *ctx.clear_cache_hydration;
-    cache_clear_ui.clear_cache_triangulation = *ctx.clear_cache_triangulation;
     cache_clear_ui.clear_cache_derived = *ctx.clear_cache_derived;
     cache_clear_ui.clear_cache_heatmap_memory = *ctx.clear_cache_heatmap_memory;
     cache_clear_ui.clear_cache_heatmap_disk = *ctx.clear_cache_heatmap_disk;
@@ -121,7 +119,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
     auto clear_cache_action = [&]() {
         const bool has_any_selected =
             cache_clear_ui.clear_cache_hydration ||
-            cache_clear_ui.clear_cache_triangulation ||
             cache_clear_ui.clear_cache_derived ||
             cache_clear_ui.clear_cache_heatmap_memory ||
             cache_clear_ui.clear_cache_heatmap_disk ||
@@ -137,10 +134,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
         if (cache_clear_ui.clear_cache_hydration) {
             removed_files += ctx.clear_cache_tree(*ctx.cache_hydration_dir);
             cleared_scopes.push_back("hydration");
-        }
-        if (cache_clear_ui.clear_cache_triangulation) {
-            removed_files += ctx.clear_cache_tree(*ctx.cache_triangulation_dir);
-            cleared_scopes.push_back("triangulation");
         }
         if (cache_clear_ui.clear_cache_derived) {
             removed_files += ctx.clear_cache_tree(*ctx.cache_derived_dir);
@@ -165,21 +158,14 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
             cleared_scopes.push_back("tile disk presence");
         }
         if (cache_clear_ui.clear_cache_hydration) std::filesystem::create_directories(*ctx.cache_hydration_dir, ec);
-        if (cache_clear_ui.clear_cache_triangulation) std::filesystem::create_directories(*ctx.cache_triangulation_dir, ec);
         if (cache_clear_ui.clear_cache_derived) std::filesystem::create_directories(*ctx.cache_derived_dir, ec);
         if (cache_clear_ui.clear_cache_heatmap_disk) std::filesystem::create_directories(*ctx.cache_aggregate_dir, ec);
         const bool clear_hydration_data = cache_clear_ui.clear_cache_hydration;
-        const bool clear_tri_data = cache_clear_ui.clear_cache_triangulation;
         const bool clear_derived_data = cache_clear_ui.clear_cache_derived || cache_clear_ui.clear_cache_hydration;
         if (clear_hydration_data) {
             {
                 std::lock_guard<std::mutex> lk(*ctx.hydrated_mutex);
                 ctx.hydrated_queue->clear();
-            }
-            {
-                std::lock_guard<std::mutex> lk(*ctx.tri_mutex);
-                ctx.tri_jobs->clear();
-                ctx.tri_results->clear();
             }
             {
                 std::lock_guard<std::mutex> lk(*ctx.spatial_mutex);
@@ -216,13 +202,10 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                         (*ctx.layer_states)[i].feature_count = 0;
                         (*ctx.layer_states)[i].error.clear();
                         (*ctx.layer_states)[i].hydration_source_signature.clear();
-                        (*ctx.layer_states)[i].triangulation_source_signature.clear();
                         (*ctx.layer_states)[i].spatial_index_source_signature.clear();
                         (*ctx.layer_states)[i].hydration_phase.clear();
-                        (*ctx.layer_states)[i].triangulation_phase.clear();
                         (*ctx.layer_states)[i].spatial_index_phase.clear();
                         (*ctx.layer_states)[i].hydration_loaded_from_cache = false;
-                        (*ctx.layer_states)[i].triangulation_loaded_from_cache = false;
                     }
                 }
             }
@@ -231,52 +214,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
             }
             ctx.trim_process_heap();
             ctx.hydrated_count->store(0, std::memory_order_relaxed);
-            ctx.triangulated_count->store(0, std::memory_order_relaxed);
-        }
-        if (clear_tri_data && !clear_hydration_data) {
-            {
-                std::lock_guard<std::mutex> lk(*ctx.tri_mutex);
-                ctx.tri_jobs->clear();
-                ctx.tri_results->clear();
-            }
-            const bool vac_layer_active_now =
-                (ctx.vacant_notice_layer_idx >= 0 && (size_t)ctx.vacant_notice_layer_idx < ctx.layers->size() && (*ctx.layers)[(size_t)ctx.vacant_notice_layer_idx].enabled) ||
-                (ctx.vacant_rehab_layer_idx >= 0 && (size_t)ctx.vacant_rehab_layer_idx < ctx.layers->size() && (*ctx.layers)[(size_t)ctx.vacant_rehab_layer_idx].enabled);
-            for (size_t i = 0; i < ctx.layers->size(); ++i) {
-                if ((*ctx.layers)[i].features.empty()) continue;
-                if ((int)i == ctx.parcel_layer_idx) {
-                    std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
-                    if (i < ctx.layer_states->size()) {
-                        (*ctx.layer_states)[i].status = LayerPipelineStatus::Ready;
-                        (*ctx.layer_states)[i].triangulation_source_signature =
-                            (*ctx.layer_states)[i].hydration_source_signature;
-                        (*ctx.layer_states)[i].triangulation_phase = "render_blob_mode";
-                        (*ctx.layer_states)[i].triangulation_loaded_from_cache = false;
-                    }
-                    continue;
-                }
-                const bool parcel_dep_priority = vac_layer_active_now && ctx.parcel_layer_idx >= 0 && (int)i == ctx.parcel_layer_idx;
-                if (!(*ctx.layers)[i].enabled && !parcel_dep_priority) continue;
-                TriJob tj;
-                tj.index = i;
-                tj.file = (*ctx.layers)[i].file;
-                if (i < ctx.layer_states->size()) {
-                    tj.source_signature = (*ctx.layer_states)[i].hydration_source_signature;
-                }
-                tj.rings_per_feature.reserve((*ctx.layers)[i].features.size());
-                for (const auto& fg : (*ctx.layers)[i].features) tj.rings_per_feature.push_back(fg.rings);
-                {
-                    std::lock_guard<std::mutex> lk2(*ctx.tri_mutex);
-                    if (parcel_dep_priority) ctx.tri_jobs->push_front(std::move(tj));
-                    else ctx.tri_jobs->push_back(std::move(tj));
-                }
-                ctx.tri_cv->notify_one();
-                {
-                    std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
-                    if (i < ctx.layer_states->size()) (*ctx.layer_states)[i].status = LayerPipelineStatus::TriQueued;
-                }
-            }
-            ctx.tri_cv->notify_all();
         }
         if (clear_derived_data) {
             ctx.reset_derived_cache_state();
@@ -301,18 +238,16 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
     perf_ui_ctx.layer_count = ctx.layer_count;
     perf_ui_ctx.enabled_layer_count = enabled_layer_count;
     perf_ui_ctx.hydrated_now = ctx.hydrated_now;
-    perf_ui_ctx.triangulated_now = ctx.triangulated_now;
+    perf_ui_ctx.ready_now = ctx.ready_now;
     perf_ui_ctx.enabled_hydrated_now = enabled_hydrated_now;
     perf_ui_ctx.enabled_ready_now = enabled_ready_now;
     perf_ui_ctx.hydrated_pending = ctx.hydrated_pending;
-    perf_ui_ctx.tri_pending = ctx.tri_pending;
     perf_ui_ctx.hydrated_frac = ctx.hydrated_frac;
-    perf_ui_ctx.tri_frac = ctx.tri_frac;
+    perf_ui_ctx.ready_frac = ctx.ready_frac;
     perf_ui_ctx.enabled_hydrated_frac = enabled_hydrated_frac;
     perf_ui_ctx.enabled_ready_frac = enabled_ready_frac;
     perf_ui_ctx.elapsed_s = ctx.elapsed_s;
     perf_ui_ctx.hydrate_idle_s = ctx.hydrate_idle_s;
-    perf_ui_ctx.tri_idle_s = ctx.tri_idle_s;
     perf_ui_ctx.perf_frame_ms_avg = ctx.perf_frame_ms_avg->load(std::memory_order_relaxed);
     perf_ui_ctx.perf_frame_ms_last = ctx.perf_frame_ms_last->load(std::memory_order_relaxed);
     perf_ui_ctx.perf_fps_avg = ctx.perf_fps_avg->load(std::memory_order_relaxed);
@@ -350,7 +285,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
 
     *ctx.clear_cache_all = cache_clear_ui.clear_cache_all;
     *ctx.clear_cache_hydration = cache_clear_ui.clear_cache_hydration;
-    *ctx.clear_cache_triangulation = cache_clear_ui.clear_cache_triangulation;
     *ctx.clear_cache_derived = cache_clear_ui.clear_cache_derived;
     *ctx.clear_cache_heatmap_memory = cache_clear_ui.clear_cache_heatmap_memory;
     *ctx.clear_cache_heatmap_disk = cache_clear_ui.clear_cache_heatmap_disk;

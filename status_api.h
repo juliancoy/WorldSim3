@@ -66,7 +66,6 @@ struct StatusApiContext {
     std::chrono::steady_clock::time_point* hydration_started_at = nullptr;
 
     std::atomic<size_t>* hydrated_count = nullptr;
-    std::atomic<size_t>* triangulated_count = nullptr;
     std::atomic<size_t>* prof_tile_cache_size = nullptr;
     std::atomic<int>* current_zoom_state = nullptr;
     std::atomic<double>* current_lon_state = nullptr;
@@ -74,7 +73,6 @@ struct StatusApiContext {
     std::atomic<size_t>* visible_vacant_parcels_last_frame = nullptr;
     std::atomic<size_t>* vacant_parcels_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_with_geometry_total = nullptr;
-    std::atomic<size_t>* vacant_parcels_triangulated_renderable_total = nullptr;
 
     std::atomic<double>* perf_frame_ms_avg = nullptr;
     std::atomic<double>* perf_frame_ms_last = nullptr;

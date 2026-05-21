@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "imgui.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
@@ -16,6 +17,8 @@ struct MapRenderContext {
     ImVec2 size;
     std::vector<LayerDef>* layers = nullptr;
     size_t parcel_layer_idx = (size_t)-1;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
+    int math_zoom = 0;
 
     bool vacant_notice_enabled = false;
     bool vacant_rehab_enabled = false;

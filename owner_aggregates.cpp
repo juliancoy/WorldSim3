@@ -150,7 +150,7 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
         *ctx.owner_sorted_mode = -1;
     } else {
         for (const auto& parcel_record : *ctx.unified_parcels) {
-            const LayerDef::FeatureGeom* pf = parcel_record.parcel_geom;
+            const LayerDef::FeatureGeom* pf = unifiedParcelGeometry(parcel_record, *ctx.layers);
             if (!pf) continue;
             std::string owner = parcel_record.owner;
             if (owner.empty()) continue;
@@ -227,7 +227,8 @@ void refreshFilteredAggregateSnapshot(const OwnerAggregatesContext& ctx) {
                     const int vac_rehab = parcel_record.vacant_rehab_count;
                     if ((vac_notice + vac_rehab) <= 0) continue;
                     ctx.filtered_aggregate_snapshot->vacancy_parcels_matched++;
-                    if (parcel_record.parcel_geom && !parcel_record.parcel_geom->rings.empty()) {
+                    const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(parcel_record, *ctx.layers);
+                    if (parcel_geom && !parcel_geom->rings.empty()) {
                         ctx.filtered_aggregate_snapshot->vacancy_parcels_with_geometry++;
                     }
                 }

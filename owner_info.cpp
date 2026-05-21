@@ -415,7 +415,8 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
         current_value_total = duckdb_detail.current_value;
     }
 
-    const LayerDef::FeatureGeom* selected_rp = selected_unified ? selected_unified->real_property : nullptr;
+    const LayerDef::FeatureGeom* selected_rp =
+        (selected_unified && ctx.layers) ? unifiedRealPropertyGeometry(*selected_unified, *ctx.layers) : nullptr;
     if (!selected_rp && ctx.real_property_for_parcel) selected_rp = ctx.real_property_for_parcel(selected);
 
     ImGui::Separator();
@@ -489,8 +490,10 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         GeoBounds owner_bounds;
         for (size_t pi : owner_parcel_indices) {
             const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-            if (!parcel_record || !parcel_record->parcel_geom) continue;
-            expandBounds(owner_bounds, parcel_record->parcel_geom->extent);
+            if (!parcel_record) continue;
+            const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
+            if (!parcel_geom) continue;
+            expandBounds(owner_bounds, parcel_geom->extent);
         }
 
         ImGui::Text("Element: Owner");
@@ -517,9 +520,10 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         ImGui::BeginChild("owner_info_properties", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
         for (size_t pi : owner_parcel_indices) {
             const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-            if (!parcel_record || !parcel_record->parcel_geom) continue;
-
-            const auto& pf = *parcel_record->parcel_geom;
+            if (!parcel_record) continue;
+            const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
+            if (!parcel_geom) continue;
+            const auto& pf = *parcel_geom;
             std::string blocklot = parcel_record->blocklot;
             std::string address = parcel_record->address;
             if (address.empty()) address = "(address unavailable)";
@@ -574,8 +578,10 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
     GeoBounds source_bounds;
     for (size_t pi : source_parcel_indices) {
         const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-        if (!parcel_record || !parcel_record->parcel_geom) continue;
-        expandBounds(source_bounds, parcel_record->parcel_geom->extent);
+        if (!parcel_record) continue;
+        const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
+        if (!parcel_geom) continue;
+        expandBounds(source_bounds, parcel_geom->extent);
     }
 
     ImGui::Text("Element: %s", property_source ? "Property Source" : "Parcel Source");
@@ -602,9 +608,10 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
     ImGui::BeginChild("source_info_properties", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
     for (size_t pi : source_parcel_indices) {
         const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-        if (!parcel_record || !parcel_record->parcel_geom) continue;
-
-        const auto& pf = *parcel_record->parcel_geom;
+        if (!parcel_record) continue;
+        const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
+        if (!parcel_geom) continue;
+        const auto& pf = *parcel_geom;
         std::string blocklot = parcel_record->blocklot;
         std::string address = parcel_record->address;
         if (address.empty()) address = "(address unavailable)";

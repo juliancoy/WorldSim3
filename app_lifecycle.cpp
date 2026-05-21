@@ -175,11 +175,9 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
     if (ctx.parcel_render_stop) ctx.parcel_render_stop->store(true, std::memory_order_relaxed);
     if (ctx.time_cube_ui_worker->joinable()) ctx.time_cube_ui_worker->join();
     ctx.hydrate_req_cv->notify_all();
-    ctx.tri_cv->notify_all();
     ctx.spatial_cv->notify_all();
     if (ctx.parcel_render_cv) ctx.parcel_render_cv->notify_all();
     for (auto& t : *ctx.hydration_workers) if (t.joinable()) t.join();
-    if (ctx.triangulation_worker->joinable()) ctx.triangulation_worker->join();
     if (ctx.spatial_index_worker->joinable()) ctx.spatial_index_worker->join();
     if (ctx.parcel_render_worker && ctx.parcel_render_worker->joinable()) ctx.parcel_render_worker->join();
     if (ctx.status_api_worker->joinable()) ctx.status_api_worker->join();

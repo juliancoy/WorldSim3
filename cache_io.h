@@ -7,6 +7,73 @@
 #include <string>
 #include <vector>
 
+struct GeometryArtifactHeader {
+    uint32_t version = 1;
+    uint32_t endian_marker = 0x01020304u;
+    GeometryArtifactClass geometry_class = GeometryArtifactClass::Unknown;
+    uint64_t feature_count = 0;
+    uint64_t chunk_count = 0;
+    std::string source_signature;
+};
+
+struct GeometryArtifactFeatureRecord {
+    uint32_t feature_idx = 0;
+    std::string feature_id;
+    uint32_t vertex_offset = 0;
+    uint32_t vertex_count = 0;
+    uint32_t index_offset = 0;
+    uint32_t index_count = 0;
+    uint32_t aux_index_offset = 0;
+    uint32_t aux_index_count = 0;
+    float min_lon = 0.0f;
+    float min_lat = 0.0f;
+    float max_lon = 0.0f;
+    float max_lat = 0.0f;
+};
+
+struct GeometryArtifactChunkRecord {
+    uint32_t chunk_idx = 0;
+    uint32_t feature_offset = 0;
+    uint32_t feature_count = 0;
+    uint32_t vertex_offset = 0;
+    uint32_t vertex_count = 0;
+    uint32_t index_offset = 0;
+    uint32_t index_count = 0;
+    uint32_t aux_index_offset = 0;
+    uint32_t aux_index_count = 0;
+    float min_lon = 0.0f;
+    float min_lat = 0.0f;
+    float max_lon = 0.0f;
+    float max_lat = 0.0f;
+};
+
+struct PointGeometryArtifact {
+    GeometryArtifactHeader header;
+    std::vector<ImVec2> positions;
+    std::vector<uint32_t> feature_refs;
+    std::vector<GeometryArtifactFeatureRecord> features;
+    std::vector<GeometryArtifactChunkRecord> chunks;
+};
+
+struct PolylineGeometryArtifact {
+    GeometryArtifactHeader header;
+    std::vector<ImVec2> vertices;
+    std::vector<uint32_t> feature_refs;
+    std::vector<uint32_t> line_indices;
+    std::vector<GeometryArtifactFeatureRecord> features;
+    std::vector<GeometryArtifactChunkRecord> chunks;
+};
+
+struct PolygonGeometryArtifact {
+    GeometryArtifactHeader header;
+    std::vector<ImVec2> vertices;
+    std::vector<uint32_t> feature_refs;
+    std::vector<uint32_t> fill_indices;
+    std::vector<uint32_t> line_indices;
+    std::vector<GeometryArtifactFeatureRecord> features;
+    std::vector<GeometryArtifactChunkRecord> chunks;
+};
+
 struct ParcelRenderFeatureRecord {
     uint32_t feature_idx = 0;
     uint32_t vertex_offset = 0;
@@ -61,6 +128,45 @@ std::filesystem::path geometryArtifactCachePathForLayerFile(
     const std::filesystem::path& root,
     const std::string& layer_file,
     GeometryArtifactClass cls);
+bool buildPointGeometryArtifact(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::string& sig,
+    PointGeometryArtifact& out,
+    size_t chunk_feature_budget = 4096);
+bool loadBinaryPointGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    PointGeometryArtifact& out);
+void saveBinaryPointGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const PointGeometryArtifact& artifact);
+bool buildPolylineGeometryArtifact(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::string& sig,
+    PolylineGeometryArtifact& out,
+    size_t chunk_feature_budget = 4096);
+bool loadBinaryPolylineGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    PolylineGeometryArtifact& out);
+void saveBinaryPolylineGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const PolylineGeometryArtifact& artifact);
+bool buildPolygonGeometryArtifact(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::string& sig,
+    PolygonGeometryArtifact& out,
+    size_t chunk_feature_budget = 4096);
+bool loadBinaryPolygonGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    PolygonGeometryArtifact& out);
+void saveBinaryPolygonGeometryArtifact(
+    const std::filesystem::path& cache_path,
+    const PolygonGeometryArtifact& artifact);
 
 std::string fileSignature(const std::filesystem::path& p);
 bool resolveLayerSourceSignature(
@@ -81,17 +187,6 @@ void saveBinaryHydrationCache(
 bool binaryHydrationCacheShouldBeCompacted(
     const std::filesystem::path& cache_path,
     const std::vector<LayerDef::FeatureGeom>& features);
-
-bool loadBinaryTriCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    size_t count,
-    std::vector<std::vector<uint32_t>>& out);
-
-void saveBinaryTriCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    const std::vector<std::vector<uint32_t>>& tris);
 
 bool buildParcelRenderCacheBlob(
     const std::vector<LayerDef::FeatureGeom>& features,

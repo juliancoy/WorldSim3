@@ -370,7 +370,8 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         if (!unified_parcels.empty()) {
             auto parcel_appender = duckdb::Appender(con, "unified_parcels");
             for (const auto& parcel : unified_parcels) {
-                if (!parcel.parcel_geom) continue;
+                const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(parcel, layers);
+                if (!parcel_geom) continue;
                 parcel_appender.BeginRow();
                 parcel_appender.Append<uint64_t>((uint64_t)parcel.parcel_layer_idx);
                 parcel_appender.Append<uint64_t>((uint64_t)parcel.parcel_feature_idx);
@@ -397,10 +398,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_appender.Append<int32_t>((int32_t)parcel.tax_sale_count);
                 parcel_appender.Append<double>(parcel.tax_lien_amount);
                 parcel_appender.Append<double>(parcel.tax_sale_amount);
-                parcel_appender.Append<double>(parcel.parcel_geom->extent.min_lon);
-                parcel_appender.Append<double>(parcel.parcel_geom->extent.min_lat);
-                parcel_appender.Append<double>(parcel.parcel_geom->extent.max_lon);
-                parcel_appender.Append<double>(parcel.parcel_geom->extent.max_lat);
+                parcel_appender.Append<double>(parcel_geom->extent.min_lon);
+                parcel_appender.Append<double>(parcel_geom->extent.min_lat);
+                parcel_appender.Append<double>(parcel_geom->extent.max_lon);
+                parcel_appender.Append<double>(parcel_geom->extent.max_lat);
                 parcel_appender.EndRow();
             }
             parcel_appender.Close();

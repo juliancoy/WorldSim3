@@ -77,6 +77,7 @@ struct LayerDef {
     struct FeatureGeom {
         FeatureExtent extent;
         std::vector<std::vector<ImVec2>> rings;
+        std::vector<std::vector<ImVec2>> paths;
         std::vector<uint32_t> triangles;
         std::vector<std::pair<std::string, std::string>> properties;
     };

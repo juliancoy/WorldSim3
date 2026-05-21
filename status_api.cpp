@@ -461,7 +461,6 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& layer_heatmap_enabled = *ctx.layer_heatmap_enabled;
         auto& hydration_started_at = *ctx.hydration_started_at;
         auto& hydrated_count = *ctx.hydrated_count;
-        auto& triangulated_count = *ctx.triangulated_count;
         auto& prof_tile_cache_size = *ctx.prof_tile_cache_size;
         auto& current_zoom_state = *ctx.current_zoom_state;
         auto& current_lon_state = *ctx.current_lon_state;
@@ -469,7 +468,6 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& visible_vacant_parcels_last_frame = *ctx.visible_vacant_parcels_last_frame;
         auto& vacant_parcels_matched_total = *ctx.vacant_parcels_matched_total;
         auto& vacant_parcels_with_geometry_total = *ctx.vacant_parcels_with_geometry_total;
-        auto& vacant_parcels_triangulated_renderable_total = *ctx.vacant_parcels_triangulated_renderable_total;
         auto& perf_frame_ms_avg = *ctx.perf_frame_ms_avg;
         auto& perf_frame_ms_last = *ctx.perf_frame_ms_last;
         auto& perf_fps_avg = *ctx.perf_fps_avg;
@@ -864,13 +862,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["protocol_version"] = kProtocolVersion;
                 out["layers_total"] = layers.size();
                 out["hydrated"] = hydrated_count.load(std::memory_order_relaxed);
-                out["triangulated"] = triangulated_count.load(std::memory_order_relaxed);
                 const double total_layers = layers.empty() ? 1.0 : (double)layers.size();
                 out["hydration_pct"] = ((double)out["hydrated"].get<size_t>() / total_layers) * 100.0;
-                out["triangulation_pct"] = ((double)out["triangulated"].get<size_t>() / total_layers) * 100.0;
                 out["elapsed_seconds"] = elapsed_s;
                 out["hydrated_layers_per_min"] = ((double)out["hydrated"].get<size_t>() / elapsed_s) * 60.0;
-                out["triangulated_layers_per_min"] = ((double)out["triangulated"].get<size_t>() / elapsed_s) * 60.0;
                 out["hydrated_features_total"] = feature_total;
                 out["hydrated_features_per_sec"] = (double)feature_total / elapsed_s;
                 out["tile_cache_size"] = prof_tile_cache_size.load(std::memory_order_relaxed);
@@ -900,8 +895,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 }
                 out["vacancy_probe"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},
-                    {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)},
-                    {"triangulated_renderable_total", vacant_parcels_triangulated_renderable_total.load(std::memory_order_relaxed)}
+                    {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)}
                 };
                 out["perf"] = {
                     {"frame_ms_avg", perf_frame_ms_avg.load(std::memory_order_relaxed)},
@@ -961,13 +955,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"hydration_phase", st.hydration_phase},
                         {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
                         {"hydration_source_signature", st.hydration_source_signature},
-                        {"triangulation_phase", st.triangulation_phase},
-                        {"triangulation_loaded_from_cache", st.triangulation_loaded_from_cache},
-                        {"triangulation_source_signature", st.triangulation_source_signature},
                         {"spatial_index_phase", st.spatial_index_phase},
                         {"spatial_index_source_signature", st.spatial_index_source_signature},
                         {"hydrated", hydrated},
-                        {"triangulated", triangulated},
+                        {"ready", triangulated},
                         {"spatial_indexed", i < layers.size() && i < states_copy.size() && st.spatial_index_phase == "ready"},
                         {"error", st.error}
                     });
@@ -1629,7 +1620,6 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["vacancy"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},
                     {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)},
-                    {"triangulated_renderable_total", vacant_parcels_triangulated_renderable_total.load(std::memory_order_relaxed)},
                     {"visible_last_frame", visible_vacant_parcels_last_frame.load(std::memory_order_relaxed)}
                 };
                 std::string body = out.dump();
@@ -1643,7 +1633,6 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["ok"] = true;
                 out["matched_total"] = vacant_parcels_matched_total.load(std::memory_order_relaxed);
                 out["with_geometry_total"] = vacant_parcels_with_geometry_total.load(std::memory_order_relaxed);
-                out["triangulated_renderable_total"] = vacant_parcels_triangulated_renderable_total.load(std::memory_order_relaxed);
                 out["visible_last_frame"] = visible_vacant_parcels_last_frame.load(std::memory_order_relaxed);
                 std::string body = out.dump();
                 std::ostringstream os;

@@ -26,7 +26,6 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.layer_heatmap_enabled = input.layer_heatmap_enabled;
     ctx.hydration_started_at = input.hydration_started_at;
     ctx.hydrated_count = input.hydrated_count;
-    ctx.triangulated_count = input.triangulated_count;
     ctx.prof_tile_cache_size = input.prof_tile_cache_size;
     ctx.current_zoom_state = input.current_zoom_state;
     ctx.current_lon_state = input.current_lon_state;
@@ -34,7 +33,6 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.visible_vacant_parcels_last_frame = input.visible_vacant_parcels_last_frame;
     ctx.vacant_parcels_matched_total = input.vacant_parcels_matched_total;
     ctx.vacant_parcels_with_geometry_total = input.vacant_parcels_with_geometry_total;
-    ctx.vacant_parcels_triangulated_renderable_total = input.vacant_parcels_triangulated_renderable_total;
     ctx.perf_frame_ms_avg = input.perf_frame_ms_avg;
     ctx.perf_frame_ms_last = input.perf_frame_ms_last;
     ctx.perf_fps_avg = input.perf_fps_avg;

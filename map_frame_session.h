@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb_analytics.h"
+#include "cache_io.h"
 #include "filters.h"
 #include "heatmap_runtime.h"
 #include "layer_runtime.h"
@@ -80,6 +81,10 @@ struct MapFrameSessionContext {
     const ImVec4* vacancy_rehab_color = nullptr;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     MapFilterState* map_filter_state = nullptr;

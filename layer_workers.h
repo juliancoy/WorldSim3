@@ -28,11 +28,6 @@ struct LayerWorkersContext {
     std::mutex* status_mutex = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
 
-    std::mutex* tri_mutex = nullptr;
-    std::condition_variable* tri_cv = nullptr;
-    std::deque<TriJob>* tri_jobs = nullptr;
-    std::deque<TriResult>* tri_results = nullptr;
-
     std::mutex* spatial_mutex = nullptr;
     std::condition_variable* spatial_cv = nullptr;
     std::deque<SpatialIndexJob>* spatial_jobs = nullptr;
@@ -40,5 +35,4 @@ struct LayerWorkersContext {
 };
 
 std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned int worker_count);
-std::thread startTriangulationWorker(LayerWorkersContext ctx);
 std::thread startSpatialIndexWorker(LayerWorkersContext ctx);

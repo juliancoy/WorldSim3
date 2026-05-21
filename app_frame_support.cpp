@@ -51,39 +51,28 @@ FrameLayout updateFrameLayoutAndTextScale(
 
 PipelineProgressSnapshot updatePipelineProgress(PipelineProgressContext& ctx) {
     PipelineProgressSnapshot out;
-    if (!ctx.hydrated_count || !ctx.triangulated_count || !ctx.last_hydrated_seen ||
-        !ctx.last_triangulated_seen || !ctx.last_hydration_progress_at ||
-        !ctx.last_tri_progress_at || !ctx.hydrated_mutex || !ctx.hydrated_queue ||
-        !ctx.tri_mutex || !ctx.tri_jobs) {
+    if (!ctx.hydrated_count || !ctx.last_hydrated_seen ||
+        !ctx.last_hydration_progress_at || !ctx.hydrated_mutex || !ctx.hydrated_queue) {
         return out;
     }
 
     out.hydrated_now = ctx.hydrated_count->load(std::memory_order_relaxed);
-    out.triangulated_now = ctx.triangulated_count->load(std::memory_order_relaxed);
+    out.ready_now = out.hydrated_now;
     if (out.hydrated_now > *ctx.last_hydrated_seen) {
         *ctx.last_hydrated_seen = out.hydrated_now;
         *ctx.last_hydration_progress_at = std::chrono::steady_clock::now();
-    }
-    if (out.triangulated_now > *ctx.last_triangulated_seen) {
-        *ctx.last_triangulated_seen = out.triangulated_now;
-        *ctx.last_tri_progress_at = std::chrono::steady_clock::now();
     }
 
     {
         std::lock_guard<std::mutex> lk(*ctx.hydrated_mutex);
         out.hydrated_pending = ctx.hydrated_queue->size();
     }
-    {
-        std::lock_guard<std::mutex> lk(*ctx.tri_mutex);
-        out.tri_pending = ctx.tri_jobs->size();
-    }
 
     out.hydrated_frac = ctx.layer_count == 0 ? 1.0f : (float)out.hydrated_now / (float)ctx.layer_count;
-    out.tri_frac = ctx.layer_count == 0 ? 1.0f : (float)out.triangulated_now / (float)ctx.layer_count;
+    out.ready_frac = ctx.layer_count == 0 ? 1.0f : (float)out.ready_now / (float)ctx.layer_count;
     const auto now = std::chrono::steady_clock::now();
     out.elapsed_s = std::chrono::duration<double>(now - ctx.hydration_started_at).count();
     out.hydrate_idle_s = std::chrono::duration<double>(now - *ctx.last_hydration_progress_at).count();
-    out.tri_idle_s = std::chrono::duration<double>(now - *ctx.last_tri_progress_at).count();
     return out;
 }
 

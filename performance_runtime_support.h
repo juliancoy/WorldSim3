@@ -24,14 +24,12 @@ struct PerformanceRuntimeContext {
     float left_panel_w = 0.0f;
     size_t layer_count = 0;
     size_t hydrated_now = 0;
-    size_t triangulated_now = 0;
+    size_t ready_now = 0;
     size_t hydrated_pending = 0;
-    size_t tri_pending = 0;
     float hydrated_frac = 1.0f;
-    float tri_frac = 1.0f;
+    float ready_frac = 1.0f;
     double elapsed_s = 0.0;
     double hydrate_idle_s = 0.0;
-    double tri_idle_s = 0.0;
     std::atomic<double>* perf_frame_ms_avg = nullptr;
     std::atomic<double>* perf_frame_ms_last = nullptr;
     std::atomic<double>* perf_fps_avg = nullptr;
@@ -60,7 +58,6 @@ struct PerformanceRuntimeContext {
     size_t arkavo_send_path_size = 0;
     bool* clear_cache_all = nullptr;
     bool* clear_cache_hydration = nullptr;
-    bool* clear_cache_triangulation = nullptr;
     bool* clear_cache_derived = nullptr;
     bool* clear_cache_heatmap_memory = nullptr;
     bool* clear_cache_heatmap_disk = nullptr;
@@ -68,7 +65,6 @@ struct PerformanceRuntimeContext {
     bool* clear_cache_tile_disk_presence = nullptr;
     std::string* last_cache_clear_msg = nullptr;
     const std::filesystem::path* cache_hydration_dir = nullptr;
-    const std::filesystem::path* cache_triangulation_dir = nullptr;
     const std::filesystem::path* cache_derived_dir = nullptr;
     const std::filesystem::path* cache_aggregate_dir = nullptr;
     std::vector<LayerDef>* layers = nullptr;
@@ -79,10 +75,6 @@ struct PerformanceRuntimeContext {
     std::vector<LayerRuntimeState>* layer_states = nullptr;
     std::mutex* hydrated_mutex = nullptr;
     std::deque<HydratedLayer>* hydrated_queue = nullptr;
-    std::mutex* tri_mutex = nullptr;
-    std::deque<TriJob>* tri_jobs = nullptr;
-    std::deque<TriResult>* tri_results = nullptr;
-    std::condition_variable* tri_cv = nullptr;
     std::mutex* spatial_mutex = nullptr;
     std::deque<SpatialIndexJob>* spatial_jobs = nullptr;
     std::deque<SpatialIndexResult>* spatial_results = nullptr;
@@ -98,7 +90,6 @@ struct PerformanceRuntimeContext {
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     std::atomic<size_t>* hydrated_count = nullptr;
-    std::atomic<size_t>* triangulated_count = nullptr;
     std::function<void(size_t, bool)> enqueue_hydration;
     std::function<size_t(const std::filesystem::path&)> clear_cache_tree;
     std::function<void()> clear_heatmap_runtime_cache;

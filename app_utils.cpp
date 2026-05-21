@@ -518,9 +518,22 @@ bool layerUsesPointGeometry(const LayerDef& layer) {
     if (layer.duckdb_role == "point_event") return true;
     if (!layer.import_lon_field.empty() && !layer.import_lat_field.empty()) return true;
     if (containsCaseInsensitive(layer.import_type, "point")) return true;
+    if (containsCaseInsensitive(layer.scale, "line")) return false;
+    if (containsCaseInsensitive(layer.import_type, "line")) return false;
     if (!layer.features.empty()) {
         return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
-            return fg.rings.empty();
+            return fg.rings.empty() && fg.paths.empty();
+        });
+    }
+    return false;
+}
+
+bool layerUsesPolylineGeometry(const LayerDef& layer) {
+    if (containsCaseInsensitive(layer.scale, "line")) return true;
+    if (containsCaseInsensitive(layer.import_type, "line")) return true;
+    if (!layer.features.empty()) {
+        return std::any_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
+            return !fg.paths.empty();
         });
     }
     return false;

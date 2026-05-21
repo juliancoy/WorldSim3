@@ -60,6 +60,43 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
         return fg;
     };
 
+    auto build_from_paths = [](const json& path_coords, bool nested) -> std::optional<LayerDef::FeatureGeom> {
+        LayerDef::FeatureGeom fg{};
+        bool has = false;
+        auto expand = [&](double lon, double lat) {
+            if (!has) {
+                fg.extent.min_lon = fg.extent.max_lon = (float)lon;
+                fg.extent.min_lat = fg.extent.max_lat = (float)lat;
+                has = true;
+                return;
+            }
+            fg.extent.min_lon = std::min(fg.extent.min_lon, (float)lon);
+            fg.extent.min_lat = std::min(fg.extent.min_lat, (float)lat);
+            fg.extent.max_lon = std::max(fg.extent.max_lon, (float)lon);
+            fg.extent.max_lat = std::max(fg.extent.max_lat, (float)lat);
+        };
+
+        auto append_path = [&](const json& one_path) {
+            std::vector<ImVec2> path;
+            for (const auto& p : one_path) {
+                if (!p.is_array() || p.size() < 2) continue;
+                double lon = p[0].get<double>();
+                double lat = p[1].get<double>();
+                path.push_back(ImVec2((float)lon, (float)lat));
+                expand(lon, lat);
+            }
+            if (path.size() >= 2) fg.paths.push_back(std::move(path));
+        };
+
+        if (nested) {
+            for (const auto& one_path : path_coords) append_path(one_path);
+        } else {
+            append_path(path_coords);
+        }
+        if (!has || fg.paths.empty()) return std::nullopt;
+        return fg;
+    };
+
     if (t == "Polygon") {
         auto fg = build_from_polygon(geom["coordinates"]);
         if (fg) out.push_back(std::move(*fg));
@@ -88,6 +125,12 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
             fg.extent.min_lat = fg.extent.max_lat = (float)lat;
             out.push_back(std::move(fg));
         }
+    } else if (t == "LineString") {
+        auto fg = build_from_paths(geom["coordinates"], false);
+        if (fg) out.push_back(std::move(*fg));
+    } else if (t == "MultiLineString") {
+        auto fg = build_from_paths(geom["coordinates"], true);
+        if (fg) out.push_back(std::move(*fg));
     }
     return out;
 }
@@ -312,6 +355,24 @@ std::vector<uint32_t> triangulateRings(const std::vector<std::vector<ImVec2>>& r
         poly.push_back(std::move(rp));
     }
     return mapbox::earcut<uint32_t>(poly);
+}
+
+std::vector<uint32_t> flattenLinePathsToSegmentIndices(const std::vector<std::vector<ImVec2>>& paths) {
+    std::vector<uint32_t> out;
+    size_t vertex_offset = 0;
+    for (const auto& path : paths) {
+        if (path.size() < 2) {
+            vertex_offset += path.size();
+            continue;
+        }
+        out.reserve(out.size() + (path.size() - 1) * 2);
+        for (size_t i = 0; i + 1 < path.size(); ++i) {
+            out.push_back(static_cast<uint32_t>(vertex_offset + i));
+            out.push_back(static_cast<uint32_t>(vertex_offset + i + 1));
+        }
+        vertex_offset += path.size();
+    }
+    return out;
 }
 
 void appendRingScreenPointsLod(

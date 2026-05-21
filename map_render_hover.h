@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imgui.h"
+#include "cache_io.h"
 #include "layer_runtime.h"
 #include "types.h"
 
@@ -25,6 +26,9 @@ struct MapHoverQuery {
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::vector<bool>* layer_hover_enabled = nullptr;
     ImVec2 mouse_ll;

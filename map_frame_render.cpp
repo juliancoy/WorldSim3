@@ -205,6 +205,10 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.can_use_cached_heatmap = can_use_cached_heatmap;
     layer_pass_ctx.heatmap_data_key = heatmap_data_key;
     layer_pass_ctx.layers = ctx.layers;
+    layer_pass_ctx.point_geometry_artifacts = ctx.point_geometry_artifacts;
+    layer_pass_ctx.polyline_geometry_artifacts = ctx.polyline_geometry_artifacts;
+    layer_pass_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+    layer_pass_ctx.parcel_render_blob = ctx.parcel_render_blob;
     layer_pass_ctx.layer_spatial = ctx.layer_spatial;
     layer_pass_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
     layer_pass_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
@@ -303,6 +307,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     render_tail_ctx.vacancy_notice_color = ctx.vacancy_notice_color;
     render_tail_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color;
     render_tail_ctx.layers = ctx.layers;
+    render_tail_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+    render_tail_ctx.parcel_render_blob = ctx.parcel_render_blob;
     render_tail_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     render_tail_ctx.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
     render_tail_ctx.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;

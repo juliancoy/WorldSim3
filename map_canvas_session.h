@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "cache_io.h"
 #include "imgui.h"
 #include "layer_runtime.h"
 #include "map_render_hover.h"
@@ -36,6 +37,9 @@ struct MapCanvasSessionContext {
     int max_native_tile_zoom = 18;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::vector<bool>* layer_hover_enabled = nullptr;
     const std::vector<bool>* layer_inspect_enabled = nullptr;

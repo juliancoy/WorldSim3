@@ -9,7 +9,6 @@ struct WorldsimCliOptions {
     bool run_cache_selftest = false;
     bool run_warm_hydration_cache = false;
     bool run_warm_hydration_cache_all = false;
-    bool run_triangulation_cache_selftest = false;
     bool run_warm_parcel_render_cache = false;
     bool run_warm_parcel_render_cache_all = false;
     bool run_projection_cache_selftest = false;
@@ -17,7 +16,6 @@ struct WorldsimCliOptions {
     bool run_projection_color_cache_selftest = false;
     bool run_polygon_hole_selftest = false;
     bool run_parcel_render_cache_selftest = false;
-    bool run_triangulation_apply_selftest = false;
     bool run_spatial_index_selftest = false;
     bool run_layer_profile_selftest = false;
     bool run_layer_runtime_status_selftest = false;
@@ -28,9 +26,14 @@ struct WorldsimCliOptions {
     bool run_inspect_canonical_parcel_binary = false;
     bool run_validate_canonical_parcel_binary = false;
     bool run_parcel_artifact_health = false;
+    bool run_compile_point_geometry = false;
+    bool run_validate_point_geometry = false;
+    bool run_compile_polyline_geometry = false;
+    bool run_validate_polyline_geometry = false;
+    bool run_compile_polygon_geometry = false;
+    bool run_validate_polygon_geometry = false;
+    bool run_build_geometry_duckdb_artifacts = false;
     bool run_warm_parcel_runtime_stack = false;
-    bool run_warm_triangulation_cache = false;
-    bool run_warm_triangulation_cache_all = false;
     bool run_download_layers = false;
     bool run_rebuild_duckdb_analytics = false;
     bool run_inspect_duckdb_geography_tables = false;
@@ -42,10 +45,12 @@ struct WorldsimCliOptions {
     bool reserve_cores_set = false;
     std::string download_phase;
     std::string warm_hydration_cache_file;
-    std::string warm_triangulation_cache_file;
     std::string warm_parcel_render_cache_file;
     std::string warm_parcel_runtime_stack_file;
     std::string canonical_parcel_binary_file;
+    std::string point_geometry_file;
+    std::string polyline_geometry_file;
+    std::string polygon_geometry_file;
     std::string color_editor_session_file;
 };
 

@@ -2,7 +2,6 @@
 
 #include "app_utils.h"
 #include "feature_props.h"
-#include "layer_geometry.h"
 
 #include <algorithm>
 #include <cctype>
@@ -259,16 +258,8 @@ void appendEventsFromSpatialLayer(
     std::vector<ParcelTimelineEvent>& out) {
     if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
     const auto& layer = layers[(size_t)layer_idx];
-    const float parcel_cx = (parcel.extent.min_lon + parcel.extent.max_lon) * 0.5f;
-    const float parcel_cy = (parcel.extent.min_lat + parcel.extent.max_lat) * 0.5f;
     for (const auto& feat : layer.features) {
-        bool related = false;
-        if (feat.rings.empty()) {
-            related = pointInFeature(parcel, feat.extent.min_lon, feat.extent.min_lat);
-        } else {
-            related = pointInFeature(feat, parcel_cx, parcel_cy) || extentsOverlap(parcel, feat);
-        }
-        if (!related) continue;
+        if (!extentsOverlap(parcel, feat)) continue;
         addEvent(
             out,
             firstNonemptyProp(feat, date_keys),

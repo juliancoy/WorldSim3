@@ -11,8 +11,6 @@ bool layerRuntimeReady(const std::vector<LayerRuntimeState>& layer_states, std::
     if ((size_t)idx >= layer_states.size()) return false;
     const LayerPipelineStatus st = layer_states[(size_t)idx].status;
     return st == LayerPipelineStatus::Hydrated ||
-           st == LayerPipelineStatus::TriQueued ||
-           st == LayerPipelineStatus::Triangulating ||
            st == LayerPipelineStatus::Ready;
 }
 

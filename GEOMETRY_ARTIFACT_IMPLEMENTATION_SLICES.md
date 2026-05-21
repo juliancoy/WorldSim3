@@ -7,6 +7,60 @@ Use this with:
 - [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_MIGRATION.md)
 - [GEOMETRY_ARTIFACT_CHECKLIST.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_CHECKLIST.md)
 
+## Current Status
+
+Status as of `2026-05-21`.
+
+Completed:
+
+- Slice 1: artifact naming and runtime contracts
+- Slice 2: stable feature IDs into DuckDB and runtime contracts
+- Slice 3: point artifact format and CLI
+- Slice 6: polyline artifact format and CLI
+- Slice 8: polygon artifact format and CLI
+
+Substantially implemented but not complete:
+
+- Slice 4: point runtime loader and draw path
+- Slice 7: polyline runtime loader and generic draw path
+- Slice 9: generic polygon runtime draw path
+- Slice 11: parcel workflow cutover
+- Slice 12: runtime status and CLI cleanup
+
+Still open:
+
+- Slice 5: GPU picking for points
+- Slice 10: GPU picking for polygons
+- Slice 13: delete CPU geometry runtime paths
+- Slice 14: final simplification pass
+
+What is true in the current codebase:
+
+- `--build-geometry-duckdb-artifacts` works and emits explicit artifact and DuckDB inventory.
+- `.point.bin`, `.polyline.bin`, and `.polygon.bin` compile and validate.
+- point rendering uses compiled point artifacts
+- point hover uses compiled point artifacts
+- crime point GPU upload uses compiled point artifacts
+- generic polyline rendering uses compiled polyline artifacts
+- generic polygon rendering uses compiled polygon artifacts
+- generic render-time CPU fallback has been removed for point, polyline, and generic polygon draw paths
+- parcel selection overlays and polygon hover/inspection paths are artifact-aware
+- parcel overlays now require the parcel render blob path rather than CPU ring fallback
+- parcel selection rendering now uses the parcel render blob directly
+- parcel hover hit-testing now uses the parcel render blob directly
+- zoning polygon artifacts now load in runtime and back zoning hover/inspection
+- hydrated layers now bypass triangulation and transition straight to `Ready`
+- the app no longer starts a triangulation worker thread
+
+What is still blocking completion:
+
+- GPU picking is not implemented
+- interaction still keeps CPU feature objects alive for selection/detail/property lookup
+- parcel-specific analytics and business logic in runtime still read `LayerDef::FeatureGeom`
+- hydration workers still exist
+- triangulation worker code and cache code still exist, but are no longer on the live startup path
+- `LayerDef::FeatureGeom` is still a normal runtime data structure
+
 ## Sequencing Rules
 
 - Each slice should leave the app buildable.
@@ -16,6 +70,10 @@ Use this with:
 - Stable feature ID work must land early, because all later slices depend on it.
 
 ## Slice 1: Artifact Naming And Runtime Contracts
+
+Status:
+
+- complete
 
 Goal:
 
@@ -45,6 +103,10 @@ Exit:
 
 ## Slice 2: Stable Feature IDs End To End
 
+Status:
+
+- complete
+
 Goal:
 
 - Make stable feature identity explicit before touching picking or DuckDB joins.
@@ -72,6 +134,10 @@ Exit:
 
 ## Slice 3: Point Geometry Artifact Format
 
+Status:
+
+- complete
+
 Goal:
 
 - Land the first generic compiled geometry format on the simplest geometry class.
@@ -96,6 +162,10 @@ Exit:
 
 ## Slice 4: Point Runtime Loader And Upload Path
 
+Status:
+
+- partial
+
 Goal:
 
 - Prove the runtime can draw from compiled artifacts without CPU geometry fallback for points.
@@ -119,8 +189,14 @@ Changes:
 Exit:
 
 - Point layers can render from `.point.bin`.
+- Point hover also uses `.point.bin`.
+- Point interaction still does not use GPU picking.
 
 ## Slice 5: GPU Hover/Click Picking For Points
+
+Status:
+
+- not started
 
 Goal:
 
@@ -147,6 +223,10 @@ Exit:
 
 ## Slice 6: Polyline Geometry Artifact Format
 
+Status:
+
+- complete
+
 Goal:
 
 - Add the second generic geometry artifact class.
@@ -169,6 +249,10 @@ Exit:
 
 ## Slice 7: Polyline Runtime Loader, Upload, And Picking
 
+Status:
+
+- partial
+
 Goal:
 
 - Move polyline render and hover/click to compiled geometry.
@@ -188,9 +272,14 @@ Changes:
 
 Exit:
 
-- Polyline layers render and pick from compiled artifacts.
+- Polyline layers render from compiled artifacts.
+- Polyline picking is still not implemented.
 
 ## Slice 8: Polygon Geometry Artifact Format
+
+Status:
+
+- complete
 
 Goal:
 
@@ -216,6 +305,10 @@ Exit:
 
 ## Slice 9: Polygon Runtime Loader And Generic Polygon Upload
 
+Status:
+
+- partial
+
 Goal:
 
 - Move polygon drawing to the generic compiled artifact path.
@@ -236,9 +329,14 @@ Changes:
 
 Exit:
 
-- Polygon rendering uses `.polygon.bin`.
+- Generic polygon rendering uses `.polygon.bin`.
+- Parcel and zoning still retain specialized runtime paths.
 
 ## Slice 10: GPU Picking For Polygons
+
+Status:
+
+- not started
 
 Goal:
 
@@ -264,6 +362,10 @@ Exit:
 
 ## Slice 11: Derived Parcel Workflow Cutover
 
+Status:
+
+- partial
+
 Goal:
 
 - Make parcel workflows independent of CPU geometry residency.
@@ -283,9 +385,14 @@ Changes:
 
 Exit:
 
-- Parcel business workflows no longer depend on `LayerDef::FeatureGeom`.
+- Parcel overlays and selection visualization are artifact-aware.
+- Parcel business workflows still depend on `LayerDef::FeatureGeom`.
 
 ## Slice 12: Runtime Status And CLI Cleanup
+
+Status:
+
+- partial
 
 Goal:
 
@@ -306,9 +413,14 @@ Changes:
 
 Exit:
 
-- User-facing tooling describes only compiled geometry artifacts.
+- Bulk artifact tooling exists.
+- Runtime/status output still contains hydration and triangulation terminology in places.
 
 ## Slice 13: Delete CPU Geometry Runtime Paths
+
+Status:
+
+- not started
 
 Goal:
 
@@ -335,6 +447,10 @@ Exit:
 - No production path can render or interact through CPU geometry.
 
 ## Slice 14: Final Simplification Pass
+
+Status:
+
+- not started
 
 Goal:
 

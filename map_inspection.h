@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "layer_runtime.h"
 #include "map_render_hover.h"
 #include "selection.h"
@@ -20,6 +21,7 @@ struct MapInspectionContext {
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     ParcelSelectionState* parcel_selection = nullptr;

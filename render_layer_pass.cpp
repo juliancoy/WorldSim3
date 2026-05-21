@@ -71,6 +71,203 @@ struct DeferredPointRenderJob {
     uint64_t order_key = 0;
 };
 
+ImVec2 pointWorldPosition(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg) {
+    if (ctx.point_geometry_artifacts) {
+        auto it = ctx.point_geometry_artifacts->find(layer_idx);
+        if (it != ctx.point_geometry_artifacts->end()) {
+            const PointGeometryArtifact& artifact = it->second;
+            if (feature_idx < artifact.positions.size()) {
+                return lonLatToWorldPx(artifact.positions[feature_idx].x, artifact.positions[feature_idx].y, ctx.math_zoom);
+            }
+        }
+    }
+    return lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, ctx.math_zoom);
+}
+
+const PolylineGeometryArtifact* polylineArtifactForLayer(const RenderLayerPassContext& ctx, size_t layer_idx) {
+    if (!ctx.polyline_geometry_artifacts) return nullptr;
+    auto it = ctx.polyline_geometry_artifacts->find(layer_idx);
+    if (it == ctx.polyline_geometry_artifacts->end()) return nullptr;
+    return &it->second;
+}
+
+const PolygonGeometryArtifact* polygonArtifactForLayer(const RenderLayerPassContext& ctx, size_t layer_idx) {
+    if (!ctx.polygon_geometry_artifacts) return nullptr;
+    auto it = ctx.polygon_geometry_artifacts->find(layer_idx);
+    if (it == ctx.polygon_geometry_artifacts->end()) return nullptr;
+    return &it->second;
+}
+
+const ParcelRenderFeatureRecord* parcelRenderFeature(const RenderLayerPassContext& ctx, size_t parcel_idx) {
+    if (!ctx.parcel_render_blob) return nullptr;
+    if (parcel_idx < ctx.parcel_render_blob->features.size() &&
+        ctx.parcel_render_blob->features[parcel_idx].feature_idx == parcel_idx) {
+        return &ctx.parcel_render_blob->features[parcel_idx];
+    }
+    for (const ParcelRenderFeatureRecord& rec : ctx.parcel_render_blob->features) {
+        if (rec.feature_idx == parcel_idx) return &rec;
+    }
+    return nullptr;
+}
+
+bool featureHasPolygonGeometry(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg) {
+    (void)fg;
+    if ((int)layer_idx == ctx.parcel_layer_idx) {
+        return parcelRenderFeature(ctx, feature_idx) != nullptr;
+    }
+    if (const PolygonGeometryArtifact* artifact = polygonArtifactForLayer(ctx, layer_idx)) {
+        if (feature_idx < artifact->features.size()) return true;
+    }
+    return false;
+}
+
+bool featureHasPointGeometry(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg) {
+    if (ctx.point_geometry_artifacts) {
+        auto it = ctx.point_geometry_artifacts->find(layer_idx);
+        if (it != ctx.point_geometry_artifacts->end()) {
+            return feature_idx < it->second.positions.size();
+        }
+    }
+    return fg.rings.empty() && fg.paths.empty();
+}
+
+bool featureHasPolylineGeometry(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureGeom& fg) {
+    if (const PolylineGeometryArtifact* artifact = polylineArtifactForLayer(ctx, layer_idx)) {
+        if (feature_idx < artifact->features.size()) return true;
+    }
+    return !fg.paths.empty();
+}
+
+void drawPolylineFeatureFromArtifact(
+    const RenderLayerPassContext& ctx,
+    size_t feature_idx,
+    const PolylineGeometryArtifact& artifact,
+    ImU32 color) {
+    if (feature_idx >= artifact.features.size()) return;
+    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
+    const uint32_t index_end = rec.index_offset + rec.index_count;
+    if (index_end > artifact.line_indices.size()) return;
+    for (uint32_t i = rec.index_offset; i + 1 < index_end; i += 2) {
+        const uint32_t ia = artifact.line_indices[i];
+        const uint32_t ib = artifact.line_indices[i + 1];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size()) continue;
+        const ImVec2 a = ctx.project_world(lonLatToWorldPx(
+            artifact.vertices[ia].x,
+            artifact.vertices[ia].y,
+            ctx.math_zoom));
+        const ImVec2 b = ctx.project_world(lonLatToWorldPx(
+            artifact.vertices[ib].x,
+            artifact.vertices[ib].y,
+            ctx.math_zoom));
+        ctx.draw->AddLine(a, b, color, 1.5f);
+    }
+}
+
+void drawPolylineFeatureCpuFallback(
+    const RenderLayerPassContext& ctx,
+    const LayerDef::FeatureGeom& fg,
+    ImU32 color) {
+    for (const auto& path : fg.paths) {
+        if (path.size() < 2) continue;
+        std::vector<ImVec2> screen;
+        screen.reserve(path.size());
+        for (const ImVec2& p : path) {
+            screen.push_back(ctx.project_world(lonLatToWorldPx(p.x, p.y, ctx.math_zoom)));
+        }
+        ctx.draw->AddPolyline(screen.data(), (int)screen.size(), color, ImDrawFlags_None, 1.5f);
+    }
+}
+
+void drawPolygonFeatureFromArtifactFill(
+    const RenderLayerPassContext& ctx,
+    const GeometryArtifactFeatureRecord& rec,
+    const PolygonGeometryArtifact& artifact,
+    ImU32 fill) {
+    const uint32_t index_end = rec.index_offset + rec.index_count;
+    if (index_end > artifact.fill_indices.size()) return;
+    for (uint32_t i = rec.index_offset; i + 2 < index_end; i += 3) {
+        const uint32_t ia = artifact.fill_indices[i];
+        const uint32_t ib = artifact.fill_indices[i + 1];
+        const uint32_t ic = artifact.fill_indices[i + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
+        const ImVec2 a = ctx.project_world(lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, ctx.math_zoom));
+        const ImVec2 b = ctx.project_world(lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, ctx.math_zoom));
+        const ImVec2 c = ctx.project_world(lonLatToWorldPx(artifact.vertices[ic].x, artifact.vertices[ic].y, ctx.math_zoom));
+        ctx.draw->AddTriangleFilled(a, b, c, fill);
+    }
+}
+
+void drawPolygonFeatureFromArtifactOutline(
+    const RenderLayerPassContext& ctx,
+    const GeometryArtifactFeatureRecord& rec,
+    const PolygonGeometryArtifact& artifact,
+    ImU32 outline) {
+    const uint32_t index_end = rec.aux_index_offset + rec.aux_index_count;
+    if (index_end > artifact.line_indices.size()) return;
+    for (uint32_t i = rec.aux_index_offset; i + 1 < index_end; i += 2) {
+        const uint32_t ia = artifact.line_indices[i];
+        const uint32_t ib = artifact.line_indices[i + 1];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size()) continue;
+        const ImVec2 a = ctx.project_world(lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, ctx.math_zoom));
+        const ImVec2 b = ctx.project_world(lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, ctx.math_zoom));
+        ctx.draw->AddLine(a, b, outline, 1.0f);
+    }
+}
+
+void drawParcelFeatureFromRenderBlobFill(
+    const RenderLayerPassContext& ctx,
+    const ParcelRenderFeatureRecord& rec,
+    ImU32 fill) {
+    if (!ctx.parcel_render_blob) return;
+    const uint32_t index_end = rec.index_offset + rec.index_count;
+    if (index_end > ctx.parcel_render_blob->indices.size()) return;
+    for (uint32_t i = rec.index_offset; i + 2 < index_end; i += 3) {
+        const uint32_t ia = ctx.parcel_render_blob->indices[i];
+        const uint32_t ib = ctx.parcel_render_blob->indices[i + 1];
+        const uint32_t ic = ctx.parcel_render_blob->indices[i + 2];
+        if (ia >= ctx.parcel_render_blob->vertices.size() ||
+            ib >= ctx.parcel_render_blob->vertices.size() ||
+            ic >= ctx.parcel_render_blob->vertices.size()) continue;
+        const ImVec2 a = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ia].x, ctx.parcel_render_blob->vertices[ia].y, ctx.math_zoom));
+        const ImVec2 b = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ib].x, ctx.parcel_render_blob->vertices[ib].y, ctx.math_zoom));
+        const ImVec2 c = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ic].x, ctx.parcel_render_blob->vertices[ic].y, ctx.math_zoom));
+        ctx.draw->AddTriangleFilled(a, b, c, fill);
+    }
+}
+
+void drawParcelFeatureFromRenderBlobOutline(
+    const RenderLayerPassContext& ctx,
+    const ParcelRenderFeatureRecord& rec,
+    ImU32 outline) {
+    if (!ctx.parcel_render_blob) return;
+    const uint32_t index_end = rec.line_index_offset + rec.line_index_count;
+    if (index_end > ctx.parcel_render_blob->line_indices.size()) return;
+    for (uint32_t i = rec.line_index_offset; i + 1 < index_end; i += 2) {
+        const uint32_t ia = ctx.parcel_render_blob->line_indices[i];
+        const uint32_t ib = ctx.parcel_render_blob->line_indices[i + 1];
+        if (ia >= ctx.parcel_render_blob->vertices.size() || ib >= ctx.parcel_render_blob->vertices.size()) continue;
+        const ImVec2 a = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ia].x, ctx.parcel_render_blob->vertices[ia].y, ctx.math_zoom));
+        const ImVec2 b = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ib].x, ctx.parcel_render_blob->vertices[ib].y, ctx.math_zoom));
+        ctx.draw->AddLine(a, b, outline, 1.0f);
+    }
+}
+
 bool isHoveredPointFeature(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
@@ -196,6 +393,42 @@ bool pointInWorldRings(const std::vector<std::vector<ImVec2>>& rings, float x, f
         if (pointInRing(rings[ri], x, y)) return false;
     }
     return true;
+}
+
+bool pointInTriangleWorld(const ImVec2& p, const ImVec2& a, const ImVec2& b, const ImVec2& c) {
+    auto cross = [](const ImVec2& u, const ImVec2& v, const ImVec2& q) {
+        return (v.x - u.x) * (q.y - u.y) - (v.y - u.y) * (q.x - u.x);
+    };
+    const float c1 = cross(a, b, p);
+    const float c2 = cross(b, c, p);
+    const float c3 = cross(c, a, p);
+    const bool has_neg = (c1 < 0.0f) || (c2 < 0.0f) || (c3 < 0.0f);
+    const bool has_pos = (c1 > 0.0f) || (c2 > 0.0f) || (c3 > 0.0f);
+    return !(has_neg && has_pos);
+}
+
+bool pointInPolygonArtifactWorld(
+    const RenderLayerPassContext& ctx,
+    const PolygonGeometryArtifact& artifact,
+    size_t feature_idx,
+    float world_x,
+    float world_y) {
+    if (feature_idx >= artifact.features.size()) return false;
+    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
+    const uint32_t index_end = rec.index_offset + rec.index_count;
+    if (index_end > artifact.fill_indices.size()) return false;
+    const ImVec2 p(world_x, world_y);
+    for (uint32_t i = rec.index_offset; i + 2 < index_end; i += 3) {
+        const uint32_t ia = artifact.fill_indices[i];
+        const uint32_t ib = artifact.fill_indices[i + 1];
+        const uint32_t ic = artifact.fill_indices[i + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
+        const ImVec2 a = lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, ctx.math_zoom);
+        const ImVec2 b = lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, ctx.math_zoom);
+        const ImVec2 c = lonLatToWorldPx(artifact.vertices[ic].x, artifact.vertices[ic].y, ctx.math_zoom);
+        if (pointInTriangleWorld(p, a, b, c)) return true;
+    }
+    return false;
 }
 
 bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
@@ -466,7 +699,7 @@ bool resolveFeatureRenderStyle(
         (uint32_t)feature_idx,
         style_key,
         feature_c,
-        fg.rings.empty() ? 0 : 1);
+        featureHasPolygonGeometry(ctx, layer_idx, feature_idx, fg) ? 1 : 0);
     return true;
 }
 
@@ -504,7 +737,10 @@ void renderClusteredPointCandidates(
     for (uint32_t fidx : feature_indices) {
         if ((size_t)fidx >= layer.features.size()) continue;
         const auto& fg = layer.features[(size_t)fidx];
-        if (!fg.rings.empty()) continue;
+        if (featureHasPolygonGeometry(ctx, layer_idx, (size_t)fidx, fg) ||
+            featureHasPolylineGeometry(ctx, layer_idx, (size_t)fidx, fg)) {
+            continue;
+        }
         ImU32 feature_c = base_color;
         float feature_heat_value = 0.0f;
         float feature_normalized_value = 0.0f;
@@ -528,7 +764,7 @@ void renderClusteredPointCandidates(
         }
         ImVec2 p0w, p1w, p0, p1;
         if (!projectFeatureScreenBounds(ctx, layer_idx, (size_t)fidx, fg, p0w, p1w, p0, p1)) continue;
-        ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, ctx.math_zoom);
+        ImVec2 pw = pointWorldPosition(ctx, layer_idx, (size_t)fidx, fg);
         ImVec2 ps = ctx.project_world(pw);
         const PointClusterCellKey key{
             (int)std::floor((ps.x - ctx.origin.x) / kPointClusterCellPx),
@@ -620,12 +856,13 @@ void addHeatSamplesForFeature(
     resolveLayerHeatSettings(*ctx.heatmap_policy, sample_layer_idx, base);
 
     const int aggregate_algo = resolveLayerAggregateAlgo(*ctx.heatmap_policy, sample_layer_idx);
+    const PolygonGeometryArtifact* polygon_artifact = polygonArtifactForLayer(ctx, sample_layer_idx);
+    const bool artifact_ready = polygon_artifact && feature_idx < polygon_artifact->features.size();
     const bool area_choropleth =
         aggregate_algo == kAggregateMedianChoropleth &&
         feature_heat_value_valid &&
-        !fg.rings.empty();
+        artifact_ready;
     if (area_choropleth) {
-        const auto& world_rings = ctx.projection->getWorldRings(sample_layer_idx, feature_idx, fg);
         const float cell = std::max(2.0f, base.cell_px);
         const float min_x = std::min(p0w.x, p1w.x);
         const float max_x = std::max(p0w.x, p1w.x);
@@ -640,7 +877,9 @@ void addHeatSamplesForFeature(
             const float cy = ((float)by + 0.5f) * cell;
             for (int bx = bx0; bx <= bx1; ++bx) {
                 const float cx = ((float)bx + 0.5f) * cell;
-                if (!pointInWorldRings(world_rings, cx, cy)) continue;
+                const bool inside =
+                    pointInPolygonArtifactWorld(ctx, *polygon_artifact, feature_idx, cx, cy);
+                if (!inside) continue;
                 HeatSample hs = base;
                 hs.x = cx;
                 hs.y = cy;
@@ -665,9 +904,12 @@ void drawFeatureGeometry(
     ImU32 feature_c,
     bool layer_uses_lod_for_draw,
     std::vector<DeferredPointRenderJob>* deferred_point_jobs) {
-    if (!fg.rings.empty()) {
+    const PolygonGeometryArtifact* polygon_artifact = polygonArtifactForLayer(ctx, layer_idx);
+    const bool artifact_ready = polygon_artifact && feature_idx < polygon_artifact->features.size();
+    const ParcelRenderFeatureRecord* parcel_feature =
+        (int)layer_idx == ctx.parcel_layer_idx ? parcelRenderFeature(ctx, feature_idx) : nullptr;
+    if (artifact_ready || parcel_feature) {
         const ImU32 outline_c = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
-        const auto& world_rings = ctx.projection->getWorldRings(layer_idx, (uint32_t)feature_idx, fg);
         const bool fill_enabled_for_layer =
             layer_idx < ctx.layer_fill_enabled->size() && (*ctx.layer_fill_enabled)[layer_idx];
         const bool suppress_base_parcel_outlines =
@@ -675,10 +917,7 @@ void drawFeatureGeometry(
             ctx.zoom_value < 14.0;
         const bool use_gpu_parcel_fill =
             (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
-        const bool allow_cpu_zoning_fill =
-            isZoningPolygonLayer(layer) && cpuZoningFillAllowed(layer) && !zoningGpuDrawActive(layer_idx);
         if (!use_gpu_parcel_fill &&
-            (!isZoningPolygonLayer(layer) || allow_cpu_zoning_fill) &&
             fill_enabled_for_layer &&
             ctx.should_fill_layer_polygon(layer_idx)) {
             const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
@@ -687,7 +926,11 @@ void drawFeatureGeometry(
                 0,
                 255);
             ImU32 fill = (feature_c & 0x00FFFFFF) | (fill_alpha << 24);
-            ctx.projection->drawTessellatedFill(ctx.draw, layer_idx, (uint32_t)feature_idx, fg, fill);
+            if (artifact_ready) {
+                drawPolygonFeatureFromArtifactFill(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, fill);
+            } else {
+                drawParcelFeatureFromRenderBlobFill(ctx, *parcel_feature, fill);
+            }
         }
 
         if (layer_idx == (size_t)ctx.parcel_layer_idx &&
@@ -721,26 +964,42 @@ void drawFeatureGeometry(
                         vac_notice,
                         vac_rehab);
                     ImU32 vac_fill = colorWithAlpha(vac_base, alpha);
-                    ctx.projection->drawTessellatedFill(ctx.draw, layer_idx, (uint32_t)feature_idx, fg, vac_fill);
+                    if (artifact_ready) {
+                        drawPolygonFeatureFromArtifactFill(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, vac_fill);
+                    } else {
+                        drawParcelFeatureFromRenderBlobFill(ctx, *parcel_feature, vac_fill);
+                    }
                 }
             }
         }
 
-        for (const auto& r : world_rings) {
-            const bool allow_cpu_zoning_outline =
-                isZoningPolygonLayer(layer) && cpuZoningOutlineAllowed(layer) && !zoningGpuOutlineDrawActive(layer_idx);
-            if (!suppress_base_parcel_outlines &&
-                ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive()) &&
-                (!isZoningPolygonLayer(layer) || allow_cpu_zoning_outline)) {
-                ctx.projection->appendWorldRingLine(r, layer_uses_lod_for_draw ? ctx.lod_ring_step : 1);
-                const auto& line = ctx.projection->scratchLine();
-                ctx.draw->AddPolyline(line.data(), (int)line.size(), outline_c, ImDrawFlags_Closed, 1.0f);
+        const bool draw_base_outline =
+            !suppress_base_parcel_outlines &&
+            ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive());
+        if (draw_base_outline) {
+            if (artifact_ready) {
+                drawPolygonFeatureFromArtifactOutline(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, outline_c);
+            } else {
+                drawParcelFeatureFromRenderBlobOutline(ctx, *parcel_feature, outline_c);
             }
         }
         return;
     }
 
-    ImVec2 pw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, ctx.math_zoom);
+    if (featureHasPolylineGeometry(ctx, layer_idx, feature_idx, fg)) {
+        if (const PolylineGeometryArtifact* artifact = polylineArtifactForLayer(ctx, layer_idx)) {
+            drawPolylineFeatureFromArtifact(ctx, feature_idx, *artifact, feature_c);
+        } else {
+            return;
+        }
+        if (ctx.prof_features_drawn_frame) {
+            ++(*ctx.prof_features_drawn_frame);
+        }
+        return;
+    }
+
+    if (!featureHasPointGeometry(ctx, layer_idx, feature_idx, fg)) return;
+    ImVec2 pw = pointWorldPosition(ctx, layer_idx, feature_idx, fg);
     ImVec2 ps = ctx.project_world(pw);
     if (ps.x >= ctx.origin.x && ps.x <= ctx.origin.x + ctx.size.x &&
         ps.y >= ctx.origin.y && ps.y <= ctx.origin.y + ctx.size.y) {
@@ -773,7 +1032,7 @@ void flushDeferredPointRenderJobs(
     const std::vector<DeferredPointRenderJob>& deferred_point_jobs) {
     for (const DeferredPointRenderJob& job : deferred_point_jobs) {
         if (!job.layer || !job.feature) continue;
-        ImVec2 pw = lonLatToWorldPx(job.feature->extent.min_lon, job.feature->extent.min_lat, ctx.math_zoom);
+        ImVec2 pw = pointWorldPosition(ctx, job.layer_idx, job.feature_idx, *job.feature);
         ImVec2 ps = ctx.project_world(pw);
         if (ps.x < ctx.origin.x || ps.x > ctx.origin.x + ctx.size.x ||
             ps.y < ctx.origin.y || ps.y > ctx.origin.y + ctx.size.y) {

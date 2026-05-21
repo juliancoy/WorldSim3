@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "imgui.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
@@ -29,6 +30,8 @@ struct RenderTailPassContext {
     const ImVec4* vacancy_notice_color = nullptr;
     const ImVec4* vacancy_rehab_color = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     const std::vector<int>* parcel_vac_rehab_by_feature = nullptr;

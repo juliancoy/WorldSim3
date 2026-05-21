@@ -5,6 +5,7 @@
 #include "heatmap_render.h"
 #include "imgui.h"
 #include "layer_runtime.h"
+#include "cache_io.h"
 #include "map_render_hover.h"
 #include "map_render_projection.h"
 #include "render_plan_builder.h"
@@ -48,6 +49,10 @@ struct RenderLayerPassContext {
     bool can_use_cached_heatmap = false;
     uint64_t heatmap_data_key = 0;
     const std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;

@@ -71,12 +71,10 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.hydration_stop = input.hydration_stop;
     ctx.time_cube_ui_worker = input.time_cube_ui_worker;
     ctx.hydrate_req_cv = input.hydrate_req_cv;
-    ctx.tri_cv = input.tri_cv;
     ctx.spatial_cv = input.spatial_cv;
     ctx.parcel_render_stop = input.parcel_render_stop;
     ctx.parcel_render_cv = input.parcel_render_cv;
     ctx.hydration_workers = input.hydration_workers;
-    ctx.triangulation_worker = input.triangulation_worker;
     ctx.spatial_index_worker = input.spatial_index_worker;
     ctx.parcel_render_worker = input.parcel_render_worker;
     ctx.status_api_worker = input.status_api_worker;

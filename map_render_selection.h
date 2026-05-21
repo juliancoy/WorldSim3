@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "imgui.h"
 #include "map_render_projection.h"
 #include "types.h"
@@ -13,6 +14,8 @@ struct MapSelectionRenderContext {
     ImVec2 origin;
     ImVec2 size;
     const std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     int parcel_layer_idx = -1;
     const std::vector<size_t>* selected_parcel_indices = nullptr;
     int math_zoom = 0;

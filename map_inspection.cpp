@@ -19,6 +19,50 @@
 namespace {
 namespace fs = std::filesystem;
 
+const PolygonGeometryArtifact* polygonArtifactForLayer(const MapInspectionContext& ctx, size_t layer_idx) {
+    if (!ctx.polygon_geometry_artifacts) return nullptr;
+    auto it = ctx.polygon_geometry_artifacts->find(layer_idx);
+    if (it == ctx.polygon_geometry_artifacts->end()) return nullptr;
+    return &it->second;
+}
+
+bool pointInTriangleLonLat(
+    float px, float py,
+    const ImVec2& a,
+    const ImVec2& b,
+    const ImVec2& c) {
+    auto cross = [](const ImVec2& u, const ImVec2& v, float x, float y) {
+        return (v.x - u.x) * (y - u.y) - (v.y - u.y) * (x - u.x);
+    };
+    const float c1 = cross(a, b, px, py);
+    const float c2 = cross(b, c, px, py);
+    const float c3 = cross(c, a, px, py);
+    const bool has_neg = (c1 < 0.0f) || (c2 < 0.0f) || (c3 < 0.0f);
+    const bool has_pos = (c1 > 0.0f) || (c2 > 0.0f) || (c3 > 0.0f);
+    return !(has_neg && has_pos);
+}
+
+bool pointInPolygonArtifactFeature(
+    const PolygonGeometryArtifact& artifact,
+    size_t feature_idx,
+    float lon,
+    float lat) {
+    if (feature_idx >= artifact.features.size()) return false;
+    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
+    const uint32_t end = rec.index_offset + rec.index_count;
+    if (end > artifact.fill_indices.size()) return false;
+    for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
+        const uint32_t ia = artifact.fill_indices[i];
+        const uint32_t ib = artifact.fill_indices[i + 1];
+        const uint32_t ic = artifact.fill_indices[i + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
+        if (pointInTriangleLonLat(lon, lat, artifact.vertices[ia], artifact.vertices[ib], artifact.vertices[ic])) {
+            return true;
+        }
+    }
+    return false;
+}
+
 enum class PointMarkerGlyph {
     Circle,
     Square,
@@ -609,12 +653,17 @@ void handleMapInspection(const MapInspectionContext& ctx) {
             }
             if (have_zoning_candidates) {
                 const auto& zfeats = (*ctx.layers)[(size_t)ctx.zoning_layer_idx].features;
+                const PolygonGeometryArtifact* zoning_artifact =
+                    polygonArtifactForLayer(ctx, (size_t)ctx.zoning_layer_idx);
                 for (uint32_t zi : zoning_candidates) {
                     if (zi >= zfeats.size()) continue;
                     const auto& zf = zfeats[zi];
+                    if (!zoning_artifact || (size_t)zi >= zoning_artifact->features.size()) continue;
+                    const bool contains_point =
+                        pointInPolygonArtifactFeature(*zoning_artifact, (size_t)zi, qlon, qlat);
                     if (qlon >= zf.extent.min_lon && qlon <= zf.extent.max_lon &&
                         qlat >= zf.extent.min_lat && qlat <= zf.extent.max_lat &&
-                        pointInFeature(zf, qlon, qlat)) {
+                        contains_point) {
                         hovered_zoning = &zf;
                         break;
                     }

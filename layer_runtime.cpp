@@ -15,8 +15,6 @@ const char* statusToString(LayerPipelineStatus s) {
         case LayerPipelineStatus::Queued: return "queued";
         case LayerPipelineStatus::Hydrating: return "hydrating";
         case LayerPipelineStatus::Hydrated: return "hydrated";
-        case LayerPipelineStatus::TriQueued: return "tri_queued";
-        case LayerPipelineStatus::Triangulating: return "triangulating";
         case LayerPipelineStatus::Ready: return "ready";
         case LayerPipelineStatus::Failed: return "failed";
     }
@@ -57,19 +55,13 @@ std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std:
             return "canonical binary read failed";
         }
     }
-    if (state.status == LayerPipelineStatus::Triangulating) {
-        if (state.triangulation_phase == "loading_binary_cache" ||
-            state.triangulation_phase == "binary_cache_hit") {
-            return artifactReadStatus("reading triangulation cache", layer_file, ".tri.bin");
+    if (state.status == LayerPipelineStatus::Ready) {
+        if (state.geometry_artifact_class == GeometryArtifactClass::Polygon &&
+            (layer_file.find("parcel") != std::string::npos ||
+             layer_file.find("Parcel") != std::string::npos)) {
+            return "ready via parcel render blob";
         }
-        if (state.triangulation_phase == "building_source_triangles" ||
-            state.triangulation_phase == "building_cache_missing") {
-            return "building triangulation cache";
-        }
-    }
-    if (state.status == LayerPipelineStatus::TriQueued) return "queued for triangulation";
-    if (state.status == LayerPipelineStatus::Ready && state.triangulation_phase == "render_blob_mode") {
-        return "ready via parcel render blob";
+        return "ready via compiled geometry artifact";
     }
     return statusToString(state.status);
 }
