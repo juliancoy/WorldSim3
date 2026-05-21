@@ -1774,12 +1774,14 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
             " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
     DuckDbAnalytics analytics(root);
     const bool needs_rebuild = analytics.needsRebuild(layers);
+    const bool current_artifact_valid = !needs_rebuild && analytics.validateExistingCache();
     emitCliProgress(
         kMode,
         "check",
         "needs_rebuild=" + std::string(needs_rebuild ? "true" : "false") +
+            " current_artifact_valid=" + std::string(current_artifact_valid ? "true" : "false") +
             " db_path=" + analytics.status().db_path);
-    if (!needs_rebuild) {
+    if (current_artifact_valid) {
         const double elapsed_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - started_at).count();
         emitCliProgress(
@@ -1831,11 +1833,12 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
     emitCliProgress(
         kMode,
         "duckdb",
-        "rebuilding analytics database from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
+        "ensuring analytics database artifact from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
-    const bool reused_existing = load_any && !analytics.needsRebuild(layers);
-    const bool rebuild_ok =
-        load_any && (reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
+    const DuckDbArtifactEnsureResult duckdb_result =
+        load_any ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
+    const bool reused_existing = duckdb_result.reused_existing;
+    const bool rebuild_ok = duckdb_result.ok;
     const double elapsed_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started_at).count();
     emitCliProgress(
@@ -1843,6 +1846,8 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         "complete",
         "ok=" + std::string(rebuild_ok ? "true" : "false") +
             " reused_existing=" + std::string(reused_existing ? "true" : "false") +
+            " rebuilt=" + std::string(duckdb_result.rebuilt ? "true" : "false") +
+            " invalidated=" + std::string(duckdb_result.invalidated ? "true" : "false") +
             " elapsed=" + formatElapsedMs(elapsed_ms) +
             " db_path=" + analytics.status().db_path);
 
@@ -1865,6 +1870,8 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         {"unified_parcels", artifacts.unified_parcels.size()},
         {"duckdb", {
             {"reused_existing", reused_existing},
+            {"rebuilt", duckdb_result.rebuilt},
+            {"invalidated", duckdb_result.invalidated},
             {"available", analytics.status().available},
             {"last_rebuild_ok", analytics.status().last_rebuild_ok},
             {"layer_count", analytics.status().layer_count},
@@ -2843,17 +2850,20 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     emitCliProgress(
         kMode,
         "duckdb",
-        "rebuilding analytics database from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
+        "ensuring analytics database artifact from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
     DuckDbAnalytics analytics(root);
-    const bool duckdb_reused_existing = load_ok && !analytics.needsRebuild(layers);
-    const bool duckdb_ok =
-        load_ok && (duckdb_reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
+    const DuckDbArtifactEnsureResult duckdb_result =
+        load_ok ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
+    const bool duckdb_reused_existing = duckdb_result.reused_existing;
+    const bool duckdb_ok = duckdb_result.ok;
     emitCliProgress(
         kMode,
         "duckdb-complete",
         "ok=" + std::string(duckdb_ok ? "true" : "false") +
             " reused_existing=" + std::string(duckdb_reused_existing ? "true" : "false") +
+            " rebuilt=" + std::string(duckdb_result.rebuilt ? "true" : "false") +
+            " invalidated=" + std::string(duckdb_result.invalidated ? "true" : "false") +
             " db_path=" + analytics.status().db_path +
             " message=" + analytics.status().message);
 
@@ -2981,20 +2991,33 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         "ok=" + std::string((load_ok && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
             " elapsed=" + formatElapsedMs(total_elapsed_ms));
 
+    json source_load = {
+        {"ok", load_ok},
+        {"local_layer_count", load_summary.local_layer_count},
+        {"requested_layer_count", load_summary.requested_layer_count},
+        {"loaded_layer_count", load_summary.loaded_layer_count},
+        {"failed_layer_count", load_summary.failed_layer_count},
+        {"skipped_missing_layer_count", load_summary.skipped_missing_layer_count},
+        {"total_feature_count", load_summary.total_feature_count},
+        {"elapsed_ms", load_summary.elapsed_ms}
+    };
+    if (!load_summary.failures.empty()) {
+        json failures = json::array();
+        for (const auto& failure : load_summary.failures) {
+            failures.push_back({
+                {"layer_index", failure.layer_index},
+                {"layer_file", failure.layer_file},
+                {"error", failure.error}
+            });
+        }
+        source_load["failures"] = std::move(failures);
+    }
+
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
         {"ok", load_ok && geometry_failed_count == 0 && duckdb_ok},
         {"worker_count", worker_count},
-        {"source_load", {
-            {"ok", load_ok},
-            {"local_layer_count", load_summary.local_layer_count},
-            {"requested_layer_count", load_summary.requested_layer_count},
-            {"loaded_layer_count", load_summary.loaded_layer_count},
-            {"failed_layer_count", load_summary.failed_layer_count},
-            {"skipped_missing_layer_count", load_summary.skipped_missing_layer_count},
-            {"total_feature_count", load_summary.total_feature_count},
-            {"elapsed_ms", load_summary.elapsed_ms}
-        }},
+        {"source_load", std::move(source_load)},
         {"geometry", {
             {"ok_count", geometry_ok_count},
             {"failed_count", geometry_failed_count},
@@ -3004,6 +3027,8 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         {"duckdb", {
             {"ok", duckdb_ok},
             {"reused_existing", duckdb_reused_existing},
+            {"rebuilt", duckdb_result.rebuilt},
+            {"invalidated", duckdb_result.invalidated},
             {"db_path", db_path.string()},
             {"available", analytics.status().available},
             {"last_rebuild_ok", analytics.status().last_rebuild_ok},
@@ -3752,6 +3777,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_build_geometry_duckdb_artifacts = true;
             continue;
         }
+        if (arg == "--startup-preprocess") {
+            options.run_startup_preprocess = true;
+            continue;
+        }
         if (arg == "--warm-parcel-render-cache") {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 options.run_warm_parcel_render_cache = true;
@@ -3924,6 +3953,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --compile-parcel-polygon-geometry-artifacts\n"
         << "       worldsim3 --validate-polygon-geometry LAYER_FILE\n"
         << "       worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]\n"
+        << "       worldsim3 --startup-preprocess [--reserve-cores N]\n"
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"

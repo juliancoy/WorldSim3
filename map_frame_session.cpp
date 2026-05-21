@@ -160,7 +160,6 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
     render_frame_ctx.parcel_render_blob = ctx.parcel_render_blob;
     render_frame_ctx.layer_spatial = ctx.layer_spatial;
-    render_frame_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
     render_frame_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     render_frame_ctx.layer_heatmap_enabled = ctx.layer_heatmap_enabled;
     render_frame_ctx.layer_heatmap_algo = ctx.layer_heatmap_algo;

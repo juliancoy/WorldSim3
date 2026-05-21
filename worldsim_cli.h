@@ -32,6 +32,7 @@ struct WorldsimCliOptions {
     bool run_compile_parcel_polygon_geometry_artifacts = false;
     bool run_validate_polygon_geometry = false;
     bool run_build_geometry_duckdb_artifacts = false;
+    bool run_startup_preprocess = false;
     bool run_download_layers = false;
     bool run_generate_canonical_files = false;
     bool run_rebuild_duckdb_analytics = false;

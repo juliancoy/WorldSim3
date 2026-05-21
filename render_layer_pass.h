@@ -54,7 +54,6 @@ struct RenderLayerPassContext {
     const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
-    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<bool>* layer_heatmap_use_gradient = nullptr;
     const std::vector<float>* layer_choropleth_gamma = nullptr;

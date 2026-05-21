@@ -177,21 +177,23 @@ struct ParcelRenderCacheResult {
     std::string error;
 };
 
-bool loadLocalLayerFeaturesForRuntime(
-    const fs::path& root,
-    const std::string& layer_file,
-    const std::string& sig,
-    std::vector<LayerDef::FeatureRecord>& out,
-    std::vector<LayerDef::FeatureProperties>* out_feature_properties,
-    std::string* out_source_kind,
-    std::string* out_error) {
-    if (loadCanonicalLayerFeatureCollection(root, layer_file, sig, out, out_feature_properties)) {
-        if (out_source_kind) *out_source_kind = "canonical_binary";
-        return true;
-    }
-    if (out_error) *out_error = "no readable canonical layer binary";
-    return false;
-}
+struct StartupPreprocessIssue {
+    std::string kind;
+    std::string layer_file;
+    std::string message;
+    std::string artifact_path;
+};
+
+struct StartupPreprocessPlan {
+    bool required = false;
+    bool duckdb_required = false;
+    std::vector<StartupPreprocessIssue> issues;
+};
+
+struct StartupPreprocessRunResult {
+    int exit_code = 1;
+    fs::path log_path;
+};
 
 bool isZoningPolygonLayerApp(const LayerDef& layer) {
     if (layerUsesPointGeometry(layer)) return false;
@@ -200,6 +202,404 @@ bool isZoningPolygonLayerApp(const LayerDef& layer) {
     const std::string name_lower = toLowerAscii(layer.name);
     return file_lower.find("zoning") != std::string::npos ||
            name_lower.find("zoning") != std::string::npos;
+}
+
+GeometryArtifactClass startupGeometryClassForLayer(const LayerDef& layer, bool is_parcel_layer) {
+    if (is_parcel_layer) return GeometryArtifactClass::Polygon;
+    if (layerUsesPointGeometry(layer)) return GeometryArtifactClass::Point;
+    if (layerUsesPolylineGeometry(layer)) return GeometryArtifactClass::Polyline;
+    return GeometryArtifactClass::Polygon;
+}
+
+std::string shellQuote(const std::string& s) {
+    std::string out = "'";
+    for (char ch : s) {
+        if (ch == '\'') out += "'\\''";
+        else out.push_back(ch);
+    }
+    out += "'";
+    return out;
+}
+
+std::string currentExecutablePath(const char* argv0) {
+#if defined(__linux__)
+    std::error_code ec;
+    fs::path p = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec && !p.empty()) return p.string();
+#endif
+    return argv0 && *argv0 ? std::string(argv0) : std::string("./worldsim3");
+}
+
+fs::path startupPreprocessLogPath(const fs::path& root) {
+    return root / "data" / "logs" / "startup_preprocess_latest.log";
+}
+
+void printStartupPreprocessPlan(
+    const StartupPreprocessPlan& plan,
+    std::ostream& out) {
+    out << "[worldsim3] startup preprocess required=" << (plan.required ? "true" : "false")
+        << " duckdb_required=" << (plan.duckdb_required ? "true" : "false")
+        << " issues=" << plan.issues.size() << "\n";
+    for (const auto& issue : plan.issues) {
+        out << "[worldsim3] preprocess issue kind=" << issue.kind
+            << " layer=" << issue.layer_file
+            << " message=\"" << issue.message << "\"";
+        if (!issue.artifact_path.empty()) out << " artifact=" << issue.artifact_path;
+        out << "\n";
+    }
+}
+
+StartupPreprocessRunResult runStartupPreprocessSubprocess(
+    const fs::path& root,
+    const std::string& command,
+    std::vector<std::string>* ui_log_lines = nullptr,
+    std::mutex* ui_log_mutex = nullptr,
+    std::atomic<bool>* done = nullptr,
+    std::atomic<int>* exit_code = nullptr) {
+    StartupPreprocessRunResult result;
+    result.log_path = startupPreprocessLogPath(root);
+    std::error_code ec;
+    fs::create_directories(result.log_path.parent_path(), ec);
+    std::ofstream log(result.log_path, std::ios::out | std::ios::trunc);
+
+    auto emit = [&](const std::string& line) {
+        std::cerr << "[worldsim3-preprocess] " << line << "\n";
+        if (log) {
+            log << line << "\n";
+            log.flush();
+        }
+        if (ui_log_lines && ui_log_mutex) {
+            std::lock_guard<std::mutex> lk(*ui_log_mutex);
+            ui_log_lines->push_back(line);
+            if (ui_log_lines->size() > 400) ui_log_lines->erase(ui_log_lines->begin(), ui_log_lines->begin() + 80);
+        }
+    };
+
+    emit("log=" + result.log_path.string());
+    emit("$ " + command);
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        emit("failed to start preprocess subprocess");
+        result.exit_code = 127;
+        if (exit_code) exit_code->store(result.exit_code, std::memory_order_relaxed);
+        if (done) done->store(true, std::memory_order_relaxed);
+        return result;
+    }
+
+    char buf[512];
+    while (fgets(buf, sizeof(buf), pipe)) {
+        std::string line(buf);
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        emit(line);
+    }
+    const int rc = pclose(pipe);
+    result.exit_code = WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
+    emit("exit_code=" + std::to_string(result.exit_code));
+    if (exit_code) exit_code->store(result.exit_code, std::memory_order_relaxed);
+    if (done) done->store(true, std::memory_order_relaxed);
+    return result;
+}
+
+void applyPersistedLayerEnabledStateForPreflight(const fs::path& root, std::vector<LayerDef>& layers) {
+    std::ifstream in(root / "data" / "layer_ui_state.json");
+    if (!in) return;
+    json j;
+    try {
+        in >> j;
+    } catch (...) {
+        return;
+    }
+    if (!j.contains("layers") || !j["layers"].is_object()) return;
+    const auto& obj = j["layers"];
+    for (auto& layer : layers) {
+        auto it = obj.find(layer.file);
+        if (it != obj.end() && it->is_boolean()) layer.enabled = it->get<bool>();
+    }
+}
+
+bool persistedGeometryArtifactReady(
+    const fs::path& root,
+    const LayerDef& layer,
+    bool is_primary_parcel_layer,
+    const std::string& sig,
+    fs::path& out_path) {
+    if (is_primary_parcel_layer) {
+        out_path = root / "data" / "cache" / "render" /
+            (layerArtifactBasenameForFile(layer.file) + ".parcel-render.bin");
+        ParcelRenderCacheBlob blob;
+        return loadBinaryParcelRenderCache(out_path, sig, blob) && !blob.features.empty();
+    }
+    const GeometryArtifactClass cls = startupGeometryClassForLayer(layer, false);
+    out_path = geometryArtifactCachePathForLayerFile(root, layer.file, cls);
+    if (cls == GeometryArtifactClass::Point) {
+        PointGeometryArtifact artifact;
+        return loadBinaryPointGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
+    }
+    if (cls == GeometryArtifactClass::Polyline) {
+        PolylineGeometryArtifact artifact;
+        return loadBinaryPolylineGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
+    }
+    if (cls == GeometryArtifactClass::Polygon) {
+        PolygonGeometryArtifact artifact;
+        return loadBinaryPolygonGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
+    }
+    return false;
+}
+
+StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
+    StartupPreprocessPlan plan;
+    std::vector<LayerDef> layers = loadManifest(root);
+    applyPersistedLayerEnabledStateForPreflight(root, layers);
+    LayerRegistry registry;
+    registry.refresh(root, layers);
+    const int primary_parcel_idx = registry.indices().parcel_layer_idx;
+
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const LayerDef& layer = layers[i];
+        if (!layer.enabled) continue;
+        const fs::path layer_path = resolveStoredLayerPath(root, layer);
+        std::string sig;
+        if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+            plan.issues.push_back(StartupPreprocessIssue{
+                "source",
+                layer.file,
+                "source signature unavailable; preprocessing cannot build this layer until the canonical/input artifact exists",
+                canonicalLayerPathForFile(root, layer.file).string()
+            });
+            continue;
+        }
+        fs::path artifact_path;
+        if (!persistedGeometryArtifactReady(root, layer, primary_parcel_idx >= 0 && (int)i == primary_parcel_idx, sig, artifact_path)) {
+            plan.required = true;
+            plan.issues.push_back(StartupPreprocessIssue{
+                "geometry",
+                layer.file,
+                "compiled geometry artifact missing or stale",
+                artifact_path.string()
+            });
+        }
+    }
+
+    DuckDbAnalytics analytics(root);
+    const bool duckdb_stale = analytics.needsRebuild(layers);
+    const bool duckdb_valid = !duckdb_stale && analytics.validateExistingCache();
+    if (!duckdb_valid) {
+        plan.required = true;
+        plan.duckdb_required = true;
+        plan.issues.push_back(StartupPreprocessIssue{
+            "duckdb",
+            "data/worldsim.duckdb",
+            duckdb_stale ? "DuckDB semantic artifact missing or stale" : analytics.status().message,
+            analytics.status().db_path
+        });
+    }
+
+    return plan;
+}
+
+void uploadCurrentImGuiFonts(ImGui_ImplVulkanH_Window& wd) {
+    VkCommandPool command_pool = wd.Frames[wd.FrameIndex].CommandPool;
+    VkCommandBuffer command_buffer = wd.Frames[wd.FrameIndex].CommandBuffer;
+    check_vk_result(vkResetCommandPool(g_Device, command_pool, 0));
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    check_vk_result(vkBeginCommandBuffer(command_buffer, &begin_info));
+    ImGui_ImplVulkan_CreateFontsTexture();
+    check_vk_result(vkEndCommandBuffer(command_buffer));
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &command_buffer;
+    {
+        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
+        check_vk_result(vkDeviceWaitIdle(g_Device));
+    }
+    ImGui_ImplVulkan_DestroyFontsTexture();
+}
+
+int runStartupPreprocessWindow(
+    const fs::path& root,
+    const AppSettings& app_settings,
+    const StartupPreprocessPlan& initial_plan,
+    const WorldsimCliOptions& cli_options,
+    const char* argv0) {
+    if (!glfwInit()) return 1;
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(880, 520, "WorldSim3 Preprocess Required", nullptr, nullptr);
+    if (!window) {
+        glfwTerminate();
+        return 1;
+    }
+
+    uint32_t extensions_count = 0;
+    const char** extensions = glfwGetRequiredInstanceExtensions(&extensions_count);
+    SetupVulkan(extensions, extensions_count);
+
+    VkSurfaceKHR surface;
+    VkResult err = glfwCreateWindowSurface(g_Instance, window, g_Allocator, &surface);
+    if (err != VK_SUCCESS) return 1;
+    ImGui_ImplVulkanH_Window pre_wd{};
+    int w = 0;
+    int h = 0;
+    glfwGetFramebufferSize(window, &w, &h);
+    SetupVulkanWindow(&pre_wd, surface, w, h);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    configureWorldsimFonts();
+    applyWorldsimUiTheme(app_settings.dark_mode);
+    ImGui_ImplGlfw_InitForVulkan(window, true);
+    ImGui_ImplVulkan_InitInfo init_info{};
+    init_info.Instance = g_Instance;
+    init_info.PhysicalDevice = g_PhysicalDevice;
+    init_info.Device = g_Device;
+    init_info.QueueFamily = g_QueueFamily;
+    init_info.Queue = g_Queue;
+    init_info.DescriptorPool = g_DescriptorPool;
+    init_info.RenderPass = pre_wd.RenderPass;
+    init_info.MinImageCount = g_MinImageCount;
+    init_info.ImageCount = pre_wd.ImageCount;
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.CheckVkResultFn = check_vk_result;
+    ImGui_ImplVulkan_Init(&init_info);
+    uploadCurrentImGuiFonts(pre_wd);
+
+    std::mutex log_mutex;
+    std::vector<std::string> log_lines;
+    std::atomic<bool> worker_done{false};
+    std::atomic<int> worker_exit{-1};
+    fs::path preprocess_log_path = startupPreprocessLogPath(root);
+    const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
+    const std::string exe = currentExecutablePath(argv0);
+    std::string command = shellQuote(exe) + " --build-geometry-duckdb-artifacts";
+    if (reserve_cores > 0) command += " --reserve-cores " + std::to_string(reserve_cores);
+    command += " 2>&1";
+
+    std::thread worker([&] {
+        StartupPreprocessRunResult result = runStartupPreprocessSubprocess(
+            root,
+            command,
+            &log_lines,
+            &log_mutex,
+            &worker_done,
+            &worker_exit);
+        preprocess_log_path = result.log_path;
+    });
+
+    bool proceed = false;
+    bool quit = false;
+    bool swapchain_rebuild = false;
+    while (!glfwWindowShouldClose(window) && !quit && !proceed) {
+        glfwPollEvents();
+        int fb_w = 0;
+        int fb_h = 0;
+        glfwGetFramebufferSize(window, &fb_w, &fb_h);
+        if (fb_w > 0 && fb_h > 0 && (fb_w != pre_wd.Width || fb_h != pre_wd.Height)) {
+            check_vk_result(vkDeviceWaitIdle(g_Device));
+            ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
+            ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &pre_wd, g_QueueFamily, g_Allocator, fb_w, fb_h, g_MinImageCount);
+            pre_wd.FrameIndex = 0;
+        }
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
+        ImGui::Begin("Preprocess", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+        ImGui::TextUnformatted("WorldSim3 preprocess is running before the main UI starts.");
+        ImGui::TextWrapped("Runtime rendering no longer builds missing geometry, DuckDB, or property artifacts. The main UI will start only after this separate preprocessing step completes.");
+        ImGui::Separator();
+        ImGui::Text("Initial work items: %zu", initial_plan.issues.size());
+        ImGui::SameLine();
+        ImGui::Text("DuckDB: %s", initial_plan.duckdb_required ? "required" : "current");
+        ImGui::TextDisabled("Log: %s", preprocess_log_path.string().c_str());
+        if (ImGui::BeginChild("preprocess_issues", ImVec2(0, 120), true)) {
+            for (const auto& issue : initial_plan.issues) {
+                ImGui::BulletText("[%s] %s", issue.kind.c_str(), issue.layer_file.c_str());
+                if (!issue.message.empty()) ImGui::TextWrapped("  %s", issue.message.c_str());
+                if (!issue.artifact_path.empty()) ImGui::TextDisabled("  %s", issue.artifact_path.c_str());
+            }
+        }
+        ImGui::EndChild();
+        ImGui::SeparatorText("Preprocess Log");
+        if (!worker_done.load(std::memory_order_relaxed)) {
+            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, 0), "running");
+        } else {
+            const int rc = worker_exit.load(std::memory_order_relaxed);
+            ImGui::Text("preprocess exit code: %d", rc);
+            if (rc == 0) {
+                ImGui::TextColored(ImVec4(0.25f, 0.75f, 0.35f, 1.0f), "Artifacts prepared. Launching main UI.");
+                proceed = true;
+            } else {
+                ImGui::TextColored(ImVec4(0.90f, 0.25f, 0.18f, 1.0f), "Preprocess failed. Main UI will not start with stale artifacts.");
+                ImGui::TextWrapped("See terminal output or %s", preprocess_log_path.string().c_str());
+                if (ImGui::Button("Quit")) quit = true;
+            }
+        }
+        if (ImGui::BeginChild("preprocess_log", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+            std::lock_guard<std::mutex> lk(log_mutex);
+            const size_t start = log_lines.size() > 120 ? log_lines.size() - 120 : 0;
+            for (size_t i = start; i < log_lines.size(); ++i) ImGui::TextUnformatted(log_lines[i].c_str());
+            if (!worker_done.load(std::memory_order_relaxed)) ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        ImGui::End();
+        ImGui::Render();
+        FrameRenderSecondary(&pre_wd, ImGui::GetDrawData(), swapchain_rebuild);
+        FramePresentSecondary(&pre_wd, swapchain_rebuild);
+        if (swapchain_rebuild) swapchain_rebuild = false;
+        if (proceed) std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        else std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+
+    if (worker.joinable()) worker.join();
+    const int rc = worker_exit.load(std::memory_order_relaxed);
+    check_vk_result(vkDeviceWaitIdle(g_Device));
+    ImGui_ImplVulkan_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    ImGui_ImplVulkanH_DestroyWindow(g_Instance, g_Device, &pre_wd, g_Allocator);
+    CleanupVulkan();
+    glfwDestroyWindow(window);
+    glfwTerminate();
+    return (proceed && rc == 0) ? 0 : 1;
+}
+
+int runStartupPreprocessCli(
+    const fs::path& root,
+    const AppSettings& app_settings,
+    const StartupPreprocessPlan& plan,
+    const WorldsimCliOptions& cli_options,
+    const char* argv0) {
+    printStartupPreprocessPlan(plan, std::cerr);
+    if (!plan.required) {
+        std::cout << json{
+            {"mode", "startup-preprocess"},
+            {"ok", true},
+            {"required", false},
+            {"message", "startup artifacts are current"}
+        }.dump(2) << '\n';
+        return 0;
+    }
+
+    const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
+    const std::string exe = currentExecutablePath(argv0);
+    std::string command = shellQuote(exe) + " --build-geometry-duckdb-artifacts";
+    if (reserve_cores > 0) command += " --reserve-cores " + std::to_string(reserve_cores);
+    command += " 2>&1";
+
+    StartupPreprocessRunResult result = runStartupPreprocessSubprocess(root, command);
+    std::cout << json{
+        {"mode", "startup-preprocess"},
+        {"ok", result.exit_code == 0},
+        {"required", true},
+        {"exit_code", result.exit_code},
+        {"log_path", result.log_path.string()}
+    }.dump(2) << '\n';
+    return result.exit_code == 0 ? 0 : result.exit_code;
 }
 }
 
@@ -239,7 +639,21 @@ int runWorldSim3App(int argc, char** argv) {
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
     preloadLayersFromEnvironment(root);
-    ensureParcelMatchedEventLayers(root, false, &std::cerr, false);
+
+    StartupPreprocessPlan preprocess_plan = inspectStartupPreprocessPlan(root);
+    if (cli_options.run_startup_preprocess) {
+        return runStartupPreprocessCli(
+            root,
+            app_settings,
+            preprocess_plan,
+            cli_options,
+            argc > 0 ? argv[0] : nullptr);
+    }
+    printStartupPreprocessPlan(preprocess_plan, std::cerr);
+    if (preprocess_plan.required) {
+        std::cerr << "[worldsim3] startup preprocess skipped during interactive launch; "
+                  << "run --startup-preprocess or --build-geometry-duckdb-artifacts explicitly\n";
+    }
 
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
     if (!glfwInit()) return 1;
@@ -653,6 +1067,7 @@ int runWorldSim3App(int argc, char** argv) {
         &heatmap_multires_enabled,
         &heatmap_multires_blend,
         &heatmap_allow_cpu_fallback);
+    heatmap_allow_cpu_fallback = false;
     heatmap_algo = kAggregateNone;
     heatmap_quality_preset = std::clamp(heatmap_quality_preset, 0, 2);
     if (parcel_layer_idx >= 0) {
@@ -669,7 +1084,6 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex status_mutex;
     std::vector<LayerRuntimeState> layer_states(layers.size());
     std::vector<LayerSpatialIndex> layer_spatial(layers.size());
-    std::vector<size_t> layer_fallback_scan_cursor(layers.size(), 0);
     std::vector<size_t> spatial_index_requested_feature_count(layers.size(), 0);
     std::vector<std::string> spatial_index_requested_signature(layers.size());
     std::vector<OwnerAggregate> owner_aggregates;
@@ -729,32 +1143,70 @@ int runWorldSim3App(int argc, char** argv) {
 
     std::vector<bool> hydration_requested(layers.size(), false);
     std::vector<bool> hydration_required(layers.size(), false);
-    std::vector<size_t> initial_hydration_order;
-    initial_hydration_order.reserve(layers.size());
+    auto initializeLayerFromPersistedArtifacts = [&](size_t idx) {
+        if (idx >= layers.size() || idx >= layer_states.size()) return;
+        const fs::path layer_path = resolveStoredLayerPath(root, layers[idx]);
+        std::string sig;
+        std::string resolved_kind;
+        if (!resolveLayerSourceSignature(layer_path, sig, &resolved_kind)) {
+            std::lock_guard<std::mutex> lk(status_mutex);
+            layer_states[idx].status = LayerPipelineStatus::Failed;
+            layer_states[idx].feature_count = 0;
+            layer_states[idx].error = "canonical metadata/signature missing";
+            layer_states[idx].hydration_source_signature.clear();
+            layer_states[idx].hydration_source_kind.clear();
+            layer_states[idx].hydration_phase = "metadata_missing";
+            return;
+        }
+        const bool is_parcel = parcel_layer_idx >= 0 && (int)idx == parcel_layer_idx;
+        const GeometryArtifactClass cls = startupGeometryClassForLayer(layers[idx], is_parcel);
+        const fs::path artifact_path = is_parcel
+            ? (root / "data" / "cache" / "render" / (layerArtifactBasenameForFile(layers[idx].file) + ".parcel-render.bin"))
+            : geometryArtifactCachePathForLayerFile(root, layers[idx].file, cls);
+
+        bool artifact_ok = false;
+        size_t artifact_features = 0;
+        if (is_parcel) {
+            ParcelRenderCacheBlob blob;
+            artifact_ok = loadBinaryParcelRenderCache(artifact_path, sig, blob);
+            artifact_features = blob.features.size();
+        } else if (cls == GeometryArtifactClass::Point) {
+            PointGeometryArtifact artifact;
+            artifact_ok = loadBinaryPointGeometryArtifact(artifact_path, sig, artifact);
+            artifact_features = artifact.features.size();
+        } else if (cls == GeometryArtifactClass::Polyline) {
+            PolylineGeometryArtifact artifact;
+            artifact_ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact);
+            artifact_features = artifact.features.size();
+        } else if (cls == GeometryArtifactClass::Polygon) {
+            PolygonGeometryArtifact artifact;
+            artifact_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact);
+            artifact_features = artifact.features.size();
+        }
+
+        std::lock_guard<std::mutex> lk(status_mutex);
+        layer_states[idx].hydration_source_signature = sig;
+        layer_states[idx].hydration_source_kind = resolved_kind;
+        layer_states[idx].hydration_loaded_from_cache = true;
+        layer_states[idx].geometry_artifact_class = cls;
+        layer_states[idx].geometry_artifact_path = artifact_path.string();
+        layer_states[idx].geometry_source_signature = artifact_ok ? sig : std::string{};
+        layer_states[idx].geometry_loaded_from_artifact = artifact_ok;
+        layer_states[idx].geometry_phase = artifact_ok ? "artifact_ready" : "artifact_missing";
+        layer_states[idx].feature_count = artifact_features;
+        if (artifact_ok) {
+            layer_states[idx].status = LayerPipelineStatus::Ready;
+            layer_states[idx].hydration_phase = "metadata_only_geometry_artifact";
+            layer_states[idx].error.clear();
+        } else {
+            layer_states[idx].status = LayerPipelineStatus::Queued;
+            layer_states[idx].hydration_phase = "metadata_only_artifact_missing";
+            layer_states[idx].error = "compiled geometry artifact missing or stale";
+        }
+    };
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].enabled) initial_hydration_order.push_back(i);
+        if (layers[i].enabled) initializeLayerFromPersistedArtifacts(i);
     }
-    auto layer_file_size = [&](size_t idx) -> uintmax_t {
-        std::error_code ec;
-        const fs::path p = resolveStoredLayerPath(root, layers[idx]);
-        const uintmax_t sz = fs::file_size(p, ec);
-        return ec ? std::numeric_limits<uintmax_t>::max() : sz;
-    };
-    auto startup_hydration_rank = [&](size_t idx) {
-        if (parcel_layer_idx >= 0 && (int)idx == parcel_layer_idx) return 0;
-        if (zoning_layer_idx >= 0 && (int)idx == zoning_layer_idx) return 1;
-        const uintmax_t sz = layer_file_size(idx);
-        if (sz > 250ull * 1024ull * 1024ull) return 4;
-        if (layers[idx].scale == "parcel") return 3;
-        return 2;
-    };
-    std::stable_sort(initial_hydration_order.begin(), initial_hydration_order.end(), [&](size_t a, size_t b) {
-        const int ar = startup_hydration_rank(a);
-        const int br = startup_hydration_rank(b);
-        if (ar != br) return ar < br;
-        return layer_file_size(a) < layer_file_size(b);
-    });
-    for (size_t i : initial_hydration_order) hydration_requested[i] = true;
     auto recomputeHydratedCount = [&]() {
         size_t ready_count = 0;
         std::lock_guard<std::mutex> lk(status_mutex);
@@ -765,128 +1217,9 @@ int runWorldSim3App(int argc, char** argv) {
         last_hydration_progress_at = std::chrono::steady_clock::now();
         last_hydrated_seen = ready_count;
     };
-    auto resetLoadedLayerState = [&](size_t idx) {
-        clearFeaturePropertyRegistryForLayer(layers[idx]);
-        releaseContainerStorage(layers[idx].features);
-        releaseContainerStorage(layers[idx].feature_properties);
-        layer_spatial[idx] = LayerSpatialIndex{};
-        layer_fallback_scan_cursor[idx] = 0;
-        layer_profile_accumulators[idx] = LayerProfileAccumulator{};
-        layer_profile_dirty[idx] = true;
-        spatial_index_requested_feature_count[idx] = 0;
-        spatial_index_requested_signature[idx].clear();
-    };
-    auto populateLayerProfileAccumulator = [&](size_t idx) {
-        auto& acc = layer_profile_accumulators[idx];
-        acc = LayerProfileAccumulator{};
-        for (const auto& fg : layers[idx].features) {
-            acc.features += 1;
-            acc.rings += fg.rings.size();
-            for (const auto& r : fg.rings) acc.ring_points += r.size();
-        }
-        for (const auto& props : layers[idx].feature_properties) acc.properties += props.values.size();
-    };
-    auto loadLayerRuntimeData = [&](size_t idx, bool required = false) {
-        if (idx >= layers.size() || (!layers[idx].enabled && !required)) return;
-        const fs::path layer_path = resolveStoredLayerPath(root, layers[idx]);
-        std::string sig;
-        std::string resolved_kind;
-        if (!resolveLayerSourceSignature(layer_path, sig, &resolved_kind)) {
-            resetLoadedLayerState(idx);
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                layer_states[idx].status = LayerPipelineStatus::Failed;
-                layer_states[idx].feature_count = 0;
-                layer_states[idx].error = "failed to resolve layer source signature";
-                layer_states[idx].hydration_source_signature.clear();
-                layer_states[idx].hydration_source_kind.clear();
-                layer_states[idx].hydration_phase = "failed";
-                layer_states[idx].spatial_index_source_signature.clear();
-                layer_states[idx].spatial_index_phase.clear();
-                layer_states[idx].hydration_loaded_from_cache = false;
-            }
-            recomputeHydratedCount();
-            return;
-        }
-
-        {
-            std::lock_guard<std::mutex> lk(status_mutex);
-            if (layer_states[idx].status == LayerPipelineStatus::Ready &&
-                layer_states[idx].hydration_source_signature == sig &&
-                !layers[idx].features.empty()) {
-                return;
-            }
-            layer_states[idx].status = LayerPipelineStatus::Hydrating;
-            layer_states[idx].error.clear();
-            layer_states[idx].hydration_source_signature = sig;
-            layer_states[idx].hydration_source_kind = resolved_kind;
-            layer_states[idx].hydration_phase = resolved_kind == "canonical_binary"
-                ? "direct_canonical_load"
-                : "direct_source_load";
-            layer_states[idx].hydration_loaded_from_cache = false;
-        }
-
-        std::vector<LayerDef::FeatureRecord> loaded_features;
-        std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
-        std::string source_kind;
-        std::string error;
-        if (!loadLocalLayerFeaturesForRuntime(
-                root,
-                layers[idx].file,
-                sig,
-                loaded_features,
-                &loaded_feature_properties,
-                &source_kind,
-                &error)) {
-            resetLoadedLayerState(idx);
-            {
-                std::lock_guard<std::mutex> lk(status_mutex);
-                layer_states[idx].status = LayerPipelineStatus::Failed;
-                layer_states[idx].feature_count = 0;
-                layer_states[idx].error = error;
-                layer_states[idx].hydration_source_signature = sig;
-                layer_states[idx].hydration_source_kind = source_kind;
-                layer_states[idx].hydration_phase = "failed";
-                layer_states[idx].spatial_index_source_signature.clear();
-                layer_states[idx].spatial_index_phase.clear();
-                layer_states[idx].hydration_loaded_from_cache = false;
-            }
-            recomputeHydratedCount();
-            return;
-        }
-
-        std::string prior_signature;
-        {
-            std::lock_guard<std::mutex> lk(status_mutex);
-            prior_signature = layer_states[idx].hydration_source_signature;
-        }
-        resetLoadedLayerState(idx);
-        layers[idx].features = std::move(loaded_features);
-        layers[idx].feature_properties = std::move(loaded_feature_properties);
-        refreshLayerGeometryUsageCache(layers[idx]);
-        rebuildFeaturePropertyRegistryForLayer(layers[idx]);
-        populateLayerProfileAccumulator(idx);
-        layer_profile_dirty[idx] = true;
-        {
-            std::lock_guard<std::mutex> lk(status_mutex);
-            layer_states[idx].status = LayerPipelineStatus::Ready;
-            layer_states[idx].feature_count = layers[idx].features.size();
-            layer_states[idx].error.clear();
-            layer_states[idx].hydration_source_signature = sig;
-            layer_states[idx].hydration_source_kind = source_kind;
-            layer_states[idx].hydration_phase = source_kind == "canonical_binary"
-                ? "direct_canonical_load"
-                : "direct_source_load";
-            layer_states[idx].spatial_index_source_signature.clear();
-            layer_states[idx].spatial_index_phase.clear();
-            layer_states[idx].hydration_loaded_from_cache = false;
-        }
-        if (!prior_signature.empty() && prior_signature != sig) projection_generation += 1;
-        recomputeHydratedCount();
-        trimProcessHeap();
-    };
+    recomputeHydratedCount();
     auto layer_data_available = [&](size_t idx) -> bool {
-        if (idx >= layers.size() || layers[idx].features.empty()) return false;
+        if (idx >= layers.size()) return false;
         std::lock_guard<std::mutex> lk(status_mutex);
         if (idx >= layer_states.size()) return false;
         LayerPipelineStatus st = layer_states[idx].status;
@@ -895,9 +1228,11 @@ int runWorldSim3App(int argc, char** argv) {
     };
     auto enqueue_hydration = [&](size_t idx, bool required = false) {
         if (idx >= layers.size()) return;
+        if (!layers[idx].enabled && !required) return;
         hydration_requested[idx] = true;
         if (required) hydration_required[idx] = true;
-        loadLayerRuntimeData(idx, required);
+        initializeLayerFromPersistedArtifacts(idx);
+        recomputeHydratedCount();
         hydration_requested[idx] = false;
     };
 
@@ -921,10 +1256,6 @@ int runWorldSim3App(int argc, char** argv) {
     };
     std::vector<std::thread> hydration_workers;
     std::thread spatial_index_worker = startSpatialIndexWorker(layer_workers_ctx);
-    for (size_t i : initial_hydration_order) {
-        loadLayerRuntimeData(i, true);
-        hydration_requested[i] = false;
-    }
     std::atomic<bool> parcel_render_stop{false};
     std::mutex parcel_render_req_mutex;
     std::condition_variable parcel_render_cv;
@@ -948,21 +1279,7 @@ int runWorldSim3App(int argc, char** argv) {
             result.layer_file = req.layer_file;
             result.source_signature = req.source_signature;
             if (!loadBinaryParcelRenderCache(req.cache_path, req.source_signature, result.blob)) {
-                std::vector<LayerDef::FeatureRecord> hydrated_features;
-                if (!loadLocalLayerFeaturesForRuntime(
-                        root,
-                        req.layer_file,
-                        req.source_signature,
-                        hydrated_features,
-                        nullptr,
-                        nullptr,
-                        &result.error)) {
-                    if (result.error.empty()) result.error = "failed to load source features for parcel render build";
-                } else if (!buildParcelRenderCacheBlob(hydrated_features, req.source_signature, result.blob)) {
-                    result.error = "failed to build parcel render cache blob";
-                } else {
-                    saveBinaryParcelRenderCache(req.cache_path, result.blob);
-                }
+                result.error = "compiled parcel render artifact missing or stale; run the artifact build CLI";
             }
 
             {
@@ -2271,7 +2588,6 @@ int runWorldSim3App(int argc, char** argv) {
             &cache_aggregate_dir,
             &layers,
             &layer_spatial,
-            &layer_fallback_scan_cursor,
             &layer_profile_accumulators,
             &layer_profile_dirty,
             &layer_states,
@@ -2389,7 +2705,6 @@ int runWorldSim3App(int argc, char** argv) {
         pipeline_drain_ctx.spatial_mutex = &spatial_mutex;
         pipeline_drain_ctx.layer_states = &layer_states;
         pipeline_drain_ctx.layer_spatial = &layer_spatial;
-        pipeline_drain_ctx.layer_fallback_scan_cursor = &layer_fallback_scan_cursor;
         pipeline_drain_ctx.layer_profile_accumulators = &layer_profile_accumulators;
         pipeline_drain_ctx.spatial_index_requested_feature_count = &spatial_index_requested_feature_count;
         pipeline_drain_ctx.spatial_index_requested_signature = &spatial_index_requested_signature;
@@ -2509,6 +2824,7 @@ int runWorldSim3App(int argc, char** argv) {
                 st == LayerPipelineStatus::Ready;
             if (!stable) continue;
             const size_t feature_count = layers[li].features.size();
+            if (feature_count == 0) continue;
             const bool spatial_index_current =
                 layer_spatial[li].built &&
                 layer_spatial[li].feature_count_built == feature_count &&
@@ -2716,6 +3032,11 @@ int runWorldSim3App(int argc, char** argv) {
                             ++p;
                         }
                     };
+                    auto hash_f32 = [&](uint64_t& h, float value) {
+                        uint32_t bits = 0;
+                        std::memcpy(&bits, &value, sizeof(bits));
+                        hash_mix(h, bits);
+                    };
                     uint64_t color_state_key = 1469598103934665603ULL;
                     hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
                     hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
@@ -2782,6 +3103,17 @@ int runWorldSim3App(int argc, char** argv) {
                     hash_mix(overlay_state_key, feature_render_state_key);
                     hash_mix(outline_state_key, feature_render_state_key);
                     const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
+                    auto hash_state_f32 = [&](uint64_t& h, float value) {
+                        uint32_t bits = 0;
+                        std::memcpy(&bits, &value, sizeof(bits));
+                        hash_mix(h, bits);
+                    };
+                    hash_mix(color_state_key, (uint64_t)layers[(size_t)parcel_layer_idx].enabled);
+                    hash_mix(color_state_key, (uint64_t)((size_t)parcel_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)parcel_layer_idx] : false));
+                    hash_state_f32(color_state_key, parcel_layer.color.x);
+                    hash_state_f32(color_state_key, parcel_layer.color.y);
+                    hash_state_f32(color_state_key, parcel_layer.color.z);
+                    hash_state_f32(color_state_key, parcel_layer.color.w);
 
                     if (color_state_key != parcel_gpu_filter_state_key) {
                         std::vector<ImU32> parcel_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
@@ -2817,10 +3149,9 @@ int runWorldSim3App(int argc, char** argv) {
                             value_samples.reserve(parcel_gpu_render_blob.features.size());
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
-                                if (feature_idx >= parcel_layer.features.size()) continue;
                                 const FeatureRenderState* render_state =
                                     findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                                if (!render_state || !render_state->visible) continue;
+                                if (render_state && !render_state->visible) continue;
                                 const double v = parcel_parameter_mode == 3
                                     ? current_value_per_area_at(feature_idx)
                                     : current_value_at(feature_idx);
@@ -2831,10 +3162,9 @@ int runWorldSim3App(int argc, char** argv) {
                         const bool value_range_valid = value_choropleth_enabled && value_hist.rangeValid();
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            if (feature_idx >= parcel_layer.features.size()) continue;
                             const FeatureRenderState* render_state =
                                 findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (!render_state || !render_state->visible) {
+                            if (render_state && !render_state->visible) {
                                 parcel_colors[i] = IM_COL32(0, 0, 0, 0);
                                 continue;
                             }
@@ -2856,7 +3186,7 @@ int runWorldSim3App(int argc, char** argv) {
                                     continue;
                                 }
                             }
-                            if (render_state->has_query_color) {
+                            if (render_state && render_state->has_query_color) {
                                 parcel_colors[i] = mapPolygonFillColor(
                                     render_state->query_color,
                                     app_settings.map_polygon_fill_opacity);
@@ -2913,10 +3243,9 @@ int runWorldSim3App(int argc, char** argv) {
                             parameter_samples.reserve(parcel_gpu_render_blob.features.size());
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
-                                if (feature_idx >= parcel_layer.features.size()) continue;
                                 const FeatureRenderState* render_state =
                                     findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                                if (!render_state || !render_state->visible) continue;
+                                if (render_state && !render_state->visible) continue;
                                 const double v = parameter_value(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) parameter_samples.push_back(v);
                             }
@@ -2947,6 +3276,23 @@ int runWorldSim3App(int argc, char** argv) {
                             (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
                                 ? layers[(size_t)vacant_rehab_layer_idx].color
                                 : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                        hash_state_f32(overlay_state_key, notice_c.x);
+                        hash_state_f32(overlay_state_key, notice_c.y);
+                        hash_state_f32(overlay_state_key, notice_c.z);
+                        hash_state_f32(overlay_state_key, notice_c.w);
+                        hash_state_f32(overlay_state_key, rehab_c.x);
+                        hash_state_f32(overlay_state_key, rehab_c.y);
+                        hash_state_f32(overlay_state_key, rehab_c.z);
+                        hash_state_f32(overlay_state_key, rehab_c.w);
+                        hash_state_f32(overlay_state_key, lien_c.x);
+                        hash_state_f32(overlay_state_key, lien_c.y);
+                        hash_state_f32(overlay_state_key, lien_c.z);
+                        hash_state_f32(overlay_state_key, lien_c.w);
+                        hash_state_f32(overlay_state_key, sale_c.x);
+                        hash_state_f32(overlay_state_key, sale_c.y);
+                        hash_state_f32(overlay_state_key, sale_c.z);
+                        hash_state_f32(overlay_state_key, sale_c.w);
+                        outline_state_key = overlay_state_key;
                         const ImU32 selected_overlay = IM_COL32(255, 230, 0, 112);
                         const float parcel_gamma =
                             (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
@@ -2954,10 +3300,9 @@ int runWorldSim3App(int argc, char** argv) {
                                 : 1.0f;
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            if (feature_idx >= parcel_layer.features.size()) continue;
                             const FeatureRenderState* render_state =
                                 findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (!render_state || !render_state->visible) {
+                            if (render_state && !render_state->visible) {
                                 continue;
                             }
                             ImU32 overlay = IM_COL32(0, 0, 0, 0);
@@ -3020,10 +3365,9 @@ int runWorldSim3App(int argc, char** argv) {
                         const ImU32 selected_outline = IM_COL32(255, 240, 64, 255);
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            if (feature_idx >= parcel_layer.features.size()) continue;
                             const FeatureRenderState* render_state =
                                 findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (!render_state || !render_state->visible) {
+                            if (render_state && !render_state->visible) {
                                 continue;
                             }
                             if (selected_parcel_index_set.find((size_t)feature_idx) != selected_parcel_index_set.end()) {
@@ -3163,7 +3507,7 @@ int runWorldSim3App(int argc, char** argv) {
                     PolygonGeometryArtifact artifact;
                     ParcelRenderCacheBlob blob;
                     if (!loadBinaryPolygonGeometryArtifact(artifact_path, state.hydration_source_signature, artifact) ||
-                        artifact.features.size() != layer.features.size() ||
+                        (!layer.features.empty() && artifact.features.size() != layer.features.size()) ||
                         !build_polygon_gpu_blob(artifact, blob)) {
                         clearZoningGpuBuffers(li);
                         clearZoningGpuDrawState(li);
@@ -3261,22 +3605,22 @@ int runWorldSim3App(int argc, char** argv) {
 
                 if (zoning_gpu_color_state_keys[li] != color_state_key) {
                     std::vector<ImU32> zoning_colors(blob.features.size(), IM_COL32(0, 0, 0, 0));
+                    const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
                     for (size_t i = 0; i < blob.features.size(); ++i) {
                         const uint32_t feature_idx = blob.features[i].feature_idx;
-                        if ((size_t)feature_idx >= layer.features.size()) continue;
-                        const LayerDef::FeatureRecord& fg = layer.features[(size_t)feature_idx];
                         if (!(li < layer_fill_enabled.size() && layer_fill_enabled[li])) continue;
                         const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
-                        if (!render_state || !render_state->visible) continue;
-                        ImU32 color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                        if (is_zoning_polygon_layer(layer)) {
+                        if (render_state && !render_state->visible) continue;
+                        ImU32 color = base_color;
+                        if ((size_t)feature_idx < layer.features.size() && is_zoning_polygon_layer(layer)) {
+                            const LayerDef::FeatureRecord& fg = layer.features[(size_t)feature_idx];
                             const std::string zkey = zoningClassKey(fg);
                             auto it_col = zoning_zone_color.find(zkey);
                             if (it_col != zoning_zone_color.end()) {
                                 color = ImGui::ColorConvertFloat4ToU32(it_col->second);
                             }
                         }
-                        if (render_state->has_query_color) color = render_state->query_color;
+                        if (render_state && render_state->has_query_color) color = render_state->query_color;
                         zoning_colors[i] = mapPolygonFillColor(color, app_settings.map_polygon_fill_opacity);
                     }
                     std::string color_error;
@@ -3287,12 +3631,12 @@ int runWorldSim3App(int argc, char** argv) {
                 }
                 if (zoning_gpu_outline_state_keys[li] != outline_state_key) {
                     std::vector<ImU32> outline_colors(blob.features.size(), IM_COL32(0, 0, 0, 0));
+                    const ImU32 outline_color = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
                     for (size_t i = 0; i < blob.features.size(); ++i) {
                         const uint32_t feature_idx = blob.features[i].feature_idx;
-                        if ((size_t)feature_idx >= layer.features.size()) continue;
                         const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
-                        if (!render_state || !render_state->visible) continue;
-                        outline_colors[i] = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
+                        if (render_state && !render_state->visible) continue;
+                        outline_colors[i] = outline_color;
                     }
                     std::string outline_error;
                     if (updateZoningGpuOutlineColorBuffer(li, outline_colors, &outline_error)) {
@@ -3345,8 +3689,8 @@ int runWorldSim3App(int argc, char** argv) {
                         crime_point_gpu_uploaded_signature.clear();
                         crime_point_gpu_color_state_key = 0;
                         crime_point_gpu_artifact = PointGeometryArtifact{};
-                    } else if (point_artifact.positions.size() != crime_layer.features.size() ||
-                               point_artifact.features.size() != crime_layer.features.size()) {
+                    } else if (point_artifact.positions.size() != point_artifact.features.size() ||
+                               (!crime_layer.features.empty() && point_artifact.features.size() != crime_layer.features.size())) {
                         crime_state.geometry_source_signature = sig;
                         crime_state.geometry_phase = "artifact_feature_mismatch";
                         crime_state.geometry_loaded_from_artifact = false;
@@ -3362,9 +3706,10 @@ int runWorldSim3App(int argc, char** argv) {
                         crime_point_gpu_color_state_key = 0;
                         crime_point_gpu_artifact = PointGeometryArtifact{};
                     } else {
-                    point_glyphs.reserve(crime_layer.features.size());
-                    for (const LayerDef::FeatureRecord& fg : crime_layer.features) {
-                        point_glyphs.push_back(crimePointGlyphCode(fg));
+                    point_glyphs.reserve(point_artifact.features.size());
+                    for (size_t i = 0; i < point_artifact.features.size(); ++i) {
+                        if (i < crime_layer.features.size()) point_glyphs.push_back(crimePointGlyphCode(crime_layer.features[i]));
+                        else point_glyphs.push_back(0u);
                     }
                     std::string gpu_error;
                     if (ensureCrimePointGpuBuffersResident(sig, point_artifact.positions, &gpu_error) &&
@@ -3390,7 +3735,7 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                 }
                 if (crime_point_gpu_uploaded_signature == sig &&
-                    crime_point_gpu_artifact.positions.size() == crime_layer.features.size()) {
+                    crime_point_gpu_artifact.positions.size() == crime_point_gpu_artifact.features.size()) {
                     crime_state.geometry_source_signature = sig;
                     crime_state.geometry_phase = "gpu_ready";
                     crime_state.geometry_loaded_from_artifact = true;
@@ -3439,14 +3784,17 @@ int runWorldSim3App(int argc, char** argv) {
                     hash_mix(color_state_key, feature_render_state_key);
 
                     if (color_state_key != crime_point_gpu_color_state_key) {
-                        std::vector<ImU32> point_colors(crime_layer.features.size(), IM_COL32(0, 0, 0, 0));
+                        const size_t crime_feature_count = crime_point_gpu_artifact.features.size();
+                        std::vector<ImU32> point_colors(crime_feature_count, IM_COL32(0, 0, 0, 0));
                         const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(crime_layer.color);
-                        for (size_t i = 0; i < crime_layer.features.size(); ++i) {
+                        for (size_t i = 0; i < crime_feature_count; ++i) {
                             const FeatureRenderState* render_state =
                                 findFeatureRenderState(cached_feature_render, (size_t)crime_nibrs_layer_idx, i);
-                            if (!render_state || !render_state->visible) continue;
                             ImU32 color = base_color;
-                            if (render_state->has_query_color) color = render_state->query_color;
+                            if (render_state) {
+                                if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
+                                else if (render_state->has_query_color) color = render_state->query_color;
+                            }
                             point_colors[i] = color;
                         }
                         std::string color_error;
@@ -3542,8 +3890,8 @@ int runWorldSim3App(int argc, char** argv) {
             } else {
                 PointGeometryArtifact artifact;
                 if (!loadBinaryPointGeometryArtifact(artifact_path, sig, artifact) ||
-                    artifact.positions.size() != layer.features.size() ||
-                    artifact.features.size() != layer.features.size()) {
+                    artifact.positions.size() != artifact.features.size() ||
+                    (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
                     point_geometry_artifacts.erase(li);
                     point_geometry_artifact_signatures.erase(li);
                     clearPointLayerGpuBuffers(li);
@@ -3597,13 +3945,16 @@ int runWorldSim3App(int argc, char** argv) {
                 hash_f32(color_state_key, layer.color.z);
                 hash_f32(color_state_key, layer.color.w);
                 if (point_gpu_color_state_keys[li] != color_state_key) {
-                    std::vector<ImU32> point_colors(layer.features.size(), IM_COL32(0, 0, 0, 0));
+                    const size_t point_feature_count = point_geometry_artifacts[li].features.size();
+                    std::vector<ImU32> point_colors(point_feature_count, IM_COL32(0, 0, 0, 0));
                     const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                    for (size_t i = 0; i < layer.features.size(); ++i) {
+                    for (size_t i = 0; i < point_feature_count; ++i) {
                         const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
-                        if (!render_state || !render_state->visible) continue;
                         ImU32 color = base_color;
-                        if (render_state->has_query_color) color = render_state->query_color;
+                        if (render_state) {
+                            if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
+                            else if (render_state->has_query_color) color = render_state->query_color;
+                        }
                         point_colors[i] = color;
                     }
                     std::string color_error;
@@ -3613,9 +3964,11 @@ int runWorldSim3App(int argc, char** argv) {
                 }
                 const uint64_t glyph_state_key = color_state_key ^ 0x9f8d4c53b1a2401dULL;
                 if (point_gpu_glyph_state_keys[li] != glyph_state_key) {
-                    std::vector<uint32_t> glyph_codes(layer.features.size(), 0u);
-                    for (size_t i = 0; i < layer.features.size(); ++i) {
-                        glyph_codes[i] = point_glyph_for_layer_feature(layer, &layer.features[i]);
+                    const size_t point_feature_count = point_geometry_artifacts[li].features.size();
+                    std::vector<uint32_t> glyph_codes(point_feature_count, 0u);
+                    for (size_t i = 0; i < point_feature_count; ++i) {
+                        const LayerDef::FeatureRecord* fg = i < layer.features.size() ? &layer.features[i] : nullptr;
+                        glyph_codes[i] = point_glyph_for_layer_feature(layer, fg);
                     }
                     std::string glyph_error;
                     if (updatePointLayerGpuGlyphBuffer(li, glyph_codes, &glyph_error)) {
@@ -3661,7 +4014,7 @@ int runWorldSim3App(int argc, char** argv) {
             } else {
                 PolylineGeometryArtifact artifact;
                 if (!loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact) ||
-                    artifact.features.size() != layer.features.size()) {
+                    (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
                     polyline_geometry_artifacts.erase(li);
                     polyline_geometry_artifact_signatures.erase(li);
                     clearPolylineLayerGpuBuffers(li);
@@ -3713,13 +4066,16 @@ int runWorldSim3App(int argc, char** argv) {
                 hash_f32(color_state_key, layer.color.z);
                 hash_f32(color_state_key, layer.color.w);
                 if (polyline_gpu_color_state_keys[li] != color_state_key) {
-                    std::vector<ImU32> line_colors(layer.features.size(), IM_COL32(0, 0, 0, 0));
+                    const size_t line_feature_count = polyline_geometry_artifacts[li].features.size();
+                    std::vector<ImU32> line_colors(line_feature_count, IM_COL32(0, 0, 0, 0));
                     const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                    for (size_t i = 0; i < layer.features.size(); ++i) {
+                    for (size_t i = 0; i < line_feature_count; ++i) {
                         const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
-                        if (!render_state || !render_state->visible) continue;
                         ImU32 color = base_color;
-                        if (render_state->has_query_color) color = render_state->query_color;
+                        if (render_state) {
+                            if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
+                            else if (render_state->has_query_color) color = render_state->query_color;
+                        }
                         line_colors[i] = color;
                     }
                     std::string color_error;
@@ -3769,7 +4125,7 @@ int runWorldSim3App(int argc, char** argv) {
 
             PolygonGeometryArtifact artifact;
             if (!loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact) ||
-                artifact.features.size() != layer.features.size()) {
+                (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
                 polygon_geometry_artifacts.erase(li);
                 polygon_geometry_artifact_signatures.erase(li);
                 state.geometry_source_signature = sig;
@@ -3919,7 +4275,6 @@ int runWorldSim3App(int argc, char** argv) {
             &polygon_geometry_artifacts,
             &parcel_gpu_render_blob,
             &layer_spatial,
-            &layer_fallback_scan_cursor,
             &map_filter_state,
             &query_layers,
             &real_property_by_blocklot,

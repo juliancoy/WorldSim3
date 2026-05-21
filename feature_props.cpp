@@ -10,6 +10,23 @@ namespace {
 std::mutex g_feature_property_registry_mutex;
 std::unordered_map<const LayerDef::FeatureRecord*, const LayerDef::FeatureProperties*> g_feature_property_registry;
 std::unordered_map<const LayerDef::FeatureRecord*, FeaturePropertyPairs> g_transient_feature_property_registry;
+
+std::string findPropertyValueInPairs(const FeaturePropertyPairs& values, const std::string& key) {
+    for (const auto& kv : values) {
+        if (kv.first == key) return kv.second;
+    }
+    return "";
+}
+
+std::string findFirstPropertyValueInPairs(const FeaturePropertyPairs& values, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        if (!key) continue;
+        for (const auto& kv : values) {
+            if (kv.first == key) return kv.second;
+        }
+    }
+    return "";
+}
 }
 
 void rebuildFeaturePropertyRegistryForLayer(const LayerDef& layer) {
@@ -65,27 +82,42 @@ std::string getPropertyValue(const LayerDef::FeatureRecord& fg, const std::strin
     std::lock_guard<std::mutex> lk(g_feature_property_registry_mutex);
     auto tit = g_transient_feature_property_registry.find(&fg);
     if (tit != g_transient_feature_property_registry.end()) {
-        for (const auto& kv : tit->second) {
-            if (kv.first == key) return kv.second;
-        }
+        return findPropertyValueInPairs(tit->second, key);
     }
     auto it = g_feature_property_registry.find(&fg);
     if (it != g_feature_property_registry.end() && it->second) {
-        for (const auto& kv : it->second->values) {
-            if (kv.first == key) return kv.second;
-        }
+        return findPropertyValueInPairs(it->second->values, key);
     }
     return "";
 }
 
 std::string getPropertyValue(const LayerDef& layer, size_t feature_idx, const std::string& key) {
     if (const LayerDef::FeatureProperties* props = getFeatureProperties(layer, feature_idx)) {
-        for (const auto& kv : props->values) {
-            if (kv.first == key) return kv.second;
-        }
+        return findPropertyValueInPairs(props->values, key);
     }
     if (feature_idx >= layer.features.size()) return "";
     return getPropertyValue(layer.features[feature_idx], key);
+}
+
+std::string getFirstPropertyValue(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
+    std::lock_guard<std::mutex> lk(g_feature_property_registry_mutex);
+    auto tit = g_transient_feature_property_registry.find(&fg);
+    if (tit != g_transient_feature_property_registry.end()) {
+        return findFirstPropertyValueInPairs(tit->second, keys);
+    }
+    auto it = g_feature_property_registry.find(&fg);
+    if (it != g_feature_property_registry.end() && it->second) {
+        return findFirstPropertyValueInPairs(it->second->values, keys);
+    }
+    return "";
+}
+
+std::string getFirstPropertyValue(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys) {
+    if (const LayerDef::FeatureProperties* props = getFeatureProperties(layer, feature_idx)) {
+        return findFirstPropertyValueInPairs(props->values, keys);
+    }
+    if (feature_idx >= layer.features.size()) return "";
+    return getFirstPropertyValue(layer.features[feature_idx], keys);
 }
 
 std::string normalizeJoinKey(std::string s) {
@@ -103,37 +135,19 @@ std::string normalizeJoinKey(std::string s) {
 }
 
 std::string zoningClassKey(const LayerDef::FeatureRecord& fg) {
-    std::string z = getPropertyValue(fg, "Zoning");
-    if (z.empty()) z = getPropertyValue(fg, "Label");
-    if (z.empty()) z = getPropertyValue(fg, "ZoningLabel");
-    if (z.empty()) z = getPropertyValue(fg, "ZONING");
-    if (z.empty()) z = getPropertyValue(fg, "ZONED");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(fg, "CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(fg, "Type");
-    if (z.empty()) z = getPropertyValue(fg, "TYPE");
-    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
+    std::string z = getFirstPropertyValue(fg, {
+        "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
+        "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
 
 std::string zoningClassKey(const LayerDef& layer, size_t feature_idx) {
-    std::string z = getPropertyValue(layer, feature_idx, "Zoning");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "Label");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZoningLabel");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONING");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONED");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "Type");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "TYPE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DIST_CODE");
+    std::string z = getFirstPropertyValue(layer, feature_idx, {
+        "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
+        "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
@@ -147,63 +161,37 @@ std::string zoningGroupKey(const std::string& zone_key) {
 }
 
 std::string zoningClassLabel(const LayerDef::FeatureRecord& fg) {
-    std::string z = getPropertyValue(fg, "Label");
-    if (z.empty()) z = getPropertyValue(fg, "ZONING");
-    if (z.empty()) z = getPropertyValue(fg, "ZONED");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(fg, "CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(fg, "Type");
-    if (z.empty()) z = getPropertyValue(fg, "TYPE");
-    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
+    std::string z = getFirstPropertyValue(fg, {
+        "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
 
 std::string zoningClassLabel(const LayerDef& layer, size_t feature_idx) {
-    std::string z = getPropertyValue(layer, feature_idx, "Label");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONING");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONED");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "Type");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "TYPE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DIST_CODE");
+    std::string z = getFirstPropertyValue(layer, feature_idx, {
+        "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
 
 std::string zoningClassTooltip(const LayerDef::FeatureRecord& fg) {
-    std::string z = getPropertyValue(fg, "ZONING");
-    if (z.empty()) z = getPropertyValue(fg, "ZONED");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(fg, "CLASS");
-    if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(fg, "Type");
-    if (z.empty()) z = getPropertyValue(fg, "TYPE");
-    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
+    std::string z = getFirstPropertyValue(fg, {
+        "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
 
 std::string zoningClassTooltip(const LayerDef& layer, size_t feature_idx) {
-    std::string z = getPropertyValue(layer, feature_idx, "ZONING");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONED");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "ZONE_DIST");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "CLASS");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DISTRICT");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "Type");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "TYPE");
-    if (z.empty()) z = getPropertyValue(layer, feature_idx, "DIST_CODE");
+    std::string z = getFirstPropertyValue(layer, feature_idx, {
+        "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }

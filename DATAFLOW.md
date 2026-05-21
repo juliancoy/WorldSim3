@@ -20,9 +20,10 @@ WorldSim3 should converge on three broad classes of disk artifacts:
 
 The startup rule should be intentionally simple:
 
-- Geometry startup reads canonical layer binaries and compiled geometry artifacts that are already shaped for runtime use.
-- DuckDB is the universal durable attribute store for text, numeric, and query-oriented feature data.
-- Runtime state should orchestrate GPU artifact residency and query readiness, not retain CPU geometry as an interaction fallback.
+- Geometry startup reads compiled geometry artifacts that are already shaped for runtime/GPU use.
+- Attribute startup opens `data/worldsim.duckdb` and reads text, numeric, join, filter, detail, and query-oriented feature data from DuckDB tables.
+- Canonical layer binaries are build/import artifacts and rebuild inputs. They are not the normal interactive startup source for attributes, joins, filters, or render geometry.
+- Runtime state should orchestrate GPU artifact residency and DuckDB query readiness, not retain CPU geometry/property bags as an interaction fallback.
 
 ## Single High-Grade Pipeline Rule
 
@@ -52,7 +53,7 @@ source payloads / SSOT
      -> direct-uploadable geometry artifact
   -> attribute ingester
      -> DuckDB canonical feature tables
-  -> optional derived domain tables/caches
+  -> optional DuckDB-derived domain tables/caches
   -> UI-visible feature and query workflows
 ```
 
@@ -60,7 +61,7 @@ The key simplification is:
 
 - geometry artifacts should not carry full property bags
 - DuckDB should not be asked to provide render geometry
-- runtime should stop treating full CPU geometry objects as the primary durable interface between import and rendering
+- runtime should stop treating full CPU geometry objects or canonical property bags as the primary durable interface between persisted artifacts and interaction
 
 ## Explicit Boundaries
 
@@ -111,8 +112,9 @@ They must not:
 - require a live runtime session to exist
 - exist only as a temporary runtime merge that disappears after shutdown
 - require reparsing raw GeoJSON in order to become renderable every time the app starts
+- require interactive startup to rebuild feature property bags from canonical binaries when DuckDB already contains the needed attribute columns
 
-If a domain join is important enough for search, screening, or inspection, it should be represented either as canonical DuckDB data or as an explicit derived artifact, not as an accidental byproduct of one runtime session.
+If a domain join is important enough for search, screening, filtering, inspection, styling, or choropleth classification, it belongs in DuckDB as a canonical or derived table. A separate binary sidecar may exist only as a DuckDB-derived acceleration artifact with the same source/build signature; it must not become a competing source of truth.
 
 ### 3. Runtime Geometry Boundary
 
@@ -122,15 +124,16 @@ Runtime layer records may:
 
 - load compiled geometry artifacts and resident GPU buffers
 - support culling, upload scheduling, and GPU picking
-- assemble session-scoped derived structures needed for immediate interaction
+- hold compact session views of DuckDB-backed attributes needed for immediate interaction
 
 They must not:
 
 - become the only place where important attribute detail exists
 - redefine the canonical meaning of a persisted artifact
 - force analytical workflows to depend on frame-loop timing or CPU geometry residency
+- rebuild large text/numeric/property columns from canonical binaries during normal startup when those columns are already persisted in DuckDB
 
-Runtime-only joins are acceptable as accelerators or temporary assembly steps, but not as the sole durable representation of domain facts.
+Runtime-only joins are acceptable only as short-lived accelerators over DuckDB-backed columns or explicit derived artifacts. They are not acceptable as the sole durable representation of domain facts, and they should not be rebuilt by scanning canonical feature property bags on the startup critical path.
 
 ### 4. Derived Runtime Boundary
 
@@ -156,12 +159,12 @@ They must not:
 
 ### 5. DuckDB Boundary
 
-DuckDB is the analytics materialization boundary.
+DuckDB is the attribute, semantic, and analytics materialization boundary.
 
 DuckDB may:
 
 - be the universal durable store for feature attributes, normalized fields, and query-oriented denormalizations
-- accelerate search, filtering, reporting, and ad hoc analysis
+- accelerate startup semantic hydration, search, filtering, reporting, choropleths, detail panels, and ad hoc analysis
 - store derived tables such as `unified_parcels` when those joins are query-facing
 - store generic repository/source metadata keyed by provenance rather than region-specific one-off tables
 
@@ -170,6 +173,7 @@ DuckDB must not:
 - be required to provide map geometry
 - be treated as the render-geometry source
 - be bypassed by large parallel property bags persisted inside geometry caches
+- be bypassed by normal startup paths that rebuild semantic columns from canonical binary property bags
 - redefine canonical truth through DB-only transforms that cannot be rebuilt from persisted inputs
 - materialize geography-named special tables such as one region per table; geography belongs in rows and provenance columns, not in schema names
 
@@ -410,7 +414,8 @@ The main artifacts are:
 | `data/cache/derived/parcel_vacancy_status.json` | Derived parcel status cache | Derived cache refresh | Derived cache refresh and parcel styling | Stores derived parcel vacancy status records. Invalidated by propagated source signatures/generations. |
 | `data/filters/*.json` | Persisted repeatable filter definitions | REST filter registry and future analytics tooling | Repeatable filter apply workflows, audit/export tooling | Versioned declarative filter specs over canonical normalized fields. Distinct from `MapFilterState` and renderer-local UI state. |
 | `data/cache/screenshots/*` | User screenshots | Screenshot capture path | User/debug workflows | Output artifacts, not inputs to the layer pipeline. |
-| `data/worldsim.duckdb` | Canonical attribute and query store | Explicit DuckDB analytics rebuild / future ingest pipeline | Query/search/right-panel analytics, repeatable filters, detail panels, derived analytics | Durable home for normalized feature attributes and query-oriented denormalizations. It is not a render-geometry cache and should not be asked to become one. |
+| `data/worldsim.duckdb` | Canonical attribute and query store | Explicit DuckDB analytics rebuild / future ingest pipeline | Startup semantic hydration, query/search/right-panel analytics, repeatable filters, detail panels, choropleth/filter column extraction, derived analytics | Durable home for normalized feature attributes and query-oriented denormalizations. It is not a render-geometry cache and should not be asked to become one. |
+| `data/cache/derived/*.bin` | Optional DuckDB-derived column acceleration cache | DuckDB-backed derived cache builder | Startup semantic column mapping, renderer color/filter buffer construction | Optional performance sidecar for hot columns. Must carry DuckDB/source signatures and be rebuildable from `data/worldsim.duckdb`; it is not an independent source of truth. |
 | `data/analytics/*` | Offline analytics exports | Scripts | User/audit workflows | Example: vacancy timeseries CSV/QA JSON. Not used for normal startup geometry acquisition. |
 | `data/tiles/<z>/<x>/<y>.png` | OSM raster tile cache | Basemap lazy downloader or preseeded data | Basemap renderer | On-disk basemap PNGs. Disk presence is memoized in memory and can be cleared without deleting PNGs. |
 | `data/tiles_topo*/<z>/<x>/<y>.png` | Topographic raster tile cache | Basemap lazy downloader or preseeded data | Basemap renderer | Topographic raster tiles. `data/tiles_topographic` may be used as an alternate/preferred topo source when present. |
@@ -434,11 +439,16 @@ On startup, `app_main_loop.cpp` should enqueue every enabled geometry layer for 
 That does not mean a text interchange export should ever be reparsed during normal startup. The preferred path is:
 
 ```text
-source payloads / SSOT
-  -> canonical layer binary
-  -> compiled geometry artifact on disk
-  -> runtime loads binary artifacts
-  -> runtime uploads artifact-shaped buffers to Vulkan
+render path:
+  compiled geometry artifact on disk
+    -> runtime maps/loads artifact metadata
+    -> runtime uploads artifact-shaped buffers to Vulkan
+
+semantic path:
+  data/worldsim.duckdb
+    -> query/load required normalized columns
+    -> optional DuckDB-derived column sidecar
+    -> renderer color/filter/detail buffers
 ```
 
 The target readiness split should instead be:
@@ -447,10 +457,32 @@ The target readiness split should instead be:
 compiled geometry artifact present
   -> GPU buffers resident
   -> GPU picking ready
-  -> DuckDB-backed detail/query workflows ready
+DuckDB present and current
+  -> attribute columns ready
+  -> filter/choropleth/detail/query workflows ready
 ```
 
 The frame loop should not compensate for missing compiled geometry by scanning full CPU feature sets. Large geometry layers are either drawn through the retained GPU path or remain non-drawable until their compiled geometry artifact is ready. This includes polygon and polyline outlines: they are retained geometry, not an ImGui fallback workload.
+
+The frame loop should also not compensate for missing DuckDB-derived semantic columns by rebuilding full CPU property bags from canonical binaries. If DuckDB is missing or stale, semantic features should report stale/unavailable status or use an explicitly built derived sidecar with matching signatures. Rebuilding DuckDB or scanning canonical property bags is offline/background work, not startup work.
+
+## Startup Preprocess Contract
+
+Interactive startup has two separate responsibilities:
+
+- report artifact readiness
+- start the main map UI/API without doing artifact construction
+
+The main map UI must not build geometry, DuckDB, or semantic artifacts on the frame-loop path. Startup may inspect enabled layers and DuckDB freshness, but interactive launch must not synchronously run preprocessing before the status API and UI are alive. Missing or stale artifacts should be reported as readiness issues; affected layers remain unavailable or degraded according to their render contract.
+
+Preprocessing is an explicit CLI operation:
+
+```text
+worldsim3 --startup-preprocess [--reserve-cores N]
+worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]
+```
+
+These commands may scan canonical sources and write artifacts. Normal interactive startup must not invoke them implicitly. This keeps expensive artifact writes and canonical-source scans out of the renderer and out of the startup critical path; operators can prepare or repair artifacts intentionally from CLI.
 
 ## Compiled Geometry Artifacts
 
@@ -492,9 +524,9 @@ source layer
   -> Vulkan upload and GPU picking
 ```
 
-## Derived Runtime Caches
+## Derived Attribute And Column Caches
 
-Derived caches are rebuilt in `derived_layer_caches.cpp`.
+Derived attribute caches are currently rebuilt in `derived_layer_caches.cpp`. The target contract is that these caches are DuckDB-backed: DuckDB owns the durable columns/tables, and runtime caches are compact session views or optional binary sidecars derived from those DuckDB rows.
 
 The key derived data includes:
 
@@ -509,7 +541,22 @@ The key derived data includes:
 
 Invalidation should use propagated geometry-artifact source signatures, not only feature counts. This matters when a source file changes but keeps the same number of rows.
 
-Derived parcel joins should be columnar after hydration. Runtime code may scan canonical feature properties once to build compact arrays such as `parcel_blocklot_by_feature`, owner search text, address search text, and per-feature overlay arrays. Layer enable/disable toggles must not rescan parcel property bags with `getPropertyValue(...)` or `firstDisplayProperty(...)`; toggles should only flip visibility/color state or reuse existing derived arrays.
+Derived parcel joins should be columnar after semantic load. Runtime code should get compact arrays such as `parcel_blocklot_by_feature`, owner search text, address search text, status, zip, numeric values, and per-feature overlay arrays from DuckDB tables or DuckDB-derived sidecars. Layer enable/disable toggles must not rescan parcel property bags with `getPropertyValue(...)` or `firstDisplayProperty(...)`; toggles should only flip visibility/color state or reuse existing derived arrays.
+
+Runtime canonical loads must not duplicate property storage. If a layer owns `feature_properties`, property lookup should use the layer-indexed accessors directly; the transient feature-property registry is only for temporary feature vectors that do not have an owning `LayerDef::feature_properties` array. Rebuilding a global pointer registry or copying every property pair during startup is not an acceptable disk-cache strategy because it turns persisted column data back into session-only CPU property bags.
+
+The next target state is to persist the high-traffic derived columns in DuckDB and optionally mirror them into versioned binary sidecars. Startup should prefer opening DuckDB or matching sidecars for fields such as parcel blocklot, owner search text, address search text, normalized status, zip, and numeric value/tax fields. If DuckDB or the sidecar source signatures match, startup must not scan canonical property bags to rebuild those columns.
+
+Required DuckDB-owned startup columns include:
+
+- stable layer id and feature index
+- blocklot and other join keys
+- owner display/search text
+- address display/search text
+- status, zip, and normalized categorical fields
+- numeric parcel/property values used by filters, choropleths, and detail panels
+- parcel-level vacancy/tax/derived counts and amounts
+- source signatures/build signatures needed to validate optional sidecars
 
 The unified parcel cache is invalidated when any of these change:
 
@@ -536,7 +583,8 @@ data/worldsim.duckdb
 Writer:
 
 ```text
-duckdb_analytics.cpp -> DuckDbAnalytics::rebuild()
+duckdb_analytics.cpp -> DuckDbAnalytics::ensureCurrentArtifact()
+  -> DuckDbAnalytics::rebuild() only when missing, invalidated, or structurally invalid
 ```
 
 Reader:
@@ -547,17 +595,49 @@ duckdb_analytics.cpp -> DuckDbAnalytics::executeMapQuery()
 
 DuckDB is the canonical attribute and query store, not the render cache. The intended end state is direct ingest from persisted canonical inputs and derived artifacts rather than any session-only CPU geometry state.
 
-DuckDB stores extracted feature attributes in `layer_features` and parcel-level property/detail fields in `unified_parcels`. This is the intended home for searchable owner/address/value/detail data. It is not the source of startup render geometry.
+DuckDB stores extracted feature attributes in `layer_features`, full/long-form properties in `layer_feature_properties`, and parcel-level property/detail fields in `unified_parcels`. This is the intended home for searchable owner/address/value/detail data, filter inputs, choropleth inputs, and parcel join keys. It is not the source of startup render geometry.
+
+Normal interactive startup should treat DuckDB as the semantic load source:
+
+```text
+data/worldsim.duckdb
+  -> layer_features / unified_parcels / derived views
+  -> compact runtime semantic arrays
+  -> GPU color/filter/selection buffers and detail/query UI
+```
+
+Normal interactive startup should not do this:
+
+```text
+*.canonical.bin
+  -> FeatureRecord vectors
+  -> FeatureProperties/property bags
+  -> getPropertyValue/firstDisplayProperty scans
+  -> runtime semantic arrays
+```
+
+That canonical-binary path is allowed for explicit rebuild, validation, and migration tooling. It is not the professional steady-state startup path when `data/worldsim.duckdb` is current.
 
 The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied.
+
+DuckDB artifact hydration is isolated in `DuckDbAnalytics::ensureCurrentArtifact()`. That function is the normal provisioning entrypoint: it validates and reuses `data/worldsim.duckdb` when the artifact is current, and calls the unconditional low-level writer `DuckDbAnalytics::rebuild()` only when the output artifact does not exist, has an outdated source signature, or fails structural validation.
+
+Runtime layer hydration and DuckDB artifact hydration are separate responsibilities:
+
+- layer/runtime hydration prepares renderable geometry metadata from persisted geometry artifacts
+- DuckDB artifact hydration materializes the persisted semantic/query database
+- startup and frame-loop code must not invoke DuckDB artifact hydration to satisfy a query or render request
+- explicit CLI/provisioning flows may invoke `ensureCurrentArtifact()` after the required source/parcel inputs have been prepared
+- explicit destructive/manual maintenance flows may invoke `rebuild()` directly when the operator intentionally wants a full rewrite
 
 DuckDB rebuild is intentionally explicit. The SQL tab exposes a rebuild button, and command-line/offline tools may also rebuild it. The frame loop does not automatically rebuild `data/worldsim.duckdb`, because a full rebuild can write multiple gigabytes and can stall the UI while parcels are still becoming render-ready.
 
 If DuckDB is missing or stale:
 
 - map rendering and GPU upload still proceed from compiled geometry artifacts
-- DuckDB-backed search/detail/query features report that the cache is unavailable or stale
+- DuckDB-backed search/detail/query/filter/choropleth features report that the cache is unavailable or stale
 - the user can rebuild the analytics cache when interactive startup is no longer on the critical path
+- runtime must not silently rebuild large property bags from canonical binaries on the startup critical path to hide the stale DuckDB state
 
 Applied rule for parcel history:
 
@@ -586,7 +666,8 @@ Clearing compiled geometry data should clear geometry-artifact residency, queued
 The architectural distinction should now be:
 
 - compiled geometry artifacts exist to make rendering and GPU picking cheap
-- DuckDB exists to make attributes, detail panels, repeatable filters, and analytics cheap
-- runtime memory exists to orchestrate those two systems, not to cache CPU geometry as a third canonical persistence model
+- DuckDB exists to make attributes, joins, detail panels, repeatable filters, choropleths, search, and analytics cheap
+- optional derived binary sidecars exist only to make DuckDB-owned hot columns faster to map/load
+- runtime memory exists to orchestrate geometry artifacts and DuckDB-backed semantics, not to cache CPU geometry or property bags as a third canonical persistence model
 
-The next step is to make explicit-type compiled geometry artifacts the only geometry runtime path for all major geometry families.
+The next implementation step is to remove remaining startup semantic hydration from canonical binaries. Explicit-type compiled geometry artifacts should be the only geometry runtime path for all major geometry families, and DuckDB or DuckDB-derived sidecars should be the only normal startup path for owner/address/blocklot/status/value/filter/choropleth columns.

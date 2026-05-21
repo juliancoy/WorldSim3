@@ -437,6 +437,27 @@ bool DuckDbAnalytics::validateExistingCache() {
     }
 }
 
+DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
+    const std::vector<LayerDef>& layers,
+    const std::vector<UnifiedParcelRecord>& unified_parcels) {
+    DuckDbArtifactEnsureResult result;
+    const bool stale_or_missing = needsRebuild(layers);
+    result.invalidated = stale_or_missing;
+
+    if (!stale_or_missing && validateExistingCache()) {
+        result.ok = true;
+        result.reused_existing = true;
+        result.message = status_.message;
+        return result;
+    }
+
+    result.invalidated = true;
+    result.rebuilt = true;
+    result.ok = rebuild(layers, unified_parcels);
+    result.message = status_.message;
+    return result;
+}
+
 bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels) {
     try {
         struct ParcelAnalyticsRow {

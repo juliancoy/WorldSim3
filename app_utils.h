@@ -61,6 +61,7 @@ std::string firstDisplayProperty(const LayerDef::FeatureRecord& fg, std::initial
 std::string firstDisplayProperty(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys);
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);
 std::string featureBlockLotJoinKey(const LayerDef::FeatureRecord& fg);
+std::string featureBlockLotJoinKey(const LayerDef& layer, size_t feature_idx);
 std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
 std::filesystem::path provenanceStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
 std::filesystem::path provenanceSourceArtifactPath(const std::filesystem::path& root, const LayerDef& layer, const std::string& artifact_name);

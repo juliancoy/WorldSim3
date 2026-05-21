@@ -50,7 +50,6 @@ struct MapTabContext {
     const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
-    std::vector<size_t>* layer_fallback_scan_cursor = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;

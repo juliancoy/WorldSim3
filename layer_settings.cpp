@@ -152,16 +152,7 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
             (*shared.layer_heatmap_zoom_adaptive_bandwidth)[ctx.idx] = adaptive;
             *shared.layer_heatmap_state_changed = true;
         }
-        if (shared.heatmap_allow_cpu_fallback) {
-            bool allow_fallback = *shared.heatmap_allow_cpu_fallback;
-            if (ImGui::Checkbox("Allow CPU fallback if GPU path fails", &allow_fallback)) {
-                *shared.heatmap_allow_cpu_fallback = allow_fallback;
-                *shared.layer_heatmap_state_changed = true;
-            }
-            if (!allow_fallback) {
-                ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
-            }
-        }
+        ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
         *shared.heatmap_controls_active |= ImGui::IsItemActive();
     } else if (resolved_layer_algo == kAggregateGpuSplatHue) {
         *shared.layer_heatmap_state_changed |= shared.heatmap_input_float_enter("Splat radius", (*shared.layer_heatmap_bandwidth_px)[ctx.idx], 2.0f, 96.0f, "%.1f");
@@ -171,16 +162,7 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
             (*shared.layer_heatmap_zoom_adaptive_bandwidth)[ctx.idx] = adaptive;
             *shared.layer_heatmap_state_changed = true;
         }
-        if (shared.heatmap_allow_cpu_fallback) {
-            bool allow_fallback = *shared.heatmap_allow_cpu_fallback;
-            if (ImGui::Checkbox("Allow CPU fallback if GPU path fails", &allow_fallback)) {
-                *shared.heatmap_allow_cpu_fallback = allow_fallback;
-                *shared.layer_heatmap_state_changed = true;
-            }
-            if (!allow_fallback) {
-                ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
-            }
-        }
+        ImGui::TextDisabled("GPU path is required. Aggregate is skipped until GPU succeeds.");
         ImGui::TextDisabled("Preserves average source hue while density drives brightness and alpha.");
         *shared.heatmap_controls_active |= ImGui::IsItemActive();
     } else if (resolved_layer_algo == kAggregateLodGeometry) {

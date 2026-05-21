@@ -154,13 +154,15 @@ std::vector<LayerDef::FeatureRecord> loadLayerPointsFromFile(
             }
         }
         for (auto& g : geoms) {
-            setTransientFeatureProperties(g, props);
             if (out_feature_properties) {
                 LayerDef::FeatureProperties fp;
                 fp.values = props;
                 out_feature_properties->push_back(std::move(fp));
+                features.push_back(std::move(g));
+            } else {
+                features.push_back(std::move(g));
+                setTransientFeatureProperties(features.back(), props);
             }
-            features.push_back(std::move(g));
         }
     }
     return features;
@@ -333,7 +335,6 @@ void hydrateLayerBatches(
                 stream_aborted = true;
                 return false;
             }
-            setTransientFeatureProperties(g, props);
             batch.push_back(std::move(g));
             LayerDef::FeatureProperties fp;
             fp.values = props;

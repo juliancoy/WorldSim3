@@ -2,7 +2,6 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "app_utils.h"
-#include "cpu_zoning_fallback.h"
 #include "feature_props.h"
 #include "geo.h"
 #include "layer_geometry.h"
@@ -19,9 +18,6 @@
 
 namespace {
 
-constexpr size_t kMaxFallbackFullScanFeatures = 12000;
-constexpr size_t kFallbackScanBudgetPerFrame = 4096;
-constexpr size_t kMaxLargeParcelCpuFallbackFeatures = 100000;
 constexpr float kPointMarkerRadiusPx = 5.0f;
 constexpr float kPointMarkerOutlinePx = 1.6f;
 constexpr float kPointClusterCellPx = 28.0f;
@@ -1128,40 +1124,6 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
              l.features.size() > kMaxSmoothHeatSamplesPerLayer)
                 ? std::max<size_t>(1, (l.features.size() + kMaxSmoothHeatSamplesPerLayer - 1) / kMaxSmoothHeatSamplesPerLayer)
                 : 1;
-        const bool use_bounded_fallback_scan =
-            ctx.layer_fallback_scan_cursor &&
-            layer_idx < ctx.layer_fallback_scan_cursor->size() &&
-            l.features.size() > kMaxFallbackFullScanFeatures;
-        if (use_bounded_fallback_scan) {
-            if (ctx.should_recompute_heatmap && layer_uses_heatmap_for_cache) {
-                continue;
-            }
-            const size_t total = l.features.size();
-            const size_t cursor = (*ctx.layer_fallback_scan_cursor)[layer_idx] % total;
-            const size_t budget = std::min(total, kFallbackScanBudgetPerFrame);
-            for (size_t offset = 0; offset < budget; ++offset) {
-                const size_t fi = (cursor + offset) % total;
-                auto& fg = l.features[fi];
-                renderFeature(
-                    ctx,
-                    layer_idx,
-                    fi,
-                    l,
-                    fg,
-                    base_color,
-                    is_heat_layer,
-                    is_zoning_layer,
-                    heat_normalization,
-                    normalization_group_key,
-                    layer_uses_heatmap_for_cache,
-                    layer_uses_lod_for_draw,
-                    true,
-                    smooth_sample_stride,
-                    &deferred_point_jobs);
-            }
-            (*ctx.layer_fallback_scan_cursor)[layer_idx] = (cursor + budget) % total;
-            continue;
-        }
         if (should_cluster_point_layer) {
             render_candidates.clear();
             render_candidates.reserve(l.features.size());

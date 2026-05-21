@@ -19,6 +19,14 @@ struct DuckDbAnalyticsStatus {
     std::string message;
 };
 
+struct DuckDbArtifactEnsureResult {
+    bool ok = false;
+    bool rebuilt = false;
+    bool reused_existing = false;
+    bool invalidated = false;
+    std::string message;
+};
+
 struct DuckDbQueryResult {
     bool ok = false;
     std::string message;
@@ -52,6 +60,9 @@ public:
     const DuckDbAnalyticsStatus& status() const { return status_; }
     bool needsRebuild(const std::vector<LayerDef>& layers) const;
     bool validateExistingCache();
+    DuckDbArtifactEnsureResult ensureCurrentArtifact(
+        const std::vector<LayerDef>& layers,
+        const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     bool rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     DuckDbQueryResult executeMapQuery(
         const std::string& sql,

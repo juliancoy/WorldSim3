@@ -21,7 +21,7 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
         !ctx.clear_cache_tile_memory || !ctx.clear_cache_tile_disk_presence ||
         !ctx.last_cache_clear_msg || !ctx.cache_hydration_dir ||
         !ctx.cache_derived_dir || !ctx.cache_aggregate_dir || !ctx.layers || !ctx.layer_spatial ||
-        !ctx.layer_fallback_scan_cursor || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.hydrated_mutex ||
+        !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.hydrated_mutex ||
         !ctx.hydrated_queue || !ctx.spatial_mutex || !ctx.spatial_jobs || !ctx.spatial_results ||
         !ctx.spatial_cv || !ctx.spatial_index_requested_feature_count ||
         !ctx.spatial_index_requested_signature || !ctx.hydrate_req_mutex || !ctx.hydrate_requests ||
@@ -189,9 +189,6 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                 releaseContainerStorage((*ctx.layers)[i].features);
                 releaseContainerStorage((*ctx.layers)[i].feature_properties);
                 (*ctx.layer_spatial)[i] = LayerSpatialIndex{};
-                if (i < ctx.layer_fallback_scan_cursor->size()) {
-                    (*ctx.layer_fallback_scan_cursor)[i] = 0;
-                }
                 if (i < ctx.layer_profile_accumulators->size()) {
                     (*ctx.layer_profile_accumulators)[i] = LayerProfileAccumulator{};
                 }

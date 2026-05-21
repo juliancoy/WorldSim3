@@ -314,8 +314,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                 auto build_raster_group = [&](const std::vector<HeatSample>& group) {
                     if (group.empty()) return;
                     const HeatSample& settings = group.front();
-                    if (isGpuSplatFamilyAlgo(settings.algo) &&
-                        !settings.allow_cpu_fallback) {
+                    if (isGpuSplatFamilyAlgo(settings.algo)) {
                         std::string gpu_err;
                         TileTexture gpu_texture;
                         const float zf = settings.zoom_adaptive_bandwidth
@@ -355,7 +354,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     const float sx = (float)rw / std::max(0.0001f, raster_max_lon - raster_min_lon);
                     const float sy = (float)rh / std::max(0.0001f, raster_max_lat - raster_min_lat);
                     const bool preserved_gpu_splat =
-                        isGpuSplatFamilyAlgo(settings.algo) && !settings.allow_cpu_fallback;
+                        isGpuSplatFamilyAlgo(settings.algo);
                     const float screen_span_x =
                         viewport_w * (raster_max_lon - raster_min_lon) /
                         std::max(0.0001f, view_max_lon - view_min_lon);
@@ -433,7 +432,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         src.swap(dst);
                     };
 
-                    if (!gpu_ok && !settings.allow_cpu_fallback && isGpuSplatFamilyAlgo(settings.algo)) {
+                    if (!gpu_ok && isGpuSplatFamilyAlgo(settings.algo)) {
                         return;
                     }
                     if (!gpu_ok) {
@@ -452,7 +451,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         }
                     }
                     const bool skip_cpu_blur_for_gpu_splat =
-                        isGpuSplatFamilyAlgo(settings.algo) && gpu_ok && !settings.allow_cpu_fallback;
+                        isGpuSplatFamilyAlgo(settings.algo) && gpu_ok;
                     if (!skip_cpu_blur_for_gpu_splat) {
                         for (auto* field : {&density, &cr, &cg, &cb, &cw, &gv, &sv}) {
                             blur_field(*field, true);

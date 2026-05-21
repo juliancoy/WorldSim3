@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -137,6 +138,110 @@ bool readString(std::istream& in, std::string& out) {
     return n == 0 || readExact(in, out.data(), n);
 }
 
+class BufferedBinaryFileReader {
+public:
+    explicit BufferedBinaryFileReader(const fs::path& path) {
+        file_ = std::fopen(path.string().c_str(), "rb");
+        buffer_.resize(kBufferBytes);
+    }
+
+    ~BufferedBinaryFileReader() {
+        if (file_) std::fclose(file_);
+    }
+
+    BufferedBinaryFileReader(const BufferedBinaryFileReader&) = delete;
+    BufferedBinaryFileReader& operator=(const BufferedBinaryFileReader&) = delete;
+
+    explicit operator bool() const { return file_ != nullptr && ok_; }
+
+    bool seek(uint64_t offset) {
+        if (!file_) return false;
+#if defined(_WIN32)
+        if (_fseeki64(file_, static_cast<__int64>(offset), SEEK_SET) != 0) return false;
+#else
+        if (fseeko(file_, static_cast<off_t>(offset), SEEK_SET) != 0) return false;
+#endif
+        pos_ = 0;
+        end_ = 0;
+        ok_ = true;
+        return true;
+    }
+
+    bool readExact(void* dst, size_t n) {
+        auto* out = static_cast<uint8_t*>(dst);
+        while (n > 0) {
+            if (pos_ == end_ && !refill()) return false;
+            const size_t available = end_ - pos_;
+            const size_t take = std::min(n, available);
+            std::memcpy(out, buffer_.data() + pos_, take);
+            pos_ += take;
+            out += take;
+            n -= take;
+        }
+        return true;
+    }
+
+private:
+    bool refill() {
+        if (!file_) return false;
+        end_ = std::fread(buffer_.data(), 1, buffer_.size(), file_);
+        pos_ = 0;
+        if (end_ > 0) return true;
+        ok_ = false;
+        return false;
+    }
+
+    static constexpr size_t kBufferBytes = 1024 * 1024;
+    std::FILE* file_ = nullptr;
+    std::vector<uint8_t> buffer_;
+    size_t pos_ = 0;
+    size_t end_ = 0;
+    bool ok_ = true;
+};
+
+bool readU32(BufferedBinaryFileReader& in, uint32_t& out) {
+    uint8_t b[4];
+    if (!in.readExact(b, sizeof(b))) return false;
+    out = uint32_t(b[0]) |
+          (uint32_t(b[1]) << 8) |
+          (uint32_t(b[2]) << 16) |
+          (uint32_t(b[3]) << 24);
+    return true;
+}
+
+bool readU64(BufferedBinaryFileReader& in, uint64_t& out) {
+    uint8_t b[8];
+    if (!in.readExact(b, sizeof(b))) return false;
+    out = uint64_t(b[0]) |
+          (uint64_t(b[1]) << 8) |
+          (uint64_t(b[2]) << 16) |
+          (uint64_t(b[3]) << 24) |
+          (uint64_t(b[4]) << 32) |
+          (uint64_t(b[5]) << 40) |
+          (uint64_t(b[6]) << 48) |
+          (uint64_t(b[7]) << 56);
+    return true;
+}
+
+bool readExact(BufferedBinaryFileReader& in, void* dst, size_t n) {
+    return in.readExact(dst, n);
+}
+
+bool readFloat(BufferedBinaryFileReader& in, float& out) {
+    uint32_t bits = 0;
+    if (!readU32(in, bits)) return false;
+    static_assert(sizeof(float) == sizeof(uint32_t));
+    std::memcpy(&out, &bits, sizeof(float));
+    return true;
+}
+
+bool readString(BufferedBinaryFileReader& in, std::string& out) {
+    uint32_t n = 0;
+    if (!readU32(in, n) || n > kMaxBinaryHydrationStringBytes) return false;
+    out.resize(n);
+    return n == 0 || in.readExact(out.data(), n);
+}
+
 bool writeString(std::ostream& out, const std::string& s) {
     if (s.size() > std::numeric_limits<uint32_t>::max()) return false;
     if (!writeU32(out, static_cast<uint32_t>(s.size()))) return false;
@@ -172,6 +277,26 @@ bool writePolylinePaths(std::ostream& out, const std::vector<std::vector<ImVec2>
 }
 
 bool readPolylinePaths(std::istream& in, std::vector<std::vector<ImVec2>>& paths) {
+    paths.clear();
+    uint32_t path_count = 0;
+    if (!readU32(in, path_count) || path_count > kMaxBinaryHydrationRingsPerFeature) return false;
+    paths.reserve(path_count);
+    for (uint32_t pi = 0; pi < path_count; ++pi) {
+        uint32_t point_count = 0;
+        if (!readU32(in, point_count) || point_count > kMaxBinaryHydrationPointsPerRing) return false;
+        std::vector<ImVec2> path;
+        path.reserve(point_count);
+        for (uint32_t vi = 0; vi < point_count; ++vi) {
+            ImVec2 p;
+            if (!readFloat(in, p.x) || !readFloat(in, p.y)) return false;
+            path.push_back(p);
+        }
+        paths.push_back(std::move(path));
+    }
+    return true;
+}
+
+bool readPolylinePaths(BufferedBinaryFileReader& in, std::vector<std::vector<ImVec2>>& paths) {
     paths.clear();
     uint32_t path_count = 0;
     if (!readU32(in, path_count) || path_count > kMaxBinaryHydrationRingsPerFeature) return false;
@@ -490,7 +615,7 @@ bool loadBinaryPointGeometryArtifact(
     const fs::path& cache_path,
     const std::string& sig,
     PointGeometryArtifact& out) {
-    std::ifstream in(cache_path, std::ios::binary);
+    BufferedBinaryFileReader in(cache_path);
     if (!in) return false;
     std::array<char, 8> magic{};
     if (!readExact(in, magic.data(), magic.size())) return false;
@@ -567,7 +692,7 @@ bool loadBinaryPolylineGeometryArtifact(
     const fs::path& cache_path,
     const std::string& sig,
     PolylineGeometryArtifact& out) {
-    std::ifstream in(cache_path, std::ios::binary);
+    BufferedBinaryFileReader in(cache_path);
     if (!in) return false;
     static constexpr std::array<char, 8> kPolylineArtifactMagic{{'W','S','3','L','I','N','1','\0'}};
     std::array<char, 8> magic{};
@@ -646,7 +771,7 @@ bool loadBinaryPolygonGeometryArtifact(
     const fs::path& cache_path,
     const std::string& sig,
     PolygonGeometryArtifact& out) {
-    std::ifstream in(cache_path, std::ios::binary);
+    BufferedBinaryFileReader in(cache_path);
     if (!in) return false;
     static constexpr std::array<char, 8> kPolygonArtifactMagic{{'W','S','3','P','L','Y','1','\0'}};
     std::array<char, 8> magic{};
@@ -1062,8 +1187,11 @@ bool loadBinaryHydrationCache(
                 props.values.push_back({std::move(key), std::move(value)});
             }
             out.push_back(std::move(fg));
-            setTransientFeatureProperties(out.back(), props.values);
-            if (out_feature_properties) out_feature_properties->push_back(std::move(props));
+            if (out_feature_properties) {
+                out_feature_properties->push_back(std::move(props));
+            } else {
+                setTransientFeatureProperties(out.back(), std::move(props.values));
+            }
         }
         ok = true;
     }
@@ -1466,14 +1594,12 @@ bool loadBinaryCanonicalFeatureCollection(
     const std::string& sig,
     std::vector<LayerDef::FeatureRecord>& out,
     std::vector<LayerDef::FeatureProperties>* out_feature_properties) {
-    std::ifstream in(cache_path, std::ios::binary);
-    if (!in) return false;
-
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(cache_path, meta) || meta.source_signature != sig) return false;
-    in.clear();
-    in.seekg(static_cast<std::streamoff>(8 + 4 + 4 + 8 + kCanonicalFeatureSignatureBytes), std::ios::beg);
+
+    BufferedBinaryFileReader in(cache_path);
     if (!in) return false;
+    if (!in.seek(8 + 4 + 4 + 8 + kCanonicalFeatureSignatureBytes)) return false;
 
     out.clear();
     if (out_feature_properties) out_feature_properties->clear();
@@ -1516,8 +1642,11 @@ bool loadBinaryCanonicalFeatureCollection(
             props.values.push_back({std::move(key), std::move(value)});
         }
         out.push_back(std::move(fg));
-        setTransientFeatureProperties(out.back(), props.values);
-        if (out_feature_properties) out_feature_properties->push_back(std::move(props));
+        if (out_feature_properties) {
+            out_feature_properties->push_back(std::move(props));
+        } else {
+            setTransientFeatureProperties(out.back(), std::move(props.values));
+        }
     }
     return true;
 }

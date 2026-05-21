@@ -3,6 +3,7 @@
 #include "types.h"
 
 #include <cstddef>
+#include <initializer_list>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +19,8 @@ void setTransientFeatureProperties(LayerDef::FeatureRecord& fg, FeaturePropertyP
 void clearTransientFeatureProperties(const LayerDef::FeatureRecord& fg);
 std::string getPropertyValue(const LayerDef::FeatureRecord& fg, const std::string& key);
 std::string getPropertyValue(const LayerDef& layer, size_t feature_idx, const std::string& key);
+std::string getFirstPropertyValue(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys);
+std::string getFirstPropertyValue(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys);
 std::string normalizeJoinKey(std::string s);
 std::string zoningClassKey(const LayerDef::FeatureRecord& fg);
 std::string zoningClassKey(const LayerDef& layer, size_t feature_idx);

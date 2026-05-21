@@ -88,19 +88,9 @@ void coordinateLayerHydrationDependencies(const LayerDependencyCoordinatorContex
         ctx.enqueue_hydration((size_t)ctx.parcel_layer_idx, true);
     }
 
-    if (ctx.real_property_layer_idx >= 0 && (size_t)ctx.real_property_layer_idx < ctx.layers->size()) {
-        const bool filter_join_needed =
-            ctx.filter_enabled ||
-            (ctx.parcel_layer_idx >= 0 && (*ctx.layers)[(size_t)ctx.parcel_layer_idx].enabled) ||
-            vacant_layer_active ||
-            (ctx.filter_owner && ctx.filter_owner[0] != '\0') ||
-            (ctx.filter_address && ctx.filter_address[0] != '\0') ||
-            (ctx.filter_zip && ctx.filter_zip[0] != '\0');
-        if (filter_join_needed &&
-            !layerRuntimeReady(*ctx.layer_states, *ctx.status_mutex, ctx.real_property_layer_idx)) {
-            ctx.enqueue_hydration((size_t)ctx.real_property_layer_idx, true);
-        }
-    }
+    // Attribute joins such as owner/address/zip must be served from DuckDB or
+    // DuckDB-derived sidecars. Do not auto-hydrate real-property canonical
+    // feature/property bags just because parcel rendering or filters are active.
 
     const bool tax_layer_active =
         (ctx.tax_lien_layer_idx >= 0 && (*ctx.layers)[(size_t)ctx.tax_lien_layer_idx].enabled) ||

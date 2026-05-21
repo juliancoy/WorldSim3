@@ -618,19 +618,11 @@ bool layerUsesPolylineGeometry(const LayerDef& layer) {
 }
 
 std::string firstDisplayProperty(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
-    for (const char* key : keys) {
-        std::string v = trimDisplayValue(getPropertyValue(fg, key));
-        if (!v.empty()) return v;
-    }
-    return "";
+    return trimDisplayValue(getFirstPropertyValue(fg, keys));
 }
 
 std::string firstDisplayProperty(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys) {
-    for (const char* key : keys) {
-        std::string v = trimDisplayValue(getPropertyValue(layer, feature_idx, key));
-        if (!v.empty()) return v;
-    }
-    return "";
+    return trimDisplayValue(getFirstPropertyValue(layer, feature_idx, keys));
 }
 
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot) {
@@ -656,6 +648,28 @@ std::string featureBlockLotJoinKey(const LayerDef::FeatureRecord& fg) {
     bl = blockLotJoinKeyFromParts(getPropertyValue(fg, "BLOCK"), getPropertyValue(fg, "LOT"));
     if (!bl.empty()) return bl;
     return blockLotJoinKeyFromParts(getPropertyValue(fg, "block"), getPropertyValue(fg, "lot"));
+}
+
+std::string featureBlockLotJoinKey(const LayerDef& layer, size_t feature_idx) {
+    std::string bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "BLOCKLOT"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "blocklot"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "source_parcel_id"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "account_id"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "PIN"));
+    if (!bl.empty()) return bl;
+    bl = normalizeJoinKey(getPropertyValue(layer, feature_idx, "pin"));
+    if (!bl.empty()) return bl;
+    bl = blockLotJoinKeyFromParts(
+        getPropertyValue(layer, feature_idx, "BLOCK"),
+        getPropertyValue(layer, feature_idx, "LOT"));
+    if (!bl.empty()) return bl;
+    return blockLotJoinKeyFromParts(
+        getPropertyValue(layer, feature_idx, "block"),
+        getPropertyValue(layer, feature_idx, "lot"));
 }
 
 std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {

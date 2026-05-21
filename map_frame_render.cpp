@@ -210,7 +210,6 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
     layer_pass_ctx.parcel_render_blob = ctx.parcel_render_blob;
     layer_pass_ctx.layer_spatial = ctx.layer_spatial;
-    layer_pass_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
     layer_pass_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     layer_pass_ctx.layer_heatmap_use_gradient = ctx.layer_heatmap_use_gradient;
     layer_pass_ctx.layer_choropleth_gamma = ctx.layer_choropleth_gamma;

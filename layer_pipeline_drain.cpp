@@ -34,9 +34,6 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
                 if (ctx.layer_spatial && ready.index < ctx.layer_spatial->size()) {
                     (*ctx.layer_spatial)[ready.index] = LayerSpatialIndex{};
                 }
-                if (ctx.layer_fallback_scan_cursor && ready.index < ctx.layer_fallback_scan_cursor->size()) {
-                    (*ctx.layer_fallback_scan_cursor)[ready.index] = 0;
-                }
                 if (ctx.layer_profile_accumulators && ready.index < ctx.layer_profile_accumulators->size()) {
                     (*ctx.layer_profile_accumulators)[ready.index] = LayerProfileAccumulator{};
                 }

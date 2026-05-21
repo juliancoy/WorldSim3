@@ -249,7 +249,7 @@ bool isGenericPolygonLayerForGpu(const LayerDef& layer) {
 
 void drawMapTabWindow(const MapTabContext& ctx) {
     if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.center_lon || !ctx.center_lat || !ctx.zoom ||
-        !ctx.layers || !ctx.layer_spatial || !ctx.layer_fallback_scan_cursor || !ctx.map_filter_state || !ctx.query_layers || !ctx.real_property_by_blocklot ||
+        !ctx.layers || !ctx.layer_spatial || !ctx.map_filter_state || !ctx.query_layers || !ctx.real_property_by_blocklot ||
         !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.zoning_zone_color || !ctx.parcel_selection ||
         !ctx.selected_parcel_indices || !ctx.show_selected_zone_details || !ctx.selected_zone_idx || !ctx.element_info_state ||
         !ctx.layer_fill_enabled || !ctx.layer_hover_enabled || !ctx.layer_inspect_enabled || !ctx.layer_heatmap_enabled ||
@@ -529,7 +529,6 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
             map_frame_session_ctx.parcel_render_blob = ctx.parcel_render_blob;
             map_frame_session_ctx.layer_spatial = ctx.layer_spatial;
-            map_frame_session_ctx.layer_fallback_scan_cursor = ctx.layer_fallback_scan_cursor;
             map_frame_session_ctx.map_filter_state = ctx.map_filter_state;
             map_frame_session_ctx.query_layers = ctx.query_layers;
             map_frame_session_ctx.real_property_by_blocklot = ctx.real_property_by_blocklot;

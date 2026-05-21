@@ -15,6 +15,12 @@ The main map path is:
 
 Rendering should consume prepared state. It should not perform expensive data discovery, file scanning, or full filter evaluation in the frame loop.
 
+## Startup Readiness
+
+Rendering assumes compiled geometry artifacts and DuckDB semantics are already current. Startup may inspect artifact readiness, but interactive launch must not run preprocessing before the main map UI and status API are alive.
+
+The main renderer does not perform preprocessing, rebuild missing geometry, or silently fall back to CPU feature records. Missing or stale artifacts are prepared explicitly with `worldsim3 --startup-preprocess` or `worldsim3 --build-geometry-duckdb-artifacts`.
+
 ## Filter And Query Color Contract
 
 Filter evaluation produces `LayerFeatureRenderCache`:
@@ -124,7 +130,7 @@ Zoning layers are polygon layers with category `Zoning` or zoning-like names/fil
 
 The zoning GPU path stores base fill and outline colors per feature. Zone enabled/disabled state and zone colors are part of the color state key. Disabled zones should produce transparent feature colors rather than being filtered inside draw loops.
 
-The outline path should submit GPU-generated indirect line draws when supported by the Vulkan device. Each command slot references a feature's resident line-index range; transparent or out-of-view features are written with zero instances by compute. Devices without multi-draw indirect support may fall back to CPU-visible chunk line draws, but that fallback is compatibility behavior, not the target architecture.
+The outline path should submit GPU-generated indirect line draws. Each command slot references a feature's resident line-index range; transparent or out-of-view features are written with zero instances by compute.
 
 ### Raw Source Layers
 
@@ -148,7 +154,7 @@ High-quality GPU aggregate modes should reuse cached aggregate textures while pa
 
 ### LOD Geometry
 
-LOD geometry layers use precomputed geometry artifacts and a GPU draw path. The CPU feature pass is allowed only for aggregate sample generation or bounded point fallback work; it must not rebuild or redraw retained line/polygon geometry.
+LOD geometry layers use precomputed geometry artifacts and a GPU draw path. They must not rebuild or redraw retained line/polygon geometry from CPU feature records during normal rendering.
 
 ## Choropleth Contract
 
@@ -228,6 +234,6 @@ Do not rebuild geometry, filters, or color buffers just because the camera panne
 
 `render_layer_pass.*` handles primary layer drawing and sample collection.
 
-`render_tail_pass.*` and `map_render_overlays.*` handle late parcel overlays and fallback overlay drawing.
+`render_tail_pass.*` and `map_render_overlays.*` handle late parcel overlays.
 
 `app_main_loop.cpp` currently owns several persistent GPU color/geometry buffers and their state keys. New render work should prefer moving reusable state behind smaller services when that reduces coupling, but it must preserve the same invalidation contracts.
