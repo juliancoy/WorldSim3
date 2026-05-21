@@ -14,7 +14,8 @@ void drawGearPanel(
     AppSettings* app_settings,
     ImGuiContext* main_imgui_context,
     ImGuiContext* queue_imgui_context,
-    BootstrapProgress& bootstrap) {
+    BootstrapProgress& bootstrap,
+    const std::function<void()>& rescan_local_data) {
     if (!show_sources_panel || !*show_sources_panel) return;
 
     ImGui::SetNextWindowSize(ImVec2(540, 420), ImGuiCond_FirstUseEver);
@@ -63,6 +64,13 @@ void drawGearPanel(
                 ImGui::Text("Future: %zu", future_work.size());
                 ImGui::SameLine();
                 ImGui::Text("Skipped: %zuL/%zuT", skipped_layers, skipped_tiles);
+                if (rescan_local_data) {
+                    if (ImGui::Button("Rescan Local Data")) {
+                        rescan_local_data();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Refreshes detected local layer files.");
+                }
                 ImGui::Separator();
                 if (ImGui::BeginTabBar("work_tabs")) {
                     if (ImGui::BeginTabItem("Past Work")) {

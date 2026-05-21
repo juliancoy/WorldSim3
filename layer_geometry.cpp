@@ -5,11 +5,8 @@
 #include "geo.h"
 
 #include <algorithm>
-#include <array>
 #include <fstream>
 #include <optional>
-
-#include "earcut.hpp"
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
@@ -364,19 +361,6 @@ void loadLayerPoints(LayerDef& layer, const fs::path& root) {
     layer.features = loadLayerPointsFromFile(resolveStoredLayerPath(root, layer), &layer.feature_properties);
     refreshLayerGeometryUsageCache(layer);
     rebuildFeaturePropertyRegistryForLayer(layer);
-}
-
-std::vector<uint32_t> triangulateRings(const std::vector<std::vector<ImVec2>>& rings) {
-    using Pt = std::array<double, 2>;
-    std::vector<std::vector<Pt>> poly;
-    poly.reserve(rings.size());
-    for (const auto& ring : rings) {
-        std::vector<Pt> rp;
-        rp.reserve(ring.size());
-        for (const ImVec2& p : ring) rp.push_back(Pt{(double)p.x, (double)p.y});
-        poly.push_back(std::move(rp));
-    }
-    return mapbox::earcut<uint32_t>(poly);
 }
 
 std::vector<uint32_t> flattenLinePathsToSegmentIndices(const std::vector<std::vector<ImVec2>>& paths) {

@@ -70,8 +70,6 @@
 #include <cctype>
 #include <cfloat>
 #include <random>
-#include "earcut.hpp"
-
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 ScreenshotRequestState g_ScreenshotState;
@@ -216,6 +214,21 @@ struct ParcelGpuBuffer {
     VkDeviceSize size_bytes = 0;
 };
 
+struct ZoningOutlineFeatureGpuRecord {
+    uint32_t feature_idx = 0;
+    uint32_t vertex_offset = 0;
+    uint32_t vertex_count = 0;
+    uint32_t index_offset = 0;
+    uint32_t index_count = 0;
+    uint32_t line_index_offset = 0;
+    uint32_t line_index_count = 0;
+    uint32_t pad0 = 0;
+    float min_lon = 0.0f;
+    float min_lat = 0.0f;
+    float max_lon = 0.0f;
+    float max_lat = 0.0f;
+};
+
 struct ParcelGpuBuffers {
     ParcelGpuBuffer positions;
     ParcelGpuBuffer indices;
@@ -224,6 +237,8 @@ struct ParcelGpuBuffers {
     ParcelGpuBuffer colors;
     ParcelGpuBuffer overlay_colors;
     ParcelGpuBuffer outline_colors;
+    ParcelGpuBuffer outline_feature_records;
+    std::vector<ParcelRenderFeatureRecord> features;
     std::vector<ParcelRenderChunkRecord> chunks;
     uint32_t render_features = 0;
     uint32_t vertices = 0;
@@ -392,8 +407,35 @@ struct ZoningGpuLayerDescriptors {
 struct ZoningGpuLayerState {
     ParcelGpuBuffers buffers;
     bool outline_has_visible_colors = false;
+    std::vector<ImU32> outline_colors_cpu;
+    std::vector<ParcelGpuBuffer> outline_indirect_commands_by_frame;
+    std::vector<uint32_t> outline_indirect_capacity_by_frame;
+    std::vector<uint32_t> outline_indirect_count_by_frame;
+    std::vector<VkDescriptorSet> outline_compute_descriptor_sets_by_frame;
+    std::vector<bool> outline_compute_descriptor_dirty_by_frame;
+    bool outline_compute_descriptor_dirty = true;
+    bool outline_compute_pending = false;
+    float outline_compute_view_min_lon = 0.0f;
+    float outline_compute_view_min_lat = 0.0f;
+    float outline_compute_view_max_lon = 0.0f;
+    float outline_compute_view_max_lat = 0.0f;
+    std::vector<VkDrawIndexedIndirectCommand> outline_indirect_scratch;
     ParcelGpuDrawState draw_state;
     ZoningGpuLayerDescriptors descriptors;
+};
+
+struct ZoningOutlineIndirectComputePipeline {
+    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+};
+
+struct ZoningOutlineIndirectPushConstants {
+    uint32_t feature_count = 0;
+    float view_min_lon = 0.0f;
+    float view_min_lat = 0.0f;
+    float view_max_lon = 0.0f;
+    float view_max_lat = 0.0f;
 };
 
 struct ParcelGpuUploadPayload {
@@ -427,9 +469,12 @@ struct ParcelGpuUploadResult {
 static ParcelGpuBuffers g_ParcelGpuBuffers;
 static bool g_ParcelGpuOverlayHasVisibleColors = false;
 static bool g_ParcelGpuOutlineHasVisibleColors = false;
+static bool g_MultiDrawIndirectEnabled = false;
+static uint32_t g_MaxDrawIndirectCount = 1;
 static ParcelGpuDrawState g_ParcelGpuDrawState;
 static ParcelGpuPipeline g_ParcelGpuPipeline;
 static ParcelGpuPipeline g_ZoningGpuPipeline;
+static ZoningOutlineIndirectComputePipeline g_ZoningOutlineIndirectComputePipeline;
 static std::unordered_map<size_t, ZoningGpuLayerState> g_ZoningGpuLayers;
 static CrimePointGpuBuffers g_CrimePointGpuBuffers;
 static std::unordered_map<size_t, PointLayerGpuBuffers> g_PointGpuLayers;
@@ -470,7 +515,8 @@ static uint64_t parcelDeviceLocalBytes(const ParcelGpuBuffers& buffers) {
         (uint64_t)buffers.positions.size_bytes +
         (uint64_t)buffers.indices.size_bytes +
         (uint64_t)buffers.line_indices.size_bytes +
-        (uint64_t)buffers.vertex_feature_refs.size_bytes;
+        (uint64_t)buffers.vertex_feature_refs.size_bytes +
+        (uint64_t)buffers.outline_feature_records.size_bytes;
 }
 
 static uint64_t parcelHostVisibleBytes(const ParcelGpuBuffers& buffers) {
@@ -591,6 +637,12 @@ static const char* kGpuPickPointVertShaderPath = nullptr;
 static const char* kGpuPickPointFragShaderPath = WS3_GPU_PICK_POINT_FRAG_SPV;
 #else
 static const char* kGpuPickPointFragShaderPath = nullptr;
+#endif
+
+#if defined(WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV)
+static const char* kZoningOutlineIndirectShaderPath = WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV;
+#else
+static const char* kZoningOutlineIndirectShaderPath = nullptr;
 #endif
 
 struct ParcelGpuPushConstants {
@@ -815,12 +867,29 @@ static void destroyParcelGpuBuffers(ParcelGpuBuffers& buffers) {
     destroyParcelGpuBuffer(buffers.colors);
     destroyParcelGpuBuffer(buffers.overlay_colors);
     destroyParcelGpuBuffer(buffers.outline_colors);
+    destroyParcelGpuBuffer(buffers.outline_feature_records);
+    buffers.features.clear();
     buffers.chunks.clear();
     buffers.render_features = 0;
     buffers.vertices = 0;
     buffers.indices_count = 0;
     buffers.line_indices_count = 0;
     buffers.source_signature.clear();
+}
+
+static void destroyZoningGpuLayerState(ZoningGpuLayerState& state) {
+    destroyParcelGpuBuffers(state.buffers);
+    for (ParcelGpuBuffer& buffer : state.outline_indirect_commands_by_frame) {
+        destroyParcelGpuBuffer(buffer);
+    }
+    if (g_Device && g_DescriptorPool && !state.outline_compute_descriptor_sets_by_frame.empty()) {
+        vkFreeDescriptorSets(
+            g_Device,
+            g_DescriptorPool,
+            (uint32_t)state.outline_compute_descriptor_sets_by_frame.size(),
+            state.outline_compute_descriptor_sets_by_frame.data());
+    }
+    state = ZoningGpuLayerState{};
 }
 
 static void destroyPointLayerGpuBuffers(PointLayerGpuBuffers& buffers) {
@@ -857,7 +926,8 @@ static void retireParcelGpuBuffers(ParcelGpuBuffers&& buffers) {
         !buffers.vertex_feature_refs.buffer &&
         !buffers.colors.buffer &&
         !buffers.overlay_colors.buffer &&
-        !buffers.outline_colors.buffer) {
+        !buffers.outline_colors.buffer &&
+        !buffers.outline_feature_records.buffer) {
         return;
     }
     RetiredParcelGpuPayload retired;
@@ -916,6 +986,25 @@ static bool createHostVisibleParcelBuffer(
     if (vkMapMemory(g_Device, out.memory, 0, size, 0, &out.mapped) != VK_SUCCESS) {
         if (error) *error = "failed to map host-visible parcel buffer";
         destroyParcelGpuBuffer(out);
+        return false;
+    }
+    out.size_bytes = size;
+    return true;
+}
+
+static bool createDeviceLocalParcelBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error) {
+    destroyParcelGpuBuffer(out);
+    if (!tryCreateBuffer(
+            size,
+            usage,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            out.buffer,
+            out.memory,
+            error)) {
         return false;
     }
     out.size_bytes = size;
@@ -1135,6 +1224,24 @@ static bool buildParcelGpuUploadPayload(
     const VkDeviceSize line_indices_size = sizeof(uint32_t) * blob.line_indices.size();
     const VkDeviceSize refs_size = sizeof(uint32_t) * blob.vertex_feature_refs.size();
     const VkDeviceSize colors_size = sizeof(ImU32) * blob.features.size();
+    std::vector<ZoningOutlineFeatureGpuRecord> outline_features;
+    outline_features.reserve(blob.features.size());
+    for (const ParcelRenderFeatureRecord& feature : blob.features) {
+        ZoningOutlineFeatureGpuRecord gpu_feature{};
+        gpu_feature.feature_idx = feature.feature_idx;
+        gpu_feature.vertex_offset = feature.vertex_offset;
+        gpu_feature.vertex_count = feature.vertex_count;
+        gpu_feature.index_offset = feature.index_offset;
+        gpu_feature.index_count = feature.index_count;
+        gpu_feature.line_index_offset = feature.line_index_offset;
+        gpu_feature.line_index_count = feature.line_index_count;
+        gpu_feature.min_lon = feature.min_lon;
+        gpu_feature.min_lat = feature.min_lat;
+        gpu_feature.max_lon = feature.max_lon;
+        gpu_feature.max_lat = feature.max_lat;
+        outline_features.push_back(gpu_feature);
+    }
+    const VkDeviceSize outline_features_size = sizeof(ZoningOutlineFeatureGpuRecord) * outline_features.size();
     if (!uploadDeviceLocalParcelBuffer(ctx, blob.vertices.data(), positions_size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.positions, error) ||
         !uploadDeviceLocalParcelBuffer(ctx, blob.indices.data(), indices_size,
@@ -1143,6 +1250,8 @@ static bool buildParcelGpuUploadPayload(
             VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.line_indices, error) ||
         !uploadDeviceLocalParcelBuffer(ctx, blob.vertex_feature_refs.data(), refs_size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.vertex_feature_refs, error) ||
+        !uploadDeviceLocalParcelBuffer(ctx, outline_features.data(), outline_features_size,
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.outline_feature_records, error) ||
         !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.colors, error) ||
         !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.overlay_colors, error) ||
         !createHostVisibleParcelBuffer(colors_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, out.buffers.outline_colors, error)) {
@@ -1158,6 +1267,7 @@ static bool buildParcelGpuUploadPayload(
     out.buffers.vertices = static_cast<uint32_t>(blob.vertices.size());
     out.buffers.indices_count = static_cast<uint32_t>(blob.indices.size());
     out.buffers.line_indices_count = static_cast<uint32_t>(blob.line_indices.size());
+    out.buffers.features = blob.features;
     out.buffers.chunks = blob.chunks;
     out.buffers.source_signature = blob.source_signature;
     return true;
@@ -2228,6 +2338,21 @@ static void destroyZoningGpuPipeline() {
     g_ZoningGpuPipeline.descriptor_dirty = true;
 }
 
+static void destroyZoningOutlineIndirectComputePipeline() {
+    if (g_ZoningOutlineIndirectComputePipeline.pipeline) {
+        vkDestroyPipeline(g_Device, g_ZoningOutlineIndirectComputePipeline.pipeline, g_Allocator);
+        g_ZoningOutlineIndirectComputePipeline.pipeline = VK_NULL_HANDLE;
+    }
+    if (g_ZoningOutlineIndirectComputePipeline.pipeline_layout) {
+        vkDestroyPipelineLayout(g_Device, g_ZoningOutlineIndirectComputePipeline.pipeline_layout, g_Allocator);
+        g_ZoningOutlineIndirectComputePipeline.pipeline_layout = VK_NULL_HANDLE;
+    }
+    if (g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout) {
+        vkDestroyDescriptorSetLayout(g_Device, g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout, g_Allocator);
+        g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout = VK_NULL_HANDLE;
+    }
+}
+
 static void destroyCrimePointGpuPipeline() {
     if (g_CrimePointGpuPipeline.pipeline) {
         vkDestroyPipeline(g_Device, g_CrimePointGpuPipeline.pipeline, g_Allocator);
@@ -2944,6 +3069,7 @@ bool ensureZoningGpuBuffersResident(size_t layer_idx, const ParcelRenderCacheBlo
     dst.buffers = std::move(payload.buffers);
     dst.outline_has_visible_colors = false;
     dst.descriptors.descriptor_dirty = true;
+    dst.outline_compute_descriptor_dirty = true;
     return true;
 }
 
@@ -2972,6 +3098,8 @@ bool updateZoningGpuOutlineColorBuffer(size_t layer_idx, const std::vector<ImU32
         return false;
     }
     std::memcpy(layer_state->buffers.outline_colors.mapped, colors_rgba.data(), colors_rgba.size() * sizeof(ImU32));
+    layer_state->outline_colors_cpu = colors_rgba;
+    layer_state->outline_compute_descriptor_dirty = true;
     layer_state->outline_has_visible_colors = std::any_of(colors_rgba.begin(), colors_rgba.end(), [](ImU32 color) {
         return (color >> 24) != 0;
     });
@@ -2981,14 +3109,13 @@ bool updateZoningGpuOutlineColorBuffer(size_t layer_idx, const std::vector<ImU32
 void clearZoningGpuBuffers(size_t layer_idx) {
     auto it = g_ZoningGpuLayers.find(layer_idx);
     if (it == g_ZoningGpuLayers.end()) return;
-    destroyParcelGpuBuffers(it->second.buffers);
-    it->second = ZoningGpuLayerState{};
+    destroyZoningGpuLayerState(it->second);
     g_ZoningGpuLayers.erase(it);
 }
 
 void clearAllZoningGpuBuffers() {
     for (auto& kv : g_ZoningGpuLayers) {
-        destroyParcelGpuBuffers(kv.second.buffers);
+        destroyZoningGpuLayerState(kv.second);
     }
     g_ZoningGpuLayers.clear();
 }
@@ -3247,6 +3374,405 @@ static bool ensureZoningGpuPipeline(VkRenderPass render_pass, std::string* error
     return true;
 }
 
+static bool ensureZoningOutlineIndirectComputePipeline(std::string* error) {
+    if (!g_Device) {
+        if (error) *error = "Vulkan device is not ready";
+        return false;
+    }
+    if (g_ZoningOutlineIndirectComputePipeline.pipeline) return true;
+    const std::vector<uint32_t> comp_code = loadSpirvFile(kZoningOutlineIndirectShaderPath);
+    if (comp_code.empty()) {
+        if (error) *error = "zoning outline indirect compute shader SPIR-V is unavailable";
+        return false;
+    }
+
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    for (uint32_t i = 0; i < 3; ++i) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo layout_info{};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 3;
+    layout_info.pBindings = bindings;
+    if (vkCreateDescriptorSetLayout(g_Device, &layout_info, g_Allocator, &g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout) != VK_SUCCESS) {
+        if (error) *error = "vkCreateDescriptorSetLayout failed for zoning outline indirect compute";
+        return false;
+    }
+
+    VkPushConstantRange push_range{};
+    push_range.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    push_range.offset = 0;
+    push_range.size = sizeof(ZoningOutlineIndirectPushConstants);
+    VkPipelineLayoutCreateInfo pipeline_layout_info{};
+    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout;
+    pipeline_layout_info.pushConstantRangeCount = 1;
+    pipeline_layout_info.pPushConstantRanges = &push_range;
+    if (vkCreatePipelineLayout(g_Device, &pipeline_layout_info, g_Allocator, &g_ZoningOutlineIndirectComputePipeline.pipeline_layout) != VK_SUCCESS) {
+        if (error) *error = "vkCreatePipelineLayout failed for zoning outline indirect compute";
+        destroyZoningOutlineIndirectComputePipeline();
+        return false;
+    }
+
+    VkShaderModuleCreateInfo shader_info{};
+    shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shader_info.codeSize = comp_code.size() * sizeof(uint32_t);
+    shader_info.pCode = comp_code.data();
+    VkShaderModule comp_shader = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(g_Device, &shader_info, g_Allocator, &comp_shader) != VK_SUCCESS) {
+        if (error) *error = "vkCreateShaderModule failed for zoning outline indirect compute";
+        destroyZoningOutlineIndirectComputePipeline();
+        return false;
+    }
+    VkComputePipelineCreateInfo pipeline_info{};
+    pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipeline_info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pipeline_info.stage.module = comp_shader;
+    pipeline_info.stage.pName = "main";
+    pipeline_info.layout = g_ZoningOutlineIndirectComputePipeline.pipeline_layout;
+    const VkResult result = vkCreateComputePipelines(g_Device, VK_NULL_HANDLE, 1, &pipeline_info, g_Allocator, &g_ZoningOutlineIndirectComputePipeline.pipeline);
+    vkDestroyShaderModule(g_Device, comp_shader, g_Allocator);
+    if (result != VK_SUCCESS) {
+        if (error) *error = "vkCreateComputePipelines failed for zoning outline indirect compute";
+        destroyZoningOutlineIndirectComputePipeline();
+        return false;
+    }
+    return true;
+}
+
+static bool ensureZoningOutlineComputeDescriptorSet(
+    ZoningGpuLayerState& layer_state,
+    uint32_t frame_slot,
+    std::string* error,
+    VkDescriptorSet* out_set) {
+    if (!g_DescriptorPool ||
+        !layer_state.buffers.outline_feature_records.buffer ||
+        !layer_state.buffers.outline_colors.buffer ||
+        frame_slot >= layer_state.outline_indirect_commands_by_frame.size() ||
+        !layer_state.outline_indirect_commands_by_frame[frame_slot].buffer) {
+        if (error) *error = "zoning outline indirect compute descriptor prerequisites are unavailable";
+        return false;
+    }
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    if (layer_state.outline_compute_descriptor_sets_by_frame.size() != frame_count) {
+        if (!layer_state.outline_compute_descriptor_sets_by_frame.empty()) {
+            vkFreeDescriptorSets(
+                g_Device,
+                g_DescriptorPool,
+                (uint32_t)layer_state.outline_compute_descriptor_sets_by_frame.size(),
+                layer_state.outline_compute_descriptor_sets_by_frame.data());
+        }
+        std::vector<VkDescriptorSetLayout> layouts(frame_count, g_ZoningOutlineIndirectComputePipeline.descriptor_set_layout);
+        layer_state.outline_compute_descriptor_sets_by_frame.assign(frame_count, VK_NULL_HANDLE);
+        VkDescriptorSetAllocateInfo alloc{};
+        alloc.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc.descriptorPool = g_DescriptorPool;
+        alloc.descriptorSetCount = frame_count;
+        alloc.pSetLayouts = layouts.data();
+        if (vkAllocateDescriptorSets(g_Device, &alloc, layer_state.outline_compute_descriptor_sets_by_frame.data()) != VK_SUCCESS) {
+            layer_state.outline_compute_descriptor_sets_by_frame.clear();
+            if (error) *error = "vkAllocateDescriptorSets failed for zoning outline indirect compute";
+            return false;
+        }
+        layer_state.outline_compute_descriptor_dirty_by_frame.assign(frame_count, true);
+        layer_state.outline_compute_descriptor_dirty = true;
+    }
+    if (layer_state.outline_compute_descriptor_dirty) {
+        if (layer_state.outline_compute_descriptor_dirty_by_frame.size() != frame_count) {
+            layer_state.outline_compute_descriptor_dirty_by_frame.assign(frame_count, true);
+        } else {
+            std::fill(layer_state.outline_compute_descriptor_dirty_by_frame.begin(), layer_state.outline_compute_descriptor_dirty_by_frame.end(), true);
+        }
+        layer_state.outline_compute_descriptor_dirty = false;
+    }
+    if (frame_slot >= layer_state.outline_compute_descriptor_sets_by_frame.size()) {
+        if (error) *error = "zoning outline indirect compute frame slot is unavailable";
+        return false;
+    }
+    *out_set = layer_state.outline_compute_descriptor_sets_by_frame[frame_slot];
+    if (frame_slot < layer_state.outline_compute_descriptor_dirty_by_frame.size() &&
+        !layer_state.outline_compute_descriptor_dirty_by_frame[frame_slot]) {
+        return true;
+    }
+
+    VkDescriptorBufferInfo feature_info{};
+    feature_info.buffer = layer_state.buffers.outline_feature_records.buffer;
+    feature_info.offset = 0;
+    feature_info.range = layer_state.buffers.outline_feature_records.size_bytes;
+    VkDescriptorBufferInfo color_info{};
+    color_info.buffer = layer_state.buffers.outline_colors.buffer;
+    color_info.offset = 0;
+    color_info.range = layer_state.buffers.outline_colors.size_bytes;
+    VkDescriptorBufferInfo command_info{};
+    command_info.buffer = layer_state.outline_indirect_commands_by_frame[frame_slot].buffer;
+    command_info.offset = 0;
+    command_info.range = layer_state.outline_indirect_commands_by_frame[frame_slot].size_bytes;
+    VkWriteDescriptorSet writes[3]{};
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = *out_set;
+    writes[0].dstBinding = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[0].pBufferInfo = &feature_info;
+    writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet = *out_set;
+    writes[1].dstBinding = 1;
+    writes[1].descriptorCount = 1;
+    writes[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[1].pBufferInfo = &color_info;
+    writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[2].dstSet = *out_set;
+    writes[2].dstBinding = 2;
+    writes[2].descriptorCount = 1;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    writes[2].pBufferInfo = &command_info;
+    vkUpdateDescriptorSets(g_Device, 3, writes, 0, nullptr);
+    layer_state.outline_compute_descriptor_dirty_by_frame[frame_slot] = false;
+    return true;
+}
+
+static uint32_t currentParcelGpuFrameSlot() {
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    return frame_count > 0 ? (g_CurrentFrameRenderIndex % frame_count) : 0;
+}
+
+static bool ensureZoningOutlineIndirectFrameBuffers(ZoningGpuLayerState& layer_state, std::string* error) {
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    if (layer_state.outline_indirect_commands_by_frame.size() == frame_count) return true;
+    for (ParcelGpuBuffer& buffer : layer_state.outline_indirect_commands_by_frame) {
+        destroyParcelGpuBuffer(buffer);
+    }
+    layer_state.outline_indirect_commands_by_frame.assign(frame_count, {});
+    layer_state.outline_indirect_capacity_by_frame.assign(frame_count, 0);
+    layer_state.outline_indirect_count_by_frame.assign(frame_count, 0);
+    return true;
+}
+
+static bool ensureZoningOutlineIndirectCapacity(
+    ZoningGpuLayerState& layer_state,
+    uint32_t frame_slot,
+    uint32_t command_count,
+    bool device_local_indirect,
+    std::string* error) {
+    if (!ensureZoningOutlineIndirectFrameBuffers(layer_state, error)) return false;
+    if (frame_slot >= layer_state.outline_indirect_commands_by_frame.size()) {
+        if (error) *error = "zoning outline indirect frame slot is unavailable";
+        return false;
+    }
+    if (command_count == 0) {
+        layer_state.outline_indirect_count_by_frame[frame_slot] = 0;
+        return true;
+    }
+    if (layer_state.outline_indirect_capacity_by_frame[frame_slot] >= command_count &&
+        layer_state.outline_indirect_commands_by_frame[frame_slot].buffer &&
+        (device_local_indirect || layer_state.outline_indirect_commands_by_frame[frame_slot].mapped)) {
+        return true;
+    }
+    uint32_t capacity = std::max<uint32_t>(command_count, 256);
+    const uint32_t previous = layer_state.outline_indirect_capacity_by_frame[frame_slot];
+    if (previous > 0) {
+        capacity = std::max<uint32_t>(capacity, previous + previous / 2);
+    }
+    const VkDeviceSize buffer_size = sizeof(VkDrawIndexedIndirectCommand) * (VkDeviceSize)capacity;
+    const bool created = device_local_indirect
+        ? createDeviceLocalParcelBuffer(
+            buffer_size,
+            VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            layer_state.outline_indirect_commands_by_frame[frame_slot],
+            error)
+        : createHostVisibleParcelBuffer(
+            buffer_size,
+            VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+            layer_state.outline_indirect_commands_by_frame[frame_slot],
+            error);
+    if (!created) {
+        layer_state.outline_indirect_capacity_by_frame[frame_slot] = 0;
+        return false;
+    }
+    layer_state.outline_indirect_capacity_by_frame[frame_slot] = capacity;
+    layer_state.outline_compute_descriptor_dirty = true;
+    return true;
+}
+
+static bool updateZoningOutlineIndirectCommands(
+    ZoningGpuLayerState& layer_state,
+    const ParcelGpuDrawConfig& config,
+    float lon_pad,
+    float lat_pad,
+    std::string* error) {
+    layer_state.outline_indirect_scratch.clear();
+    if (g_MultiDrawIndirectEnabled &&
+        kZoningOutlineIndirectShaderPath &&
+        layer_state.buffers.outline_feature_records.buffer &&
+        layer_state.buffers.render_features <= g_MaxDrawIndirectCount) {
+        const uint32_t command_count = layer_state.outline_has_visible_colors
+            ? layer_state.buffers.render_features
+            : 0;
+        const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+        for (uint32_t frame_slot = 0; frame_slot < frame_count; ++frame_slot) {
+            if (!ensureZoningOutlineIndirectCapacity(layer_state, frame_slot, command_count, true, error)) return false;
+            if (frame_slot < layer_state.outline_indirect_count_by_frame.size()) {
+                layer_state.outline_indirect_count_by_frame[frame_slot] = command_count;
+            }
+        }
+        layer_state.outline_compute_pending = command_count > 0;
+        layer_state.outline_compute_view_min_lon = config.view_min_lon - lon_pad;
+        layer_state.outline_compute_view_min_lat = config.view_min_lat - lat_pad;
+        layer_state.outline_compute_view_max_lon = config.view_max_lon + lon_pad;
+        layer_state.outline_compute_view_max_lat = config.view_max_lat + lat_pad;
+        return true;
+    }
+
+    if (!layer_state.outline_has_visible_colors ||
+        layer_state.outline_colors_cpu.size() != layer_state.buffers.features.size()) {
+        if (ensureZoningOutlineIndirectFrameBuffers(layer_state, error)) {
+            std::fill(
+                layer_state.outline_indirect_count_by_frame.begin(),
+                layer_state.outline_indirect_count_by_frame.end(),
+                0);
+        }
+        layer_state.outline_compute_pending = false;
+        return true;
+    }
+
+    for (const ParcelRenderChunkRecord& chunk : layer_state.buffers.chunks) {
+        if (!rectsOverlap(chunk.min_lon, chunk.min_lat, chunk.max_lon, chunk.max_lat,
+                config.view_min_lon - lon_pad, config.view_min_lat - lat_pad,
+                config.view_max_lon + lon_pad, config.view_max_lat + lat_pad)) {
+            continue;
+        }
+        const uint32_t feature_end = std::min<uint32_t>(
+            (uint32_t)layer_state.buffers.features.size(),
+            chunk.feature_offset + chunk.feature_count);
+        for (uint32_t feature_i = chunk.feature_offset; feature_i < feature_end; ++feature_i) {
+            const ParcelRenderFeatureRecord& feature = layer_state.buffers.features[feature_i];
+            if (feature.line_index_count == 0) continue;
+            if ((layer_state.outline_colors_cpu[feature_i] >> 24) == 0) continue;
+            if (!rectsOverlap(feature.min_lon, feature.min_lat, feature.max_lon, feature.max_lat,
+                    config.view_min_lon - lon_pad, config.view_min_lat - lat_pad,
+                    config.view_max_lon + lon_pad, config.view_max_lat + lat_pad)) {
+                continue;
+            }
+            VkDrawIndexedIndirectCommand draw{};
+            draw.indexCount = feature.line_index_count;
+            draw.instanceCount = 1;
+            draw.firstIndex = feature.line_index_offset;
+            draw.vertexOffset = 0;
+            draw.firstInstance = 0;
+            layer_state.outline_indirect_scratch.push_back(draw);
+        }
+    }
+
+    const uint32_t command_count = (uint32_t)layer_state.outline_indirect_scratch.size();
+    const uint32_t frame_count = parcelGpuDescriptorFrameCount();
+    for (uint32_t frame_slot = 0; frame_slot < frame_count; ++frame_slot) {
+        if (!ensureZoningOutlineIndirectCapacity(layer_state, frame_slot, command_count, false, error)) return false;
+        layer_state.outline_indirect_count_by_frame[frame_slot] = command_count;
+        if (command_count > 0) {
+            std::memcpy(
+                layer_state.outline_indirect_commands_by_frame[frame_slot].mapped,
+                layer_state.outline_indirect_scratch.data(),
+                sizeof(VkDrawIndexedIndirectCommand) * (size_t)command_count);
+        }
+    }
+    return true;
+}
+
+static void recordZoningOutlineIndirectComputeDispatches(VkCommandBuffer cmd) {
+    if (!cmd || !g_MultiDrawIndirectEnabled || !kZoningOutlineIndirectShaderPath || g_ZoningGpuLayers.empty()) return;
+    std::string compute_error;
+    if (!ensureZoningOutlineIndirectComputePipeline(&compute_error)) {
+        const uint32_t frame_slot = currentParcelGpuFrameSlot();
+        for (auto& kv : g_ZoningGpuLayers) {
+            ZoningGpuLayerState& layer_state = kv.second;
+            layer_state.outline_compute_pending = false;
+            if (frame_slot < layer_state.outline_indirect_count_by_frame.size()) {
+                layer_state.outline_indirect_count_by_frame[frame_slot] = 0;
+            }
+        }
+        return;
+    }
+    VkMemoryBarrier host_to_compute{};
+    host_to_compute.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    host_to_compute.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
+    host_to_compute.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_HOST_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        1,
+        &host_to_compute,
+        0,
+        nullptr,
+        0,
+        nullptr);
+    bool recorded_dispatch = false;
+    for (auto& kv : g_ZoningGpuLayers) {
+        ZoningGpuLayerState& layer_state = kv.second;
+        if (!layer_state.outline_compute_pending) continue;
+        const uint32_t frame_slot = currentParcelGpuFrameSlot();
+        if (frame_slot >= layer_state.outline_indirect_count_by_frame.size() ||
+            layer_state.outline_indirect_count_by_frame[frame_slot] == 0) {
+            layer_state.outline_compute_pending = false;
+            continue;
+        }
+        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+        if (!ensureZoningOutlineComputeDescriptorSet(layer_state, frame_slot, &compute_error, &descriptor_set)) {
+            layer_state.outline_compute_pending = false;
+            layer_state.outline_indirect_count_by_frame[frame_slot] = 0;
+            continue;
+        }
+        ZoningOutlineIndirectPushConstants push{};
+        push.feature_count = layer_state.buffers.render_features;
+        push.view_min_lon = layer_state.outline_compute_view_min_lon;
+        push.view_min_lat = layer_state.outline_compute_view_min_lat;
+        push.view_max_lon = layer_state.outline_compute_view_max_lon;
+        push.view_max_lat = layer_state.outline_compute_view_max_lat;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, g_ZoningOutlineIndirectComputePipeline.pipeline);
+        vkCmdBindDescriptorSets(
+            cmd,
+            VK_PIPELINE_BIND_POINT_COMPUTE,
+            g_ZoningOutlineIndirectComputePipeline.pipeline_layout,
+            0,
+            1,
+            &descriptor_set,
+            0,
+            nullptr);
+        vkCmdPushConstants(
+            cmd,
+            g_ZoningOutlineIndirectComputePipeline.pipeline_layout,
+            VK_SHADER_STAGE_COMPUTE_BIT,
+            0,
+            sizeof(push),
+            &push);
+        vkCmdDispatch(cmd, (push.feature_count + 127u) / 128u, 1, 1);
+        layer_state.outline_compute_pending = false;
+        recorded_dispatch = true;
+    }
+    if (!recorded_dispatch) return;
+    VkMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+        0,
+        1,
+        &barrier,
+        0,
+        nullptr,
+        0,
+        nullptr);
+}
+
 bool configureZoningGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& config, std::string* error) {
     ZoningGpuLayerState* layer_state = findZoningGpuLayerState(layer_idx);
     if (!layer_state) {
@@ -3279,12 +3805,14 @@ bool configureZoningGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& co
                 config.view_max_lon + lon_pad, config.view_max_lat + lat_pad)) {
             continue;
         }
-        if (chunk.index_count == 0) continue;
-        layer_state->draw_state.visible_chunks.push_back(ParcelGpuDrawChunk{chunk.index_offset, chunk.index_count});
+        if (chunk.index_count > 0) {
+            layer_state->draw_state.visible_chunks.push_back(ParcelGpuDrawChunk{chunk.index_offset, chunk.index_count});
+        }
         if (chunk.line_index_count > 0) {
             layer_state->draw_state.visible_line_chunks.push_back(ParcelGpuLineDrawChunk{chunk.line_index_offset, chunk.line_index_count});
         }
     }
+    if (!updateZoningOutlineIndirectCommands(*layer_state, config, lon_pad, lat_pad, error)) return false;
     return true;
 }
 
@@ -3361,11 +3889,25 @@ void enqueueZoningGpuDraw(ImDrawList* draw_list, size_t layer_idx) {
 
 bool zoningGpuOutlineDrawActive(size_t layer_idx) {
     const ZoningGpuLayerState* layer_state = findZoningGpuLayerState(layer_idx);
-    return layer_state &&
-        zoningGpuDrawActive(layer_idx) &&
+    if (!layer_state) return false;
+    const uint32_t frame_slot = currentParcelGpuFrameSlot();
+    const bool use_gpu_compute_indirect =
+        g_MultiDrawIndirectEnabled &&
+        kZoningOutlineIndirectShaderPath &&
+        layer_state->buffers.render_features <= g_MaxDrawIndirectCount;
+    const bool indirect_active =
+        use_gpu_compute_indirect &&
+        frame_slot < layer_state->outline_indirect_count_by_frame.size() &&
+        layer_state->outline_indirect_count_by_frame[frame_slot] > 0 &&
+        frame_slot < layer_state->outline_indirect_commands_by_frame.size() &&
+        layer_state->outline_indirect_commands_by_frame[frame_slot].buffer;
+    return layer_state->draw_state.active &&
+        layer_state->buffers.positions.buffer &&
+        layer_state->buffers.line_indices.buffer &&
+        layer_state->buffers.vertex_feature_refs.buffer &&
         layer_state->buffers.outline_colors.mapped &&
-        !layer_state->draw_state.visible_line_chunks.empty() &&
-        layer_state->outline_has_visible_colors;
+        layer_state->outline_has_visible_colors &&
+        (indirect_active || (!use_gpu_compute_indirect && !layer_state->draw_state.visible_line_chunks.empty()));
 }
 
 static void renderZoningGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCmd* cmd) {
@@ -3405,8 +3947,26 @@ static void renderZoningGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
     vkCmdPushConstants(g_CurrentFrameRenderCommandBuffer, g_ZoningGpuPipeline.pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(push), &push);
     vkCmdBindVertexBuffers(g_CurrentFrameRenderCommandBuffer, 0, 2, vertex_buffers, offsets);
     vkCmdBindIndexBuffer(g_CurrentFrameRenderCommandBuffer, layer_state->buffers.line_indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-    for (const ParcelGpuLineDrawChunk& chunk : layer_state->draw_state.visible_line_chunks) {
-        vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+    const uint32_t frame_slot = currentParcelGpuFrameSlot();
+    const bool use_gpu_compute_indirect =
+        g_MultiDrawIndirectEnabled &&
+        kZoningOutlineIndirectShaderPath &&
+        layer_state->buffers.render_features <= g_MaxDrawIndirectCount;
+    if (use_gpu_compute_indirect &&
+        frame_slot < layer_state->outline_indirect_count_by_frame.size() &&
+        frame_slot < layer_state->outline_indirect_commands_by_frame.size() &&
+        layer_state->outline_indirect_count_by_frame[frame_slot] > 0 &&
+        layer_state->outline_indirect_commands_by_frame[frame_slot].buffer) {
+        vkCmdDrawIndexedIndirect(
+            g_CurrentFrameRenderCommandBuffer,
+            layer_state->outline_indirect_commands_by_frame[frame_slot].buffer,
+            0,
+            layer_state->outline_indirect_count_by_frame[frame_slot],
+            sizeof(VkDrawIndexedIndirectCommand));
+    } else {
+        for (const ParcelGpuLineDrawChunk& chunk : layer_state->draw_state.visible_line_chunks) {
+            vkCmdDrawIndexed(g_CurrentFrameRenderCommandBuffer, chunk.index_count, 1, chunk.first_index, 0, 0);
+        }
     }
 }
 
@@ -4797,7 +5357,11 @@ bool gpuPickParcelFeature(const GpuPickRequest& request, size_t* out_feature_idx
         return false;
     }
     if (feature_ref == std::numeric_limits<uint32_t>::max()) return true;
-    *out_feature_idx = (size_t)feature_ref;
+    if (feature_ref >= g_ParcelGpuBuffers.features.size()) {
+        if (error) *error = "parcel GPU pick returned an out-of-range render feature reference";
+        return false;
+    }
+    *out_feature_idx = static_cast<size_t>(g_ParcelGpuBuffers.features[feature_ref].feature_idx);
     return true;
 }
 
@@ -5350,6 +5914,8 @@ void SetupVulkan(const char** extensions, uint32_t extensions_count) {
     vkGetPhysicalDeviceFeatures(g_PhysicalDevice, &available_features);
     VkPhysicalDeviceFeatures enabled_features{};
     enabled_features.samplerAnisotropy = available_features.samplerAnisotropy;
+    enabled_features.multiDrawIndirect = available_features.multiDrawIndirect;
+    g_MultiDrawIndirectEnabled = available_features.multiDrawIndirect == VK_TRUE;
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.queueCreateInfoCount = 1;
@@ -5388,6 +5954,7 @@ void SetupVulkan(const char** extensions, uint32_t extensions_count) {
     sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(g_PhysicalDevice, &props);
+    g_MaxDrawIndirectCount = props.limits.maxDrawIndirectCount;
     sampler.anisotropyEnable = available_features.samplerAnisotropy ? VK_TRUE : VK_FALSE;
     sampler.maxAnisotropy = available_features.samplerAnisotropy ? std::min(8.0f, props.limits.maxSamplerAnisotropy) : 1.0f;
     check_vk_result(vkCreateSampler(g_Device, &sampler, g_Allocator, &g_TileSampler));
@@ -5464,6 +6031,7 @@ void CleanupVulkan() {
     destroyPolylineLayerGpuPipeline();
     destroyCrimePointGpuPipeline();
     destroyZoningGpuPipeline();
+    destroyZoningOutlineIndirectComputePipeline();
     destroyParcelGpuPipeline();
     if (g_UploadCommandPool) vkDestroyCommandPool(g_Device, g_UploadCommandPool, g_Allocator);
     if (g_TileSampler) vkDestroySampler(g_Device, g_TileSampler, g_Allocator);
@@ -5489,6 +6057,7 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
         return;
     }
     check_vk_result(err);
+    g_CurrentFrameRenderIndex = wd->FrameIndex;
 
     ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
     check_vk_result(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX));
@@ -5499,6 +6068,7 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     check_vk_result(vkBeginCommandBuffer(fd->CommandBuffer, &begin));
+    recordZoningOutlineIndirectComputeDispatches(fd->CommandBuffer);
 
     VkRenderPassBeginInfo rp{};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -5512,7 +6082,6 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
 
     g_CurrentFrameRenderCommandBuffer = fd->CommandBuffer;
     g_CurrentFrameRenderPass = wd->RenderPass;
-    g_CurrentFrameRenderIndex = wd->FrameIndex;
     ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
     g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
     g_CurrentFrameRenderPass = VK_NULL_HANDLE;

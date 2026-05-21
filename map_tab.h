@@ -108,6 +108,7 @@ struct MapTabContext {
     std::vector<std::string>* parcel_address_search_by_feature = nullptr;
     const FilterResultSet* owner_text_filter_result_set = nullptr;
     const FilterResultSet* address_text_filter_result_set = nullptr;
+    const LayerFeatureRenderCache* feature_render_cache = nullptr;
 
     float global_heat_cell_px = 24.0f;
     int heatmap_algo = 0;

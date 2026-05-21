@@ -183,6 +183,7 @@ bool drawDuckDbParcelDetail(ElementInfoUiState* state, DuckDbAnalytics* duckdb_a
     text_prop("Status", "status");
     text_prop("Current Land", "current_land");
     text_prop("Current Improvements", "current_improvements");
+    text_prop("Structure Area (sq ft)", "structure_area_sqft");
     text_prop("Tax Base", "tax_base");
     text_prop("Sale Price", "sale_price");
     text_prop("Current Value", "current_value");
@@ -212,6 +213,9 @@ void drawUnifiedParcelDetail(ElementInfoUiState* state, const UnifiedParcelRecor
     text_prop("Status", rec.status);
     numeric_prop("Current Land", rec.current_land);
     numeric_prop("Current Improvements", rec.current_improvements);
+    if (rec.structure_area_sqft > 0.0) {
+        ImGui::TextWrapped("Structure Area (sq ft): %s", formatUsNumber(rec.structure_area_sqft, 0).c_str());
+    }
     numeric_prop("Tax Base", rec.tax_base);
     numeric_prop("Sale Price", rec.sale_price);
     drawParcelCurrentValueDetail(rec);

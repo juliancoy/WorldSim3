@@ -5,8 +5,10 @@
 #include "feature_props.h"
 #include "real_property_ui.h"
 
+#include <algorithm>
 #include <chrono>
 #include <initializer_list>
+#include <cstring>
 
 namespace {
 const MapFilterState kEmptyMapFilterState;
@@ -121,8 +123,8 @@ bool isZoningLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
 bool crimeFeatureMatches(const FeatureFilterContext& ctx, const LayerDef::FeatureRecord& fg) {
     const CrimeFilterState& crime = mapFilters(ctx).crime;
     if (!crime.enabled) return true;
-    const std::string desc = toLowerAscii(firstDisplayProperty(fg, {"Description", "description", "OFFENSE", "UCRDescription"}));
-    const std::string code = toLowerAscii(firstDisplayProperty(fg, {"CrimeCode", "UCR_CODE", "UCRCode"}));
+    const std::string desc = firstDisplayProperty(fg, {"Description", "description", "OFFENSE", "UCRDescription"});
+    const std::string code = firstDisplayProperty(fg, {"CrimeCode", "UCR_CODE", "UCRCode"});
     const std::string dt = firstDisplayProperty(fg, {"CrimeDateTime", "CrimeDate", "DATE", "RECORD_DATE"});
     if (crime.use_year) {
         int yr = extractYearMaybe(dt);
@@ -133,7 +135,7 @@ bool crimeFeatureMatches(const FeatureFilterContext& ctx, const LayerDef::Featur
         crime.burglary || crime.theft || crime.auto_theft ||
         crime.drug || crime.shooting;
     if (!any_type) return true;
-    auto has = [&](const char* s) { return desc.find(s) != std::string::npos || code.find(s) != std::string::npos; };
+    auto has = [&](const char* s) { return containsCaseInsensitive(desc, s) || containsCaseInsensitive(code, s); };
     bool ok = false;
     if (crime.homicide && (has("homicide") || has("murder"))) ok = true;
     if (crime.robbery && has("robbery")) ok = true;
@@ -151,8 +153,8 @@ bool crimeFeatureMatches(const FeatureFilterContext& ctx, size_t layer_idx, size
     if (!layer) return crimeFeatureMatches(ctx, fg);
     const CrimeFilterState& crime = mapFilters(ctx).crime;
     if (!crime.enabled) return true;
-    const std::string desc = toLowerAscii(firstDisplayProperty(*layer, feature_idx, {"Description", "description", "OFFENSE", "UCRDescription"}));
-    const std::string code = toLowerAscii(firstDisplayProperty(*layer, feature_idx, {"CrimeCode", "UCR_CODE", "UCRCode"}));
+    const std::string desc = firstDisplayProperty(*layer, feature_idx, {"Description", "description", "OFFENSE", "UCRDescription"});
+    const std::string code = firstDisplayProperty(*layer, feature_idx, {"CrimeCode", "UCR_CODE", "UCRCode"});
     const std::string dt = firstDisplayProperty(*layer, feature_idx, {"CrimeDateTime", "CrimeDate", "DATE", "RECORD_DATE"});
     if (crime.use_year) {
         int yr = extractYearMaybe(dt);
@@ -163,7 +165,7 @@ bool crimeFeatureMatches(const FeatureFilterContext& ctx, size_t layer_idx, size
         crime.burglary || crime.theft || crime.auto_theft ||
         crime.drug || crime.shooting;
     if (!any_type) return true;
-    auto has = [&](const char* s) { return desc.find(s) != std::string::npos || code.find(s) != std::string::npos; };
+    auto has = [&](const char* s) { return containsCaseInsensitive(desc, s) || containsCaseInsensitive(code, s); };
     bool ok = false;
     if (crime.homicide && (has("homicide") || has("murder"))) ok = true;
     if (crime.robbery && has("robbery")) ok = true;
@@ -205,6 +207,62 @@ bool resultSetAllows(const FeatureFilterContext& ctx, size_t layer_idx, size_t f
     return allows_one(ctx.result_set) &&
         allows_one(ctx.secondary_result_set) &&
         allows_one(ctx.tertiary_result_set);
+}
+
+void hashMix(uint64_t& h, uint64_t v) {
+    h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+}
+
+void hashCString(uint64_t& h, const char* s) {
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
+    while (*p) {
+        hashMix(h, *p);
+        ++p;
+    }
+}
+
+void hashString(uint64_t& h, const std::string& value) {
+    hashCString(h, value.c_str());
+}
+
+void hashFloat(uint64_t& h, float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    hashMix(h, bits);
+}
+
+void hashResultSet(uint64_t& h, const FilterResultSet* result_set) {
+    if (!result_set) {
+        hashMix(h, 0);
+        return;
+    }
+    hashMix(h, 1);
+    hashMix(h, (uint64_t)result_set->active);
+    hashMix(h, (uint64_t)result_set->layers.size());
+    hashMix(h, (uint64_t)result_set->features.size());
+    hashMix(h, (uint64_t)result_set->blocklots.size());
+    hashMix(h, (uint64_t)result_set->owners.size());
+    std::vector<size_t> layers(result_set->layers.begin(), result_set->layers.end());
+    std::sort(layers.begin(), layers.end());
+    for (size_t layer_idx : layers) hashMix(h, (uint64_t)layer_idx);
+
+    std::vector<FeatureKey> features(result_set->features.begin(), result_set->features.end());
+    std::sort(features.begin(), features.end(), [](const FeatureKey& a, const FeatureKey& b) {
+        if (a.layer_idx != b.layer_idx) return a.layer_idx < b.layer_idx;
+        return a.feature_idx < b.feature_idx;
+    });
+    for (const FeatureKey& feature : features) {
+        hashMix(h, (uint64_t)feature.layer_idx);
+        hashMix(h, (uint64_t)feature.feature_idx);
+    }
+
+    std::vector<std::string> blocklots(result_set->blocklots.begin(), result_set->blocklots.end());
+    std::sort(blocklots.begin(), blocklots.end());
+    for (const std::string& blocklot : blocklots) hashString(h, blocklot);
+
+    std::vector<std::string> owners(result_set->owners.begin(), result_set->owners.end());
+    std::sort(owners.begin(), owners.end());
+    for (const std::string& owner : owners) hashString(h, owner);
 }
 }
 
@@ -368,4 +426,115 @@ bool queryMapColorForFeature(
         return true;
     }
     return false;
+}
+
+uint64_t buildFeatureRenderStateKey(const FeatureRenderStateKeyContext& ctx) {
+    uint64_t state_key = 1469598103934665603ULL;
+    const MapFilterState& filters = ctx.map_filters ? *ctx.map_filters : kEmptyMapFilterState;
+    hashMix(state_key, (uint64_t)filters.enabled);
+    hashMix(state_key, (uint64_t)filters.use_date);
+    hashMix(state_key, (uint64_t)filters.year_min);
+    hashMix(state_key, (uint64_t)filters.year_max);
+    hashCString(state_key, filters.blocklot);
+    hashCString(state_key, filters.status);
+    hashCString(state_key, filters.address);
+    hashCString(state_key, filters.owner);
+    hashCString(state_key, filters.zip);
+    std::vector<std::string> selected_owners(filters.selected_owners.begin(), filters.selected_owners.end());
+    std::sort(selected_owners.begin(), selected_owners.end());
+    hashMix(state_key, (uint64_t)selected_owners.size());
+    for (const std::string& owner : selected_owners) hashString(state_key, owner);
+    std::vector<std::pair<std::string, bool>> event_sectors(
+        filters.event_sector_enabled.begin(),
+        filters.event_sector_enabled.end());
+    std::sort(event_sectors.begin(), event_sectors.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+    hashMix(state_key, (uint64_t)event_sectors.size());
+    for (const auto& [sector, enabled] : event_sectors) {
+        hashString(state_key, sector);
+        hashMix(state_key, (uint64_t)enabled);
+    }
+    hashMix(state_key, (uint64_t)filters.crime.enabled);
+    hashMix(state_key, (uint64_t)filters.crime.homicide);
+    hashMix(state_key, (uint64_t)filters.crime.robbery);
+    hashMix(state_key, (uint64_t)filters.crime.assault);
+    hashMix(state_key, (uint64_t)filters.crime.burglary);
+    hashMix(state_key, (uint64_t)filters.crime.theft);
+    hashMix(state_key, (uint64_t)filters.crime.auto_theft);
+    hashMix(state_key, (uint64_t)filters.crime.drug);
+    hashMix(state_key, (uint64_t)filters.crime.shooting);
+    hashMix(state_key, (uint64_t)filters.crime.use_year);
+    hashMix(state_key, (uint64_t)filters.crime.year_min);
+    hashMix(state_key, (uint64_t)filters.crime.year_max);
+    hashResultSet(state_key, ctx.result_set);
+    hashResultSet(state_key, ctx.secondary_result_set);
+    hashResultSet(state_key, ctx.tertiary_result_set);
+    hashMix(state_key, (uint64_t)(ctx.query_layers ? ctx.query_layers->size() : 0));
+    if (ctx.query_layers) {
+        for (const QueryMapLayer& layer : *ctx.query_layers) {
+            hashMix(state_key, (uint64_t)layer.enabled);
+            hashMix(state_key, (uint64_t)layer.result_set.active);
+            hashMix(state_key, (uint64_t)layer.row_count);
+            hashMix(state_key, (uint64_t)layer.result_set.layers.size());
+            hashMix(state_key, (uint64_t)layer.result_set.features.size());
+            hashMix(state_key, (uint64_t)layer.result_set.blocklots.size());
+            hashMix(state_key, (uint64_t)layer.result_set.owners.size());
+            hashResultSet(state_key, &layer.result_set);
+            for (float color : layer.color) hashFloat(state_key, color);
+        }
+    }
+    return state_key;
+}
+
+bool ensureLayerFeatureRenderCache(
+    const FeatureFilterContext& ctx,
+    const std::vector<LayerDef>& layers,
+    uint64_t state_key,
+    LayerFeatureRenderCache& cache) {
+    if (cache.state_key == state_key &&
+        cache.layer_states.size() == layers.size()) {
+        bool shape_ok = true;
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (cache.layer_states[i].size() != layers[i].features.size()) {
+                shape_ok = false;
+                break;
+            }
+        }
+        if (shape_ok) return false;
+    }
+
+    cache.layer_states.clear();
+    cache.layer_states.resize(layers.size());
+    for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
+        const LayerDef& layer = layers[layer_idx];
+        auto& feature_states = cache.layer_states[layer_idx];
+        feature_states.resize(layer.features.size());
+        for (size_t feature_idx = 0; feature_idx < layer.features.size(); ++feature_idx) {
+            const LayerDef::FeatureRecord& fg = layer.features[feature_idx];
+            FeatureRenderState state;
+            state.visible = featurePassesFilters(ctx, layer_idx, feature_idx, fg);
+            if (state.visible) {
+                float query_color[4] = {0, 0, 0, 0};
+                if (queryMapColorForFeature(ctx, layer_idx, feature_idx, fg, query_color)) {
+                    state.has_query_color = true;
+                    state.query_color = ImGui::ColorConvertFloat4ToU32(
+                        ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                }
+            }
+            feature_states[feature_idx] = state;
+        }
+    }
+    cache.state_key = state_key;
+    return true;
+}
+
+const FeatureRenderState* findFeatureRenderState(
+    const LayerFeatureRenderCache& cache,
+    size_t layer_idx,
+    size_t feature_idx) {
+    if (layer_idx >= cache.layer_states.size()) return nullptr;
+    const auto& layer_states = cache.layer_states[layer_idx];
+    if (feature_idx >= layer_states.size()) return nullptr;
+    return &layer_states[feature_idx];
 }

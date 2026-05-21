@@ -12,8 +12,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <initializer_list>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -119,14 +121,13 @@ bool featureHasPolygonGeometry(
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef::FeatureRecord& fg) {
-    (void)fg;
     if ((int)layer_idx == ctx.parcel_layer_idx) {
         return parcelRenderFeature(ctx, feature_idx) != nullptr;
     }
     if (const PolygonGeometryArtifact* artifact = polygonArtifactForLayer(ctx, layer_idx)) {
         if (feature_idx < artifact->features.size()) return true;
     }
-    return false;
+    return !fg.rings.empty();
 }
 
 bool featureHasPointGeometry(
@@ -152,120 +153,6 @@ bool featureHasPolylineGeometry(
         if (feature_idx < artifact->features.size()) return true;
     }
     return !fg.paths.empty();
-}
-
-void drawPolylineFeatureFromArtifact(
-    const RenderLayerPassContext& ctx,
-    size_t feature_idx,
-    const PolylineGeometryArtifact& artifact,
-    ImU32 color) {
-    if (feature_idx >= artifact.features.size()) return;
-    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
-    const uint32_t index_end = rec.index_offset + rec.index_count;
-    if (index_end > artifact.line_indices.size()) return;
-    for (uint32_t i = rec.index_offset; i + 1 < index_end; i += 2) {
-        const uint32_t ia = artifact.line_indices[i];
-        const uint32_t ib = artifact.line_indices[i + 1];
-        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size()) continue;
-        const ImVec2 a = ctx.project_world(lonLatToWorldPx(
-            artifact.vertices[ia].x,
-            artifact.vertices[ia].y,
-            ctx.math_zoom));
-        const ImVec2 b = ctx.project_world(lonLatToWorldPx(
-            artifact.vertices[ib].x,
-            artifact.vertices[ib].y,
-            ctx.math_zoom));
-        ctx.draw->AddLine(a, b, color, 1.5f);
-    }
-}
-
-void drawPolylineFeatureCpuFallback(
-    const RenderLayerPassContext& ctx,
-    const LayerDef::FeatureRecord& fg,
-    ImU32 color) {
-    for (const auto& path : fg.paths) {
-        if (path.size() < 2) continue;
-        std::vector<ImVec2> screen;
-        screen.reserve(path.size());
-        for (const ImVec2& p : path) {
-            screen.push_back(ctx.project_world(lonLatToWorldPx(p.x, p.y, ctx.math_zoom)));
-        }
-        ctx.draw->AddPolyline(screen.data(), (int)screen.size(), color, ImDrawFlags_None, 1.5f);
-    }
-}
-
-void drawPolygonFeatureFromArtifactFill(
-    const RenderLayerPassContext& ctx,
-    const GeometryArtifactFeatureRecord& rec,
-    const PolygonGeometryArtifact& artifact,
-    ImU32 fill) {
-    const uint32_t index_end = rec.index_offset + rec.index_count;
-    if (index_end > artifact.fill_indices.size()) return;
-    for (uint32_t i = rec.index_offset; i + 2 < index_end; i += 3) {
-        const uint32_t ia = artifact.fill_indices[i];
-        const uint32_t ib = artifact.fill_indices[i + 1];
-        const uint32_t ic = artifact.fill_indices[i + 2];
-        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
-        const ImVec2 a = ctx.project_world(lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, ctx.math_zoom));
-        const ImVec2 b = ctx.project_world(lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, ctx.math_zoom));
-        const ImVec2 c = ctx.project_world(lonLatToWorldPx(artifact.vertices[ic].x, artifact.vertices[ic].y, ctx.math_zoom));
-        ctx.draw->AddTriangleFilled(a, b, c, fill);
-    }
-}
-
-void drawPolygonFeatureFromArtifactOutline(
-    const RenderLayerPassContext& ctx,
-    const GeometryArtifactFeatureRecord& rec,
-    const PolygonGeometryArtifact& artifact,
-    ImU32 outline) {
-    const uint32_t index_end = rec.aux_index_offset + rec.aux_index_count;
-    if (index_end > artifact.line_indices.size()) return;
-    for (uint32_t i = rec.aux_index_offset; i + 1 < index_end; i += 2) {
-        const uint32_t ia = artifact.line_indices[i];
-        const uint32_t ib = artifact.line_indices[i + 1];
-        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size()) continue;
-        const ImVec2 a = ctx.project_world(lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, ctx.math_zoom));
-        const ImVec2 b = ctx.project_world(lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, ctx.math_zoom));
-        ctx.draw->AddLine(a, b, outline, 1.0f);
-    }
-}
-
-void drawParcelFeatureFromRenderBlobFill(
-    const RenderLayerPassContext& ctx,
-    const ParcelRenderFeatureRecord& rec,
-    ImU32 fill) {
-    if (!ctx.parcel_render_blob) return;
-    const uint32_t index_end = rec.index_offset + rec.index_count;
-    if (index_end > ctx.parcel_render_blob->indices.size()) return;
-    for (uint32_t i = rec.index_offset; i + 2 < index_end; i += 3) {
-        const uint32_t ia = ctx.parcel_render_blob->indices[i];
-        const uint32_t ib = ctx.parcel_render_blob->indices[i + 1];
-        const uint32_t ic = ctx.parcel_render_blob->indices[i + 2];
-        if (ia >= ctx.parcel_render_blob->vertices.size() ||
-            ib >= ctx.parcel_render_blob->vertices.size() ||
-            ic >= ctx.parcel_render_blob->vertices.size()) continue;
-        const ImVec2 a = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ia].x, ctx.parcel_render_blob->vertices[ia].y, ctx.math_zoom));
-        const ImVec2 b = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ib].x, ctx.parcel_render_blob->vertices[ib].y, ctx.math_zoom));
-        const ImVec2 c = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ic].x, ctx.parcel_render_blob->vertices[ic].y, ctx.math_zoom));
-        ctx.draw->AddTriangleFilled(a, b, c, fill);
-    }
-}
-
-void drawParcelFeatureFromRenderBlobOutline(
-    const RenderLayerPassContext& ctx,
-    const ParcelRenderFeatureRecord& rec,
-    ImU32 outline) {
-    if (!ctx.parcel_render_blob) return;
-    const uint32_t index_end = rec.line_index_offset + rec.line_index_count;
-    if (index_end > ctx.parcel_render_blob->line_indices.size()) return;
-    for (uint32_t i = rec.line_index_offset; i + 1 < index_end; i += 2) {
-        const uint32_t ia = ctx.parcel_render_blob->line_indices[i];
-        const uint32_t ib = ctx.parcel_render_blob->line_indices[i + 1];
-        if (ia >= ctx.parcel_render_blob->vertices.size() || ib >= ctx.parcel_render_blob->vertices.size()) continue;
-        const ImVec2 a = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ia].x, ctx.parcel_render_blob->vertices[ia].y, ctx.math_zoom));
-        const ImVec2 b = ctx.project_world(lonLatToWorldPx(ctx.parcel_render_blob->vertices[ib].x, ctx.parcel_render_blob->vertices[ib].y, ctx.math_zoom));
-        ctx.draw->AddLine(a, b, outline, 1.0f);
-    }
 }
 
 bool isHoveredPointFeature(
@@ -423,32 +310,24 @@ bool pointInPolygonArtifactWorld(
     return false;
 }
 
-bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
-    if (!needle || !*needle) return false;
-    std::string hs = haystack;
-    std::string nd = needle;
-    std::transform(hs.begin(), hs.end(), hs.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-    std::transform(nd.begin(), nd.end(), nd.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-    return hs.find(nd) != std::string::npos;
+char toLowerAsciiFast(char ch) {
+    return (ch >= 'A' && ch <= 'Z') ? (char)(ch + ('a' - 'A')) : ch;
 }
 
-PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
-    if (fg && isLikelyCrimePointLayer(layer)) {
-        return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
+bool containsCaseInsensitive(std::string_view haystack, std::string_view needle) {
+    if (needle.empty() || needle.size() > haystack.size()) return false;
+    const size_t limit = haystack.size() - needle.size();
+    for (size_t i = 0; i <= limit; ++i) {
+        size_t j = 0;
+        for (; j < needle.size(); ++j) {
+            if (toLowerAsciiFast(haystack[i + j]) != toLowerAsciiFast(needle[j])) break;
+        }
+        if (j == needle.size()) return true;
     }
-    if (containsCaseInsensitive(layer.name, "water")) return PointMarkerGlyph::Droplet;
-    if (containsCaseInsensitive(layer.name, "health")) return PointMarkerGlyph::Cross;
-    if (containsCaseInsensitive(layer.name, "school")) return PointMarkerGlyph::Triangle;
-    if (containsCaseInsensitive(layer.name, "market")) return PointMarkerGlyph::Diamond;
-    if (containsCaseInsensitive(layer.name, "police")) return PointMarkerGlyph::Diamond;
-    if (containsCaseInsensitive(layer.name, "church")) return PointMarkerGlyph::Plus;
-    if (containsCaseInsensitive(layer.name, "industry")) return PointMarkerGlyph::Square;
-    if (containsCaseInsensitive(layer.name, "filling")) return PointMarkerGlyph::Square;
-    if (containsCaseInsensitive(layer.name, "event") ||
-        containsCaseInsensitive(layer.subcategory, "event") ||
-        containsCaseInsensitive(layer.duckdb_role, "point_event")) {
-        return PointMarkerGlyph::Droplet;
-    }
+    return false;
+}
+
+PointMarkerGlyph defaultPointMarkerGlyphForLayer(const LayerDef& layer) {
     switch (layer.category) {
         case LayerDef::Category::PublicHealth: return PointMarkerGlyph::Cross;
         case LayerDef::Category::Infrastructure: return PointMarkerGlyph::Square;
@@ -457,6 +336,42 @@ PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const La
         case LayerDef::Category::Housing:
         default: return PointMarkerGlyph::Circle;
     }
+}
+
+void ensureRenderClassificationCache(const LayerDef& layer) {
+    if (layer.render_classification_cache_valid) return;
+
+    layer.zoning_polygon_layer_cache =
+        !layerUsesPointGeometry(layer) &&
+        (layer.category == LayerDef::Category::Zoning ||
+         containsCaseInsensitive(layer.file, "zoning") ||
+         containsCaseInsensitive(layer.name, "zoning"));
+
+    PointMarkerGlyph glyph = defaultPointMarkerGlyphForLayer(layer);
+    if (containsCaseInsensitive(layer.name, "water")) glyph = PointMarkerGlyph::Droplet;
+    else if (containsCaseInsensitive(layer.name, "health")) glyph = PointMarkerGlyph::Cross;
+    else if (containsCaseInsensitive(layer.name, "school")) glyph = PointMarkerGlyph::Triangle;
+    else if (containsCaseInsensitive(layer.name, "market")) glyph = PointMarkerGlyph::Diamond;
+    else if (containsCaseInsensitive(layer.name, "police")) glyph = PointMarkerGlyph::Diamond;
+    else if (containsCaseInsensitive(layer.name, "church")) glyph = PointMarkerGlyph::Plus;
+    else if (containsCaseInsensitive(layer.name, "industry")) glyph = PointMarkerGlyph::Square;
+    else if (containsCaseInsensitive(layer.name, "filling")) glyph = PointMarkerGlyph::Square;
+    else if (containsCaseInsensitive(layer.name, "event") ||
+             containsCaseInsensitive(layer.subcategory, "event") ||
+             containsCaseInsensitive(layer.duckdb_role, "point_event")) {
+        glyph = PointMarkerGlyph::Droplet;
+    }
+
+    layer.point_marker_glyph_cache = (uint8_t)glyph;
+    layer.render_classification_cache_valid = true;
+}
+
+PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
+    if (fg && isLikelyCrimePointLayer(layer)) {
+        return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
+    }
+    ensureRenderClassificationCache(layer);
+    return (PointMarkerGlyph)layer.point_marker_glyph_cache;
 }
 
 void drawPointMarker(
@@ -576,10 +491,8 @@ bool pointInsideCircle(const ImVec2& p, const ImVec2& center, float radius) {
 }
 
 bool isZoningPolygonLayer(const LayerDef& layer) {
-    if (layerUsesPointGeometry(layer)) return false;
-    if (layer.category == LayerDef::Category::Zoning) return true;
-    return containsCaseInsensitive(layer.file, "zoning") ||
-           containsCaseInsensitive(layer.name, "zoning");
+    ensureRenderClassificationCache(layer);
+    return layer.zoning_polygon_layer_cache;
 }
 
 bool shouldClusterPointLayer(
@@ -613,7 +526,8 @@ bool layerHasPrimaryGpuDraw(
         return pointLayerGpuDrawActive(layer_idx);
     }
     if (layerUsesPolylineGeometry(layer)) return polylineLayerGpuDrawActive(layer_idx);
-    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuDrawActive(layer_idx)) return true;
+    if ((int)layer_idx != ctx.parcel_layer_idx &&
+        (zoningGpuDrawActive(layer_idx) || zoningGpuOutlineDrawActive(layer_idx))) return true;
     return false;
 }
 
@@ -647,9 +561,9 @@ void enqueuePrimaryGpuDrawForLayer(
     }
     if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuDrawActive(layer_idx)) {
         enqueueZoningGpuDraw(ctx.draw, layer_idx);
-        if (zoningGpuOutlineDrawActive(layer_idx)) {
-            enqueueZoningGpuOutlineDraw(ctx.draw, layer_idx);
-        }
+    }
+    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuOutlineDrawActive(layer_idx)) {
+        enqueueZoningGpuOutlineDraw(ctx.draw, layer_idx);
     }
 }
 
@@ -924,93 +838,11 @@ void drawFeatureRecordetry(
     const bool artifact_ready = polygon_artifact && feature_idx < polygon_artifact->features.size();
     const ParcelRenderFeatureRecord* parcel_feature =
         (int)layer_idx == ctx.parcel_layer_idx ? parcelRenderFeature(ctx, feature_idx) : nullptr;
-    if (artifact_ready || parcel_feature) {
-        const ImU32 outline_c = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
-        const bool fill_enabled_for_layer =
-            layer_idx < ctx.layer_fill_enabled->size() && (*ctx.layer_fill_enabled)[layer_idx];
-        const bool suppress_base_parcel_outlines =
-            (int)layer_idx == ctx.parcel_layer_idx &&
-            ctx.zoom_value < 14.0;
-        const bool use_gpu_parcel_fill =
-            (int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive();
-        if (!use_gpu_parcel_fill &&
-            fill_enabled_for_layer &&
-            ctx.should_fill_layer_polygon(layer_idx)) {
-            const uint32_t src_alpha = (feature_c >> 24) & 0xFFu;
-            const uint32_t fill_alpha = (uint32_t)std::clamp(
-                (int)std::lround((float)src_alpha * std::clamp(ctx.map_polygon_fill_opacity, 0.0f, 1.0f)),
-                0,
-                255);
-            ImU32 fill = (feature_c & 0x00FFFFFF) | (fill_alpha << 24);
-            if (artifact_ready) {
-                drawPolygonFeatureFromArtifactFill(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, fill);
-            } else {
-                drawParcelFeatureFromRenderBlobFill(ctx, *parcel_feature, fill);
-            }
-        }
-
-        if (layer_idx == (size_t)ctx.parcel_layer_idx &&
-            (ctx.vacant_notice_overlay_enabled || ctx.vacant_rehab_overlay_enabled)) {
-            int vac_notice = 0;
-            int vac_rehab = 0;
-            if (feature_idx < ctx.parcel_vac_notice_by_feature->size()) vac_notice = (*ctx.parcel_vac_notice_by_feature)[feature_idx];
-            if (feature_idx < ctx.parcel_vac_rehab_by_feature->size()) vac_rehab = (*ctx.parcel_vac_rehab_by_feature)[feature_idx];
-
-            const int weight = overlayWeight(
-                ctx.vacant_notice_overlay_enabled,
-                vac_notice,
-                ctx.vacant_rehab_overlay_enabled,
-                vac_rehab);
-            if (weight > 0) {
-                const bool notice_fill = ctx.vacant_notice_overlay_enabled &&
-                    ctx.vacant_notice_layer_idx >= 0 &&
-                    (size_t)ctx.vacant_notice_layer_idx < ctx.layer_fill_enabled->size() &&
-                    (*ctx.layer_fill_enabled)[(size_t)ctx.vacant_notice_layer_idx];
-                const bool rehab_fill = ctx.vacant_rehab_overlay_enabled &&
-                    ctx.vacant_rehab_layer_idx >= 0 &&
-                    (size_t)ctx.vacant_rehab_layer_idx < ctx.layer_fill_enabled->size() &&
-                    (*ctx.layer_fill_enabled)[(size_t)ctx.vacant_rehab_layer_idx];
-                if ((notice_fill || rehab_fill) &&
-                    ctx.should_fill_layer_polygon((size_t)ctx.parcel_layer_idx) &&
-                    !parcelGpuOverlayDrawActive()) {
-                    const int alpha = scaledOverlayAlpha(95, 16, 95, 220, weight);
-                    ImVec4 vac_base = blendVacancyColor(
-                        *ctx.vacancy_notice_color,
-                        *ctx.vacancy_rehab_color,
-                        vac_notice,
-                        vac_rehab);
-                    ImU32 vac_fill = colorWithAlpha(vac_base, alpha);
-                    if (artifact_ready) {
-                        drawPolygonFeatureFromArtifactFill(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, vac_fill);
-                    } else {
-                        drawParcelFeatureFromRenderBlobFill(ctx, *parcel_feature, vac_fill);
-                    }
-                }
-            }
-        }
-
-        const bool draw_base_outline =
-            !suppress_base_parcel_outlines &&
-            ((int)layer_idx != ctx.parcel_layer_idx || !parcelGpuOutlineDrawActive());
-        if (draw_base_outline) {
-            if (artifact_ready) {
-                drawPolygonFeatureFromArtifactOutline(ctx, polygon_artifact->features[feature_idx], *polygon_artifact, outline_c);
-            } else {
-                drawParcelFeatureFromRenderBlobOutline(ctx, *parcel_feature, outline_c);
-            }
-        }
+    if (artifact_ready || parcel_feature || !fg.rings.empty()) {
         return;
     }
 
     if (featureHasPolylineGeometry(ctx, layer_idx, feature_idx, fg)) {
-        if (const PolylineGeometryArtifact* artifact = polylineArtifactForLayer(ctx, layer_idx)) {
-            drawPolylineFeatureFromArtifact(ctx, feature_idx, *artifact, feature_c);
-        } else {
-            return;
-        }
-        if (ctx.prof_features_drawn_frame) {
-            ++(*ctx.prof_features_drawn_frame);
-        }
         return;
     }
 
@@ -1139,7 +971,7 @@ bool shouldBypassCpuParcelFeaturePass(
     bool layer_uses_heatmap_for_cache,
     bool layer_uses_lod_for_draw,
     bool should_recompute_heatmap) {
-    if (!parcel_gpu_draw_active) return true;
+    if (!parcel_gpu_draw_active) return false;
     if (layer_uses_lod_for_draw) return false;
     if (layer_uses_heatmap_for_cache && should_recompute_heatmap) return false;
     return true;
@@ -1157,6 +989,15 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         const bool is_zoning_layer = isZoningPolygonLayer(l);
         enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw);
         if (layerHasPrimaryGpuDraw(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw)) {
+            continue;
+        }
+
+        const bool stable_gpu_geometry_layer =
+            layerUsesPolylineGeometry(l) ||
+            (!layerUsesPointGeometry(l) && !layerUsesPolylineGeometry(l));
+        if (stable_gpu_geometry_layer &&
+            !layer_uses_heatmap_for_cache &&
+            !layer_uses_lod_for_draw) {
             continue;
         }
 
@@ -1221,7 +1062,7 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
 
         ImU32 base_color = ImGui::ColorConvertFloat4ToU32(l.color);
         const bool should_cluster_point_layer =
-            shouldClusterPointLayer(ctx, layer_idx, l, is_heat_layer, layer_uses_lod_for_draw);
+            shouldClusterPointLayer(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw);
         bool have_candidates = !ctx.should_recompute_heatmap || !layer_uses_heatmap_for_cache;
         if (ctx.high_quality_gpu_aggregate && ctx.should_recompute_heatmap && layer_uses_heatmap_for_cache) {
             have_candidates = false;
@@ -1250,11 +1091,10 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                 continue;
             }
             for (uint32_t fidx : render_candidates) {
-                const bool layer_uses_heatmap = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
                 if (!ctx.high_quality_gpu_aggregate &&
                     ctx.smooth_only_heatmap &&
                     ctx.should_recompute_heatmap &&
-                    layer_uses_heatmap &&
+                    layer_uses_heatmap_for_cache &&
                     fidx % 2 != 0) {
                     continue;
                 }
@@ -1271,7 +1111,7 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                     is_zoning_layer,
                     heat_normalization,
                     normalization_group_key,
-                    layer_uses_heatmap,
+                    layer_uses_heatmap_for_cache,
                     layer_uses_lod_for_draw,
                     false,
                     1,
@@ -1302,7 +1142,6 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
             for (size_t offset = 0; offset < budget; ++offset) {
                 const size_t fi = (cursor + offset) % total;
                 auto& fg = l.features[fi];
-                const bool layer_uses_heatmap = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
                 renderFeature(
                     ctx,
                     layer_idx,
@@ -1314,7 +1153,7 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                     is_zoning_layer,
                     heat_normalization,
                     normalization_group_key,
-                    layer_uses_heatmap,
+                    layer_uses_heatmap_for_cache,
                     layer_uses_lod_for_draw,
                     true,
                     smooth_sample_stride,
@@ -1341,7 +1180,6 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         }
         for (size_t fi = 0; fi < l.features.size(); ++fi) {
             auto& fg = l.features[fi];
-            const bool layer_uses_heatmap = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
             renderFeature(
                 ctx,
                 layer_idx,
@@ -1353,11 +1191,11 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
                 is_zoning_layer,
                 heat_normalization,
                 normalization_group_key,
-                    layer_uses_heatmap,
-                    layer_uses_lod_for_draw,
-                    true,
-                    smooth_sample_stride,
-                    &deferred_point_jobs);
+                layer_uses_heatmap_for_cache,
+                layer_uses_lod_for_draw,
+                true,
+                smooth_sample_stride,
+                &deferred_point_jobs);
         }
     }
     std::sort(

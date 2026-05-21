@@ -23,9 +23,10 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
 
     LayerUiSharedContext& shared = *ctx.shared;
     LayerDef& l = *ctx.layer;
+    const fs::path local_layer_path = resolveStoredLayerPath(shared.root, l);
     ImGui::TextUnformatted(l.name.c_str());
     ImGui::Separator();
-    const fs::path version_meta_path = shared.root / "data" / "versions" / "metadata" / (ctx.local_layer_path.filename().string() + ".json");
+    const fs::path version_meta_path = shared.root / "data" / "versions" / "metadata" / (local_layer_path.filename().string() + ".json");
     json version_meta = json::object();
     {
         std::ifstream in(version_meta_path);
@@ -48,11 +49,11 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
     const bool can_track_update = !l.source_url.empty() || layerHasImportSource(l);
     ImGui::BeginDisabled(!can_track_update);
     if (ImGui::Button(ctx.local_layer_exists ? "Update (versioned)" : "Download (versioned)")) {
-        downloadOrUpdateLayerVersioned({ctx.shared, ctx.idx, &l, ctx.local_layer_path}, ctx.local_layer_exists);
+        downloadOrUpdateLayerVersioned({ctx.shared, ctx.idx, &l, local_layer_path}, ctx.local_layer_exists);
     }
     ImGui::SameLine();
     if (ImGui::Button("Check Update")) {
-        checkLayerUpdateVersioned({ctx.shared, ctx.idx, &l, ctx.local_layer_path});
+        checkLayerUpdateVersioned({ctx.shared, ctx.idx, &l, local_layer_path});
     }
     ImGui::EndDisabled();
     if (!can_track_update) {
@@ -64,7 +65,7 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
 
     pushButtonPalette(ButtonPalette::Destructive);
     if (ImGui::Button("Delete Local Layer File")) {
-        deleteLocalLayerFile({ctx.shared, ctx.idx, &l, ctx.local_layer_path});
+        deleteLocalLayerFile({ctx.shared, ctx.idx, &l, local_layer_path});
     }
     ImGui::PopStyleColor(buttonPaletteColorCount(ButtonPalette::Destructive));
     if (ImGui::IsItemHovered()) {

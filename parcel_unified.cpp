@@ -113,6 +113,10 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
         if (row.current_land <= 0.0) row.current_land = money(&parcel, {"land_value", "CURRLAND"});
         row.current_improvements = money(rp, {"improvement_value", "CURRIMPR"});
         if (row.current_improvements <= 0.0) row.current_improvements = money(&parcel, {"improvement_value", "CURRIMPR"});
+        row.structure_area_sqft = money(rp, {"structure_area_sqft", "STRUCTAREA", "BLDG_AREA", "GROSS_AREA", "LIVING_AREA"});
+        if (row.structure_area_sqft <= 0.0) {
+            row.structure_area_sqft = money(&parcel, {"structure_area_sqft", "STRUCTAREA", "BLDG_AREA", "GROSS_AREA", "LIVING_AREA"});
+        }
         row.tax_base = money(rp, {"current_value", "tax_base", "TAXBASE", "ARTAXBAS"});
         if (row.tax_base <= 0.0) row.tax_base = money(&parcel, {"current_value", "tax_base", "TAXBASE", "ARTAXBAS"});
         row.sale_price = money(rp, {"sale_price", "SALEPRIC"});

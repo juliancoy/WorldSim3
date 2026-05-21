@@ -212,9 +212,6 @@ bool flattenParcelFeatureForRender(const LayerDef::FeatureRecord& fg, FlattenedP
     out.indices.clear();
     out.line_indices.clear();
     if (fg.rings.empty()) return false;
-    const std::vector<uint32_t> triangulated =
-        fg.triangles.empty() ? triangulateRings(fg.rings) : fg.triangles;
-    if (triangulated.empty()) return false;
     size_t total_points = 0;
     for (const auto& ring : fg.rings) total_points += ring.size();
     if (total_points == 0 || total_points > std::numeric_limits<uint32_t>::max()) return false;
@@ -233,17 +230,17 @@ bool flattenParcelFeatureForRender(const LayerDef::FeatureRecord& fg, FlattenedP
         }
         ring_vertex_offset += ring.size();
     }
-    out.indices.reserve(triangulated.size());
-    for (size_t ti = 0; ti + 2 < triangulated.size(); ti += 3) {
-        const uint32_t a = triangulated[ti + 0];
-        const uint32_t b = triangulated[ti + 1];
-        const uint32_t c = triangulated[ti + 2];
+    out.indices.reserve(fg.triangles.size());
+    for (size_t ti = 0; ti + 2 < fg.triangles.size(); ti += 3) {
+        const uint32_t a = fg.triangles[ti + 0];
+        const uint32_t b = fg.triangles[ti + 1];
+        const uint32_t c = fg.triangles[ti + 2];
         if (a >= out.vertices.size() || b >= out.vertices.size() || c >= out.vertices.size()) continue;
         out.indices.push_back(a);
         out.indices.push_back(b);
         out.indices.push_back(c);
     }
-    return !out.vertices.empty() && !out.indices.empty() && !out.line_indices.empty();
+    return !out.vertices.empty() && !out.line_indices.empty();
 }
 }
 
@@ -430,13 +427,8 @@ bool buildPolygonGeometryArtifact(
         const auto& fg = features[feature_idx];
         if (fg.rings.empty()) continue;
 
-        LayerDef::FeatureRecord triangulated = fg;
-        if (triangulated.triangles.empty()) {
-            triangulated.triangles = triangulateRings(triangulated.rings);
-        }
-
         FlattenedParcelFeature flattened;
-        if (!flattenParcelFeatureForRender(triangulated, flattened)) continue;
+        if (!flattenParcelFeatureForRender(fg, flattened)) continue;
         if (out.vertices.size() + flattened.vertices.size() > std::numeric_limits<uint32_t>::max()) return false;
         if (out.fill_indices.size() + flattened.indices.size() > std::numeric_limits<uint32_t>::max()) return false;
         if (out.line_indices.size() + flattened.line_indices.size() > std::numeric_limits<uint32_t>::max()) return false;
@@ -491,7 +483,7 @@ bool buildPolygonGeometryArtifact(
     if (chunk_open) out.chunks.push_back(current_chunk);
     out.header.feature_count = out.features.size();
     out.header.chunk_count = out.chunks.size();
-    return !out.vertices.empty() && !out.fill_indices.empty() && !out.line_indices.empty();
+    return !out.vertices.empty() && !out.line_indices.empty();
 }
 
 bool loadBinaryPointGeometryArtifact(

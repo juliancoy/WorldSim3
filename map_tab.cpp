@@ -545,6 +545,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.parcel_address_search_by_feature = ctx.parcel_address_search_by_feature;
             map_frame_session_ctx.owner_text_filter_result_set = ctx.owner_text_filter_result_set;
             map_frame_session_ctx.address_text_filter_result_set = ctx.address_text_filter_result_set;
+            map_frame_session_ctx.feature_render_cache = ctx.feature_render_cache;
             map_frame_session_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
             map_frame_session_ctx.zoning_metadata = ctx.zoning_metadata;
             map_frame_session_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;

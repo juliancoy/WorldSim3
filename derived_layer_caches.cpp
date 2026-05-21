@@ -105,6 +105,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature ||
         !ctx.parcel_tax_lien_by_feature || !ctx.parcel_tax_sale_by_feature ||
         !ctx.parcel_tax_lien_amount_by_feature || !ctx.parcel_tax_sale_amount_by_feature ||
+        !ctx.parcel_blocklot_by_feature || !ctx.parcel_blocklot_cached_signature ||
         !ctx.vacant_notice_rows_matched_total || !ctx.vacant_rehab_rows_matched_total ||
         !ctx.vacant_parcels_matched_total || !ctx.vacant_parcels_with_geometry_total ||
         !ctx.vacant_parcels_triangulated_renderable_total || !ctx.unified_parcels ||
@@ -258,6 +259,15 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     if (ctx.parcel_layer_idx >= 0) {
         const auto& pfeats = layers[(size_t)ctx.parcel_layer_idx].features;
         const std::string parcel_sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.parcel_layer_idx);
+        if (ctx.parcel_blocklot_by_feature->size() != pfeats.size() ||
+            *ctx.parcel_blocklot_cached_signature != parcel_sig) {
+            ctx.parcel_blocklot_by_feature->clear();
+            ctx.parcel_blocklot_by_feature->reserve(pfeats.size());
+            for (const auto& fg : pfeats) {
+                ctx.parcel_blocklot_by_feature->push_back(featureBlockLotJoinKey(fg));
+            }
+            *ctx.parcel_blocklot_cached_signature = parcel_sig;
+        }
         if (ctx.parcel_vac_notice_by_feature->size() != pfeats.size() ||
             ctx.parcel_vac_rehab_by_feature->size() != pfeats.size() ||
             *ctx.parcel_vacancy_generation_applied != *ctx.vacancy_maps_generation) {
@@ -266,7 +276,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             size_t notice_rows_matched = 0;
             size_t rehab_rows_matched = 0;
             for (size_t i = 0; i < pfeats.size(); ++i) {
-                std::string bl = normalizeJoinKey(getPropertyValue(pfeats[i], "BLOCKLOT"));
+                const std::string& bl = (*ctx.parcel_blocklot_by_feature)[i];
                 auto itn = ctx.vacant_notice_count_by_blocklot->find(bl);
                 if (itn != ctx.vacant_notice_count_by_blocklot->end()) {
                     (*ctx.parcel_vac_notice_by_feature)[i] = itn->second;
@@ -290,7 +300,8 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 (size_t)*ctx.cached_vac_notice_size,
                 (size_t)*ctx.cached_vac_rehab_size,
                 notice_rows_matched,
-                rehab_rows_matched);
+                rehab_rows_matched,
+                ctx.parcel_blocklot_by_feature);
             *ctx.owner_aggregates_dirty = true;
         }
         if (ctx.parcel_tax_lien_by_feature->size() != pfeats.size() ||
@@ -301,7 +312,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             ctx.parcel_tax_lien_amount_by_feature->assign(pfeats.size(), 0.0);
             ctx.parcel_tax_sale_amount_by_feature->assign(pfeats.size(), 0.0);
             for (size_t i = 0; i < pfeats.size(); ++i) {
-                std::string bl = featureBlockLotJoinKey(pfeats[i]);
+                const std::string& bl = (*ctx.parcel_blocklot_by_feature)[i];
                 auto it_lien = ctx.tax_lien_count_by_blocklot->find(bl);
                 if (it_lien != ctx.tax_lien_count_by_blocklot->end()) {
                     (*ctx.parcel_tax_lien_by_feature)[i] = it_lien->second;

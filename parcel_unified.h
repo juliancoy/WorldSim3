@@ -31,6 +31,7 @@ struct UnifiedParcelRecord {
 
     double current_land = 0.0;
     double current_improvements = 0.0;
+    double structure_area_sqft = 0.0;
     double tax_base = 0.0;
     double sale_price = 0.0;
     double current_value = 0.0;

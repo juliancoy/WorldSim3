@@ -15,6 +15,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
@@ -480,8 +481,9 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
     LayersPanelUiContext& ctx,
     size_t idx,
     LayerDef& layer,
-    const std::filesystem::path& local_layer_path,
     bool local_layer_exists);
+
+bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer);
 
 bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& layer);
 
@@ -513,19 +515,361 @@ bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& la
     return layerMatchesSearch(ctx, layer);
 }
 
-bool drawBranchVisibilityToggle(const char* id, bool visible, const char* tooltip) {
+struct GroupControlState {
+    bool has_rows = false;
+    bool any_visible = false;
+    bool hover_supported = false;
+    bool hover_selected = false;
+    bool click_supported = false;
+    bool click_selected = false;
+    int first_hover_idx = -1;
+    int first_click_idx = -1;
+};
+
+struct SourceHierarchyNode {
+    std::string key;
+    std::string label;
+    std::vector<size_t> layer_indices;
+    std::vector<size_t> descendant_layer_indices;
+    std::vector<SourceHierarchyNode> children;
+};
+
+using LayerGroupMatcher = std::function<bool(size_t, const LayerDef&)>;
+
+GroupControlState buildGroupControlState(const LayersPanelUiContext& ctx, const LayerGroupMatcher& matches) {
+    GroupControlState state;
+    if (!ctx.shared || !ctx.shared->layers) return state;
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        const LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (!matches(idx, layer)) continue;
+        state.has_rows = true;
+        state.any_visible = state.any_visible || layer.enabled;
+        if (layerSupportsHoverSelection(ctx, idx)) {
+            state.hover_supported = true;
+            if (state.first_hover_idx < 0) state.first_hover_idx = (int)idx;
+            state.hover_selected = state.hover_selected || layerIsSelectedHoverTarget(ctx, idx);
+        }
+        if (layerSupportsClickSelection(ctx, idx)) {
+            state.click_supported = true;
+            if (state.first_click_idx < 0) state.first_click_idx = (int)idx;
+            state.click_selected = state.click_selected || layerIsSelectedClickTarget(ctx, idx);
+        }
+    }
+    return state;
+}
+
+void setGroupVisibility(const LayersPanelUiContext& ctx, const LayerGroupMatcher& matches, bool enabled) {
+    if (!ctx.shared || !ctx.shared->layers) return;
+    bool heatmap_changed = false;
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (!matches(idx, layer)) continue;
+        layer.enabled = enabled;
+        if (!enabled && ctx.shared->layer_heatmap_enabled && idx < ctx.shared->layer_heatmap_enabled->size()) {
+            (*ctx.shared->layer_heatmap_enabled)[idx] = false;
+            heatmap_changed = true;
+        }
+    }
+    if (heatmap_changed && ctx.shared->layer_heatmap_state_changed) *ctx.shared->layer_heatmap_state_changed = true;
+}
+
+void setGroupHoverTarget(LayersPanelUiContext& ctx, const LayerGroupMatcher& matches) {
+    if (!ctx.shared || !ctx.shared->layers || !ctx.shared->layer_hover_enabled) return;
+    int first_idx = -1;
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (!matches(idx, layer) || !layerSupportsHoverSelection(ctx, idx)) continue;
+        (*ctx.shared->layer_hover_enabled)[idx] = true;
+        if (first_idx < 0) first_idx = (int)idx;
+    }
+    if (first_idx >= 0 && ctx.active_hover_layer_idx) {
+        *ctx.active_hover_layer_idx = first_idx;
+        if (ctx.shared->layer_hover_state_changed) *ctx.shared->layer_hover_state_changed = true;
+    }
+}
+
+void setGroupClickTarget(LayersPanelUiContext& ctx, const LayerGroupMatcher& matches) {
+    if (!ctx.shared || !ctx.shared->layers || !ctx.shared->layer_inspect_enabled) return;
+    int first_idx = -1;
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (!matches(idx, layer) || !layerSupportsClickSelection(ctx, idx)) continue;
+        if (idx < ctx.shared->layer_inspect_enabled->size()) {
+            (*ctx.shared->layer_inspect_enabled)[idx] = true;
+        }
+        if (first_idx < 0) first_idx = (int)idx;
+    }
+    if (first_idx >= 0 && ctx.active_click_layer_idx) {
+        *ctx.active_click_layer_idx = first_idx;
+        if (ctx.shared->layer_inspect_state_changed) *ctx.shared->layer_inspect_state_changed = true;
+    }
+}
+
+bool drawGroupControls(
+    LayersPanelUiContext& ctx,
+    const char* id,
+    const GroupControlState& state,
+    const LayerGroupMatcher& matches,
+    const char* visibility_tooltip,
+    const char* hover_tooltip,
+    const char* click_tooltip) {
     ImGui::PushID(id);
-    pushButtonPalette(visible ? ButtonPalette::ToggleOn : ButtonPalette::ToggleOff);
-    const bool clicked = ImGui::SmallButton("Eye");
-    ImGui::PopStyleColor(buttonPaletteColorCount(visible ? ButtonPalette::ToggleOn : ButtonPalette::ToggleOff));
+    if (state.hover_supported) {
+        const bool selected = state.hover_selected;
+        if (ImGui::RadioButton("##hover_target", selected)) setGroupHoverTarget(ctx, matches);
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(hover_tooltip);
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    if (state.click_supported) {
+        const bool selected = state.click_selected;
+        if (ImGui::RadioButton("##click_target", selected)) setGroupClickTarget(ctx, matches);
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted(click_tooltip);
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    bool visible = state.any_visible;
+    const bool changed = drawIconToggleButton("show", "V", visible, visibility_tooltip);
+    if (changed) setGroupVisibility(ctx, matches, visible);
+    ImGui::PopID();
+    return changed;
+}
+
+std::string humanizeSourceHierarchyValue(const std::string& value) {
+    if (value.empty()) return {};
+    if (value == "earth") return "Earth";
+    if (value == "us") return "US";
+    if (value.size() <= 3) {
+        std::string out = value;
+        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+            return (char)std::toupper(c);
+        });
+        return out;
+    }
+    std::string out;
+    out.reserve(value.size());
+    bool uppercase_next = true;
+    for (char ch : value) {
+        if (ch == '_' || ch == '-') {
+            out.push_back(' ');
+            uppercase_next = true;
+            continue;
+        }
+        if (uppercase_next) out.push_back((char)std::toupper((unsigned char)ch));
+        else out.push_back(ch);
+        uppercase_next = false;
+    }
+    return out;
+}
+
+std::vector<std::pair<std::string, std::string>> sourceHierarchySegments(const LayerDef& layer) {
+    std::vector<std::pair<std::string, std::string>> out;
+    auto push_segment = [&](const char* level, const std::string& value) {
+        if (value.empty()) return;
+        out.push_back({
+            std::string(level) + ":" + value,
+            humanizeSourceHierarchyValue(value)
+        });
+    };
+    push_segment("world", layer.provenance_world);
+    push_segment("nation_state", layer.provenance_nation_state);
+    push_segment("state_region", layer.provenance_state_region);
+    push_segment("county_city", layer.provenance_county_city);
+    return out;
+}
+
+void insertLayerIntoSourceHierarchy(
+    SourceHierarchyNode& root,
+    const std::vector<std::pair<std::string, std::string>>& segments,
+    size_t layer_idx) {
+    root.descendant_layer_indices.push_back(layer_idx);
+    SourceHierarchyNode* node = &root;
+    for (const auto& [segment_key, segment_label] : segments) {
+        auto it = std::find_if(node->children.begin(), node->children.end(), [&](const SourceHierarchyNode& child) {
+            return child.key == segment_key;
+        });
+        if (it == node->children.end()) {
+            node->children.push_back(SourceHierarchyNode{segment_key, segment_label});
+            it = node->children.end() - 1;
+        }
+        it->descendant_layer_indices.push_back(layer_idx);
+        node = &(*it);
+    }
+    node->layer_indices.push_back(layer_idx);
+}
+
+LayerGroupMatcher matcherForLayerIndices(const std::vector<size_t>& indices) {
+    return [indices](size_t idx, const LayerDef&) {
+        return std::find(indices.begin(), indices.end(), idx) != indices.end();
+    };
+}
+
+void drawStandardLayerRow(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer) {
+    ImGui::PushID((int)idx);
+    const bool local_layer_exists =
+        ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
+            ? (*ctx.shared->local_layer_exists_cache)[idx]
+            : false;
+    const bool download_pending =
+        ctx.shared->layer_download_pending ? ctx.shared->layer_download_pending(idx) : false;
+    if (!local_layer_exists && !download_pending) {
+        pushButtonPalette(ButtonPalette::Download);
+        const bool can_download = ctx.shared->layer_registry
+            ? ctx.shared->layer_registry->canDownload(idx)
+            : (!layer.source_url.empty() || !layer.import_type.empty());
+        const bool has_source_metadata = ctx.shared->layer_registry
+            ? ctx.shared->layer_registry->hasSourceMetadata(idx)
+            : (can_download || !layer.reference_url.empty() || !layer.source_urls.empty());
+        if (ImGui::SmallButton("D")) {
+            if (can_download && ctx.shared->enqueue_layer_download_request) {
+                ctx.shared->enqueue_layer_download_request(idx);
+            } else if (ctx.shared->data_library_status_msg) {
+                *ctx.shared->data_library_status_msg = has_source_metadata
+                    ? "No direct downloadable GeoJSON URL for " + layer.file + "; see layer tooltip for source URLs."
+                    : "No source URL for " + layer.file;
+            }
+        }
+        ImGui::PopStyleColor(buttonPaletteColorCount(ButtonPalette::Download));
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Download missing dataset");
+            ImGui::TextDisabled(
+                "%s",
+                can_download ? (layer.source_url.empty() ? "Import source available" : "Direct download URL available") :
+                (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    if (!local_layer_exists && download_pending) {
+        ImGui::TextDisabled("Q");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Layer download is queued or active");
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+
+    const bool hover_selected = layerIsSelectedHoverTarget(ctx, idx);
+    if (layerSupportsHoverSelection(ctx, idx)) {
+        if (ImGui::RadioButton("##hover_target", hover_selected)) {
+            selectHoverTargetLayer(ctx, idx);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Set active hover inspector target");
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    const bool click_selected = layerIsSelectedClickTarget(ctx, idx);
+    if (layerSupportsClickSelection(ctx, idx)) {
+        if (ImGui::RadioButton("##click_target", click_selected)) {
+            selectClickTargetLayer(ctx, idx);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Set active click action target");
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+    }
+    drawIconToggleButton("show", "V", layer.enabled, "Show layer");
+    if (ImGui::SmallButton("?")) ImGui::OpenPopup("layer_display_settings");
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
-        ImGui::TextUnformatted(tooltip);
-        ImGui::TextDisabled("%s", visible ? "Some subdata visible" : "All subdata hidden");
+        ImGui::TextUnformatted("Layer display settings");
+        ImGui::EndTooltip();
+    }
+
+    LayerSettingsPopupContext settings_ctx =
+        makeLayerSettingsPopupContext(ctx, idx, layer, local_layer_exists);
+    drawLayerDisplaySettingsPopup(settings_ctx);
+
+    ImGui::SameLine();
+    drawFillColorCircleButton(ctx, idx, layer);
+    ImGui::SameLine(0.0f, 3.0f);
+    drawOutlineColorCircleButton(ctx, idx, layer);
+    ImGui::SameLine(0.0f, 6.0f);
+    drawLayerNameBadge(layer.name, layer.color);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) copyLayerNameToClipboard(layer.name);
+    const bool row_hovered = ImGui::IsItemHovered();
+    ImGui::SameLine();
+    LayerRuntimeState st;
+    if (ctx.shared->status_mutex && ctx.shared->layer_states) {
+        std::lock_guard<std::mutex> lk(*ctx.shared->status_mutex);
+        if (idx < ctx.shared->layer_states->size()) st = (*ctx.shared->layer_states)[idx];
+    }
+    const std::string display_status = layerRuntimeDisplayStatus(st, layerLogicalId(layer));
+    if (st.status == LayerPipelineStatus::Failed) {
+        ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", display_status.c_str());
+    } else {
+        ImGui::TextDisabled("[%s | %zu]", display_status.c_str(), st.feature_count);
+    }
+    const bool status_hovered = ImGui::IsItemHovered();
+    if (row_hovered || status_hovered) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(layer.name.c_str());
+        ImGui::Separator();
+        ImGui::Text("Category: %s", categoryToString(layer.category));
+        ImGui::Text("Status: %s", display_status.c_str());
+        ImGui::TextDisabled("Pipeline: %s", statusToString(st.status));
+        if (!st.hydration_phase.empty()) ImGui::TextDisabled("Hydration: %s", st.hydration_phase.c_str());
+        ImGui::Text("Features: %zu", st.feature_count);
+        ImGui::Text("Layer ID: %s", layerLogicalId(layer).c_str());
+        ImGui::TextDisabled("Storage Key: %s", layer.file.c_str());
+        ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
+        if (!layer.scale.empty()) ImGui::Text("Scale: %s", layer.scale.c_str());
+        if (!layer.heatmap_field.empty()) ImGui::Text("Heatmap Field: %s", layer.heatmap_field.c_str());
+        if (!layer.description.empty()) ImGui::TextWrapped("Description: %s", layer.description.c_str());
+        if (!layer.source_url.empty()) ImGui::TextWrapped("Download URL: %s", layer.source_url.c_str());
+        if (!layer.reference_url.empty()) ImGui::TextWrapped("Reference: %s", layer.reference_url.c_str());
+        if (!layer.source_urls.empty()) {
+            ImGui::SeparatorText("Source URLs");
+            for (const auto& url : layer.source_urls) ImGui::TextWrapped("%s", url.c_str());
+        }
+        if (!st.error.empty()) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Error: %s", st.error.c_str());
+        }
         ImGui::EndTooltip();
     }
     ImGui::PopID();
-    return clicked;
+}
+
+void drawSourceHierarchyNode(LayersPanelUiContext& ctx, const SourceHierarchyNode& node) {
+    const LayerGroupMatcher matches = matcherForLayerIndices(node.descendant_layer_indices);
+    const GroupControlState state = buildGroupControlState(ctx, matches);
+    const std::string visibility_tip = std::string("Show or hide all layers in ") + node.label;
+    const std::string hover_tip = std::string("Set hover action for the first supported layer in ") + node.label;
+    const std::string click_tip = std::string("Set click action for the first supported layer in ") + node.label;
+    drawGroupControls(
+        ctx,
+        node.key.c_str(),
+        state,
+        matches,
+        visibility_tip.c_str(),
+        hover_tip.c_str(),
+        click_tip.c_str());
+    const bool open = ImGui::TreeNodeEx(node.label.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
+    if (!open) return;
+
+    for (const auto& child : node.children) {
+        drawSourceHierarchyNode(ctx, child);
+    }
+    for (size_t idx : node.layer_indices) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (drawParcelJurisdictionFilterRow(ctx, idx, layer)) continue;
+        drawStandardLayerRow(ctx, idx, layer);
+    }
+    ImGui::TreePop();
 }
 
 void setParcelJurisdictionSelected(LayersPanelUiContext& ctx, const char* jurisdiction, bool selected) {
@@ -543,7 +887,6 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
     if (jurisdiction[0] == '\0') return false;
 
     ImGui::PushID((int)idx);
-    const std::filesystem::path local_layer_path = resolveStoredLayerPath(ctx.shared->root, layer);
     const bool local_layer_exists =
         ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
             ? (*ctx.shared->local_layer_exists_cache)[idx]
@@ -580,9 +923,10 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         }
         ImGui::SameLine();
     }
+    drawIconToggleButton("show", "V", layer.enabled, "Show layer");
     bool selected = ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.find(jurisdiction) !=
         ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.end();
-    if (drawIconToggleButton("show_jurisdiction", "V", selected, "Show jurisdiction in active parcel filter")) {
+    if (drawIconToggleButton("show_jurisdiction", "J", selected, "Include jurisdiction in active parcel filter")) {
         setParcelJurisdictionSelected(ctx, jurisdiction, selected);
     }
     if (ImGui::SmallButton("?")) ImGui::OpenPopup("layer_display_settings");
@@ -593,7 +937,7 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
     }
 
     LayerSettingsPopupContext settings_ctx =
-        makeLayerSettingsPopupContext(ctx, idx, layer, local_layer_path, local_layer_exists);
+        makeLayerSettingsPopupContext(ctx, idx, layer, local_layer_exists);
     drawLayerDisplaySettingsPopup(settings_ctx);
 
     ImGui::SameLine();
@@ -607,8 +951,10 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(layer.name.c_str());
         ImGui::Separator();
-        ImGui::TextWrapped("Filters the active Maryland parcel layer through DuckDB before Vulkan rendering.");
+        ImGui::TextWrapped("County parcel rows have separate layer visibility and parcel-jurisdiction filter state.");
         ImGui::Text("Jurisdiction: %s", jurisdiction);
+        ImGui::Text("Layer visible: %s", layer.enabled ? "yes" : "no");
+        ImGui::Text("Jurisdiction filter enabled: %s", selected ? "yes" : "no");
         ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
         ImGui::Text("Download queued/active: %s", download_pending ? "yes" : "no");
         if (!ctx.parcel_jurisdiction_filter_state->status.empty()) {
@@ -708,13 +1054,11 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
     LayersPanelUiContext& ctx,
     size_t idx,
     LayerDef& layer,
-    const std::filesystem::path& local_layer_path,
     bool local_layer_exists) {
     LayerSettingsPopupContext settings_ctx;
     settings_ctx.shared = ctx.shared;
     settings_ctx.active_hover_layer_idx = ctx.active_hover_layer_idx;
     settings_ctx.active_click_layer_idx = ctx.active_click_layer_idx;
-    settings_ctx.local_layer_path = local_layer_path;
     settings_ctx.idx = idx;
     settings_ctx.layer = &layer;
     settings_ctx.local_layer_exists = local_layer_exists;
@@ -724,201 +1068,45 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
 
 void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const char* label) {
     if (!ctx.shared || !ctx.shared->layers) return;
-    bool category_has_rows = false;
-    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
-        const LayerDef& layer = (*ctx.shared->layers)[idx];
-        if (layer.category != cat) continue;
-        if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
-        if (!layerVisibleInHierarchy(ctx, layer)) continue;
-        category_has_rows = true;
-        break;
-    }
-    if (!category_has_rows) return;
-    const bool any_visible = categoryHasVisibleSubdata(ctx, cat);
-    const std::string toggle_id = std::string("toggle_") + label;
-    const std::string toggle_tip = std::string("Toggle all ") + label + " subdata";
-    if (drawBranchVisibilityToggle(toggle_id.c_str(), any_visible, toggle_tip.c_str())) {
-        setCategoryVisible(*ctx.shared, ctx.parcel_layer_idx, cat, !any_visible);
-    }
-    ImGui::SameLine();
+    const LayerGroupMatcher category_matches = [&](size_t idx, const LayerDef& layer) {
+        return layer.category == cat &&
+            !hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx) &&
+            layerVisibleInHierarchy(ctx, layer);
+    };
+    const GroupControlState category_state = buildGroupControlState(ctx, category_matches);
+    if (!category_state.has_rows) return;
+    const std::string category_id = std::string("category_") + label;
+    const std::string category_visibility_tip = std::string("Show or hide all layers in ") + label;
+    const std::string category_hover_tip = std::string("Set hover action for the first supported layer in ") + label;
+    const std::string category_click_tip = std::string("Set click action for the first supported layer in ") + label;
+    drawGroupControls(
+        ctx,
+        category_id.c_str(),
+        category_state,
+        category_matches,
+        category_visibility_tip.c_str(),
+        category_hover_tip.c_str(),
+        category_click_tip.c_str());
     const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
     if (!open) return;
-
-    std::string current_subcategory;
-    std::string current_scope;
-    std::string current_region;
-    bool current_region_open = false;
+    SourceHierarchyNode root;
+    root.key = std::string("source_root_") + label;
+    root.label = label;
     for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
         LayerDef& layer = (*ctx.shared->layers)[idx];
         if (layer.category != cat) continue;
         if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
         if (!layerVisibleInHierarchy(ctx, layer)) continue;
-        if (layer.subcategory != current_subcategory) {
-            if (!current_region.empty() && current_region_open) ImGui::TreePop();
-            current_subcategory = layer.subcategory;
-            if (!current_subcategory.empty()) ImGui::SeparatorText(current_subcategory.c_str());
-            current_scope.clear();
-            current_region.clear();
-            current_region_open = false;
-        }
-        if (layer.region != current_region) {
-            if (!current_region.empty() && current_region_open) ImGui::TreePop();
-            current_region = layer.region;
-            current_region_open = false;
-            if (!current_region.empty()) {
-                current_region_open = ImGui::TreeNodeEx(
-                    current_region.c_str(),
-                    ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
-                current_scope.clear();
-            }
-        }
-        if (!current_region.empty() && !current_region_open) {
-            continue;
-        }
-        if (drawParcelJurisdictionFilterRow(ctx, idx, layer)) {
-            continue;
-        }
-        const char* scope_label = geographicScopeLabel(layer);
-        if (scope_label != current_scope) {
-            current_scope = scope_label;
-            ImGui::TextDisabled("%s", current_scope.c_str());
-        }
-
-        ImGui::PushID((int)idx);
-        const std::filesystem::path local_layer_path = resolveStoredLayerPath(ctx.shared->root, layer);
-        const bool local_layer_exists =
-            ctx.shared->local_layer_exists_cache && idx < ctx.shared->local_layer_exists_cache->size()
-                ? (*ctx.shared->local_layer_exists_cache)[idx]
-                : false;
-        const bool download_pending =
-            ctx.shared->layer_download_pending ? ctx.shared->layer_download_pending(idx) : false;
-        if (!local_layer_exists && !download_pending) {
-            pushButtonPalette(ButtonPalette::Download);
-            const bool can_download = ctx.shared->layer_registry
-                ? ctx.shared->layer_registry->canDownload(idx)
-                : (!layer.source_url.empty() || !layer.import_type.empty());
-            const bool has_source_metadata = ctx.shared->layer_registry
-                ? ctx.shared->layer_registry->hasSourceMetadata(idx)
-                : (can_download || !layer.reference_url.empty() || !layer.source_urls.empty());
-            if (ImGui::SmallButton("D")) {
-                if (can_download && ctx.shared->enqueue_layer_download_request) {
-                    ctx.shared->enqueue_layer_download_request(idx);
-                } else if (ctx.shared->data_library_status_msg) {
-                    *ctx.shared->data_library_status_msg = has_source_metadata
-                        ? "No direct downloadable GeoJSON URL for " + layer.file + "; see layer tooltip for source URLs."
-                        : "No source URL for " + layer.file;
-                }
-            }
-            ImGui::PopStyleColor(buttonPaletteColorCount(ButtonPalette::Download));
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Download missing dataset");
-                ImGui::TextDisabled(
-                    "%s",
-                    can_download ? (layer.source_url.empty() ? "Import source available" : "Direct download URL available") :
-                    (has_source_metadata ? "Source URLs documented; no direct app download URL" : "No source URL in manifest"));
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-        }
-        if (!local_layer_exists && download_pending) {
-            ImGui::TextDisabled("Q");
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Layer download is queued or active");
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-        }
-
-        const bool hover_selected = layerIsSelectedHoverTarget(ctx, idx);
-        if (layerSupportsHoverSelection(ctx, idx)) {
-            if (ImGui::RadioButton("##hover_target", hover_selected)) {
-                selectHoverTargetLayer(ctx, idx);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Set active hover inspector target");
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-        }
-        const bool click_selected = layerIsSelectedClickTarget(ctx, idx);
-        if (layerSupportsClickSelection(ctx, idx)) {
-            if (ImGui::RadioButton("##click_target", click_selected)) {
-                selectClickTargetLayer(ctx, idx);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Set active click action target");
-                ImGui::EndTooltip();
-            }
-            ImGui::SameLine();
-        }
-        drawIconToggleButton("show", "V", layer.enabled, "Show layer");
-        if (ImGui::SmallButton("?")) ImGui::OpenPopup("layer_display_settings");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Layer display settings");
-            ImGui::EndTooltip();
-        }
-
-        LayerSettingsPopupContext settings_ctx =
-            makeLayerSettingsPopupContext(ctx, idx, layer, local_layer_path, local_layer_exists);
-        drawLayerDisplaySettingsPopup(settings_ctx);
-
-        ImGui::SameLine();
-        drawFillColorCircleButton(ctx, idx, layer);
-        ImGui::SameLine(0.0f, 3.0f);
-        drawOutlineColorCircleButton(ctx, idx, layer);
-        ImGui::SameLine(0.0f, 6.0f);
-        drawLayerNameBadge(layer.name, layer.color);
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) copyLayerNameToClipboard(layer.name);
-        const bool row_hovered = ImGui::IsItemHovered();
-        ImGui::SameLine();
-        LayerRuntimeState st;
-        if (ctx.shared->status_mutex && ctx.shared->layer_states) {
-            std::lock_guard<std::mutex> lk(*ctx.shared->status_mutex);
-            if (idx < ctx.shared->layer_states->size()) st = (*ctx.shared->layer_states)[idx];
-        }
-        const std::string display_status = layerRuntimeDisplayStatus(st, layerLogicalId(layer));
-        if (st.status == LayerPipelineStatus::Failed) {
-            ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "[%s]", display_status.c_str());
-        } else {
-            ImGui::TextDisabled("[%s | %zu]", display_status.c_str(), st.feature_count);
-        }
-        const bool status_hovered = ImGui::IsItemHovered();
-        if (row_hovered || status_hovered) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted(layer.name.c_str());
-            ImGui::Separator();
-            ImGui::Text("Category: %s", categoryToString(layer.category));
-            ImGui::Text("Status: %s", display_status.c_str());
-            ImGui::TextDisabled("Pipeline: %s", statusToString(st.status));
-            if (!st.hydration_phase.empty()) ImGui::TextDisabled("Hydration: %s", st.hydration_phase.c_str());
-            ImGui::Text("Features: %zu", st.feature_count);
-            ImGui::Text("Layer ID: %s", layerLogicalId(layer).c_str());
-            ImGui::TextDisabled("Storage Key: %s", layer.file.c_str());
-            ImGui::Text("Local: %s", local_layer_exists ? "yes" : "no");
-            if (!layer.subcategory.empty()) ImGui::Text("Subcategory: %s", layer.subcategory.c_str());
-            if (!layer.scale.empty()) ImGui::Text("Scale: %s", layer.scale.c_str());
-            if (!layer.heatmap_field.empty()) ImGui::Text("Heatmap Field: %s", layer.heatmap_field.c_str());
-            if (!layer.description.empty()) ImGui::TextWrapped("Description: %s", layer.description.c_str());
-            if (!layer.source_url.empty()) ImGui::TextWrapped("Download URL: %s", layer.source_url.c_str());
-            if (!layer.reference_url.empty()) ImGui::TextWrapped("Reference: %s", layer.reference_url.c_str());
-            if (!layer.source_urls.empty()) {
-                ImGui::SeparatorText("Source URLs");
-                for (const auto& url : layer.source_urls) ImGui::TextWrapped("%s", url.c_str());
-            }
-            if (!st.error.empty()) {
-                ImGui::Separator();
-                ImGui::TextColored(ImVec4(0.85f, 0.35f, 0.2f, 1.0f), "Error: %s", st.error.c_str());
-            }
-            ImGui::EndTooltip();
-        }
-        ImGui::PopID();
+        insertLayerIntoSourceHierarchy(root, sourceHierarchySegments(layer), idx);
     }
-    if (!current_region.empty() && current_region_open) ImGui::TreePop();
+    for (const auto& child : root.children) {
+        drawSourceHierarchyNode(ctx, child);
+    }
+    for (size_t idx : root.layer_indices) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (drawParcelJurisdictionFilterRow(ctx, idx, layer)) continue;
+        drawStandardLayerRow(ctx, idx, layer);
+    }
 
     if (cat == LayerDef::Category::Safety) drawCrimeFilters(ctx);
     ImGui::TreePop();

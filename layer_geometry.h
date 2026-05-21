@@ -31,7 +31,6 @@ void hydrateLayerBatches(
         bool,
         const std::string&)>& emit);
 void loadLayerPoints(LayerDef& layer, const std::filesystem::path& root);
-std::vector<uint32_t> triangulateRings(const std::vector<std::vector<ImVec2>>& rings);
 std::vector<uint32_t> flattenLinePathsToSegmentIndices(const std::vector<std::vector<ImVec2>>& paths);
 void appendRingScreenPointsLod(
     const std::vector<ImVec2>& ring,

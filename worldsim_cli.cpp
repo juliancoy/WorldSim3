@@ -46,6 +46,12 @@ bool isBareLayerFilename(const std::string& file) {
            file.find('\\') == std::string::npos;
 }
 
+bool isPrimaryParcelGeometryFileForCli(const std::string& file) {
+    return file == "parcel.geojson" ||
+           (file.size() > std::strlen("_county_parcels.geojson") &&
+            file.ends_with("_county_parcels.geojson"));
+}
+
 std::unordered_map<std::string, std::vector<std::string>> readDuckDbColumnsByTable(
     const fs::path& db_path,
     const std::vector<std::string>& table_names);
@@ -203,18 +209,6 @@ bool loadLocalLayerFeatures(
         source_used = "canonical_binary";
         return true;
     }
-    std::error_code ec;
-    if (fs::exists(layer_path, ec) && !ec && layer_path.extension() == ".geojson") {
-        try {
-            std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
-            features = loadLayerPointsFromFile(layer_path, &loaded_feature_properties);
-            if (feature_properties) *feature_properties = std::move(loaded_feature_properties);
-            source_used = "legacy_geojson";
-            return true;
-        } catch (const std::exception& e) {
-            error = std::string("legacy geojson load failed: ") + e.what();
-        }
-    }
     std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
     if (loadLayerFeaturesFromLocalImportArtifact(
             root,
@@ -245,9 +239,6 @@ bool loadLocalLayerFeatures(
 
 bool layerHasLocalAnalyticsSource(const fs::path& root, const LayerDef& layer) {
     if (layerRuntimeSourceMaterialized(root, layer)) return true;
-    const fs::path layer_path = resolveStoredLayerPath(root, layer);
-    std::error_code ec;
-    if (fs::exists(layer_path, ec) && !ec && layer_path.extension() == ".geojson") return true;
     return layerHasLocalImportArtifact(root, layer);
 }
 
@@ -811,7 +802,16 @@ int runPolygonHoleSelftest() {
         ImVec2(7.0f, 7.0f),
         ImVec2(7.0f, 3.0f)
     });
-    feature.triangles = triangulateRings(feature.rings);
+    feature.triangles = {
+        0, 1, 7,
+        0, 7, 4,
+        1, 2, 6,
+        1, 6, 7,
+        2, 3, 5,
+        2, 5, 6,
+        3, 0, 4,
+        3, 4, 5
+    };
 
     const bool shell_point_inside = pointInFeature(feature, 1.0f, 1.0f);
     const bool hole_point_rejected = !pointInFeature(feature, 5.0f, 5.0f);
@@ -900,18 +900,18 @@ int runParcelRenderCacheSelftest(const fs::path& root) {
     b.triangles = {0, 1, 2, 0, 2, 3};
     features.push_back(b);
 
-    LayerDef::FeatureRecord skipped;
-    skipped.extent.min_lon = -76.3f;
-    skipped.extent.min_lat = 39.0f;
-    skipped.extent.max_lon = -76.2f;
-    skipped.extent.max_lat = 39.1f;
-    skipped.rings.push_back({
+    LayerDef::FeatureRecord outline_only;
+    outline_only.extent.min_lon = -76.3f;
+    outline_only.extent.min_lat = 39.0f;
+    outline_only.extent.max_lon = -76.2f;
+    outline_only.extent.max_lat = 39.1f;
+    outline_only.rings.push_back({
         ImVec2(-76.3f, 39.0f),
         ImVec2(-76.2f, 39.0f),
         ImVec2(-76.2f, 39.1f),
         ImVec2(-76.3f, 39.1f)
     });
-    features.push_back(skipped);
+    features.push_back(outline_only);
 
     const std::string sig = "parcel_render_selftest_sig";
     ParcelRenderCacheBlob blob;
@@ -927,24 +927,19 @@ int runParcelRenderCacheSelftest(const fs::path& root) {
     const bool same =
         loaded_ok &&
         loaded.source_signature == sig &&
-        loaded.vertices.size() == 8 &&
-        loaded.vertex_feature_refs.size() == 8 &&
+        loaded.vertices.size() == 12 &&
+        loaded.vertex_feature_refs.size() == 12 &&
         loaded.indices.size() == 12 &&
-        loaded.line_indices.size() == 16 &&
-        loaded.features.size() == 2 &&
-        loaded.chunks.size() == 2 &&
-        loaded.features[0].feature_idx == 0 &&
-        loaded.features[1].feature_idx == 1 &&
+        loaded.line_indices.size() == 24 &&
+        loaded.features.size() == 3 &&
+        loaded.chunks.size() == 3 &&
         loaded.chunks[0].feature_count == 1 &&
         loaded.chunks[1].feature_count == 1 &&
+        loaded.chunks[2].feature_count == 1 &&
         loaded.features[0].line_index_count == 8 &&
         loaded.features[1].line_index_count == 8 &&
-        loaded.vertex_feature_refs[0] == 0 &&
-        loaded.vertex_feature_refs[4] == 1 &&
-        loaded.indices[0] == 0 &&
-        loaded.indices[6] == 4 &&
-        loaded.line_indices[0] == 0 &&
-        loaded.line_indices[8] == 4;
+        loaded.features[2].index_count == 0 &&
+        loaded.features[2].line_index_count == 8;
 
     std::error_code ec;
     fs::remove(cache_path, ec);
@@ -1113,8 +1108,8 @@ int runLayerRuntimeStatusSelftest() {
     const std::string file = "parcel.geojson";
     const bool ok =
         layerRuntimeDisplayStatus(hydration_cache, file) == "reading hydration cache" &&
-        layerRuntimeDisplayStatus(canonical_binary, file) == "reading canonical parcel binary" &&
-        layerRuntimeDisplayStatus(missing_canonical_source, file) == "reading deprecated source layer artifact" &&
+        layerRuntimeDisplayStatus(canonical_binary, file) == "reading canonical layer binary" &&
+        layerRuntimeDisplayStatus(missing_canonical_source, file) == "canonical layer binary missing" &&
         layerRuntimeDisplayStatus(ready, file) == "ready via compiled geometry artifact";
 
     json out = {
@@ -1122,7 +1117,7 @@ int runLayerRuntimeStatusSelftest() {
         {"ok", ok},
         {"hydration_cache", layerRuntimeDisplayStatus(hydration_cache, file)},
         {"canonical_binary", layerRuntimeDisplayStatus(canonical_binary, file)},
-        {"legacy_source_layer_artifact", layerRuntimeDisplayStatus(missing_canonical_source, file)},
+        {"missing_canonical_binary", layerRuntimeDisplayStatus(missing_canonical_source, file)},
         {"ready", layerRuntimeDisplayStatus(ready, file)}
     };
     std::cout << out.dump(2) << '\n';
@@ -1618,7 +1613,7 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
 
     const bool ok =
         meta_ok &&
-        meta.version == 1 &&
+        meta.version == 2 &&
         meta.endian_marker == 0x01020304u &&
         meta.feature_count == 1 &&
         meta.source_signature == sig &&
@@ -1892,6 +1887,246 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
 
     std::cout << out.dump(2) << '\n';
     return rebuild_ok ? 0 : 1;
+}
+
+int runDuckDbParcelIngestSelftest(const fs::path& root, int reserve_cores) {
+    constexpr const char* kMode = "duckdb-parcel-ingest-selftest";
+    const auto started_at = std::chrono::steady_clock::now();
+    json out = {
+        {"mode", kMode},
+        {"ok", false}
+    };
+
+    std::vector<LayerDef> layers = loadManifest(root, true);
+    LocalLayerLoadSummary load_summary;
+    const bool load_ok = loadLocalLayersForCli(root, layers, false, load_summary, true);
+    out["source_load"] = {
+        {"ok", load_ok},
+        {"local_layer_count", load_summary.local_layer_count},
+        {"requested_layer_count", load_summary.requested_layer_count},
+        {"loaded_layer_count", load_summary.loaded_layer_count},
+        {"failed_layer_count", load_summary.failed_layer_count},
+        {"skipped_missing_layer_count", load_summary.skipped_missing_layer_count},
+        {"total_feature_count", load_summary.total_feature_count},
+        {"elapsed_ms", load_summary.elapsed_ms}
+    };
+    if (!load_ok) {
+        json failures = json::array();
+        for (const auto& failure : load_summary.failures) {
+            failures.push_back({
+                {"layer_index", failure.layer_index},
+                {"layer_file", failure.layer_file},
+                {"error", failure.error}
+            });
+        }
+        out["source_load"]["failures"] = std::move(failures);
+        out["elapsed_ms"] = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    size_t expected_total = 0;
+    size_t expected_primary_layer_count = 0;
+    std::unordered_map<size_t, uint64_t> expected_by_layer_idx;
+    std::unordered_map<size_t, std::string> layer_file_by_idx;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (!isPrimaryParcelGeometryFileForCli(layers[i].file)) continue;
+        expected_primary_layer_count += 1;
+        expected_total += layers[i].features.size();
+        expected_by_layer_idx[i] = (uint64_t)layers[i].features.size();
+        layer_file_by_idx[i] = layers[i].file;
+    }
+    out["expected_primary_parcel_layers"] = expected_primary_layer_count;
+    out["expected_primary_parcel_rows"] = expected_total;
+
+    WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
+    ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
+    out["in_memory_unified_parcels"] = artifacts.unified_parcels.size();
+
+    DuckDbAnalytics analytics(root);
+    const bool rebuild_ok = analytics.rebuild(layers, artifacts.unified_parcels);
+    out["duckdb"] = {
+        {"ok", rebuild_ok},
+        {"available", analytics.status().available},
+        {"last_rebuild_ok", analytics.status().last_rebuild_ok},
+        {"layer_count", analytics.status().layer_count},
+        {"feature_count", analytics.status().feature_count},
+        {"db_path", analytics.status().db_path},
+        {"message", analytics.status().message}
+    };
+    if (!rebuild_ok) {
+        out["elapsed_ms"] = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    json failures = json::array();
+    try {
+        duckdb::DuckDB db(root / "data" / "worldsim.duckdb", nullptr);
+        duckdb::Connection con(db);
+
+        auto query_or_throw = [&](const std::string& sql, const char* context) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(
+                    std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+            }
+            return res;
+        };
+
+        const auto unified_total_res = query_or_throw(
+            "SELECT count(*) FROM unified_parcels",
+            "count unified_parcels");
+        const uint64_t unified_total = unified_total_res->GetValue<uint64_t>(0, 0);
+
+        std::unordered_map<size_t, uint64_t> actual_by_layer_idx;
+        const auto per_layer_res = query_or_throw(
+            "SELECT parcel_layer_idx, count(*) FROM unified_parcels GROUP BY 1",
+            "group unified_parcels by parcel layer");
+        for (idx_t row = 0; row < per_layer_res->RowCount(); ++row) {
+            const size_t layer_idx = (size_t)per_layer_res->GetValue<uint64_t>(0, row);
+            const uint64_t count = per_layer_res->GetValue<uint64_t>(1, row);
+            actual_by_layer_idx[layer_idx] = count;
+        }
+
+        const auto leaked_rows_res = query_or_throw(R"SQL(
+            SELECT count(*)
+            FROM unified_parcels up
+            JOIN layer_features lf
+              ON lf.layer_idx = up.parcel_layer_idx
+             AND lf.feature_idx = up.parcel_feature_idx
+            WHERE NOT (
+                lf.layer_file = 'parcel.geojson' OR
+                lf.layer_file LIKE '%_county_parcels.geojson'
+            )
+        )SQL", "check unified_parcels leakage");
+        const uint64_t leaked_rows = leaked_rows_res->GetValue<uint64_t>(0, 0);
+
+        const auto property_attachment_res = query_or_throw(
+            "SELECT count(*), coalesce(sum(CASE WHEN has_property_record THEN 1 ELSE 0 END), 0) FROM unified_parcels",
+            "check property attachment coverage");
+        const uint64_t property_attachment_total = property_attachment_res->GetValue<uint64_t>(0, 0);
+        const uint64_t property_attachment_with_record = property_attachment_res->GetValue<uint64_t>(1, 0);
+
+        const auto parcel_record_res = query_or_throw(R"SQL(
+            SELECT count(*)
+            FROM layer_features
+            WHERE duckdb_role = 'parcel_record'
+              AND NOT (
+                layer_file = 'parcel.geojson' OR
+                layer_file LIKE '%_county_parcels.geojson'
+              )
+        )SQL", "count parcel record rows");
+        const uint64_t parcel_record_rows = parcel_record_res->GetValue<uint64_t>(0, 0);
+
+        const auto structure_source_res = query_or_throw(
+            "SELECT count(*) FROM layer_features WHERE layer_file = 'real_property_information.geojson' AND structure_area_sqft > 0",
+            "count source structure sqft rows");
+        const uint64_t structure_source_rows = structure_source_res->GetValue<uint64_t>(0, 0);
+
+        const auto structure_unified_res = query_or_throw(
+            "SELECT count(*) FROM unified_parcels WHERE structure_area_sqft > 0",
+            "count unified structure sqft rows");
+        const uint64_t structure_unified_rows = structure_unified_res->GetValue<uint64_t>(0, 0);
+
+        json per_layer = json::array();
+        for (const auto& [layer_idx, expected_count] : expected_by_layer_idx) {
+            const uint64_t actual_count = actual_by_layer_idx.count(layer_idx) ? actual_by_layer_idx[layer_idx] : 0;
+            const bool match = expected_count == actual_count;
+            per_layer.push_back({
+                {"layer_idx", layer_idx},
+                {"layer_file", layer_file_by_idx[layer_idx]},
+                {"expected_count", expected_count},
+                {"actual_count", actual_count},
+                {"match", match}
+            });
+            if (!match) {
+                failures.push_back({
+                    {"type", "layer_count_mismatch"},
+                    {"layer_idx", layer_idx},
+                    {"layer_file", layer_file_by_idx[layer_idx]},
+                    {"expected_count", expected_count},
+                    {"actual_count", actual_count}
+                });
+            }
+        }
+        for (const auto& [layer_idx, actual_count] : actual_by_layer_idx) {
+            if (expected_by_layer_idx.count(layer_idx)) continue;
+            failures.push_back({
+                {"type", "unexpected_parcel_layer_idx"},
+                {"layer_idx", layer_idx},
+                {"actual_count", actual_count}
+            });
+        }
+        if (expected_primary_layer_count != 24) {
+            failures.push_back({
+                {"type", "unexpected_primary_parcel_layer_count"},
+                {"expected", 24},
+                {"actual", expected_primary_layer_count}
+            });
+        }
+        if (unified_total != expected_total) {
+            failures.push_back({
+                {"type", "unified_total_mismatch"},
+                {"expected_total", expected_total},
+                {"actual_total", unified_total}
+            });
+        }
+        if (property_attachment_total != unified_total) {
+            failures.push_back({
+                {"type", "property_attachment_total_mismatch"},
+                {"expected_total", unified_total},
+                {"actual_total", property_attachment_total}
+            });
+        }
+        if (leaked_rows != 0) {
+            failures.push_back({
+                {"type", "non_primary_layer_leakage"},
+                {"rows", leaked_rows}
+            });
+        }
+        if (parcel_record_rows > 0 && property_attachment_with_record == 0) {
+            failures.push_back({
+                {"type", "missing_property_attachments"},
+                {"parcel_record_rows", parcel_record_rows},
+                {"attached_rows", property_attachment_with_record}
+            });
+        }
+        if (structure_source_rows > 0 && structure_unified_rows == 0) {
+            failures.push_back({
+                {"type", "missing_structure_area_propagation"},
+                {"source_rows", structure_source_rows},
+                {"unified_rows", structure_unified_rows}
+            });
+        }
+
+        out["verification"] = {
+            {"expected_primary_parcel_layers", expected_primary_layer_count},
+            {"expected_total", expected_total},
+            {"unified_total", unified_total},
+            {"leaked_rows", leaked_rows},
+            {"property_attachment_total", property_attachment_total},
+            {"property_attachment_with_record", property_attachment_with_record},
+            {"parcel_record_rows", parcel_record_rows},
+            {"structure_source_rows", structure_source_rows},
+            {"structure_unified_rows", structure_unified_rows},
+            {"per_layer", std::move(per_layer)}
+        };
+    } catch (const std::exception& e) {
+        failures.push_back({
+            {"type", "verification_query_failed"},
+            {"error", e.what()}
+        });
+    }
+
+    out["failures"] = failures;
+    out["ok"] = failures.empty();
+    out["elapsed_ms"] = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    std::cout << out.dump(2) << '\n';
+    return failures.empty() ? 0 : 1;
 }
 
 int inspectDuckDbGeographyTablesCli(const fs::path& root) {
@@ -3255,6 +3490,73 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
     return roundtrip_ok ? 0 : 1;
 }
 
+int compileParcelPolygonGeometryArtifacts(const fs::path& root) {
+    std::vector<LayerDef> layers = loadManifest(root);
+    json results = json::array();
+    size_t candidate_count = 0;
+    size_t ok_count = 0;
+    size_t failed_count = 0;
+    size_t skipped_count = 0;
+
+    for (LayerDef& layer : layers) {
+        if (!isPrimaryParcelGeometryFileForCli(layer.file)) continue;
+        candidate_count += 1;
+
+        const fs::path layer_path = resolveStoredLayerPath(root, layer);
+        std::string sig;
+        std::string source_kind;
+        if (!resolveLayerSourceSignature(layer_path, sig, &source_kind)) {
+            skipped_count += 1;
+            results.push_back({
+                {"layer_file", layer.file},
+                {"layer_name", layer.name},
+                {"ok", false},
+                {"skipped", true},
+                {"reason", "canonical layer binary is not materialized"},
+                {"source_path", canonicalLayerPathForFile(root, layer.file).string()}
+            });
+            continue;
+        }
+
+        std::vector<LayerDef::FeatureRecord> features;
+        std::string source_used;
+        std::string error;
+        if (!loadLocalLayerFeatures(root, layer.file, sig, features, nullptr, source_used, error)) {
+            failed_count += 1;
+            results.push_back({
+                {"layer_file", layer.file},
+                {"layer_name", layer.name},
+                {"ok", false},
+                {"skipped", false},
+                {"error", error.empty() ? "failed to load canonical layer features" : error},
+                {"source_path", canonicalLayerPathForFile(root, layer.file).string()},
+                {"source_signature", sig},
+                {"source_signature_kind", source_kind}
+            });
+            continue;
+        }
+
+        int one_exit = 0;
+        json one = buildGeometryArtifactForLoadedLayer(root, layer, features, one_exit);
+        results.push_back(one);
+        if (one.value("skipped", false)) skipped_count += 1;
+        else if (one_exit == 0) ok_count += 1;
+        else failed_count += 1;
+    }
+
+    json out = {
+        {"mode", "compile-parcel-polygon-geometry-artifacts"},
+        {"ok", failed_count == 0},
+        {"candidate_count", candidate_count},
+        {"ok_count", ok_count},
+        {"failed_count", failed_count},
+        {"skipped_count", skipped_count},
+        {"results", std::move(results)}
+    };
+    std::cout << out.dump(2) << '\n';
+    return failed_count == 0 ? 0 : 1;
+}
+
 int validatePolygonGeometryArtifact(const fs::path& root, std::string file) {
     if (file.empty()) {
         json out = {
@@ -3392,6 +3694,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_canonical_parcel_binary_selftest = true;
             continue;
         }
+        if (arg == "--duckdb-parcel-ingest-selftest") {
+            options.run_duckdb_parcel_ingest_selftest = true;
+            continue;
+        }
         if (arg == "--inspect-canonical-parcel-binary") {
             options.run_inspect_canonical_parcel_binary = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') options.canonical_parcel_binary_file = argv[++i];
@@ -3430,6 +3736,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg == "--compile-polygon-geometry") {
             options.run_compile_polygon_geometry = true;
             if (i + 1 < argc && argv[i + 1][0] != '-') options.polygon_geometry_file = argv[++i];
+            continue;
+        }
+        if (arg == "--compile-parcel-polygon-geometry-artifacts" ||
+            arg == "--compile-county-parcel-geometry") {
+            options.run_compile_parcel_polygon_geometry_artifacts = true;
             continue;
         }
         if (arg == "--validate-polygon-geometry") {
@@ -3610,6 +3921,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --compile-polyline-geometry LAYER_FILE\n"
         << "       worldsim3 --validate-polyline-geometry LAYER_FILE\n"
         << "       worldsim3 --compile-polygon-geometry LAYER_FILE\n"
+        << "       worldsim3 --compile-parcel-polygon-geometry-artifacts\n"
         << "       worldsim3 --validate-polygon-geometry LAYER_FILE\n"
         << "       worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]\n"
         << "       worldsim3 --projection-cache-selftest\n"
@@ -3623,6 +3935,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
         << "       worldsim3 --render-policy-selftest\n"
         << "       worldsim3 --render-plan-selftest\n"
+        << "       worldsim3 --duckdb-parcel-ingest-selftest [--reserve-cores N]\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
@@ -3670,6 +3983,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_canonical_parcel_binary_selftest) {
         return runCanonicalParcelBinarySelftest(root);
     }
+    if (options.run_duckdb_parcel_ingest_selftest) {
+        return runDuckDbParcelIngestSelftest(root, options.reserve_cores_set ? options.reserve_cores : 0);
+    }
     if (options.run_inspect_canonical_parcel_binary) {
         return inspectCanonicalParcelBinary(root, options.canonical_parcel_binary_file);
     }
@@ -3693,6 +4009,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_compile_polygon_geometry) {
         return compilePolygonGeometryArtifact(root, options.polygon_geometry_file);
+    }
+    if (options.run_compile_parcel_polygon_geometry_artifacts) {
+        return compileParcelPolygonGeometryArtifacts(root);
     }
     if (options.run_validate_polygon_geometry) {
         return validatePolygonGeometryArtifact(root, options.polygon_geometry_file);

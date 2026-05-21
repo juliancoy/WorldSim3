@@ -150,6 +150,25 @@ struct FeatureFilterContext {
     int crime_nibrs_layer_idx = -1;
 };
 
+struct FeatureRenderState {
+    bool visible = true;
+    bool has_query_color = false;
+    ImU32 query_color = IM_COL32(0, 0, 0, 0);
+};
+
+struct LayerFeatureRenderCache {
+    uint64_t state_key = 0;
+    std::vector<std::vector<FeatureRenderState>> layer_states;
+};
+
+struct FeatureRenderStateKeyContext {
+    const MapFilterState* map_filters = nullptr;
+    const FilterResultSet* result_set = nullptr;
+    const FilterResultSet* secondary_result_set = nullptr;
+    const FilterResultSet* tertiary_result_set = nullptr;
+    const std::vector<QueryMapLayer>* query_layers = nullptr;
+};
+
 bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx);
 bool featurePassesFilters(
     const FeatureFilterContext& ctx,
@@ -163,5 +182,18 @@ bool queryMapColorForFeature(
     size_t feature_idx,
     const LayerDef::FeatureRecord& fg,
     float out_color[4]);
+
+uint64_t buildFeatureRenderStateKey(const FeatureRenderStateKeyContext& ctx);
+
+bool ensureLayerFeatureRenderCache(
+    const FeatureFilterContext& ctx,
+    const std::vector<LayerDef>& layers,
+    uint64_t state_key,
+    LayerFeatureRenderCache& cache);
+
+const FeatureRenderState* findFeatureRenderState(
+    const LayerFeatureRenderCache& cache,
+    size_t layer_idx,
+    size_t feature_idx);
 
 bool layerMatchesBrowseGeography(const LayerDef& layer, const LayerBrowseState& browse_state);

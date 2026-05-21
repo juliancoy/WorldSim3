@@ -190,11 +190,25 @@ std::string normalizeGeographyToken(const std::string& s) {
     return toLowerAscii(trimDisplayValue(s));
 }
 
-bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+bool containsCaseInsensitive(std::string_view haystack, std::string_view needle) {
     if (needle.empty()) return true;
-    const std::string h = toLowerAscii(haystack);
-    const std::string n = toLowerAscii(needle);
-    return h.find(n) != std::string::npos;
+    if (needle.size() > haystack.size()) return false;
+    const size_t limit = haystack.size() - needle.size();
+    auto lower_ascii = [](char ch) -> char {
+        return (ch >= 'A' && ch <= 'Z') ? (char)(ch + ('a' - 'A')) : ch;
+    };
+    for (size_t i = 0; i <= limit; ++i) {
+        size_t j = 0;
+        for (; j < needle.size(); ++j) {
+            if (lower_ascii(haystack[i + j]) != lower_ascii(needle[j])) break;
+        }
+        if (j == needle.size()) return true;
+    }
+    return false;
+}
+
+bool containsCaseInsensitive(const std::string& haystack, const std::string& needle) {
+    return containsCaseInsensitive(std::string_view(haystack), std::string_view(needle));
 }
 
 bool isLikelyCrimePointLayer(const LayerDef& layer) {
@@ -519,7 +533,11 @@ bool layerRuntimeSourceMaterializedForFile(const fs::path& root, const std::stri
 }
 
 bool layerRuntimeSourceMaterialized(const fs::path& root, const LayerDef& layer) {
-    return layerRuntimeSourceMaterializedForFile(root, layer.file);
+    std::error_code ec;
+    const fs::path layer_path = resolveStoredLayerPath(root, layer);
+    const fs::path canonical_path =
+        layer_path.parent_path() / (layerArtifactBasenameForFile(layer.file) + ".canonical.bin");
+    return fs::exists(canonical_path, ec) && !ec;
 }
 
 std::string trimDisplayValue(std::string s) {

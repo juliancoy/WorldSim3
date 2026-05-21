@@ -84,6 +84,30 @@ bool queryMapColorU32(
     return true;
 }
 
+bool cachedFeatureVisible(
+    const LayerFeatureRenderCache* cache,
+    size_t layer_idx,
+    size_t feature_idx,
+    bool& out_visible) {
+    if (!cache) return false;
+    const FeatureRenderState* state = findFeatureRenderState(*cache, layer_idx, feature_idx);
+    if (!state) return false;
+    out_visible = state->visible;
+    return true;
+}
+
+bool cachedFeatureQueryColor(
+    const LayerFeatureRenderCache* cache,
+    size_t layer_idx,
+    size_t feature_idx,
+    ImU32& out_color) {
+    if (!cache) return false;
+    const FeatureRenderState* state = findFeatureRenderState(*cache, layer_idx, feature_idx);
+    if (!state || !state->has_query_color) return false;
+    out_color = state->query_color;
+    return true;
+}
+
 RenderFrameOrchestrationContext buildRenderFrameContext(
     const MapFrameSessionContext& ctx,
     const FeatureFilterContext& filter_ctx) {
@@ -171,10 +195,15 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     };
     render_frame_ctx.feature_passes_filters =
         [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg) {
+            bool visible = true;
+            if (cachedFeatureVisible(ctx.feature_render_cache, layer_idx, feature_idx, visible)) return visible;
             return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
         };
     render_frame_ctx.query_map_color =
         [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg, ImU32& out_color) {
+            if (ctx.feature_render_cache && cachedFeatureQueryColor(ctx.feature_render_cache, layer_idx, feature_idx, out_color)) {
+                return true;
+            }
             return queryMapColorU32(filter_ctx, layer_idx, feature_idx, fg, out_color);
         };
     render_frame_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;

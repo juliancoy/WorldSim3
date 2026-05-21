@@ -4,6 +4,7 @@
 #include "app_settings.h"
 
 #include <filesystem>
+#include <functional>
 
 struct ImGuiContext;
 
@@ -13,4 +14,5 @@ void drawGearPanel(
     AppSettings* app_settings,
     ImGuiContext* main_imgui_context,
     ImGuiContext* queue_imgui_context,
-    BootstrapProgress& bootstrap);
+    BootstrapProgress& bootstrap,
+    const std::function<void()>& rescan_local_data);

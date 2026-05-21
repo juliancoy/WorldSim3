@@ -150,8 +150,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "earcut.hpp"
-
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
@@ -446,6 +444,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<int> parcel_tax_sale_by_feature;
     std::vector<double> parcel_tax_lien_amount_by_feature;
     std::vector<double> parcel_tax_sale_amount_by_feature;
+    std::vector<std::string> parcel_blocklot_by_feature;
+    std::string parcel_blocklot_cached_signature;
     int parcel_parameter_mode = 0;
     std::vector<UnifiedParcelRecord> unified_parcels;
     std::vector<std::string> parcel_owner_search_by_feature;
@@ -531,6 +531,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::unique_ptr<MapProjectionCache> persistent_projection_cache;
     size_t persistent_projection_generation = 0;
     size_t projection_generation = 0;
+    LayerFeatureRenderCache feature_render_cache;
+    uint64_t feature_render_state_key = 0;
     std::string parcel_gpu_uploaded_signature;
     std::string parcel_geometry_locked_signature;
     std::string parcel_geometry_restart_required_signature;
@@ -1132,7 +1134,6 @@ int runWorldSim3App(int argc, char** argv) {
         if (idx < local_layer_exists_cache.size()) local_layer_exists_cache[idx] = exists;
     };
     refresh_local_layer_exists_cache();
-    auto last_local_layer_exists_refresh_at = std::chrono::steady_clock::now();
     auto& data_library_download_phase = data_library_state.download_phase;
     auto& data_library_include_large = data_library_state.include_large;
     auto& data_library_bulk_inflight = data_library_state.bulk_inflight;
@@ -1328,6 +1329,8 @@ int runWorldSim3App(int argc, char** argv) {
         releaseContainerStorage(parcel_tax_sale_by_feature);
         releaseContainerStorage(parcel_tax_lien_amount_by_feature);
         releaseContainerStorage(parcel_tax_sale_amount_by_feature);
+        releaseContainerStorage(parcel_blocklot_by_feature);
+        parcel_blocklot_cached_signature.clear();
         releaseContainerStorage(vacant_notice_count_by_blocklot);
         releaseContainerStorage(vacant_rehab_count_by_blocklot);
         releaseContainerStorage(tax_lien_count_by_blocklot);
@@ -1880,13 +1883,6 @@ int runWorldSim3App(int argc, char** argv) {
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
-        {
-            const auto now = std::chrono::steady_clock::now();
-            if (now - last_local_layer_exists_refresh_at >= std::chrono::seconds(2)) {
-                refresh_local_layer_exists_cache();
-                last_local_layer_exists_refresh_at = now;
-            }
-        }
         const bool color_editor_alive = color_editor_process_alive();
         ColorEditorCommand color_editor_command;
         if (loadColorEditorCommand(color_editor_command_path, color_editor_command) &&
@@ -2174,7 +2170,6 @@ int runWorldSim3App(int argc, char** argv) {
         const double elapsed_s = pipeline_progress.elapsed_s;
         const double hydrate_idle_s = pipeline_progress.hydrate_idle_s;
 
-        drawGearPanel(&show_sources_panel, root, &app_settings, main_imgui_context, download_queue_imgui_context, bootstrap);
         DataLibraryCoordinatorContext data_library_ctx;
         data_library_ctx.root = root;
         data_library_ctx.layers = &layers;
@@ -2189,6 +2184,14 @@ int runWorldSim3App(int argc, char** argv) {
         data_library_ctx.data_library_bulk_future = &data_library_bulk_future;
         data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
         data_library_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
+        drawGearPanel(
+            &show_sources_panel,
+            root,
+            &app_settings,
+            main_imgui_context,
+            download_queue_imgui_context,
+            bootstrap,
+            [&]() { rescanDataLibraryLocalFiles(data_library_ctx); });
         DataLibraryUiContext data_library_ui_ctx;
         data_library_ui_ctx.root = &root;
         data_library_ui_ctx.layers = &layers;
@@ -2452,6 +2455,8 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.parcel_tax_sale_by_feature = &parcel_tax_sale_by_feature;
         derived_layer_caches_ctx.parcel_tax_lien_amount_by_feature = &parcel_tax_lien_amount_by_feature;
         derived_layer_caches_ctx.parcel_tax_sale_amount_by_feature = &parcel_tax_sale_amount_by_feature;
+        derived_layer_caches_ctx.parcel_blocklot_by_feature = &parcel_blocklot_by_feature;
+        derived_layer_caches_ctx.parcel_blocklot_cached_signature = &parcel_blocklot_cached_signature;
         derived_layer_caches_ctx.vacant_notice_rows_matched_total = &vacant_notice_rows_matched_total;
         derived_layer_caches_ctx.vacant_rehab_rows_matched_total = &vacant_rehab_rows_matched_total;
         derived_layer_caches_ctx.vacant_parcels_matched_total = &vacant_parcels_matched_total;
@@ -2537,6 +2542,52 @@ int runWorldSim3App(int argc, char** argv) {
         if (consumeGpuProfilerTabSelectionRequest()) {
             gpu_profiler_tab_requested = true;
         }
+
+        auto make_frame_filter_input = [&]() {
+            FeatureFilterContextFactoryInput filter_input;
+            filter_input.layers = &layers;
+            filter_input.map_filters = &map_filter_state;
+            filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
+                ? &parcel_jurisdiction_filter_state.result_set
+                : nullptr;
+            filter_input.secondary_result_set = owner_text_filter_state.result_set.active
+                ? &owner_text_filter_state.result_set
+                : nullptr;
+            filter_input.tertiary_result_set = address_text_filter_state.result_set.active
+                ? &address_text_filter_state.result_set
+                : nullptr;
+            filter_input.query_layers = &query_layers;
+            filter_input.unified_parcels = &unified_parcels;
+            filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
+            filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
+            filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
+            filter_input.real_property_by_blocklot = &real_property_by_blocklot;
+            filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
+            filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
+            filter_input.real_property_layer_idx = real_property_layer_idx;
+            filter_input.parcel_layer_idx = parcel_layer_idx;
+            filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
+            filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+            filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
+            return filter_input;
+        };
+        auto ensure_frame_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+            FeatureFilterContextFactoryInput filter_input = make_frame_filter_input();
+            FeatureRenderStateKeyContext key_ctx;
+            key_ctx.map_filters = &map_filter_state;
+            key_ctx.result_set = filter_input.result_set;
+            key_ctx.secondary_result_set = filter_input.secondary_result_set;
+            key_ctx.tertiary_result_set = filter_input.tertiary_result_set;
+            key_ctx.query_layers = &query_layers;
+            feature_render_state_key = buildFeatureRenderStateKey(key_ctx);
+            const FeatureFilterContext filter_ctx = makeFeatureFilterContext(filter_input);
+            ensureLayerFeatureRenderCache(
+                filter_ctx,
+                layers,
+                feature_render_state_key,
+                feature_render_cache);
+            return feature_render_cache;
+        };
 
         if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size() &&
             (size_t)parcel_layer_idx < layer_states.size()) {
@@ -2722,34 +2773,14 @@ int runWorldSim3App(int argc, char** argv) {
                     hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() ? layers[(size_t)vacant_rehab_layer_idx].enabled : false));
                     hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size() ? layers[(size_t)tax_lien_layer_idx].enabled : false));
                     hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size() ? layers[(size_t)tax_sale_layer_idx].enabled : false));
+                    hash_mix(overlay_state_key, (uint64_t)selected_parcel_indices.size());
+                    for (size_t selected_idx : selected_parcel_indices) hash_mix(overlay_state_key, (uint64_t)selected_idx);
                     uint64_t outline_state_key = overlay_state_key;
 
-                    FeatureFilterContextFactoryInput filter_input;
-                    filter_input.layers = &layers;
-                    filter_input.map_filters = &map_filter_state;
-                    filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
-                        ? &parcel_jurisdiction_filter_state.result_set
-                        : nullptr;
-                    filter_input.secondary_result_set = owner_text_filter_state.result_set.active
-                        ? &owner_text_filter_state.result_set
-                        : nullptr;
-                    filter_input.tertiary_result_set = address_text_filter_state.result_set.active
-                        ? &address_text_filter_state.result_set
-                        : nullptr;
-                    filter_input.query_layers = &query_layers;
-                    filter_input.unified_parcels = &unified_parcels;
-                    filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
-                    filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
-                    filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
-                    filter_input.real_property_by_blocklot = &real_property_by_blocklot;
-                    filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
-                    filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
-                    filter_input.real_property_layer_idx = real_property_layer_idx;
-                    filter_input.parcel_layer_idx = parcel_layer_idx;
-                    filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
-                    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
-                    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
-                    const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+                    const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
+                    hash_mix(color_state_key, feature_render_state_key);
+                    hash_mix(overlay_state_key, feature_render_state_key);
+                    hash_mix(outline_state_key, feature_render_state_key);
                     const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
 
                     if (color_state_key != parcel_gpu_filter_state_key) {
@@ -2787,8 +2818,9 @@ int runWorldSim3App(int argc, char** argv) {
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
-                                const LayerDef::FeatureRecord& fg = parcel_layer.features[feature_idx];
-                                if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                const FeatureRenderState* render_state =
+                                    findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
+                                if (!render_state || !render_state->visible) continue;
                                 const double v = parcel_parameter_mode == 3
                                     ? current_value_per_area_at(feature_idx)
                                     : current_value_at(feature_idx);
@@ -2800,8 +2832,9 @@ int runWorldSim3App(int argc, char** argv) {
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
-                            const LayerDef::FeatureRecord& fg = parcel_layer.features[feature_idx];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                            const FeatureRenderState* render_state =
+                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
+                            if (!render_state || !render_state->visible) {
                                 parcel_colors[i] = IM_COL32(0, 0, 0, 0);
                                 continue;
                             }
@@ -2823,11 +2856,9 @@ int runWorldSim3App(int argc, char** argv) {
                                     continue;
                                 }
                             }
-                            float query_color[4] = {0, 0, 0, 0};
-                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg, query_color)) {
+                            if (render_state->has_query_color) {
                                 parcel_colors[i] = mapPolygonFillColor(
-                                    ImGui::ColorConvertFloat4ToU32(
-                                        ImVec4(query_color[0], query_color[1], query_color[2], query_color[3])),
+                                    render_state->query_color,
                                     app_settings.map_polygon_fill_opacity);
                             } else {
                                 parcel_colors[i] = mapPolygonFillColor(base_color, app_settings.map_polygon_fill_opacity);
@@ -2883,8 +2914,9 @@ int runWorldSim3App(int argc, char** argv) {
                             for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
                                 const uint32_t feature_idx = rec.feature_idx;
                                 if (feature_idx >= parcel_layer.features.size()) continue;
-                                const LayerDef::FeatureRecord& fg = parcel_layer.features[feature_idx];
-                                if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) continue;
+                                const FeatureRenderState* render_state =
+                                    findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
+                                if (!render_state || !render_state->visible) continue;
                                 const double v = parameter_value(feature_idx);
                                 if (v > 0.0 && std::isfinite(v)) parameter_samples.push_back(v);
                             }
@@ -2915,6 +2947,7 @@ int runWorldSim3App(int argc, char** argv) {
                             (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
                                 ? layers[(size_t)vacant_rehab_layer_idx].color
                                 : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
+                        const ImU32 selected_overlay = IM_COL32(255, 230, 0, 112);
                         const float parcel_gamma =
                             (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
                                 ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
@@ -2922,8 +2955,9 @@ int runWorldSim3App(int argc, char** argv) {
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
-                            const LayerDef::FeatureRecord& fg = parcel_layer.features[feature_idx];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                            const FeatureRenderState* render_state =
+                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
+                            if (!render_state || !render_state->visible) {
                                 continue;
                             }
                             ImU32 overlay = IM_COL32(0, 0, 0, 0);
@@ -2970,6 +3004,9 @@ int runWorldSim3App(int argc, char** argv) {
                                     sale_count);
                                 overlay = colorWithAlpha(tax_base, alpha);
                             }
+                            if (selected_parcel_index_set.find((size_t)feature_idx) != selected_parcel_index_set.end()) {
+                                overlay = selected_overlay;
+                            }
                             overlay_colors[i] = overlay;
                         }
                         std::string overlay_error;
@@ -2980,11 +3017,17 @@ int runWorldSim3App(int argc, char** argv) {
                     }
                     if (outline_state_key != parcel_gpu_outline_state_key) {
                         std::vector<ImU32> outline_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
+                        const ImU32 selected_outline = IM_COL32(255, 240, 64, 255);
                         for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
                             const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
                             if (feature_idx >= parcel_layer.features.size()) continue;
-                            const LayerDef::FeatureRecord& fg = parcel_layer.features[feature_idx];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)parcel_layer_idx, feature_idx, fg)) {
+                            const FeatureRenderState* render_state =
+                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
+                            if (!render_state || !render_state->visible) {
+                                continue;
+                            }
+                            if (selected_parcel_index_set.find((size_t)feature_idx) != selected_parcel_index_set.end()) {
+                                outline_colors[i] = selected_outline;
                                 continue;
                             }
                             ImU32 outline =
@@ -3028,6 +3071,7 @@ int runWorldSim3App(int argc, char** argv) {
                 out.vertices = artifact.vertices;
                 out.vertex_feature_refs = artifact.feature_refs;
                 out.indices = artifact.fill_indices;
+                if (out.indices.empty() && !out.vertices.empty()) out.indices.push_back(0);
                 out.line_indices = artifact.line_indices;
                 out.features.reserve(artifact.features.size());
                 for (const GeometryArtifactFeatureRecord& rec : artifact.features) {
@@ -3070,33 +3114,6 @@ int runWorldSim3App(int argc, char** argv) {
                     !out.line_indices.empty() &&
                     !out.features.empty();
             };
-            FeatureFilterContextFactoryInput filter_input;
-            filter_input.layers = &layers;
-            filter_input.map_filters = &map_filter_state;
-            filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
-                ? &parcel_jurisdiction_filter_state.result_set
-                : nullptr;
-            filter_input.secondary_result_set = owner_text_filter_state.result_set.active
-                ? &owner_text_filter_state.result_set
-                : nullptr;
-            filter_input.tertiary_result_set = address_text_filter_state.result_set.active
-                ? &address_text_filter_state.result_set
-                : nullptr;
-            filter_input.query_layers = &query_layers;
-            filter_input.unified_parcels = &unified_parcels;
-            filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
-            filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
-            filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
-            filter_input.real_property_by_blocklot = &real_property_by_blocklot;
-            filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
-            filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
-            filter_input.real_property_layer_idx = real_property_layer_idx;
-            filter_input.parcel_layer_idx = parcel_layer_idx;
-            filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
-            filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
-            filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
-            const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
-
             auto hash_mix = [](uint64_t& h, uint64_t v) {
                 h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
             };
@@ -3191,8 +3208,10 @@ int runWorldSim3App(int argc, char** argv) {
                 }
                 const ParcelRenderCacheBlob& blob = blob_it->second;
                 state.geometry_gpu_resident = true;
+                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
 
                 uint64_t color_state_key = 1469598103934665603ULL;
+                hash_mix(color_state_key, feature_render_state_key);
                 hash_cstr(color_state_key, zoning_signature.c_str());
                 hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
                 hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
@@ -3247,7 +3266,8 @@ int runWorldSim3App(int argc, char** argv) {
                         if ((size_t)feature_idx >= layer.features.size()) continue;
                         const LayerDef::FeatureRecord& fg = layer.features[(size_t)feature_idx];
                         if (!(li < layer_fill_enabled.size() && layer_fill_enabled[li])) continue;
-                        if (!featurePassesFilters(gpu_filter_ctx, li, (size_t)feature_idx, fg)) continue;
+                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
+                        if (!render_state || !render_state->visible) continue;
                         ImU32 color = ImGui::ColorConvertFloat4ToU32(layer.color);
                         if (is_zoning_polygon_layer(layer)) {
                             const std::string zkey = zoningClassKey(fg);
@@ -3256,11 +3276,7 @@ int runWorldSim3App(int argc, char** argv) {
                                 color = ImGui::ColorConvertFloat4ToU32(it_col->second);
                             }
                         }
-                        float query_color[4] = {0, 0, 0, 0};
-                        if (queryMapColorForFeature(gpu_filter_ctx, li, (size_t)feature_idx, fg, query_color)) {
-                            color = ImGui::ColorConvertFloat4ToU32(
-                                ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
-                        }
+                        if (render_state->has_query_color) color = render_state->query_color;
                         zoning_colors[i] = mapPolygonFillColor(color, app_settings.map_polygon_fill_opacity);
                     }
                     std::string color_error;
@@ -3274,8 +3290,8 @@ int runWorldSim3App(int argc, char** argv) {
                     for (size_t i = 0; i < blob.features.size(); ++i) {
                         const uint32_t feature_idx = blob.features[i].feature_idx;
                         if ((size_t)feature_idx >= layer.features.size()) continue;
-                        const LayerDef::FeatureRecord& fg = layer.features[(size_t)feature_idx];
-                        if (!featurePassesFilters(gpu_filter_ctx, li, (size_t)feature_idx, fg)) continue;
+                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
+                        if (!render_state || !render_state->visible) continue;
                         outline_colors[i] = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
                     }
                     std::string outline_error;
@@ -3419,45 +3435,18 @@ int runWorldSim3App(int argc, char** argv) {
                         for (float c : ql.color) hash_f32(color_state_key, c);
                     }
 
-                    FeatureFilterContextFactoryInput filter_input;
-                    filter_input.layers = &layers;
-                    filter_input.map_filters = &map_filter_state;
-                    filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
-                        ? &parcel_jurisdiction_filter_state.result_set
-                        : nullptr;
-                    filter_input.secondary_result_set = owner_text_filter_state.result_set.active
-                        ? &owner_text_filter_state.result_set
-                        : nullptr;
-                    filter_input.tertiary_result_set = address_text_filter_state.result_set.active
-                        ? &address_text_filter_state.result_set
-                        : nullptr;
-                    filter_input.query_layers = &query_layers;
-                    filter_input.unified_parcels = &unified_parcels;
-                    filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
-                    filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
-                    filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
-                    filter_input.real_property_by_blocklot = &real_property_by_blocklot;
-                    filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
-                    filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
-                    filter_input.real_property_layer_idx = real_property_layer_idx;
-                    filter_input.parcel_layer_idx = parcel_layer_idx;
-                    filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
-                    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
-                    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
-                    const FeatureFilterContext gpu_filter_ctx = makeFeatureFilterContext(filter_input);
+                    const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
+                    hash_mix(color_state_key, feature_render_state_key);
 
                     if (color_state_key != crime_point_gpu_color_state_key) {
                         std::vector<ImU32> point_colors(crime_layer.features.size(), IM_COL32(0, 0, 0, 0));
                         const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(crime_layer.color);
                         for (size_t i = 0; i < crime_layer.features.size(); ++i) {
-                            const LayerDef::FeatureRecord& fg = crime_layer.features[i];
-                            if (!featurePassesFilters(gpu_filter_ctx, (size_t)crime_nibrs_layer_idx, i, fg)) continue;
+                            const FeatureRenderState* render_state =
+                                findFeatureRenderState(cached_feature_render, (size_t)crime_nibrs_layer_idx, i);
+                            if (!render_state || !render_state->visible) continue;
                             ImU32 color = base_color;
-                            float query_color[4] = {0, 0, 0, 0};
-                            if (queryMapColorForFeature(gpu_filter_ctx, (size_t)crime_nibrs_layer_idx, i, fg, query_color)) {
-                                color = ImGui::ColorConvertFloat4ToU32(
-                                    ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
-                            }
+                            if (render_state->has_query_color) color = render_state->query_color;
                             point_colors[i] = color;
                         }
                         std::string color_error;
@@ -3489,34 +3478,6 @@ int runWorldSim3App(int argc, char** argv) {
             uint32_t bits = 0;
             std::memcpy(&bits, &value, sizeof(bits));
             hash_mix(h, bits);
-        };
-        auto make_generic_gpu_filter_ctx = [&]() {
-            FeatureFilterContextFactoryInput filter_input;
-            filter_input.layers = &layers;
-            filter_input.map_filters = &map_filter_state;
-            filter_input.result_set = parcel_jurisdiction_filter_state.result_set.active
-                ? &parcel_jurisdiction_filter_state.result_set
-                : nullptr;
-            filter_input.secondary_result_set = owner_text_filter_state.result_set.active
-                ? &owner_text_filter_state.result_set
-                : nullptr;
-            filter_input.tertiary_result_set = address_text_filter_state.result_set.active
-                ? &address_text_filter_state.result_set
-                : nullptr;
-            filter_input.query_layers = &query_layers;
-            filter_input.unified_parcels = &unified_parcels;
-            filter_input.parcel_owner_search_by_feature = &parcel_owner_search_by_feature;
-            filter_input.real_property_owner_search_by_feature = &real_property_owner_search_by_feature;
-            filter_input.parcel_address_search_by_feature = &parcel_address_search_by_feature;
-            filter_input.real_property_by_blocklot = &real_property_by_blocklot;
-            filter_input.parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature;
-            filter_input.parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature;
-            filter_input.real_property_layer_idx = real_property_layer_idx;
-            filter_input.parcel_layer_idx = parcel_layer_idx;
-            filter_input.crime_nibrs_layer_idx = crime_nibrs_layer_idx;
-            filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
-            filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
-            return makeFeatureFilterContext(filter_input);
         };
         auto point_glyph_for_layer_feature = [&](const LayerDef& layer, const LayerDef::FeatureRecord* fg) -> uint32_t {
             if (fg && isLikelyCrimePointLayer(layer)) return crimePointGlyphCode(*fg);
@@ -3616,8 +3577,9 @@ int runWorldSim3App(int argc, char** argv) {
             }
 
             if (state.geometry_gpu_resident) {
-                const FeatureFilterContext gpu_filter_ctx = make_generic_gpu_filter_ctx();
+                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
                 uint64_t color_state_key = 1469598103934665603ULL;
+                hash_mix(color_state_key, feature_render_state_key);
                 hash_mix(color_state_key, (uint64_t)li);
                 hash_cstr(color_state_key, sig.c_str());
                 hash_mix(color_state_key, (uint64_t)layer.enabled);
@@ -3638,14 +3600,10 @@ int runWorldSim3App(int argc, char** argv) {
                     std::vector<ImU32> point_colors(layer.features.size(), IM_COL32(0, 0, 0, 0));
                     const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
                     for (size_t i = 0; i < layer.features.size(); ++i) {
-                        const LayerDef::FeatureRecord& fg = layer.features[i];
-                        if (!featurePassesFilters(gpu_filter_ctx, li, i, fg)) continue;
+                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
+                        if (!render_state || !render_state->visible) continue;
                         ImU32 color = base_color;
-                        float query_color[4] = {0, 0, 0, 0};
-                        if (queryMapColorForFeature(gpu_filter_ctx, li, i, fg, query_color)) {
-                            color = ImGui::ColorConvertFloat4ToU32(
-                                ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
-                        }
+                        if (render_state->has_query_color) color = render_state->query_color;
                         point_colors[i] = color;
                     }
                     std::string color_error;
@@ -3735,8 +3693,9 @@ int runWorldSim3App(int argc, char** argv) {
             }
 
             if (state.geometry_gpu_resident) {
-                const FeatureFilterContext gpu_filter_ctx = make_generic_gpu_filter_ctx();
+                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
                 uint64_t color_state_key = 1469598103934665603ULL;
+                hash_mix(color_state_key, feature_render_state_key);
                 hash_mix(color_state_key, (uint64_t)li);
                 hash_cstr(color_state_key, sig.c_str());
                 hash_mix(color_state_key, (uint64_t)layer.enabled);
@@ -3757,14 +3716,10 @@ int runWorldSim3App(int argc, char** argv) {
                     std::vector<ImU32> line_colors(layer.features.size(), IM_COL32(0, 0, 0, 0));
                     const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
                     for (size_t i = 0; i < layer.features.size(); ++i) {
-                        const LayerDef::FeatureRecord& fg = layer.features[i];
-                        if (!featurePassesFilters(gpu_filter_ctx, li, i, fg)) continue;
+                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
+                        if (!render_state || !render_state->visible) continue;
                         ImU32 color = base_color;
-                        float query_color[4] = {0, 0, 0, 0};
-                        if (queryMapColorForFeature(gpu_filter_ctx, li, i, fg, query_color)) {
-                            color = ImGui::ColorConvertFloat4ToU32(
-                                ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
-                        }
+                        if (render_state->has_query_color) color = render_state->query_color;
                         line_colors[i] = color;
                     }
                     std::string color_error;
@@ -3943,6 +3898,7 @@ int runWorldSim3App(int argc, char** argv) {
 	            });
         }
 
+        (void)ensure_frame_feature_render_cache();
         drawMapTabWindow(MapTabContext{
             map_x,
             map_w,
@@ -4016,6 +3972,7 @@ int runWorldSim3App(int argc, char** argv) {
             &parcel_address_search_by_feature,
             &owner_text_filter_state.result_set,
             &address_text_filter_state.result_set,
+            &feature_render_cache,
             global_heat_cell_px,
             heatmap_algo,
             heatmap_quality_preset,

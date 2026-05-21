@@ -71,6 +71,8 @@ struct DerivedLayerCachesContext {
     std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     std::vector<double>* parcel_tax_lien_amount_by_feature = nullptr;
     std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
+    std::vector<std::string>* parcel_blocklot_by_feature = nullptr;
+    std::string* parcel_blocklot_cached_signature = nullptr;
 
     std::atomic<size_t>* vacant_notice_rows_matched_total = nullptr;
     std::atomic<size_t>* vacant_rehab_rows_matched_total = nullptr;

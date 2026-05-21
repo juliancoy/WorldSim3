@@ -46,7 +46,8 @@ void saveDerivedVacancyStatus(
     size_t vacant_notice_rows_total,
     size_t vacant_rehab_rows_total,
     size_t vacant_notice_rows_matched,
-    size_t vacant_rehab_rows_matched) {
+    size_t vacant_rehab_rows_matched,
+    const std::vector<std::string>* parcel_blocklot_by_feature) {
     if (parcel_features.size() != notice_counts.size() || parcel_features.size() != rehab_counts.size()) return;
     json j;
     j["schema_version"] = 1;
@@ -81,7 +82,10 @@ void saveDerivedVacancyStatus(
         int r = rehab_counts[i];
         int w = n + r;
         if (w <= 0) continue;
-        std::string bl = local_norm(local_prop(parcel_features[i], "BLOCKLOT"));
+        std::string bl =
+            (parcel_blocklot_by_feature && i < parcel_blocklot_by_feature->size())
+                ? (*parcel_blocklot_by_feature)[i]
+                : local_norm(local_prop(parcel_features[i], "BLOCKLOT"));
         j["entries"].push_back({
             {"feature_index", i},
             {"blocklot_norm", bl},

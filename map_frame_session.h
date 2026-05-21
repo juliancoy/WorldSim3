@@ -102,6 +102,7 @@ struct MapFrameSessionContext {
     std::vector<std::string>* parcel_address_search_by_feature = nullptr;
     const FilterResultSet* owner_text_filter_result_set = nullptr;
     const FilterResultSet* address_text_filter_result_set = nullptr;
+    const LayerFeatureRenderCache* feature_render_cache = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;

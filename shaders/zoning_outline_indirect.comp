@@ -1,0 +1,70 @@
+#version 450
+
+layout(local_size_x = 128) in;
+
+struct FeatureRecord {
+    uint feature_idx;
+    uint vertex_offset;
+    uint vertex_count;
+    uint index_offset;
+    uint index_count;
+    uint line_index_offset;
+    uint line_index_count;
+    uint pad0;
+    float min_lon;
+    float min_lat;
+    float max_lon;
+    float max_lat;
+};
+
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer FeatureRecords {
+    FeatureRecord features[];
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer OutlineColors {
+    uint colors[];
+};
+
+layout(std430, set = 0, binding = 2) writeonly buffer IndirectCommands {
+    DrawIndexedIndirectCommand commands[];
+};
+
+layout(push_constant) uniform PushConstants {
+    uint feature_count;
+    float view_min_lon;
+    float view_min_lat;
+    float view_max_lon;
+    float view_max_lat;
+} pc;
+
+bool overlaps(float min_lon, float min_lat, float max_lon, float max_lat) {
+    return max_lon >= pc.view_min_lon &&
+        min_lon <= pc.view_max_lon &&
+        max_lat >= pc.view_min_lat &&
+        min_lat <= pc.view_max_lat;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.feature_count) return;
+
+    FeatureRecord feature = features[i];
+    uint color = colors[i];
+    bool visible = ((color >> 24) != 0u) &&
+        feature.line_index_count > 0u &&
+        overlaps(feature.min_lon, feature.min_lat, feature.max_lon, feature.max_lat);
+
+    commands[i].indexCount = feature.line_index_count;
+    commands[i].instanceCount = visible ? 1u : 0u;
+    commands[i].firstIndex = feature.line_index_offset;
+    commands[i].vertexOffset = 0;
+    commands[i].firstInstance = 0u;
+}

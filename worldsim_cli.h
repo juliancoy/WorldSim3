@@ -20,6 +20,7 @@ struct WorldsimCliOptions {
     bool run_render_policy_selftest = false;
     bool run_render_plan_selftest = false;
     bool run_canonical_parcel_binary_selftest = false;
+    bool run_duckdb_parcel_ingest_selftest = false;
     bool run_inspect_canonical_parcel_binary = false;
     bool run_validate_canonical_parcel_binary = false;
     bool run_parcel_artifact_health = false;
@@ -28,6 +29,7 @@ struct WorldsimCliOptions {
     bool run_compile_polyline_geometry = false;
     bool run_validate_polyline_geometry = false;
     bool run_compile_polygon_geometry = false;
+    bool run_compile_parcel_polygon_geometry_artifacts = false;
     bool run_validate_polygon_geometry = false;
     bool run_build_geometry_duckdb_artifacts = false;
     bool run_download_layers = false;

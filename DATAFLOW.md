@@ -82,7 +82,9 @@ They must not:
 - depend on runtime-only in-memory joins
 - silently change meaning based on whether the app was previously opened
 
-Files under `data/world/.../layers/*.geojson` are deprecated and should not be produced or maintained. If any remain from older runs, they are stale legacy artifacts and must not be required for startup, hydration, signature resolution, or normal layer availability checks.
+Upstream GeoJSON is allowed only at the source-payload boundary, such as a direct SSOT download preserved under `sources/` or `data/inbox/`.
+
+Files under `data/world/.../layers/*.geojson` are deprecated and should not be produced, regenerated as an intermediate build step, or maintained as a runtime-facing artifact. If any remain from older runs, they are stale legacy artifacts and must not be required for startup, hydration, signature resolution, or normal layer availability checks.
 
 Layer identifiers in manifests and code may still retain `.geojson` suffixes as stable logical IDs. That suffix does not imply that a stored layer GeoJSON file is an accepted runtime artifact.
 
@@ -396,7 +398,7 @@ The main artifacts are:
 | Path | Kind | Producer | Consumer | Notes |
 | --- | --- | --- | --- | --- |
 | `data/world/.../layers/*.canonical.bin` | Canonical runtime layer binary | Explicit builders/importers | Hydration workers, layer registry, compiled geometry builders, runtime detail/query glue | Required runtime-readable layer artifact. Embedded `source_signature` replaces GeoJSON file metadata as the normal invalidation key. |
-| `data/world/.../layers/*.geojson` | Legacy removed artifact class | None | None | Deprecated path. These files should not be produced by current builders and must not be required for startup, hydration, signature resolution, or normal layer availability checks. |
+| `data/world/.../layers/*.geojson` | Legacy removed artifact class | None | None | Deprecated path. Upstream GeoJSON may exist under `sources/` or `data/inbox/`, but layer GeoJSON in this runtime-facing location must not be produced by current builders, regenerated as an intermediate artifact, or required for startup, hydration, signature resolution, or normal layer availability checks. |
 | `data/world/.../layers/*.geojson.part` | In-progress legacy export/download write | Export or download tooling | Download/export finalization only | Temporary artifact; not a valid runtime layer source. |
 | `sources/world/.../**/*` excluding tracked manifests | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV/XLSX/PDF payloads used to generate canonical binaries or document the upstream source. These files are local-only working artifacts and should normally be ignored by git. |
 | `data/inbox/**` | Manual drop-zone inputs | User or external process | Builder scripts/tools | Used for datasets that are copied in manually, such as HUD PIT files. |
@@ -448,7 +450,7 @@ compiled geometry artifact present
   -> DuckDB-backed detail/query workflows ready
 ```
 
-The frame loop should not compensate for missing compiled geometry by scanning full CPU feature sets. Large geometry layers are either drawn through the retained GPU path or remain non-drawable until their compiled geometry artifact is ready.
+The frame loop should not compensate for missing compiled geometry by scanning full CPU feature sets. Large geometry layers are either drawn through the retained GPU path or remain non-drawable until their compiled geometry artifact is ready. This includes polygon and polyline outlines: they are retained geometry, not an ImGui fallback workload.
 
 ## Compiled Geometry Artifacts
 
@@ -497,6 +499,7 @@ Derived caches are rebuilt in `derived_layer_caches.cpp`.
 The key derived data includes:
 
 - harmonized real-property records
+- parcel blocklot by feature arrays
 - vacant notice counts by blocklot
 - vacant rehab counts by blocklot
 - tax lien counts and amounts by blocklot
@@ -505,6 +508,8 @@ The key derived data includes:
 - unified parcel records
 
 Invalidation should use propagated geometry-artifact source signatures, not only feature counts. This matters when a source file changes but keeps the same number of rows.
+
+Derived parcel joins should be columnar after hydration. Runtime code may scan canonical feature properties once to build compact arrays such as `parcel_blocklot_by_feature`, owner search text, address search text, and per-feature overlay arrays. Layer enable/disable toggles must not rescan parcel property bags with `getPropertyValue(...)` or `firstDisplayProperty(...)`; toggles should only flip visibility/color state or reuse existing derived arrays.
 
 The unified parcel cache is invalidated when any of these change:
 
