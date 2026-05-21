@@ -17,9 +17,9 @@ Rendering should consume prepared state. It should not perform expensive data di
 
 ## Startup Readiness
 
-Rendering assumes compiled geometry artifacts and DuckDB semantics are already current. Startup may inspect artifact readiness, but interactive launch must not run preprocessing before the main map UI and status API are alive.
+Rendering assumes compiled geometry artifacts and DuckDB semantics are already current. Startup must inspect artifact readiness before the main map UI and status API are created.
 
-The main renderer does not perform preprocessing, rebuild missing geometry, or silently fall back to CPU feature records. Missing or stale artifacts are prepared explicitly with `worldsim3 --startup-preprocess` or `worldsim3 --build-geometry-duckdb-artifacts`.
+The main renderer does not perform preprocessing, rebuild missing geometry, or silently fall back to CPU feature records. If required artifacts are missing or stale, interactive startup runs the explicit preprocessing step first and launches the main UI only after a second readiness check passes. CLI repair remains available with `worldsim3 --startup-preprocess` or `worldsim3 --build-geometry-duckdb-artifacts`.
 
 ## Filter And Query Color Contract
 

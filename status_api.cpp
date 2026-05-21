@@ -890,7 +890,10 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"hovered_zone_idx", ctx.hover_debug_state->hovered_zone_idx},
                         {"hovered_point", ctx.hover_debug_state->hovered_point},
                         {"hovered_point_idx", ctx.hover_debug_state->hovered_point_idx},
-                        {"hovered_point_layer_idx", ctx.hover_debug_state->hovered_point_layer_idx}
+                        {"hovered_point_layer_idx", ctx.hover_debug_state->hovered_point_layer_idx},
+                        {"selected_parcel", ctx.hover_debug_state->selected_parcel},
+                        {"selected_parcel_idx", ctx.hover_debug_state->selected_parcel_idx},
+                        {"selected_parcel_count", ctx.hover_debug_state->selected_parcel_count}
                     };
                 }
                 out["vacancy_probe"] = {

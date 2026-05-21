@@ -360,6 +360,7 @@ StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
         const fs::path layer_path = resolveStoredLayerPath(root, layer);
         std::string sig;
         if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+            plan.required = true;
             plan.issues.push_back(StartupPreprocessIssue{
                 "source",
                 layer.file,
@@ -651,8 +652,22 @@ int runWorldSim3App(int argc, char** argv) {
     }
     printStartupPreprocessPlan(preprocess_plan, std::cerr);
     if (preprocess_plan.required) {
-        std::cerr << "[worldsim3] startup preprocess skipped during interactive launch; "
-                  << "run --startup-preprocess or --build-geometry-duckdb-artifacts explicitly\n";
+        const int preprocess_rc = runStartupPreprocessWindow(
+            root,
+            app_settings,
+            preprocess_plan,
+            cli_options,
+            argc > 0 ? argv[0] : nullptr);
+        if (preprocess_rc != 0) {
+            std::cerr << "[worldsim3] main UI blocked because required startup preprocessing failed\n";
+            return preprocess_rc;
+        }
+        preprocess_plan = inspectStartupPreprocessPlan(root);
+        printStartupPreprocessPlan(preprocess_plan, std::cerr);
+        if (preprocess_plan.required) {
+            std::cerr << "[worldsim3] main UI blocked because required artifacts are still missing or stale after preprocessing\n";
+            return 1;
+        }
     }
 
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
@@ -2908,7 +2923,7 @@ int runWorldSim3App(int argc, char** argv) {
         if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size() &&
             (size_t)parcel_layer_idx < layer_states.size()) {
             const LayerDef& parcel_layer = layers[(size_t)parcel_layer_idx];
-            const LayerRuntimeState& parcel_state = layer_states[(size_t)parcel_layer_idx];
+            LayerRuntimeState& parcel_state = layer_states[(size_t)parcel_layer_idx];
             if (gpu_profiler_reload_requested) {
                 clearGpuProfilerAlertState();
                 clearParcelGpuBuffers();
@@ -2927,6 +2942,8 @@ int runWorldSim3App(int argc, char** argv) {
                 parcel_state.status == LayerPipelineStatus::Ready &&
                 !parcel_state.hydration_source_signature.empty();
             if (!parcel_ready) {
+                parcel_state.geometry_gpu_resident = false;
+                parcel_state.geometry_gpu_pick_ready = false;
                 if (parcel_geometry_locked_signature.empty()) {
                     clearParcelGpuBuffers();
                     parcel_gpu_uploaded_signature.clear();
@@ -3022,6 +3039,9 @@ int runWorldSim3App(int argc, char** argv) {
                 if (parcel_gpu_uploaded_signature == sig &&
                     parcel_geometry_refresh_allowed &&
                     !parcel_gpu_render_blob.features.empty()) {
+                    parcel_state.geometry_gpu_resident = true;
+                    parcel_state.geometry_gpu_pick_ready = true;
+                    parcel_state.geometry_phase = "gpu_ready";
                     auto hash_mix = [](uint64_t& h, uint64_t v) {
                         h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
                     };

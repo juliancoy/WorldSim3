@@ -23,6 +23,7 @@ struct MapInspectionContext {
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;

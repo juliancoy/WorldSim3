@@ -75,6 +75,9 @@ struct HoverDebugState {
     bool hovered_point = false;
     size_t hovered_point_idx = (size_t)-1;
     int hovered_point_layer_idx = -1;
+    bool selected_parcel = false;
+    size_t selected_parcel_idx = (size_t)-1;
+    size_t selected_parcel_count = 0;
 };
 
 MapHoverState findMapHoverTargets(const MapHoverQuery& query);

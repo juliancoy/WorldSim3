@@ -209,6 +209,19 @@ bool loadLocalLayerFeatures(
         source_used = "canonical_binary";
         return true;
     }
+    if (layer.import_type == "census_acs_tract_demographics") {
+        std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
+        if (loadLayerFeaturesFromLocalSsotSource(
+                root,
+                layer,
+                features,
+                loaded_feature_properties,
+                source_used,
+                error)) {
+            if (feature_properties) *feature_properties = std::move(loaded_feature_properties);
+            return true;
+        }
+    }
     std::vector<LayerDef::FeatureProperties> loaded_feature_properties;
     if (loadLayerFeaturesFromLocalImportArtifact(
             root,
@@ -2853,8 +2866,9 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         "ensuring analytics database artifact from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
     DuckDbAnalytics analytics(root);
+    const bool have_duckdb_source_layers = load_summary.loaded_layer_count > 0;
     const DuckDbArtifactEnsureResult duckdb_result =
-        load_ok ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
+        have_duckdb_source_layers ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
     const bool duckdb_reused_existing = duckdb_result.reused_existing;
     const bool duckdb_ok = duckdb_result.ok;
     emitCliProgress(
@@ -2988,11 +3002,11 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     emitCliProgress(
         kMode,
         "complete",
-        "ok=" + std::string((load_ok && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
+        "ok=" + std::string((have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
             " elapsed=" + formatElapsedMs(total_elapsed_ms));
 
     json source_load = {
-        {"ok", load_ok},
+        {"ok", have_duckdb_source_layers},
         {"local_layer_count", load_summary.local_layer_count},
         {"requested_layer_count", load_summary.requested_layer_count},
         {"loaded_layer_count", load_summary.loaded_layer_count},
@@ -3015,7 +3029,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
 
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
-        {"ok", load_ok && geometry_failed_count == 0 && duckdb_ok},
+        {"ok", have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok},
         {"worker_count", worker_count},
         {"source_load", std::move(source_load)},
         {"geometry", {

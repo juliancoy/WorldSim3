@@ -69,7 +69,7 @@ void tryPickParcel(const MapHoverQuery& query, MapHoverState& out) {
     if (!gpuPickParcelFeature(makePickRequest(query), &feature_idx, &pick_error)) {
         return;
     }
-    if (feature_idx >= layer.features.size()) return;
+    if (query.parcel_render_blob && feature_idx >= query.parcel_render_blob->features.size()) return;
     out.hovered_parcel_idx = feature_idx;
 }
 

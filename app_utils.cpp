@@ -498,6 +498,10 @@ std::filesystem::path resolveStoredLayerPath(const fs::path& root, const LayerDe
     const fs::path provenance_path = provenanceStoredLayerPath(root, layer);
     std::error_code ec;
     if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+    ec.clear();
+    const fs::path provenance_canonical_path =
+        provenance_path.parent_path() / (layerArtifactBasenameForFile(layer.file) + ".canonical.bin");
+    if (fs::exists(provenance_canonical_path, ec) && !ec) return provenance_path;
     const fs::path legacy_path = root / "data" / "layers" / layer.file;
     return legacy_path;
 }
@@ -508,12 +512,20 @@ std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const 
         const fs::path provenance_path = provenanceStoredLayerPath(root, *layer);
         std::error_code ec;
         if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+        ec.clear();
+        const fs::path provenance_canonical_path =
+            provenance_path.parent_path() / (layerArtifactBasenameForFile(layer->file) + ".canonical.bin");
+        if (fs::exists(provenance_canonical_path, ec) && !ec) return provenance_path;
         return root / "data" / "layers" / file;
     }
     if (const LayerDef* layer = findManifestLayerByFileIncludingNonRuntime(root, file, scratch)) {
         const fs::path provenance_path = provenanceStoredLayerPath(root, *layer);
         std::error_code ec;
         if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+        ec.clear();
+        const fs::path provenance_canonical_path =
+            provenance_path.parent_path() / (layerArtifactBasenameForFile(layer->file) + ".canonical.bin");
+        if (fs::exists(provenance_canonical_path, ec) && !ec) return provenance_path;
     }
     if (const fs::path known_path = wellKnownStoredLayerPathForFile(root, file); !known_path.empty()) {
         std::error_code ec;

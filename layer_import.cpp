@@ -2159,7 +2159,26 @@ bool loadLayerFeaturesFromLocalImportArtifact(
         return false;
     }
     try {
-        if (layer.import_type == "socrata_csv_properties") {
+        if (layer.import_type == "census_acs_tract_demographics") {
+            const fs::path source_path = sourceGeometryArtifactPath(root, layer);
+            fs::path acs_path;
+            for (const auto& candidate : localImportArtifactCandidates(root, layer)) {
+                if (candidate.extension() == ".json" && candidate.filename() != source_path.filename()) {
+                    acs_path = candidate;
+                    break;
+                }
+            }
+            if (acs_path.empty()) {
+                error = "missing census ACS source artifact";
+                return false;
+            }
+            const auto acs_rows = parseCensusAcsRowsByGeoid(
+                acs_path,
+                layer.import_table,
+                layer.import_year,
+                layer.import_survey);
+            buildCensusAcsGeoJsonFeatures(source_path, acs_rows, features, feature_properties);
+        } else if (layer.import_type == "socrata_csv_properties") {
             buildSocrataHowardPropertyFeatures(artifact_path, features, feature_properties);
         } else if (layer.import_type == "xlsx_point_table") {
             buildXlsxPointTableFeatures(

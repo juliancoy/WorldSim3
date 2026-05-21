@@ -242,6 +242,29 @@ bool readString(BufferedBinaryFileReader& in, std::string& out) {
     return n == 0 || in.readExact(out.data(), n);
 }
 
+bool readU32Array(BufferedBinaryFileReader& in, std::vector<uint32_t>& out) {
+    if (out.empty()) return true;
+    if (!hostIsLittleEndian()) {
+        for (uint32_t& v : out) {
+            if (!readU32(in, v)) return false;
+        }
+        return true;
+    }
+    return in.readExact(out.data(), out.size() * sizeof(uint32_t));
+}
+
+bool readImVec2Array(BufferedBinaryFileReader& in, std::vector<ImVec2>& out) {
+    static_assert(sizeof(ImVec2) == sizeof(float) * 2);
+    if (out.empty()) return true;
+    if (!hostIsLittleEndian()) {
+        for (ImVec2& p : out) {
+            if (!readFloat(in, p.x) || !readFloat(in, p.y)) return false;
+        }
+        return true;
+    }
+    return in.readExact(out.data(), out.size() * sizeof(ImVec2));
+}
+
 bool writeString(std::ostream& out, const std::string& s) {
     if (s.size() > std::numeric_limits<uint32_t>::max()) return false;
     if (!writeU32(out, static_cast<uint32_t>(s.size()))) return false;
@@ -647,11 +670,9 @@ bool loadBinaryPointGeometryArtifact(
     out.features.resize((size_t)hdr.feature_count);
     out.chunks.resize((size_t)hdr.chunk_count);
 
-    for (uint32_t i = 0; i < point_count; ++i) {
-        if (!readFloat(in, out.positions[i].x) || !readFloat(in, out.positions[i].y)) return false;
-    }
+    if (!readImVec2Array(in, out.positions)) return false;
+    if (!readU32Array(in, out.feature_refs)) return false;
     for (uint32_t i = 0; i < feature_ref_count; ++i) {
-        if (!readU32(in, out.feature_refs[i])) return false;
         if (out.feature_refs[i] >= out.features.size()) return false;
     }
     for (auto& rec : out.features) {
@@ -726,14 +747,14 @@ bool loadBinaryPolylineGeometryArtifact(
     out.features.resize((size_t)hdr.feature_count);
     out.chunks.resize((size_t)hdr.chunk_count);
 
-    for (uint32_t i = 0; i < vertex_count; ++i) {
-        if (!readFloat(in, out.vertices[i].x) || !readFloat(in, out.vertices[i].y)) return false;
-    }
+    if (!readImVec2Array(in, out.vertices)) return false;
+    if (!readU32Array(in, out.feature_refs)) return false;
     for (uint32_t i = 0; i < feature_ref_count; ++i) {
-        if (!readU32(in, out.feature_refs[i]) || out.feature_refs[i] >= out.features.size()) return false;
+        if (out.feature_refs[i] >= out.features.size()) return false;
     }
+    if (!readU32Array(in, out.line_indices)) return false;
     for (uint32_t i = 0; i < line_index_count; ++i) {
-        if (!readU32(in, out.line_indices[i]) || out.line_indices[i] >= out.vertices.size()) return false;
+        if (out.line_indices[i] >= out.vertices.size()) return false;
     }
     for (auto& rec : out.features) {
         if (!readU32(in, rec.feature_idx) ||
@@ -812,17 +833,18 @@ bool loadBinaryPolygonGeometryArtifact(
     out.features.resize((size_t)hdr.feature_count);
     out.chunks.resize((size_t)hdr.chunk_count);
 
-    for (uint32_t i = 0; i < vertex_count; ++i) {
-        if (!readFloat(in, out.vertices[i].x) || !readFloat(in, out.vertices[i].y)) return false;
-    }
+    if (!readImVec2Array(in, out.vertices)) return false;
+    if (!readU32Array(in, out.feature_refs)) return false;
     for (uint32_t i = 0; i < feature_ref_count; ++i) {
-        if (!readU32(in, out.feature_refs[i]) || out.feature_refs[i] >= out.features.size()) return false;
+        if (out.feature_refs[i] >= out.features.size()) return false;
     }
+    if (!readU32Array(in, out.fill_indices)) return false;
     for (uint32_t i = 0; i < fill_index_count; ++i) {
-        if (!readU32(in, out.fill_indices[i]) || out.fill_indices[i] >= out.vertices.size()) return false;
+        if (out.fill_indices[i] >= out.vertices.size()) return false;
     }
+    if (!readU32Array(in, out.line_indices)) return false;
     for (uint32_t i = 0; i < line_index_count; ++i) {
-        if (!readU32(in, out.line_indices[i]) || out.line_indices[i] >= out.vertices.size()) return false;
+        if (out.line_indices[i] >= out.vertices.size()) return false;
     }
     for (auto& rec : out.features) {
         if (!readU32(in, rec.feature_idx) ||

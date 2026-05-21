@@ -471,9 +471,9 @@ The frame loop should also not compensate for missing DuckDB-derived semantic co
 Interactive startup has two separate responsibilities:
 
 - report artifact readiness
-- start the main map UI/API without doing artifact construction
+- ensure required artifacts exist before the main map UI/API starts
 
-The main map UI must not build geometry, DuckDB, or semantic artifacts on the frame-loop path. Startup may inspect enabled layers and DuckDB freshness, but interactive launch must not synchronously run preprocessing before the status API and UI are alive. Missing or stale artifacts should be reported as readiness issues; affected layers remain unavailable or degraded according to their render contract.
+The main map UI must not build geometry, DuckDB, or semantic artifacts on the frame-loop path. Startup inspects enabled layers and DuckDB freshness before creating the main UI/API. If required compiled geometry or DuckDB artifacts are missing or stale, startup runs the explicit preprocessing command first, performs a second readiness inspection, and blocks the main UI if any required artifact is still unavailable.
 
 Preprocessing is an explicit CLI operation:
 
@@ -482,7 +482,7 @@ worldsim3 --startup-preprocess [--reserve-cores N]
 worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]
 ```
 
-These commands may scan canonical sources and write artifacts. Normal interactive startup must not invoke them implicitly. This keeps expensive artifact writes and canonical-source scans out of the renderer and out of the startup critical path; operators can prepare or repair artifacts intentionally from CLI.
+These commands may scan canonical sources and write artifacts. Interactive startup may invoke the same explicit preprocessing command as a blocking pre-main-UI gate when required artifacts are missing or stale. That work is still outside the renderer and outside the frame loop; no degraded main UI should run while required DuckDB semantics or compiled geometry artifacts are missing.
 
 ## Compiled Geometry Artifacts
 
@@ -595,7 +595,7 @@ duckdb_analytics.cpp -> DuckDbAnalytics::executeMapQuery()
 
 DuckDB is the canonical attribute and query store, not the render cache. The intended end state is direct ingest from persisted canonical inputs and derived artifacts rather than any session-only CPU geometry state.
 
-DuckDB stores extracted feature attributes in `layer_features`, full/long-form properties in `layer_feature_properties`, and parcel-level property/detail fields in `unified_parcels`. This is the intended home for searchable owner/address/value/detail data, filter inputs, choropleth inputs, and parcel join keys. It is not the source of startup render geometry.
+DuckDB stores extracted, typed feature attributes in `layer_features` and parcel-level property/detail fields in `unified_parcels`. It must not store render geometry, coordinate arrays, WKT/GeoJSON geometry payloads, or full arbitrary property bags by default. The `layer_feature_properties` table is a compatibility placeholder unless a bounded, allowlisted semantic key/value export is explicitly added. DuckDB is the intended home for searchable owner/address/value/detail data, filter inputs, choropleth inputs, and parcel join keys, not the source of startup render geometry.
 
 Normal interactive startup should treat DuckDB as the semantic load source:
 

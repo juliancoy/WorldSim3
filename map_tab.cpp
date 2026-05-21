@@ -339,6 +339,12 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
                 ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
                 ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
+                ctx.hover_debug_state->selected_parcel =
+                    ctx.parcel_selection && ctx.parcel_selection->active_idx != (size_t)-1;
+                ctx.hover_debug_state->selected_parcel_idx =
+                    ctx.parcel_selection ? ctx.parcel_selection->active_idx : (size_t)-1;
+                ctx.hover_debug_state->selected_parcel_count =
+                    ctx.parcel_selection ? ctx.parcel_selection->indices.size() : 0;
             }
             const MapCornerControlState map_corner_controls = hitTestMapCornerControls(ctx, map_canvas_session);
             drawMapFpsOverlay(map_canvas_session);

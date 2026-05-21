@@ -296,6 +296,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.zoning_layer_idx,
         ctx.layers,
         ctx.unified_parcels,
+        ctx.parcel_render_blob,
         ctx.polygon_geometry_artifacts,
         ctx.layer_spatial,
         ctx.zoning_metadata,

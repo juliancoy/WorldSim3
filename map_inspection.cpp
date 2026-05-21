@@ -597,14 +597,22 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         }
     }
 
-    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_unified && ctx.unified_parcels) {
+    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel_hit) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
-        const std::string stable_id = normalizeJoinKey(hovered_unified->blocklot);
+        const std::string stable_id = hovered_unified ? normalizeJoinKey(hovered_unified->blocklot) : std::string();
+        size_t parcel_count = 0;
+        if (ctx.unified_parcels && !ctx.unified_parcels->empty()) {
+            parcel_count = ctx.unified_parcels->size();
+        } else if (ctx.parcel_render_blob && !ctx.parcel_render_blob->features.empty()) {
+            parcel_count = ctx.parcel_render_blob->features.size();
+        } else if (ctx.layers && ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
+            parcel_count = (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size();
+        }
         if (selectParcel(
                 *ctx.parcel_selection,
                 hovered_parcel_idx,
                 stable_id,
-                ctx.unified_parcels->size(),
+                parcel_count,
                 ctrl) &&
             ctx.open_parcel_element) {
             ctx.open_parcel_element(hovered_parcel_idx);
