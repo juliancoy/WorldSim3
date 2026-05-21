@@ -79,7 +79,7 @@ bool downloadUrlToFile(const std::string& url, const fs::path& out_path, std::st
     }
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
@@ -292,8 +292,10 @@ VersionedDownloadResult downloadUrlVersioned(
     curl_off_t content_length = -1;
     long code = 0;
     CURLcode rc = CURLE_OK;
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        const bool try_resume = (attempt == 0);
+    bool force_unconditional_retry = false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const bool try_resume = (attempt == 0) && !force_unconditional_retry;
+        const bool use_validators = !force_unconditional_retry;
         uint64_t resume_bytes = 0;
         if (try_resume) {
             std::error_code szec;
@@ -315,16 +317,16 @@ VersionedDownloadResult downloadUrlVersioned(
         struct curl_slist* hdrs = nullptr;
         if (resume_bytes > 0) {
             const std::string validator = !prev_etag.empty() ? prev_etag : prev_lm;
-            if (!validator.empty()) hdrs = curl_slist_append(hdrs, ("If-Range: " + validator).c_str());
+            if (use_validators && !validator.empty()) hdrs = curl_slist_append(hdrs, ("If-Range: " + validator).c_str());
             curl_easy_setopt(curl, CURLOPT_RANGE, (std::to_string(resume_bytes) + "-").c_str());
         } else {
-            if (!prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
-            if (!prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
+            if (use_validators && !prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
+            if (use_validators && !prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
         }
         DownloadProgressBridge progress_bridge{on_progress, resume_bytes};
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
@@ -347,6 +349,14 @@ VersionedDownloadResult downloadUrlVersioned(
         if (hdrs) curl_slist_free_all(hdrs);
         std::fclose(fp);
 
+        if (code == 403 && !force_unconditional_retry &&
+            (resume_bytes > 0 || !prev_etag.empty() || !prev_lm.empty())) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            hc = HeaderCapture{};
+            force_unconditional_retry = true;
+            continue;
+        }
         if (resume_bytes > 0 && code == 200 && attempt == 0) {
             std::error_code ec;
             fs::remove(tmp, ec);
@@ -500,7 +510,7 @@ FreshnessCheckResult checkUrlFreshnessVersioned(
     HeaderCapture hc{};
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
@@ -684,6 +694,7 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_service_url = import.value("service_url", std::string());
             layer.import_where = import.value("where", std::string());
             layer.import_normalizer = import.value("normalizer", std::string());
+            layer.import_query = import.value("query", std::string());
             layer.import_table = import.value("table", std::string());
             layer.import_year = import.value("year", std::string());
             layer.import_survey = import.value("survey", std::string());

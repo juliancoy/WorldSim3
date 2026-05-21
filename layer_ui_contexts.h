@@ -62,6 +62,7 @@ struct LayerUiSharedContext {
 
     int* parcel_parameter_mode = nullptr;
     const MapFilterState* map_filter_state = nullptr;
+    const LayerBrowseState* layer_browse_state = nullptr;
 };
 
 enum class LayerColorEditorTarget {
@@ -72,8 +73,11 @@ enum class LayerColorEditorTarget {
 struct LayersPanelUiContext {
     LayerUiSharedContext* shared = nullptr;
     int parcel_layer_idx = -1;
+    int zoning_layer_idx = -1;
     int zoom = 0;
     const char* layer_search_query = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
 
     bool* crime_filter_enabled = nullptr;
     bool* crime_filter_use_year = nullptr;
@@ -92,4 +96,5 @@ struct LayersPanelUiContext {
 
     ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
     const MapFilterState* map_filter_state = nullptr;
+    const LayerBrowseState* layer_browse_state = nullptr;
 };

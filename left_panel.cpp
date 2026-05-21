@@ -34,21 +34,6 @@ constexpr std::array<GeographyPreset, 2> kGeographyPresets{{
     {"ng", "Nigeria", "anambra", "Anambra"},
 }};
 
-struct HoverInspectorOption {
-    int mode = 0;
-    const char* label = "";
-};
-
-const char* hoverInspectorModeLabel(int mode) {
-    switch (mode) {
-        case 1: return "Parcels";
-        case 2: return "Zoning";
-        case 3: return "All Supported";
-        case 0:
-        default: return "None";
-    }
-}
-
 std::string geographyNationLabel(std::string_view code) {
     for (const auto& preset : kGeographyPresets) {
         if (code == preset.nation_code) return preset.nation_label;
@@ -73,14 +58,12 @@ const GeographyPreset* presetForGeography(std::string_view nation_code, std::str
 struct GeographyHierarchyOptions {
     std::vector<std::string> nation_codes;
     std::unordered_map<std::string, std::vector<std::string>> regions_by_nation;
-    std::unordered_map<std::string, std::vector<std::string>> county_cities_by_nation_region;
 };
 
 GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::path& root) {
     GeographyHierarchyOptions out;
     std::set<std::string> nations_seen;
     std::unordered_map<std::string, std::set<std::string>> region_sets;
-    std::unordered_map<std::string, std::set<std::string>> county_city_sets;
 
     const std::filesystem::path nation_root = root / "sources" / "world" / "earth" / "nation_state";
     std::error_code ec;
@@ -101,18 +84,6 @@ GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::
                 const std::string region = toLowerAscii(trimDisplayValue(region_entry.path().filename().string()));
                 if (region.empty()) continue;
                 region_sets[nation].insert(region);
-
-                const std::filesystem::path county_city_root = region_entry.path() / "county_city";
-                std::error_code county_city_ec;
-                if (!std::filesystem::exists(county_city_root, county_city_ec) || county_city_ec) continue;
-                const std::string geography_key = nation + "/" + region;
-                for (const auto& county_city_entry : std::filesystem::directory_iterator(county_city_root, county_city_ec)) {
-                    if (county_city_ec) break;
-                    if (!county_city_entry.is_directory()) continue;
-                    const std::string county_city = toLowerAscii(trimDisplayValue(county_city_entry.path().filename().string()));
-                    if (county_city.empty()) continue;
-                    county_city_sets[geography_key].insert(county_city);
-                }
             }
         }
     }
@@ -134,48 +105,19 @@ GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::
             if (std::find(out_regions.begin(), out_regions.end(), region) == out_regions.end()) out_regions.push_back(region);
         }
     }
-    for (const auto& [geography_key, county_city_set] : county_city_sets) {
-        auto& out_county_cities = out.county_cities_by_nation_region[geography_key];
-        out_county_cities.assign(county_city_set.begin(), county_city_set.end());
-    }
     return out;
 }
 
 bool layerVisibleInSelectedHierarchy(const LeftPanelContext& ctx, const LayerDef& layer) {
-    return !ctx.map_filter_state || layerMatchesSelectedGeography(layer, *ctx.map_filter_state);
+    return !ctx.layer_browse_state || layerMatchesBrowseGeography(layer, *ctx.layer_browse_state);
 }
 
-void persistGeographyFilterState(const LeftPanelContext& ctx) {
-    if (!ctx.root || !ctx.map_filter_state) return;
-    saveFilterUiState(
+void persistLayerBrowseState(const LeftPanelContext& ctx) {
+    if (!ctx.root || !ctx.layer_browse_state) return;
+    saveLayerBrowseUiState(
         *ctx.root,
-        &ctx.map_filter_state->selected_nation_state,
-        &ctx.map_filter_state->selected_state_region,
-        &ctx.map_filter_state->selected_county_city,
-        ctx.map_filter_state->enabled,
-        ctx.map_filter_state->use_date,
-        ctx.map_filter_state->year_min,
-        ctx.map_filter_state->year_max,
-        ctx.map_filter_state->blocklot,
-        ctx.map_filter_state->status,
-        ctx.map_filter_state->address,
-        ctx.map_filter_state->owner,
-        ctx.map_filter_state->zip,
-        ctx.map_filter_state->crime.enabled,
-        ctx.map_filter_state->crime.homicide,
-        ctx.map_filter_state->crime.robbery,
-        ctx.map_filter_state->crime.assault,
-        ctx.map_filter_state->crime.burglary,
-        ctx.map_filter_state->crime.theft,
-        ctx.map_filter_state->crime.auto_theft,
-        ctx.map_filter_state->crime.drug,
-        ctx.map_filter_state->crime.shooting,
-        ctx.map_filter_state->crime.use_year,
-        ctx.map_filter_state->crime.year_min,
-        ctx.map_filter_state->crime.year_max,
-        nullptr,
-        ctx.map_filter_state->selected_owners,
-        ctx.map_filter_state->event_sector_enabled);
+        &ctx.layer_browse_state->selected_nation_state,
+        &ctx.layer_browse_state->selected_state_region);
 }
 
 bool heatmapInputFloatEnter(
@@ -208,7 +150,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
     return ctx.root && ctx.app_settings && ctx.layers && ctx.layer_registry &&
         ctx.local_layer_exists_cache && ctx.data_freshness_state && ctx.data_freshness_msg &&
         ctx.data_library_status_msg && ctx.zoom && ctx.center_lon && ctx.center_lat &&
-        ctx.hover_inspector_mode && ctx.hover_inspector_enabled && ctx.show_sources_panel &&
+        ctx.active_hover_layer_idx && ctx.active_click_layer_idx && ctx.show_sources_panel &&
         ctx.show_data_library && ctx.parcel_parameter_mode && ctx.layer_spatial &&
         ctx.layer_states && ctx.status_mutex && ctx.layer_fill_enabled &&
         ctx.layer_hover_enabled && ctx.layer_inspect_enabled && ctx.layer_heatmap_enabled &&
@@ -226,6 +168,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
         ctx.crime_filter_theft && ctx.crime_filter_auto_theft && ctx.crime_filter_drug &&
 	        ctx.crime_filter_shooting && ctx.crime_breakdown && ctx.parcel_jurisdiction_filter_state &&
         ctx.parcel_jurisdiction_options && ctx.basemap_download && ctx.lazy_tile_download && ctx.map_filter_state &&
+        ctx.layer_browse_state &&
 	        ctx.basemap_coverage_dirty && ctx.zoning_zone_enabled && ctx.zoning_zone_color &&
 	        ctx.zoning_zone_label && ctx.zoning_metadata && ctx.zoning_zone_order &&
 	        ctx.zoning_zone_counts && ctx.zoning_group_zones && ctx.zoning_group_order;
@@ -268,9 +211,8 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::Text("Vulkan map + Vulkan UI");
 
     const GeographyHierarchyOptions geography_options = buildGeographyHierarchyOptions(*ctx.root);
-    auto& selected_nation = ctx.map_filter_state->selected_nation_state;
-    auto& selected_region = ctx.map_filter_state->selected_state_region;
-    auto& selected_county_city = ctx.map_filter_state->selected_county_city;
+    auto& selected_nation = ctx.layer_browse_state->selected_nation_state;
+    auto& selected_region = ctx.layer_browse_state->selected_state_region;
     if (!geography_options.nation_codes.empty() &&
         std::find(geography_options.nation_codes.begin(), geography_options.nation_codes.end(), selected_nation) == geography_options.nation_codes.end()) {
         selected_nation = geography_options.nation_codes.front();
@@ -281,28 +223,9 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     } else if (std::find(region_it->second.begin(), region_it->second.end(), selected_region) == region_it->second.end()) {
         selected_region = region_it->second.front();
     }
-    auto county_city_key = selected_nation + "/" + selected_region;
-    auto county_city_it = geography_options.county_cities_by_nation_region.find(county_city_key);
-    if (county_city_it == geography_options.county_cities_by_nation_region.end() ||
-        std::find(county_city_it->second.begin(), county_city_it->second.end(), selected_county_city) == county_city_it->second.end()) {
-        selected_county_city.clear();
-    }
 
-    auto apply_geography_selection = [&](bool center_map) {
-        if (center_map) {
-            double preset_lon = *ctx.center_lon;
-            double preset_lat = *ctx.center_lat;
-            int preset_zoom = (int)std::floor(*ctx.zoom);
-            if (geographyViewPreset(selected_nation, selected_region, preset_lon, preset_lat, preset_zoom)) {
-                *ctx.center_lon = preset_lon;
-                *ctx.center_lat = preset_lat;
-                *ctx.zoom = std::max(*ctx.zoom, (double)preset_zoom);
-            }
-        }
-        ctx.map_filter_state->selected_owners.clear();
-        ctx.map_filter_state->owner[0] = '\0';
-        clearParcelGpuBuffers();
-        persistGeographyFilterState(ctx);
+    auto apply_geography_selection = [&]() {
+        persistLayerBrowseState(ctx);
         result.geography_changed = true;
     };
 
@@ -325,8 +248,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
         selected_region = (region_match != geography_options.regions_by_nation.end() && !region_match->second.empty())
             ? region_match->second.front()
             : std::string();
-        selected_county_city.clear();
-        apply_geography_selection(true);
+        apply_geography_selection();
     }
     region_it = geography_options.regions_by_nation.find(selected_nation);
     std::vector<std::string> region_label_storage;
@@ -346,40 +268,14 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (!region_labels.empty() && ImGui::Combo("##geography_region", &region_idx, region_labels.data(), (int)region_labels.size())) {
         selected_region = region_it->second[(size_t)region_idx];
-        selected_county_city.clear();
-        apply_geography_selection(true);
+        apply_geography_selection();
     }
     ImGui::EndDisabled();
-    county_city_key = selected_nation + "/" + selected_region;
-    county_city_it = geography_options.county_cities_by_nation_region.find(county_city_key);
-    std::vector<std::string> county_city_label_storage;
-    std::vector<const char*> county_city_labels;
-    county_city_label_storage.reserve((county_city_it != geography_options.county_cities_by_nation_region.end() ? county_city_it->second.size() : 0) + 1);
-    county_city_labels.reserve(county_city_label_storage.capacity());
-    county_city_label_storage.push_back("All Areas");
-    county_city_labels.push_back(county_city_label_storage.back().c_str());
-    int county_city_idx = 0;
-    if (county_city_it != geography_options.county_cities_by_nation_region.end()) {
-        for (size_t i = 0; i < county_city_it->second.size(); ++i) {
-            county_city_label_storage.push_back(county_city_it->second[i]);
-            county_city_labels.push_back(county_city_label_storage.back().c_str());
-            if (county_city_it->second[i] == selected_county_city) county_city_idx = (int)i + 1;
-        }
-    }
-    ImGui::TextDisabled("Area");
-    ImGui::BeginDisabled(county_city_labels.size() <= 1);
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    if (ImGui::Combo("##geography_area", &county_city_idx, county_city_labels.data(), (int)county_city_labels.size())) {
-        selected_county_city = county_city_idx == 0 ? std::string() : county_city_it->second[(size_t)county_city_idx - 1];
-        apply_geography_selection(false);
-    }
-    ImGui::EndDisabled();
-    if (!selected_nation.empty() || !selected_region.empty() || !selected_county_city.empty()) {
+    if (!selected_nation.empty() || !selected_region.empty()) {
         ImGui::TextDisabled(
-            "Active hierarchy: %s / %s / %s",
+            "Active hierarchy: %s / %s",
             geographyNationLabel(selected_nation).c_str(),
-            geographyRegionLabel(selected_region).c_str(),
-            selected_county_city.empty() ? "all areas" : selected_county_city.c_str());
+            geographyRegionLabel(selected_region).c_str());
     }
 
     size_t local_layer_count = 0;
@@ -442,42 +338,13 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::SliderScalar("Center Lat", ImGuiDataType_Double, ctx.center_lat, &lat_min, &lat_max, "%.6f");
     if (visible_layer_total == 0) {
         ImGui::TextDisabled(
-            "No runtime layers are registered for %s / %s / %s yet.",
+            "No runtime layers are registered for %s / %s yet.",
             geographyNationLabel(selected_nation).c_str(),
-            geographyRegionLabel(selected_region).c_str(),
-            selected_county_city.empty() ? "all areas" : selected_county_city.c_str());
+            geographyRegionLabel(selected_region).c_str());
     }
-
-    const bool parcel_hover_supported = ctx.parcel_layer_idx >= 0;
-    const bool zoning_hover_supported = ctx.zoning_layer_idx >= 0;
-    std::vector<HoverInspectorOption> hover_options;
-    hover_options.push_back({0, "None"});
-    if (parcel_hover_supported) hover_options.push_back({1, "Parcels"});
-    if (zoning_hover_supported) hover_options.push_back({2, "Zoning"});
-    hover_options.push_back({3, "All Supported"});
-
-    const auto mode_supported = [&](int mode) {
-        if (mode == 1) return parcel_hover_supported;
-        if (mode == 2) return zoning_hover_supported;
-        if (mode == 3) return true;
-        return mode == 0;
-    };
-    if (!mode_supported(*ctx.hover_inspector_mode)) {
-        *ctx.hover_inspector_mode = parcel_hover_supported ? 1 : 3;
-    }
-    if (ImGui::BeginCombo("Hover Inspector", hoverInspectorModeLabel(*ctx.hover_inspector_mode))) {
-        for (const HoverInspectorOption& option : hover_options) {
-            const bool selected = *ctx.hover_inspector_mode == option.mode;
-            if (ImGui::Selectable(option.label, selected)) {
-                *ctx.hover_inspector_mode = option.mode;
-            }
-            if (selected) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    *ctx.hover_inspector_enabled = *ctx.hover_inspector_mode != 0;
 
     ImGui::SeparatorText("Layer Search");
+    ImGui::TextDisabled("Hover target is selected from each layer row.");
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputTextWithHint("##layer_search_query", "Filter layers...", layer_search_query, IM_ARRAYSIZE(layer_search_query));
 
@@ -601,13 +468,17 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.layer_heatmap_state_changed = ctx.layer_heatmap_state_changed;
     layer_ui_input.heatmap_controls_active = ctx.heatmap_controls_active;
     layer_ui_input.map_filter_state = ctx.map_filter_state;
+    layer_ui_input.layer_browse_state = ctx.layer_browse_state;
     LayerUiSharedContext layer_ui_shared = makeLayerUiSharedContext(layer_ui_input);
 
     LayersPanelContextFactoryInput layers_panel_input;
     layers_panel_input.shared = &layer_ui_shared;
     layers_panel_input.parcel_layer_idx = ctx.parcel_layer_idx;
+    layers_panel_input.zoning_layer_idx = ctx.zoning_layer_idx;
     layers_panel_input.zoom = *ctx.zoom;
     layers_panel_input.layer_search_query = layer_search_query;
+    layers_panel_input.active_hover_layer_idx = ctx.active_hover_layer_idx;
+    layers_panel_input.active_click_layer_idx = ctx.active_click_layer_idx;
     layers_panel_input.crime_filter_enabled = ctx.crime_filter_enabled;
     layers_panel_input.crime_filter_use_year = ctx.crime_filter_use_year;
     layers_panel_input.crime_year_min = ctx.crime_year_min;
@@ -624,6 +495,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layers_panel_input.crime_breakdown = ctx.crime_breakdown;
     layers_panel_input.parcel_jurisdiction_filter_state = ctx.parcel_jurisdiction_filter_state;
     layers_panel_input.map_filter_state = ctx.map_filter_state;
+    layers_panel_input.layer_browse_state = ctx.layer_browse_state;
     LayersPanelUiContext layers_panel_ctx = makeLayersPanelUiContext(layers_panel_input);
     drawLayerCategoriesPanel(layers_panel_ctx);
 

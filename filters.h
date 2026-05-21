@@ -26,13 +26,15 @@ struct CrimeFilterState {
     int year_max = 2026;
 };
 
+struct LayerBrowseState {
+    std::string selected_nation_state = "us";
+    std::string selected_state_region = "md";
+};
+
 struct MapFilterState {
     // SSOT for map filters created by UI controls. Rendering reads this via
     // FeatureFilterContext; individual tabs should mutate only this object.
     bool enabled = false;
-    std::string selected_nation_state = "us";
-    std::string selected_state_region = "md";
-    std::string selected_county_city;
     bool use_date = false;
     int year_min = 2000;
     int year_max = 2026;
@@ -83,6 +85,38 @@ struct QueryMapLayer {
     std::string status;
 };
 
+struct QueryExecutionContextSnapshot {
+    bool filter_enabled = false;
+    bool filter_use_date = false;
+    int filter_year_min = 2000;
+    int filter_year_max = 2026;
+    std::string filter_blocklot;
+    std::string filter_status;
+    std::string filter_address;
+    std::string filter_owner;
+    std::string filter_zip;
+    CrimeFilterState crime;
+    std::vector<std::string> selected_owners;
+    std::vector<std::string> selected_parcel_blocklots;
+    std::unordered_map<std::string, bool> event_sector_enabled;
+    double center_lon = -76.6122;
+    double center_lat = 39.2904;
+    double zoom = 12.0;
+    std::string map_title_text;
+    bool map_title_show_primary_parcel_source = false;
+};
+
+struct QueryHistoryEntry {
+    std::string executed_at_utc;
+    std::string mode;
+    std::string name;
+    std::string sql;
+    float color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
+    size_t row_count = 0;
+    std::string status;
+    QueryExecutionContextSnapshot snapshot;
+};
+
 struct ParcelJurisdictionFilterState {
     std::unordered_set<std::string> selected_jurisdictions;
     bool dirty = true;
@@ -93,9 +127,6 @@ struct ParcelJurisdictionFilterState {
 struct FeatureFilterContext {
     const std::vector<LayerDef>* layers = nullptr;
     const MapFilterState* map_filters = nullptr;
-    std::string selected_nation_state_normalized;
-    std::string selected_state_region_normalized;
-    std::string selected_county_city_normalized;
     const FilterResultSet* result_set = nullptr;
     const FilterResultSet* secondary_result_set = nullptr;
     const FilterResultSet* tertiary_result_set = nullptr;
@@ -133,5 +164,4 @@ bool queryMapColorForFeature(
     const LayerDef::FeatureGeom& fg,
     float out_color[4]);
 
-bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters);
-bool layerMatchesSelectedGeography(const LayerDef& layer, const FeatureFilterContext& ctx);
+bool layerMatchesBrowseGeography(const LayerDef& layer, const LayerBrowseState& browse_state);

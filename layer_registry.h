@@ -36,10 +36,6 @@ public:
     bool hasSourceMetadata(size_t idx) const;
     bool isHiddenParcelGeometryLayer(size_t idx) const;
     bool isParcelHeatmapLayer(size_t idx) const;
-    int findBestZoningLayerForGeography(
-        const std::string& selected_nation_state,
-        const std::string& selected_state_region,
-        const std::string& selected_county_city) const;
 
 private:
     const std::vector<LayerDef>* layers_ = nullptr;

@@ -228,19 +228,6 @@ bool isZoningPolygonLayerApp(const LayerDef& layer) {
     return file_lower.find("zoning") != std::string::npos ||
            name_lower.find("zoning") != std::string::npos;
 }
-
-bool layerMatchesSelectedNationStateRegion(
-    const LayerDef& layer,
-    const std::string& nation_state,
-    const std::string& state_region) {
-    if (!nation_state.empty() && !layer.provenance_nation_state.empty() && layer.provenance_nation_state != nation_state) {
-        return false;
-    }
-    if (!state_region.empty() && !layer.provenance_state_region.empty() && layer.provenance_state_region != state_region) {
-        return false;
-    }
-    return true;
-}
 }
 
 int runWorldSim3App(int argc, char** argv) {
@@ -647,13 +634,15 @@ int runWorldSim3App(int argc, char** argv) {
     auto& heatmap_multires_enabled = heatmap_runtime.heatmap_multires_enabled;
     auto& heatmap_multires_blend = heatmap_runtime.heatmap_multires_blend;
     auto& heatmap_allow_cpu_fallback = heatmap_runtime.heatmap_allow_cpu_fallback;
-    int hover_inspector_mode = 3; // 0=None, 1=Parcels, 2=Zoning, 3=All supported
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
     bool hover_inspector_enabled = true;
     loadLayerUiState(
         root,
         layers,
         hover_inspector_enabled,
-        &hover_inspector_mode,
+        &active_hover_layer_idx,
+        &active_click_layer_idx,
         &parcel_parameter_mode,
         &zoning_zone_enabled,
         &layer_fill_enabled,
@@ -704,9 +693,11 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<size_t> spatial_index_requested_feature_count(layers.size(), 0);
     std::vector<std::string> spatial_index_requested_signature(layers.size());
     std::vector<OwnerAggregate> owner_aggregates;
+    LayerBrowseState layer_browse_state;
     MapFilterState map_filter_state;
     auto& selected_owners = map_filter_state.selected_owners;
     std::vector<QueryMapLayer> query_layers;
+    std::vector<QueryHistoryEntry> query_history;
     std::mutex api_control_mutex;
     ApiFilterControlCommand api_filter_control_cmd;
     std::vector<ApiQueryControlCommand> api_query_control_cmds;
@@ -809,7 +800,6 @@ int runWorldSim3App(int argc, char** argv) {
     };
     auto enqueue_hydration = [&](size_t idx, bool required = false) {
         if (idx >= layers.size()) return;
-        if (!layerMatchesSelectedGeography(layers[idx], map_filter_state)) return;
         std::lock_guard<std::mutex> lk(hydrate_req_mutex);
         if (required) hydration_required[idx] = true;
         bool retry_failed = false;
@@ -904,6 +894,7 @@ int runWorldSim3App(int argc, char** argv) {
     status_api_input.app_version = kAppVersion;
     status_api_input.protocol_version = kProtocolVersion;
     status_api_input.tile_cache_max = kMaxTileCache;
+    status_api_input.root = &root;
     status_api_input.stop = &hydration_stop;
     status_api_input.layers = &layers;
     status_api_input.duckdb_analytics = &duckdb_analytics;
@@ -1023,7 +1014,17 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<bool> last_enabled_state;
     last_enabled_state.reserve(layers.size());
     for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
-    int last_hover_inspector_mode = hover_inspector_mode;
+    if (active_hover_layer_idx < 0 || (size_t)active_hover_layer_idx >= layers.size()) {
+        if (parcel_layer_idx >= 0) active_hover_layer_idx = parcel_layer_idx;
+        else if (zoning_layer_idx >= 0) active_hover_layer_idx = zoning_layer_idx;
+    }
+    if (active_click_layer_idx < 0 || (size_t)active_click_layer_idx >= layers.size()) {
+        if (parcel_layer_idx >= 0) active_click_layer_idx = parcel_layer_idx;
+        else if (zoning_layer_idx >= 0) active_click_layer_idx = zoning_layer_idx;
+    }
+    hover_inspector_enabled = active_hover_layer_idx >= 0;
+    int last_active_hover_layer_idx = active_hover_layer_idx;
+    int last_active_click_layer_idx = active_click_layer_idx;
     bool show_sources_panel = false;
     bool show_data_library = false;
     char data_library_query[128] = "";
@@ -1104,11 +1105,12 @@ int runWorldSim3App(int argc, char** argv) {
     auto& crime_filter_use_year = map_filter_state.crime.use_year;
     auto& crime_year_min = map_filter_state.crime.year_min;
     auto& crime_year_max = map_filter_state.crime.year_max;
+    loadLayerBrowseUiState(
+        root,
+        &layer_browse_state.selected_nation_state,
+        &layer_browse_state.selected_state_region);
     loadFilterUiState(
         root,
-        &map_filter_state.selected_nation_state,
-        &map_filter_state.selected_state_region,
-        &map_filter_state.selected_county_city,
         &filter_enabled,
         &filter_use_date,
         &filter_year_min,
@@ -1139,46 +1141,26 @@ int runWorldSim3App(int argc, char** argv) {
         sizeof(owner_search_query),
         &selected_owners,
         &map_filter_state.event_sector_enabled);
+    loadQueryHistoryUiState(root, &query_history);
     ensureCommunitySectorFilterDefaults(map_filter_state.event_sector_enabled);
-    {
-        double preset_lon = center_lon;
-        double preset_lat = center_lat;
-        int preset_zoom = (int)std::floor(zoom);
-        if (geographyViewPreset(
-                map_filter_state.selected_nation_state,
-                map_filter_state.selected_state_region,
-                preset_lon,
-                preset_lat,
-                preset_zoom)) {
-            center_lon = preset_lon;
-            center_lat = preset_lat;
-            zoom = preset_zoom;
-        }
-    }
     loadMapUiState(
         root,
-        &map_filter_state.selected_nation_state,
-        &map_filter_state.selected_state_region,
-        &map_filter_state.selected_county_city,
         &center_lon,
         &center_lat,
         &zoom,
         &selected_parcel_idx,
         &selected_parcel_indices);
-    zoning_layer_idx = layer_registry.findBestZoningLayerForGeography(
-        map_filter_state.selected_nation_state,
-        map_filter_state.selected_state_region,
-        map_filter_state.selected_county_city);
-    for (LayerDef& layer : layers) {
-        if (!isZoningPolygonLayerApp(layer)) continue;
-        if (!layerMatchesSelectedNationStateRegion(
-                layer,
-                map_filter_state.selected_nation_state,
-                map_filter_state.selected_state_region)) {
-            continue;
+    auto resolve_active_zoning_layer_idx = [&]() -> int {
+        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size() &&
+            layers[(size_t)zoning_layer_idx].enabled && isZoningPolygonLayerApp(layers[(size_t)zoning_layer_idx])) {
+            return zoning_layer_idx;
         }
-        layer.enabled = true;
-    }
+        for (size_t i = 0; i < layers.size(); ++i) {
+            if (layers[i].enabled && isZoningPolygonLayerApp(layers[i])) return (int)i;
+        }
+        return layer_registry.indices().zoning_layer_idx;
+    };
+    zoning_layer_idx = resolve_active_zoning_layer_idx();
     zoom = std::clamp(zoom, (double)kMinZoom, (double)kMaxZoom);
     center_lat = std::clamp(center_lat, -85.0, 85.0);
     selected_parcel_index_set.clear();
@@ -1404,6 +1386,8 @@ int runWorldSim3App(int argc, char** argv) {
         g_ScreenshotState.logical_height = 0;
         g_ScreenshotState.output_width = 0;
         g_ScreenshotState.output_height = 0;
+        g_ScreenshotState.requested_output_width = 3840;
+        g_ScreenshotState.requested_output_height = 2160;
         g_ScreenshotState.framebuffer_scale_x = 1.0f;
         g_ScreenshotState.framebuffer_scale_y = 1.0f;
     };
@@ -1985,9 +1969,10 @@ int runWorldSim3App(int argc, char** argv) {
 	                kMaxZoom,
 	                &center_lon,
 	                &center_lat,
+                    &layer_browse_state,
 	                &map_filter_state,
-	                &hover_inspector_mode,
-	                &hover_inspector_enabled,
+	                &active_hover_layer_idx,
+	                &active_click_layer_idx,
                 &show_sources_panel,
                 &show_data_library,
                 &parcel_parameter_mode,
@@ -2066,22 +2051,7 @@ int runWorldSim3App(int argc, char** argv) {
                 [&](size_t i, bool outline) { open_external_color_editor(i, outline); }
             });
         }
-        if (left_panel.geography_changed) {
-            zoning_layer_idx = layer_registry.findBestZoningLayerForGeography(
-                map_filter_state.selected_nation_state,
-                map_filter_state.selected_state_region,
-                map_filter_state.selected_county_city);
-            for (LayerDef& layer : layers) {
-                if (!isZoningPolygonLayerApp(layer)) continue;
-                if (!layerMatchesSelectedNationStateRegion(
-                        layer,
-                        map_filter_state.selected_nation_state,
-                        map_filter_state.selected_state_region)) {
-                    continue;
-                }
-                layer.enabled = true;
-            }
-        }
+        if (left_panel.geography_changed) zoning_layer_idx = resolve_active_zoning_layer_idx();
         bool zoning_filters_changed = left_panel.zoning_filters_changed;
         bool event_sector_filters_changed = left_panel.event_sector_filters_changed;
         const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
@@ -2245,12 +2215,14 @@ int runWorldSim3App(int argc, char** argv) {
             [&]() { trimProcessHeap(); },
             []() {}
         });
+        hover_inspector_enabled = active_hover_layer_idx >= 0;
         const LayerUiStateSyncResult ui_state_sync = syncLayerUiState(LayerUiStateSyncContext{
             &root,
             &layers,
-            hover_inspector_mode,
-            hover_inspector_enabled,
-            &last_hover_inspector_mode,
+            active_hover_layer_idx,
+            active_click_layer_idx,
+            &last_active_hover_layer_idx,
+            &last_active_click_layer_idx,
             &last_enabled_state,
             zoning_filters_changed,
             event_sector_filters_changed,
@@ -2272,9 +2244,6 @@ int runWorldSim3App(int argc, char** argv) {
             tax_sale_layer_idx,
             zoning_layer_idx,
             filter_enabled,
-            &map_filter_state.selected_nation_state,
-            &map_filter_state.selected_state_region,
-            &map_filter_state.selected_county_city,
             filter_owner,
             filter_address,
             filter_zip,
@@ -3361,6 +3330,7 @@ int runWorldSim3App(int argc, char** argv) {
         if (!map_window_fullscreen) {
             drawRightPanelWindow(RightPanelContext{
                 &root,
+                &app_settings,
                 &duckdb_analytics,
                 layout_w,
                 right_panel_w,
@@ -3371,6 +3341,7 @@ int runWorldSim3App(int argc, char** argv) {
                 &unified_parcels,
                 &map_filter_state,
                 &query_layers,
+                &query_history,
                 &zoning_metadata,
                 &zoning_zone_enabled,
                 &real_property_by_blocklot,
@@ -3546,8 +3517,8 @@ int runWorldSim3App(int argc, char** argv) {
             heatmap_allow_cpu_fallback,
             heatmap_controls_active,
             &heatmap_runtime,
-            hover_inspector_mode,
-            &hover_inspector_enabled,
+            active_hover_layer_idx,
+            active_click_layer_idx,
             &lazy_tile_download,
             &topo_tiles_available_cached,
             &topo_vector_available_cached,
@@ -3705,7 +3676,8 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.window = window;
     shutdown_input.layers = &layers;
     shutdown_input.hover_inspector_enabled = hover_inspector_enabled;
-    shutdown_input.hover_inspector_mode = &hover_inspector_mode;
+    shutdown_input.active_hover_layer_idx = &active_hover_layer_idx;
+    shutdown_input.active_click_layer_idx = &active_click_layer_idx;
     shutdown_input.parcel_parameter_mode = &parcel_parameter_mode;
     shutdown_input.zoning_zone_enabled = &zoning_zone_enabled;
     shutdown_input.layer_fill_enabled = &layer_fill_enabled;
@@ -3736,9 +3708,6 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.heatmap_multires_blend = &heatmap_multires_blend;
     shutdown_input.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
     shutdown_input.filter_enabled = &filter_enabled;
-    shutdown_input.selected_nation_state = &map_filter_state.selected_nation_state;
-    shutdown_input.selected_state_region = &map_filter_state.selected_state_region;
-    shutdown_input.selected_county_city = &map_filter_state.selected_county_city;
     shutdown_input.filter_use_date = &filter_use_date;
     shutdown_input.filter_year_min = &filter_year_min;
     shutdown_input.filter_year_max = &filter_year_max;
@@ -3765,6 +3734,7 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.center_lon = &center_lon;
     shutdown_input.center_lat = &center_lat;
     shutdown_input.zoom = &zoom;
+    shutdown_input.query_history = &query_history;
     shutdown_input.selected_parcel_idx = &selected_parcel_idx;
     shutdown_input.selected_parcel_indices = &selected_parcel_indices;
     shutdown_input.hydration_stop = &hydration_stop;

@@ -254,6 +254,33 @@ bool flattenParcelFeatureForRender(const LayerDef::FeatureGeom& fg, FlattenedPar
 }
 }
 
+const char* geometryArtifactClassName(GeometryArtifactClass cls) {
+    switch (cls) {
+        case GeometryArtifactClass::Point: return "point";
+        case GeometryArtifactClass::Polyline: return "polyline";
+        case GeometryArtifactClass::Polygon: return "polygon";
+        case GeometryArtifactClass::Unknown: break;
+    }
+    return "unknown";
+}
+
+const char* geometryArtifactFileSuffix(GeometryArtifactClass cls) {
+    switch (cls) {
+        case GeometryArtifactClass::Point: return ".point.bin";
+        case GeometryArtifactClass::Polyline: return ".polyline.bin";
+        case GeometryArtifactClass::Polygon: return ".polygon.bin";
+        case GeometryArtifactClass::Unknown: break;
+    }
+    return ".unknown.bin";
+}
+
+std::filesystem::path geometryArtifactCachePathForLayerFile(
+    const fs::path& root,
+    const std::string& layer_file,
+    GeometryArtifactClass cls) {
+    return root / "data" / "cache" / "geometry" / (layer_file + geometryArtifactFileSuffix(cls));
+}
+
 std::string fileSignature(const fs::path& p) {
     std::error_code size_ec;
     auto sz = fs::file_size(p, size_ec);

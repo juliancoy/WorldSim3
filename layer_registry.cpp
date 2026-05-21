@@ -102,37 +102,3 @@ bool LayerRegistry::isHiddenParcelGeometryLayer(size_t idx) const {
            (*layers_)[idx].scale == "parcel" &&
            (*layers_)[idx].region.empty();
 }
-
-int LayerRegistry::findBestZoningLayerForGeography(
-    const std::string& selected_nation_state,
-    const std::string& selected_state_region,
-    const std::string& selected_county_city) const {
-    if (!layers_) return -1;
-    const std::string nation = normalizeGeographyToken(selected_nation_state);
-    const std::string region = normalizeGeographyToken(selected_state_region);
-    const std::string county_city = normalizeGeographyToken(selected_county_city);
-    int best_idx = -1;
-    int best_score = 0;
-    for (size_t i = 0; i < layers_->size(); ++i) {
-        const LayerDef& layer = (*layers_)[i];
-        const int base_score = zoningLayerMatchScore(layer);
-        if (base_score <= 0) continue;
-        int score = base_score * 10;
-        const std::string layer_nation = normalizeGeographyToken(layer.provenance_nation_state);
-        const std::string layer_region = normalizeGeographyToken(layer.provenance_state_region);
-        const std::string layer_county_city = normalizeGeographyToken(layer.provenance_county_city);
-        if (!nation.empty() && !layer_nation.empty() && layer_nation != nation) continue;
-        if (!region.empty() && !layer_region.empty() && layer_region != region) continue;
-        if (!county_city.empty()) {
-            if (layer_county_city == county_city) score += 5;
-            else if (!layer_county_city.empty()) continue;
-        } else if (layer_county_city.empty()) {
-            score += 1;
-        }
-        if (score > best_score) {
-            best_score = score;
-            best_idx = (int)i;
-        }
-    }
-    return best_idx;
-}

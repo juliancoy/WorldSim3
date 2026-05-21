@@ -245,6 +245,31 @@ HttpResponse httpGet(const std::string& url) {
     return res;
 }
 
+bool writeTextFileIfChanged(const fs::path& path, const std::string& body, bool* changed) {
+    if (changed) *changed = true;
+    std::error_code ec;
+    if (fs::exists(path, ec) && !ec) {
+        std::ifstream in(path, std::ios::binary);
+        if (in) {
+            std::ostringstream existing;
+            existing << in.rdbuf();
+            if (existing.str() == body) {
+                if (changed) *changed = false;
+                return true;
+            }
+        }
+    }
+    fs::create_directories(path.parent_path());
+    const fs::path tmp = path.string() + ".tmp";
+    std::ofstream out(tmp, std::ios::binary);
+    if (!out) return false;
+    out.write(body.data(), (std::streamsize)body.size());
+    out.close();
+    if (!out.good()) return false;
+    fs::rename(tmp, path, ec);
+    return !ec;
+}
+
 std::vector<std::vector<std::string>> parseCsv(const std::vector<uint8_t>& bytes) {
     std::vector<std::vector<std::string>> rows;
     std::vector<std::string> row;
@@ -958,6 +983,242 @@ void maybeNormalizeArcgisFeature(const std::string& normalizer, json& feature) {
     throw std::runtime_error("unsupported ArcGIS feature normalizer: " + normalizer);
 }
 
+size_t arcgisServiceMaxRecordCount(const std::string& service_url);
+
+struct CensusAcsJoinStats {
+    size_t matched = 0;
+    size_t missing = 0;
+};
+
+std::string jsonScalarToString(const json& value) {
+    if (value.is_string()) return value.get<std::string>();
+    if (value.is_number_integer()) return std::to_string(value.get<int64_t>());
+    if (value.is_number_unsigned()) return std::to_string(value.get<uint64_t>());
+    if (value.is_number_float()) {
+        std::ostringstream os;
+        os << value.get<double>();
+        return os.str();
+    }
+    if (value.is_boolean()) return value.get<bool>() ? "true" : "false";
+    return {};
+}
+
+int64_t parseInt64Loose(const std::string& value) {
+    if (value.empty()) return 0;
+    try {
+        return std::stoll(value);
+    } catch (...) {
+        return 0;
+    }
+}
+
+std::string censusAcsMarginField(const std::string& estimate_field) {
+    if (estimate_field.size() >= 2 && estimate_field.ends_with("E")) {
+        return estimate_field.substr(0, estimate_field.size() - 1) + "M";
+    }
+    return {};
+}
+
+void setJsonString(json& props, const char* key, const std::string& value) {
+    props[key] = value;
+}
+
+void setJsonInteger(json& props, const char* key, int64_t value) {
+    props[key] = value;
+}
+
+void setJsonPercent(json& props, const char* key, int64_t numerator, int64_t denominator) {
+    props[key] = denominator > 0 ? (100.0 * (double)numerator / (double)denominator) : 0.0;
+}
+
+std::unordered_map<std::string, json> parseCensusAcsRowsByGeoid(
+    const fs::path& acs_json_path,
+    const std::string& table,
+    const std::string& year,
+    const std::string& survey) {
+    std::ifstream in(acs_json_path);
+    if (!in) throw std::runtime_error("failed to open ACS response " + acs_json_path.string());
+    json rows = json::parse(in, nullptr, true, true);
+    if (!rows.is_array() || rows.empty() || !rows[0].is_array()) {
+        throw std::runtime_error("ACS response is not a header/data array");
+    }
+    const json& header_row = rows[0];
+    std::vector<std::string> headers;
+    headers.reserve(header_row.size());
+    std::unordered_map<std::string, size_t> col_idx;
+    for (size_t i = 0; i < header_row.size(); ++i) {
+        const std::string name = jsonScalarToString(header_row[i]);
+        headers.push_back(name);
+        col_idx[name] = i;
+    }
+    auto field_at = [&](const json& row, const std::string& field) -> std::string {
+        const auto it = col_idx.find(field);
+        if (it == col_idx.end() || it->second >= row.size()) return {};
+        return jsonScalarToString(row[it->second]);
+    };
+
+    std::unordered_map<std::string, json> out;
+    out.reserve(rows.size() > 1 ? rows.size() - 1 : 0);
+    for (size_t ri = 1; ri < rows.size(); ++ri) {
+        const json& row = rows[ri];
+        if (!row.is_array()) continue;
+        const std::string state = field_at(row, "state");
+        const std::string county = field_at(row, "county");
+        const std::string tract = field_at(row, "tract");
+        const std::string geoid = state + county + tract;
+        if (geoid.empty()) continue;
+        json props = json::object();
+        props["acs_table"] = table;
+        props["acs_year"] = year;
+        props["acs_survey"] = survey;
+        props["acs_geoid"] = geoid;
+
+        if (table == "B02001") {
+            const struct FieldMap { const char* field; const char* out_key; } maps[] = {
+                {"B02001_001E", "total_population"},
+                {"B02001_002E", "population_white_alone"},
+                {"B02001_003E", "population_black_alone"},
+                {"B02001_004E", "population_american_indian_alaska_native_alone"},
+                {"B02001_005E", "population_asian_alone"},
+                {"B02001_006E", "population_native_hawaiian_pacific_islander_alone"},
+                {"B02001_007E", "population_other_race_alone"},
+                {"B02001_008E", "population_two_or_more_races"}
+            };
+            int64_t total = 0;
+            int64_t white = 0;
+            int64_t black = 0;
+            int64_t aian = 0;
+            int64_t asian = 0;
+            int64_t nhpi = 0;
+            int64_t other = 0;
+            int64_t multi = 0;
+            for (const auto& map : maps) {
+                const int64_t value = parseInt64Loose(field_at(row, map.field));
+                setJsonInteger(props, map.out_key, value);
+                const std::string margin_key = censusAcsMarginField(map.field);
+                if (!margin_key.empty()) {
+                    setJsonInteger(props, (std::string(map.out_key) + "_moe").c_str(), parseInt64Loose(field_at(row, margin_key)));
+                }
+                if (std::string(map.out_key) == "total_population") total = value;
+                else if (std::string(map.out_key) == "population_white_alone") white = value;
+                else if (std::string(map.out_key) == "population_black_alone") black = value;
+                else if (std::string(map.out_key) == "population_american_indian_alaska_native_alone") aian = value;
+                else if (std::string(map.out_key) == "population_asian_alone") asian = value;
+                else if (std::string(map.out_key) == "population_native_hawaiian_pacific_islander_alone") nhpi = value;
+                else if (std::string(map.out_key) == "population_other_race_alone") other = value;
+                else if (std::string(map.out_key) == "population_two_or_more_races") multi = value;
+            }
+            setJsonPercent(props, "pct_white_alone", white, total);
+            setJsonPercent(props, "pct_black_alone", black, total);
+            setJsonPercent(props, "pct_american_indian_alaska_native_alone", aian, total);
+            setJsonPercent(props, "pct_asian_alone", asian, total);
+            setJsonPercent(props, "pct_native_hawaiian_pacific_islander_alone", nhpi, total);
+            setJsonPercent(props, "pct_other_race_alone", other, total);
+            setJsonPercent(props, "pct_two_or_more_races", multi, total);
+            setJsonPercent(props, "pct_nonwhite", total - white, total);
+        } else if (table == "B03003") {
+            const int64_t total = parseInt64Loose(field_at(row, "B03003_001E"));
+            const int64_t not_hisp = parseInt64Loose(field_at(row, "B03003_002E"));
+            const int64_t hisp = parseInt64Loose(field_at(row, "B03003_003E"));
+            setJsonInteger(props, "total_population", total);
+            setJsonInteger(props, "population_not_hispanic_or_latino", not_hisp);
+            setJsonInteger(props, "population_hispanic_or_latino", hisp);
+            setJsonInteger(props, "total_population_moe", parseInt64Loose(field_at(row, "B03003_001M")));
+            setJsonInteger(props, "population_not_hispanic_or_latino_moe", parseInt64Loose(field_at(row, "B03003_002M")));
+            setJsonInteger(props, "population_hispanic_or_latino_moe", parseInt64Loose(field_at(row, "B03003_003M")));
+            setJsonPercent(props, "pct_not_hispanic_or_latino", not_hisp, total);
+            setJsonPercent(props, "pct_hispanic_or_latino", hisp, total);
+        } else {
+            throw std::runtime_error("unsupported ACS census table: " + table);
+        }
+
+        out.emplace(geoid, std::move(props));
+    }
+    if (out.empty()) throw std::runtime_error("ACS response produced no tract rows");
+    return out;
+}
+
+json buildJoinedCensusAcsProperties(
+    const json& feature_props,
+    const json& acs_props) {
+    json out = feature_props.is_object() ? feature_props : json::object();
+    for (auto it = acs_props.begin(); it != acs_props.end(); ++it) {
+        out[it.key()] = it.value();
+    }
+    return out;
+}
+
+CensusAcsJoinStats writeCensusAcsArcgisLayerGeoJson(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const fs::path& out_path,
+    const std::unordered_map<std::string, json>& acs_rows_by_geoid) {
+    if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
+    const std::string where = where_clause.empty() ? "1=1" : where_clause;
+    json ids = json::parse(httpPostForm(service_url + "/query", {
+        {"where", where},
+        {"returnIdsOnly", "true"},
+        {"f", "json"}
+    }).body);
+    if (ids.contains("error")) throw std::runtime_error("ArcGIS object ID query failed: " + ids["error"].dump());
+    std::vector<int64_t> object_ids;
+    for (const auto& id : ids.value("objectIds", json::array())) object_ids.push_back(id.get<int64_t>());
+    std::sort(object_ids.begin(), object_ids.end());
+    if (object_ids.empty()) throw std::runtime_error("ArcGIS service returned no object IDs");
+
+    fs::create_directories(out_path.parent_path());
+    fs::path tmp = out_path;
+    tmp += ".part";
+    std::ofstream out(tmp);
+    if (!out) throw std::runtime_error("failed to open output " + tmp.string());
+    out << "{\"type\":\"FeatureCollection\",\"name\":\"" << jsonEscape(out_path.stem().string()) << "\",\"features\":[";
+    bool first_feature = true;
+    size_t written = 0;
+    size_t missing = 0;
+    const size_t page_size = std::max<size_t>(1, std::min<size_t>(1000, arcgisServiceMaxRecordCount(service_url)));
+    for (size_t off = 0; off < object_ids.size(); off += page_size) {
+        std::ostringstream id_list;
+        const size_t end = std::min(object_ids.size(), off + page_size);
+        for (size_t i = off; i < end; ++i) {
+            if (i > off) id_list << ',';
+            id_list << object_ids[i];
+        }
+        json page = json::parse(httpPostForm(service_url + "/query", {
+            {"objectIds", id_list.str()},
+            {"outFields", "*"},
+            {"returnGeometry", "true"},
+            {"outSR", "4326"},
+            {"f", "geojson"}
+        }).body);
+        if (page.contains("error")) throw std::runtime_error("ArcGIS feature query failed: " + page["error"].dump());
+        for (auto& feature : page.value("features", json::array())) {
+            json& props = feature["properties"];
+            const std::string geoid = jsonText(props, {"GEOID", "GEOID20", "GEOID10"});
+            if (geoid.empty()) {
+                missing++;
+                continue;
+            }
+            const auto it = acs_rows_by_geoid.find(geoid);
+            if (it == acs_rows_by_geoid.end()) {
+                missing++;
+                continue;
+            }
+            props = buildJoinedCensusAcsProperties(props, it->second);
+            if (!first_feature) out << ',';
+            first_feature = false;
+            out << feature.dump();
+            written++;
+        }
+    }
+    out << "]}\n";
+    out.close();
+    if (written == 0) throw std::runtime_error("joined Census/ACS import produced no features");
+    std::error_code ec;
+    fs::rename(tmp, out_path, ec);
+    if (ec) throw std::runtime_error("rename failed: " + ec.message());
+    return CensusAcsJoinStats{written, missing};
+}
+
 size_t arcgisServiceMaxRecordCount(const std::string& service_url) {
     try {
         json meta = json::parse(httpPostForm(service_url, {
@@ -1255,6 +1516,17 @@ bool jsonPathDouble(const json& root, const std::string& path, double& out) {
     return false;
 }
 
+bool jsonPathDoubleAny(
+    const json& root,
+    const std::initializer_list<std::string_view>& paths,
+    double& out) {
+    for (std::string_view path : paths) {
+        if (path.empty()) continue;
+        if (jsonPathDouble(root, std::string(path), out)) return true;
+    }
+    return false;
+}
+
 void flattenJsonProperties(
     const json& value,
     const std::string& prefix,
@@ -1298,7 +1570,11 @@ void writeJsonPointFeedGeoJson(
         if (!item.is_object()) continue;
         double lon = 0.0;
         double lat = 0.0;
-        if (!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) continue;
+        if ((!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) &&
+            (!jsonPathDoubleAny(item, {"center.lon", "geometry.0.lon"}, lon) ||
+             !jsonPathDoubleAny(item, {"center.lat", "geometry.0.lat"}, lat))) {
+            continue;
+        }
         for (const std::string& key : locationKeysForItem(item)) {
             inferred_coords_by_key.emplace(key, std::make_pair(lon, lat));
         }
@@ -1307,7 +1583,9 @@ void writeJsonPointFeedGeoJson(
         if (!item.is_object()) continue;
         double lon = 0.0;
         double lat = 0.0;
-        if (!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) {
+        if ((!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) &&
+            (!jsonPathDoubleAny(item, {"center.lon", "geometry.0.lon"}, lon) ||
+             !jsonPathDoubleAny(item, {"center.lat", "geometry.0.lat"}, lat))) {
             bool inferred = false;
             for (const std::string& key : locationKeysForItem(item)) {
                 auto it = inferred_coords_by_key.find(key);
@@ -1357,6 +1635,13 @@ void writeJsonPointFeedGeoJson(
 bool layerHasImportSource(const LayerDef& layer) {
     if (layer.import_type == "regional_parcel_builder") return true;
     if (layer.import_type == "arcgis_feature_layer") return !layer.import_service_url.empty();
+    if (layer.import_type == "census_acs_tract_demographics") {
+        return !layer.import_service_url.empty() && !layer.import_url.empty() &&
+            !layer.import_table.empty() && !layer.import_year.empty() && !layer.import_survey.empty();
+    }
+    if (layer.import_type == "overpass_json_point_feed") {
+        return !layer.import_url.empty() && !layer.import_query.empty();
+    }
     return (layer.import_type == "zipped_shapefile" || layer.import_type == "socrata_csv_properties" ||
             layer.import_type == "xlsx_point_table" || layer.import_type == "json_point_feed") &&
         !layer.import_url.empty();
@@ -1401,6 +1686,40 @@ VersionedDownloadResult downloadOrImportLayer(
             res.changed = true;
             res.not_modified = false;
             res.message = "imported ArcGIS feature layer";
+        } catch (const std::exception& e) {
+            res.ok = false;
+            res.message = std::string("import failed: ") + e.what();
+        }
+        return res;
+    }
+    if (layer.import_type == "census_acs_tract_demographics") {
+        fs::path artifact_name =
+            !layer.import_artifact_file.empty()
+                ? fs::path(layer.import_artifact_file)
+                : fs::path(out_path.stem().string() + ".acs.json");
+        const fs::path acs_json_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
+        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, acs_json_path, root / "data" / "versions");
+        if (!dl.ok) return dl;
+        try {
+            const auto acs_rows = parseCensusAcsRowsByGeoid(
+                acs_json_path,
+                layer.import_table,
+                layer.import_year,
+                layer.import_survey);
+            const CensusAcsJoinStats stats = writeCensusAcsArcgisLayerGeoJson(
+                layer.import_service_url,
+                layer.import_where,
+                out_path,
+                acs_rows);
+            res.ok = true;
+            res.changed = true;
+            res.not_modified = false;
+            std::ostringstream msg;
+            msg << "imported Census ACS tract demographics via " << dl.message
+                << " (" << stats.matched << " matched";
+            if (stats.missing > 0) msg << ", " << stats.missing << " missing ACS joins";
+            msg << ")";
+            res.message = msg.str();
         } catch (const std::exception& e) {
             res.ok = false;
             res.message = std::string("import failed: ") + e.what();
@@ -1452,6 +1771,37 @@ VersionedDownloadResult downloadOrImportLayer(
             res.changed = true;
             res.not_modified = false;
             res.message = "imported JSON point feed via " + dl.message;
+        } catch (const std::exception& e) {
+            res.ok = false;
+            res.message = std::string("import failed: ") + e.what();
+        }
+        return res;
+    }
+    if (layer.import_type == "overpass_json_point_feed") {
+        fs::path artifact_name =
+            !layer.import_artifact_file.empty()
+                ? fs::path(layer.import_artifact_file)
+                : fs::path(out_path.stem().string() + ".json");
+        const fs::path json_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
+        try {
+            const HttpResponse resp = httpPostForm(layer.import_url, {
+                {"data", layer.import_query}
+            });
+            bool body_changed = true;
+            if (!writeTextFileIfChanged(json_path, resp.body, &body_changed)) {
+                throw std::runtime_error("failed to write overpass artifact");
+            }
+            writeJsonPointFeedGeoJson(
+                json_path,
+                out_path,
+                layer.import_item_path,
+                layer.import_lon_field,
+                layer.import_lat_field,
+                layer.import_url);
+            res.ok = true;
+            res.changed = body_changed;
+            res.not_modified = !body_changed;
+            res.message = body_changed ? "imported Overpass JSON point feed" : "checked Overpass JSON point feed";
         } catch (const std::exception& e) {
             res.ok = false;
             res.message = std::string("import failed: ") + e.what();

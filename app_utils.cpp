@@ -3,6 +3,8 @@
 #include "feature_props.h"
 #include "layer_state_io.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cctype>
@@ -14,6 +16,7 @@
 #include <unordered_map>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 namespace {
 std::string safeProvenanceComponent(const std::string& value, const std::string& fallback = {}) {
@@ -38,6 +41,48 @@ const LayerDef* findManifestLayerByFile(const fs::path& root, const std::string&
     scratch = loadManifest(root);
     for (auto& layer : scratch) {
         if (layer.file == file) return &layer;
+    }
+    return nullptr;
+}
+
+bool hasManifestName(const fs::path& path) {
+    const std::string name = path.filename().string();
+    return name.starts_with("layers_manifest") && name.ends_with(".json");
+}
+
+const LayerDef* findManifestLayerByFileIncludingNonRuntime(
+    const fs::path& root,
+    const std::string& file,
+    std::vector<LayerDef>& scratch) {
+    std::error_code ec;
+    const fs::path manifest_root = root / "sources" / "world";
+    if (!fs::exists(manifest_root, ec) || ec) return nullptr;
+    for (fs::recursive_directory_iterator it(manifest_root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file() || !hasManifestName(it->path())) continue;
+        std::ifstream in(it->path());
+        if (!in) continue;
+        json arr;
+        try {
+            in >> arr;
+        } catch (...) {
+            continue;
+        }
+        if (!arr.is_array()) continue;
+        for (const auto& item : arr) {
+            if (!item.is_object() || item.value("file", std::string()) != file) continue;
+            LayerDef layer;
+            layer.file = file;
+            if (item.contains("provenance") && item["provenance"].is_object()) {
+                const auto& provenance = item["provenance"];
+                layer.provenance_world = provenance.value("world", std::string());
+                layer.provenance_nation_state = provenance.value("nation_state", std::string());
+                layer.provenance_state_region = provenance.value("state_region", std::string());
+                layer.provenance_county_city = provenance.value("county_city", std::string());
+            }
+            scratch.clear();
+            scratch.push_back(std::move(layer));
+            return &scratch.back();
+        }
     }
     return nullptr;
 }
@@ -449,6 +494,11 @@ std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const 
         if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
         return root / "data" / "layers" / file;
     }
+    if (const LayerDef* layer = findManifestLayerByFileIncludingNonRuntime(root, file, scratch)) {
+        const fs::path provenance_path = provenanceStoredLayerPath(root, *layer);
+        std::error_code ec;
+        if (fs::exists(provenance_path, ec) && !ec) return provenance_path;
+    }
     if (const fs::path known_path = wellKnownStoredLayerPathForFile(root, file); !known_path.empty()) {
         std::error_code ec;
         if (fs::exists(known_path, ec) && !ec) return known_path;
@@ -472,29 +522,6 @@ bool layerUsesPointGeometry(const LayerDef& layer) {
         return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
             return fg.rings.empty();
         });
-    }
-    return false;
-}
-
-bool geographyViewPreset(
-    const std::string& selected_nation_state,
-    const std::string& selected_state_region,
-    double& center_lon,
-    double& center_lat,
-    int& suggested_zoom) {
-    const std::string nation = normalizeGeographyToken(selected_nation_state);
-    const std::string region = normalizeGeographyToken(selected_state_region);
-    if (nation == "us" && region == "md") {
-        center_lon = -76.61;
-        center_lat = 39.29;
-        suggested_zoom = 11;
-        return true;
-    }
-    if (nation == "ng" && region == "anambra") {
-        center_lon = 7.02;
-        center_lat = 6.17;
-        suggested_zoom = 10;
-        return true;
     }
     return false;
 }
@@ -530,6 +557,40 @@ std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg) {
     bl = blockLotJoinKeyFromParts(getPropertyValue(fg, "BLOCK"), getPropertyValue(fg, "LOT"));
     if (!bl.empty()) return bl;
     return blockLotJoinKeyFromParts(getPropertyValue(fg, "block"), getPropertyValue(fg, "lot"));
+}
+
+std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureGeom& fg, size_t feature_idx) {
+    auto candidate = [&](std::initializer_list<const char*> keys) {
+        for (const char* key : keys) {
+            std::string v = trimDisplayValue(getPropertyValue(fg, key));
+            if (!v.empty()) return v;
+        }
+        return std::string();
+    };
+
+    std::string stable = candidate({
+        "feature_id", "FEATURE_ID", "FeatureID", "globalid", "GLOBALID", "GlobalID",
+        "regional_parcel_id", "source_parcel_id", "account_id", "OBJECTID_1", "OBJECTID",
+        "objectid", "ID", "id", "PIN", "pin"
+    });
+    if (stable.empty()) stable = featureBlockLotJoinKey(fg);
+    if (!stable.empty()) return normalizeJoinKey(stable);
+
+    stable = candidate({
+        "name", "Name", "NAME", "poi_name", "prmry_name", "FULLADDR", "PROPERTY_ADDRESS",
+        "ADDRESS", "Address", "SITE_ADDR", "SITUSADDR"
+    });
+    if (!stable.empty()) return normalizeJoinKey(stable);
+
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(6)
+       << trimDisplayValue(layer.file) << ':'
+       << fg.extent.min_lon << ','
+       << fg.extent.min_lat << ','
+       << fg.extent.max_lon << ','
+       << fg.extent.max_lat << ':'
+       << feature_idx;
+    return normalizeJoinKey(ss.str());
 }
 
 void openUrlInBrowser(const std::string& url) {

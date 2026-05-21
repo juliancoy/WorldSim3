@@ -81,13 +81,19 @@ void drawLayerDisplaySettingsPopup(LayerSettingsPopupContext& ctx) {
         *shared.layer_fill_state_changed = true;
     }
     bool hover_flag = (ctx.idx < shared.layer_hover_enabled->size()) ? (*shared.layer_hover_enabled)[ctx.idx] : true;
-    if (ImGui::Checkbox("Hover inspector", &hover_flag) && ctx.idx < shared.layer_hover_enabled->size()) {
+    if (ImGui::Checkbox("Allow hover target", &hover_flag) && ctx.idx < shared.layer_hover_enabled->size()) {
         (*shared.layer_hover_enabled)[ctx.idx] = hover_flag;
+        if (!hover_flag && ctx.active_hover_layer_idx && *ctx.active_hover_layer_idx == (int)ctx.idx) {
+            *ctx.active_hover_layer_idx = -1;
+        }
         *shared.layer_hover_state_changed = true;
     }
     bool inspect_flag = (ctx.idx < shared.layer_inspect_enabled->size()) ? (*shared.layer_inspect_enabled)[ctx.idx] : true;
-    if (ImGui::Checkbox("Click inspect", &inspect_flag) && ctx.idx < shared.layer_inspect_enabled->size()) {
+    if (ImGui::Checkbox("Allow click action", &inspect_flag) && ctx.idx < shared.layer_inspect_enabled->size()) {
         (*shared.layer_inspect_enabled)[ctx.idx] = inspect_flag;
+        if (!inspect_flag && ctx.active_click_layer_idx && *ctx.active_click_layer_idx == (int)ctx.idx) {
+            *ctx.active_click_layer_idx = -1;
+        }
         *shared.layer_inspect_state_changed = true;
     }
 

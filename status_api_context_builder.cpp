@@ -5,6 +5,7 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.app_version = input.app_version;
     ctx.protocol_version = input.protocol_version;
     ctx.tile_cache_max = input.tile_cache_max;
+    ctx.root = input.root;
     ctx.stop = input.stop;
     ctx.layers = input.layers;
     ctx.duckdb_analytics = input.duckdb_analytics;

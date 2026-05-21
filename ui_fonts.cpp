@@ -9,6 +9,8 @@
 namespace fs = std::filesystem;
 
 namespace {
+ImFont* g_map_title_font = nullptr;
+
 const char* firstExistingPath(const std::initializer_list<const char*>& paths) {
     for (const char* path : paths) {
         std::error_code ec;
@@ -21,6 +23,7 @@ const char* firstExistingPath(const std::initializer_list<const char*>& paths) {
 void configureWorldsimFonts() {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
+    g_map_title_font = nullptr;
 
     ImFontConfig base_config;
     base_config.OversampleH = 2;
@@ -43,6 +46,7 @@ void configureWorldsimFonts() {
         loaded = io.Fonts->AddFontDefault(&base_config);
         std::fprintf(stderr, "[worldsim3] UI font fallback: using ImGui default font\n");
     }
+    g_map_title_font = loaded;
 
     const char* chinese_font = firstExistingPath({
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -62,5 +66,23 @@ void configureWorldsimFonts() {
         std::fprintf(stderr, "[worldsim3] UI font warning: no Chinese-capable fallback font found\n");
     }
 
+    if (const char* title_font = firstExistingPath({"./nofile"})) {
+        ImFontConfig title_config;
+        title_config.OversampleH = 2;
+        title_config.OversampleV = 1;
+        title_config.RasterizerMultiply = 1.05f;
+        if (ImFont* loaded_title = io.Fonts->AddFontFromFileTTF(title_font, 48.0f, &title_config, io.Fonts->GetGlyphRangesDefault())) {
+            g_map_title_font = loaded_title;
+        } else {
+            std::fprintf(stderr, "[worldsim3] UI font warning: failed to load title font %s\n", title_font);
+        }
+    } else {
+        std::fprintf(stderr, "[worldsim3] UI font warning: no title font asset found at ./nofile\n");
+    }
+
     io.FontDefault = loaded;
+}
+
+ImFont* getWorldsimMapTitleFont() {
+    return g_map_title_font;
 }

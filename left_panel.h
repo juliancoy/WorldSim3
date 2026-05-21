@@ -48,10 +48,11 @@ struct LeftPanelContext {
     int max_zoom = 0;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
+    LayerBrowseState* layer_browse_state = nullptr;
     MapFilterState* map_filter_state = nullptr;
 
-    int* hover_inspector_mode = nullptr;
-    bool* hover_inspector_enabled = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
     bool* show_sources_panel = nullptr;
     bool* show_data_library = nullptr;
 

@@ -196,11 +196,10 @@ bool isParcelRelatedLayer(const FeatureFilterContext& ctx, size_t layer_idx) {
         (*ctx.layers)[layer_idx].category != LayerDef::Category::Zoning;
 }
 
-bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& filters) {
+bool layerMatchesBrowseGeography(const LayerDef& layer, const LayerBrowseState& browse_state) {
     ensureNormalizedLayerGeographyCache(layer);
-    const std::string selected_nation = normalizeGeographyToken(filters.selected_nation_state);
-    const std::string selected_region = normalizeGeographyToken(filters.selected_state_region);
-    const std::string selected_county_city = normalizeGeographyToken(filters.selected_county_city);
+    const std::string selected_nation = normalizeGeographyToken(browse_state.selected_nation_state);
+    const std::string selected_region = normalizeGeographyToken(browse_state.selected_state_region);
     if (!selected_nation.empty()) {
         if (!layer.normalized_provenance_nation_state.empty() &&
             layer.normalized_provenance_nation_state != selected_nation) {
@@ -213,35 +212,6 @@ bool layerMatchesSelectedGeography(const LayerDef& layer, const MapFilterState& 
             return false;
         }
     }
-    if (!selected_county_city.empty()) {
-        if (layer.normalized_provenance_county_city.empty() ||
-            layer.normalized_provenance_county_city != selected_county_city) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool layerMatchesSelectedGeography(const LayerDef& layer, const FeatureFilterContext& ctx) {
-    ensureNormalizedLayerGeographyCache(layer);
-    if (!ctx.selected_nation_state_normalized.empty()) {
-        if (!layer.normalized_provenance_nation_state.empty() &&
-            layer.normalized_provenance_nation_state != ctx.selected_nation_state_normalized) {
-            return false;
-        }
-    }
-    if (!ctx.selected_state_region_normalized.empty()) {
-        if (!layer.normalized_provenance_state_region.empty() &&
-            layer.normalized_provenance_state_region != ctx.selected_state_region_normalized) {
-            return false;
-        }
-    }
-    if (!ctx.selected_county_city_normalized.empty()) {
-        if (layer.normalized_provenance_county_city.empty() ||
-            layer.normalized_provenance_county_city != ctx.selected_county_city_normalized) {
-            return false;
-        }
-    }
     return true;
 }
 
@@ -251,10 +221,6 @@ bool featurePassesFilters(
     size_t feature_idx,
     const LayerDef::FeatureGeom& fg) {
     const MapFilterState& filters = mapFilters(ctx);
-    if (ctx.layers && layer_idx < ctx.layers->size() &&
-        !layerMatchesSelectedGeography((*ctx.layers)[layer_idx], ctx)) {
-        return false;
-    }
     if (!resultSetAllows(ctx, layer_idx, feature_idx, fg)) return false;
 
     if (isCrimeLayer(ctx, layer_idx)) {

@@ -56,6 +56,10 @@ struct LayerRuntimeState {
     LayerPipelineStatus status = LayerPipelineStatus::Queued;
     size_t feature_count = 0;
     std::string error;
+    GeometryArtifactClass geometry_artifact_class = GeometryArtifactClass::Unknown;
+    std::string geometry_artifact_path;
+    std::string geometry_source_signature;
+    std::string geometry_phase;
     std::string hydration_source_signature;
     std::string triangulation_source_signature;
     std::string spatial_index_source_signature;
@@ -63,6 +67,9 @@ struct LayerRuntimeState {
     std::string hydration_phase;
     std::string triangulation_phase;
     std::string spatial_index_phase;
+    bool geometry_loaded_from_artifact = false;
+    bool geometry_gpu_resident = false;
+    bool geometry_gpu_pick_ready = false;
     bool hydration_loaded_from_cache = false;
     bool triangulation_loaded_from_cache = false;
 };

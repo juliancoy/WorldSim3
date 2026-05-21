@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app_settings.h"
 #include "app_utils.h"
 #include "active_queries_tab.h"
 #include "duckdb_analytics.h"
@@ -29,6 +30,7 @@
 
 struct RightPanelContext {
     const std::filesystem::path* root = nullptr;
+    AppSettings* app_settings = nullptr;
     DuckDbAnalytics* duckdb_analytics = nullptr;
 
     float layout_w = 0.0f;
@@ -41,6 +43,7 @@ struct RightPanelContext {
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::vector<QueryHistoryEntry>* query_history = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;

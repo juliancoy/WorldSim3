@@ -42,6 +42,7 @@ struct StatusApiContext {
     const char* app_version = nullptr;
     int protocol_version = 0;
     size_t tile_cache_max = 0;
+    const std::filesystem::path* root = nullptr;
 
     std::atomic<bool>* stop = nullptr;
     std::vector<LayerDef>* layers = nullptr;

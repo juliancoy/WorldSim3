@@ -1,4 +1,6 @@
 #pragma once
 
-void configureWorldsimFonts();
+struct ImFont;
 
+void configureWorldsimFonts();
+ImFont* getWorldsimMapTitleFont();

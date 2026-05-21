@@ -7,7 +7,8 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.window = input.window;
     ctx.layers = input.layers;
     ctx.hover_inspector_enabled = input.hover_inspector_enabled;
-    ctx.hover_inspector_mode = input.hover_inspector_mode;
+    ctx.active_hover_layer_idx = input.active_hover_layer_idx;
+    ctx.active_click_layer_idx = input.active_click_layer_idx;
     ctx.parcel_parameter_mode = input.parcel_parameter_mode;
     ctx.zoning_zone_enabled = input.zoning_zone_enabled;
     ctx.layer_fill_enabled = input.layer_fill_enabled;
@@ -38,9 +39,6 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.heatmap_multires_blend = input.heatmap_multires_blend;
     ctx.heatmap_allow_cpu_fallback = input.heatmap_allow_cpu_fallback;
     ctx.filter_enabled = input.filter_enabled;
-    ctx.selected_nation_state = input.selected_nation_state;
-    ctx.selected_state_region = input.selected_state_region;
-    ctx.selected_county_city = input.selected_county_city;
     ctx.filter_use_date = input.filter_use_date;
     ctx.filter_year_min = input.filter_year_min;
     ctx.filter_year_max = input.filter_year_max;
@@ -67,6 +65,7 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.center_lon = input.center_lon;
     ctx.center_lat = input.center_lat;
     ctx.zoom = input.zoom;
+    ctx.query_history = input.query_history;
     ctx.selected_parcel_idx = input.selected_parcel_idx;
     ctx.selected_parcel_indices = input.selected_parcel_indices;
     ctx.hydration_stop = input.hydration_stop;

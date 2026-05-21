@@ -14,6 +14,12 @@ These are the URLs currently referenced by the layer manifests.
 - `https://api.census.gov/data/2023/acs/acs5/groups/B03003.html` - ACS API group metadata for Hispanic or Latino origin table B03003
 - `https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html` - TIGER/Line tract geometry
 
+### Religious institutions and worship geography
+
+- `https://overpass.kumi.systems/api/interpreter` - Overpass API endpoint used for scoped OpenStreetMap places-of-worship layers
+- `https://wiki.openstreetmap.org/Overpass_API/Language_Guide` - Overpass query language guide
+- `https://www.irs.gov/pub/irs-soi/eo_md.csv` - Maryland IRS exempt organizations source, useful for religious nonprofit finance/reference records
+
 ### Geometry MDP sources
 
 These are the Maryland Planning geometry sources that the regional parcel build prefers first.

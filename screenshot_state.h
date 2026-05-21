@@ -21,6 +21,8 @@ struct ScreenshotRequestState {
     uint32_t logical_height = 0;
     uint32_t output_width = 0;
     uint32_t output_height = 0;
+    uint32_t requested_output_width = 0;
+    uint32_t requested_output_height = 0;
     float framebuffer_scale_x = 1.0f;
     float framebuffer_scale_y = 1.0f;
 };

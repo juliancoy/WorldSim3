@@ -21,9 +21,10 @@ struct LayerUiStateSyncContext {
     const std::filesystem::path* root = nullptr;
     std::vector<LayerDef>* layers = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool hover_inspector_enabled = false;
-    int* last_hover_inspector_mode = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
+    int* last_active_hover_layer_idx = nullptr;
+    int* last_active_click_layer_idx = nullptr;
     std::vector<bool>* last_enabled_state = nullptr;
 
     bool zoning_filters_changed = false;
@@ -49,9 +50,6 @@ struct LayerUiStateSyncContext {
     int zoning_layer_idx = -1;
 
     bool filter_enabled = false;
-    const std::string* selected_nation_state = nullptr;
-    const std::string* selected_state_region = nullptr;
-    const std::string* selected_county_city = nullptr;
     const char* filter_owner = nullptr;
     const char* filter_address = nullptr;
     const char* filter_zip = nullptr;

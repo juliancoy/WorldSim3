@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <string>
 
 struct AppSettings {
     bool dark_mode = false;
@@ -21,6 +22,9 @@ struct AppSettings {
     bool topo_vector_enabled = false;
     bool zoning_use_simcity_colors = true;
     int reserve_cpu_cores = 0;
+    std::string map_title_text;
+    bool map_title_show_primary_parcel_source = false;
+    bool map_title_all_caps = false;
 };
 
 AppSettings loadAppSettings(const std::filesystem::path& root, const AppSettings& defaults);

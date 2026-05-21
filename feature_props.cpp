@@ -30,9 +30,15 @@ std::string zoningClassKey(const LayerDef::FeatureGeom& fg) {
     if (z.empty()) z = getPropertyValue(fg, "Label");
     if (z.empty()) z = getPropertyValue(fg, "ZoningLabel");
     if (z.empty()) z = getPropertyValue(fg, "ZONING");
+    if (z.empty()) z = getPropertyValue(fg, "ZONED");
     if (z.empty()) z = getPropertyValue(fg, "ZONE");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
     if (z.empty()) z = getPropertyValue(fg, "CLASS");
     if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
+    if (z.empty()) z = getPropertyValue(fg, "Type");
+    if (z.empty()) z = getPropertyValue(fg, "TYPE");
+    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
@@ -48,18 +54,30 @@ std::string zoningGroupKey(const std::string& zone_key) {
 std::string zoningClassLabel(const LayerDef::FeatureGeom& fg) {
     std::string z = getPropertyValue(fg, "Label");
     if (z.empty()) z = getPropertyValue(fg, "ZONING");
+    if (z.empty()) z = getPropertyValue(fg, "ZONED");
     if (z.empty()) z = getPropertyValue(fg, "ZONE");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
     if (z.empty()) z = getPropertyValue(fg, "CLASS");
     if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
+    if (z.empty()) z = getPropertyValue(fg, "Type");
+    if (z.empty()) z = getPropertyValue(fg, "TYPE");
+    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }
 
 std::string zoningClassTooltip(const LayerDef::FeatureGeom& fg) {
     std::string z = getPropertyValue(fg, "ZONING");
+    if (z.empty()) z = getPropertyValue(fg, "ZONED");
     if (z.empty()) z = getPropertyValue(fg, "ZONE");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_CLASS");
+    if (z.empty()) z = getPropertyValue(fg, "ZONE_DIST");
     if (z.empty()) z = getPropertyValue(fg, "CLASS");
     if (z.empty()) z = getPropertyValue(fg, "DISTRICT");
+    if (z.empty()) z = getPropertyValue(fg, "Type");
+    if (z.empty()) z = getPropertyValue(fg, "TYPE");
+    if (z.empty()) z = getPropertyValue(fg, "DIST_CODE");
     if (z.empty()) return "UNSPECIFIED";
     return z;
 }

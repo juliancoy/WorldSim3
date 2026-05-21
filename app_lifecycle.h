@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "filters.h"
 #include "heatmap_render.h"
 #include "layer_runtime.h"
 #include "profiling.h"
@@ -64,7 +65,8 @@ struct AppShutdownContext {
     GLFWwindow* window = nullptr;
     std::vector<LayerDef>* layers = nullptr;
     bool hover_inspector_enabled = true;
-    int* hover_inspector_mode = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
     int* parcel_parameter_mode = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
@@ -95,9 +97,6 @@ struct AppShutdownContext {
     float* heatmap_multires_blend = nullptr;
     bool* heatmap_allow_cpu_fallback = nullptr;
     bool* filter_enabled = nullptr;
-    std::string* selected_nation_state = nullptr;
-    std::string* selected_state_region = nullptr;
-    std::string* selected_county_city = nullptr;
     bool* filter_use_date = nullptr;
     int* filter_year_min = nullptr;
     int* filter_year_max = nullptr;
@@ -124,6 +123,7 @@ struct AppShutdownContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
     double* zoom = nullptr;
+    std::vector<QueryHistoryEntry>* query_history = nullptr;
     size_t* selected_parcel_idx = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;

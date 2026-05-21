@@ -2,17 +2,26 @@
 
 #include "app_utils.h"
 #include "duckdb_analytics.h"
+#include "layer_state_io.h"
 #include "imgui.h"
+#include "repeatable_filters.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <sstream>
 #include <string>
+
+using json = nlohmann::json;
 
 namespace {
 constexpr size_t kQueryBufferSize = 8192;
+constexpr size_t kMaxQueryHistoryEntries = 100;
 
 void copyToQueryBuffer(char (&buffer)[kQueryBufferSize], const std::string& value) {
     std::snprintf(buffer, sizeof(buffer), "%s", value.c_str());
@@ -21,6 +30,94 @@ void copyToQueryBuffer(char (&buffer)[kQueryBufferSize], const std::string& valu
 void copyLayerColor(const float src[4], float dst[4]) {
     for (int i = 0; i < 4; ++i) dst[i] = src[i];
 }
+
+std::string currentUtcTimestampIso8601() {
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t time_now = std::chrono::system_clock::to_time_t(now);
+    std::tm utc_tm{};
+#if defined(_WIN32)
+    gmtime_s(&utc_tm, &time_now);
+#else
+    gmtime_r(&time_now, &utc_tm);
+#endif
+    char buffer[32];
+    if (std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc_tm) == 0) return {};
+    return buffer;
+}
+
+QueryExecutionContextSnapshot makeQuerySnapshot(
+    const MapFilterState& map_filter_state,
+    const AppSettings& app_settings,
+    double center_lon,
+    double center_lat,
+    double zoom,
+    const std::vector<DuckDbSelectedParcel>& selected_parcels) {
+    QueryExecutionContextSnapshot snapshot;
+    snapshot.filter_enabled = map_filter_state.enabled;
+    snapshot.filter_use_date = map_filter_state.use_date;
+    snapshot.filter_year_min = map_filter_state.year_min;
+    snapshot.filter_year_max = map_filter_state.year_max;
+    snapshot.filter_blocklot = map_filter_state.blocklot;
+    snapshot.filter_status = map_filter_state.status;
+    snapshot.filter_address = map_filter_state.address;
+    snapshot.filter_owner = map_filter_state.owner;
+    snapshot.filter_zip = map_filter_state.zip;
+    snapshot.crime = map_filter_state.crime;
+    snapshot.selected_owners.assign(map_filter_state.selected_owners.begin(), map_filter_state.selected_owners.end());
+    std::sort(snapshot.selected_owners.begin(), snapshot.selected_owners.end());
+    snapshot.selected_parcel_blocklots.reserve(selected_parcels.size());
+    for (const auto& parcel : selected_parcels) {
+        if (!parcel.blocklot.empty()) snapshot.selected_parcel_blocklots.push_back(parcel.blocklot);
+    }
+    std::sort(snapshot.selected_parcel_blocklots.begin(), snapshot.selected_parcel_blocklots.end());
+    snapshot.selected_parcel_blocklots.erase(
+        std::unique(snapshot.selected_parcel_blocklots.begin(), snapshot.selected_parcel_blocklots.end()),
+        snapshot.selected_parcel_blocklots.end());
+    snapshot.event_sector_enabled = map_filter_state.event_sector_enabled;
+    snapshot.center_lon = center_lon;
+    snapshot.center_lat = center_lat;
+    snapshot.zoom = zoom;
+    snapshot.map_title_text = app_settings.map_title_text;
+    snapshot.map_title_show_primary_parcel_source = app_settings.map_title_show_primary_parcel_source;
+    return snapshot;
+}
+
+void appendQueryHistoryEntry(
+    const std::filesystem::path& root,
+    std::vector<QueryHistoryEntry>& query_history,
+    const char* query_name,
+    const char* query_sql,
+    const float query_color[4],
+    const char* mode,
+    const DuckDbQueryResult& result,
+    const QueryExecutionContextSnapshot& snapshot) {
+    QueryHistoryEntry entry;
+    entry.executed_at_utc = currentUtcTimestampIso8601();
+    entry.mode = mode ? mode : "";
+    entry.name = query_name ? query_name : "";
+    entry.sql = query_sql ? query_sql : "";
+    copyLayerColor(query_color, entry.color);
+    entry.row_count = result.rows.size();
+    entry.status = result.message;
+    entry.snapshot = snapshot;
+    query_history.push_back(std::move(entry));
+    if (query_history.size() > kMaxQueryHistoryEntries) {
+        query_history.erase(query_history.begin(), query_history.begin() + (ptrdiff_t)(query_history.size() - kMaxQueryHistoryEntries));
+    }
+    saveQueryHistoryUiState(root, query_history);
+}
+
+std::string suggestedRepeatableFilterId(const std::string& raw_name, const std::string& fallback_prefix) {
+    std::string candidate;
+    candidate.reserve(raw_name.size());
+    for (char c : raw_name) {
+        if (std::isalnum((unsigned char)c)) candidate.push_back((char)std::tolower((unsigned char)c));
+        else if (c == ' ' || c == '-' || c == '.') candidate.push_back('_');
+    }
+    candidate = sanitizeRepeatableFilterId(candidate);
+    if (candidate.empty()) candidate = fallback_prefix;
+    return candidate;
+}
 }
 
 void renderSqlTab(
@@ -28,8 +125,14 @@ void renderSqlTab(
     const std::vector<LayerDef>& layers,
     const std::vector<UnifiedParcelRecord>& unified_parcels,
     const MapFilterState& map_filter_state,
+    const AppSettings& app_settings,
+    const std::filesystem::path& root,
+    double center_lon,
+    double center_lat,
+    double zoom,
     const std::vector<DuckDbSelectedParcel>& selected_parcels,
-    std::vector<QueryMapLayer>& query_layers) {
+    std::vector<QueryMapLayer>& query_layers,
+    std::vector<QueryHistoryEntry>& query_history) {
     static char query_name[96] = "Query 1";
     static char query_sql[kQueryBufferSize] =
         "SELECT parcel_layer_idx AS layer_idx, parcel_feature_idx AS feature_idx, blocklot, owner, address, current_value\n"
@@ -40,6 +143,10 @@ void renderSqlTab(
     static float query_color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
     static int selected_query = -1;
     static DuckDbQueryResult last_result;
+    static char save_filter_id[96] = "";
+    static char save_filter_name[128] = "";
+    static int save_filter_version = 1;
+    static std::string save_filter_status;
 
     const DuckDbAnalyticsStatus& db_status = duckdb_analytics.status();
     ImGui::TextWrapped("Database: %s", db_status.db_path.c_str());
@@ -65,8 +172,17 @@ void renderSqlTab(
         ImVec2(-FLT_MIN, 150.0f),
         ImGuiInputTextFlags_AllowTabInput);
 
+    const QueryExecutionContextSnapshot snapshot = makeQuerySnapshot(
+        map_filter_state,
+        app_settings,
+        center_lon,
+        center_lat,
+        zoom,
+        selected_parcels);
+
     if (ImGui::Button("Run As Colored Map Query")) {
         last_result = duckdb_analytics.executeMapQuery(query_sql, map_filter_state.selected_owners, selected_parcels, 1000);
+        appendQueryHistoryEntry(root, query_history, query_name, query_sql, query_color, "map_layer", last_result, snapshot);
         if (last_result.ok) {
             QueryMapLayer layer;
             layer.enabled = true;
@@ -83,9 +199,50 @@ void renderSqlTab(
     ImGui::SameLine();
     if (ImGui::Button("Run Preview Only")) {
         last_result = duckdb_analytics.executeMapQuery(query_sql, map_filter_state.selected_owners, selected_parcels, 1000);
+        appendQueryHistoryEntry(root, query_history, query_name, query_sql, query_color, "preview", last_result, snapshot);
     }
     if (!last_result.message.empty()) {
         ImGui::TextWrapped("%s", last_result.message.c_str());
+    }
+
+    ImGui::SeparatorText("Save As Repeatable Filter");
+    if (save_filter_name[0] == '\0') {
+        std::snprintf(save_filter_name, sizeof(save_filter_name), "%s", query_name);
+    }
+    if (save_filter_id[0] == '\0') {
+        const std::string suggested_id = suggestedRepeatableFilterId(
+            query_name[0] ? query_name : "sql_query",
+            "sql_query");
+        std::snprintf(save_filter_id, sizeof(save_filter_id), "%s", suggested_id.c_str());
+    }
+    ImGui::InputText("Filter ID", save_filter_id, sizeof(save_filter_id));
+    ImGui::InputText("Filter Name", save_filter_name, sizeof(save_filter_name));
+    ImGui::InputInt("Filter Version", &save_filter_version);
+    if (ImGui::Button("Save Query As Repeatable Filter")) {
+        QueryHistoryEntry entry;
+        entry.executed_at_utc = currentUtcTimestampIso8601();
+        entry.mode = "sql_tab";
+        entry.name = query_name;
+        entry.sql = query_sql;
+        copyLayerColor(query_color, entry.color);
+        entry.row_count = last_result.rows.size();
+        entry.status = last_result.message;
+        entry.snapshot = snapshot;
+        std::string error;
+        const json spec = makeSqlRepeatableFilterSpec(
+            entry,
+            save_filter_id,
+            save_filter_name,
+            std::max(save_filter_version, 1),
+            "sql_tab");
+        if (saveRepeatableFilterSpec(root, spec, error)) {
+            save_filter_status = "Saved " + sanitizeRepeatableFilterId(save_filter_id);
+        } else {
+            save_filter_status = "Save failed: " + error;
+        }
+    }
+    if (!save_filter_status.empty()) {
+        ImGui::TextWrapped("%s", save_filter_status.c_str());
     }
 
     ImGui::SeparatorText("Active Query Layers");
@@ -193,11 +350,17 @@ void drawSqlTab(
     const std::vector<LayerDef>& layers,
     const std::vector<UnifiedParcelRecord>& unified_parcels,
     const MapFilterState& map_filter_state,
+    const AppSettings& app_settings,
+    const std::filesystem::path& root,
+    double center_lon,
+    double center_lat,
+    double zoom,
     const std::vector<size_t>& selected_parcel_indices,
     bool show_selected_parcel_details,
     int parcel_layer_idx,
     size_t selected_parcel_idx,
-    std::vector<QueryMapLayer>& query_layers) {
+    std::vector<QueryMapLayer>& query_layers,
+    std::vector<QueryHistoryEntry>& query_history) {
     if (!ImGui::BeginTabItem("SQL")) return;
 
     std::vector<DuckDbSelectedParcel> sql_selected_parcels;
@@ -212,10 +375,23 @@ void drawSqlTab(
             sql_selected_parcels.push_back(DuckDbSelectedParcel{
                 (size_t)parcel_layer_idx,
                 sel_idx,
+                std::string(),
                 featureBlockLotJoinKey(selected)
             });
         }
     }
-    renderSqlTab(duckdb_analytics, layers, unified_parcels, map_filter_state, sql_selected_parcels, query_layers);
+    renderSqlTab(
+        duckdb_analytics,
+        layers,
+        unified_parcels,
+        map_filter_state,
+        app_settings,
+        root,
+        center_lon,
+        center_lat,
+        zoom,
+        sql_selected_parcels,
+        query_layers,
+        query_history);
     ImGui::EndTabItem();
 }

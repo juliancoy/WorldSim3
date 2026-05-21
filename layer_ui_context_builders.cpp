@@ -45,6 +45,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.heatmap_controls_active = input.heatmap_controls_active;
     ctx.parcel_parameter_mode = input.parcel_parameter_mode;
     ctx.map_filter_state = input.map_filter_state;
+    ctx.layer_browse_state = input.layer_browse_state;
     return ctx;
 }
 
@@ -52,8 +53,11 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     LayersPanelUiContext ctx;
     ctx.shared = input.shared;
     ctx.parcel_layer_idx = input.parcel_layer_idx;
+    ctx.zoning_layer_idx = input.zoning_layer_idx;
     ctx.zoom = input.zoom;
     ctx.layer_search_query = input.layer_search_query;
+    ctx.active_hover_layer_idx = input.active_hover_layer_idx;
+    ctx.active_click_layer_idx = input.active_click_layer_idx;
     ctx.crime_filter_enabled = input.crime_filter_enabled;
     ctx.crime_filter_use_year = input.crime_filter_use_year;
     ctx.crime_year_min = input.crime_year_min;
@@ -70,5 +74,6 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     ctx.crime_breakdown = input.crime_breakdown;
     ctx.parcel_jurisdiction_filter_state = input.parcel_jurisdiction_filter_state;
     ctx.map_filter_state = input.map_filter_state;
+    ctx.layer_browse_state = input.layer_browse_state;
     return ctx;
 }

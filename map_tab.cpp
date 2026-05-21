@@ -2,10 +2,13 @@
 
 #include "map_overlay_panels.h"
 #include "owner_info.h"
+#include "ui_fonts.h"
 #include "worldsim_app.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
+#include <cstdio>
 #include <string>
 
 namespace {
@@ -84,6 +87,117 @@ void drawMapFpsOverlay(const MapCanvasSession& session) {
     draw->PopClipRect();
 }
 
+std::string trimCopy(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() && std::isspace((unsigned char)value[begin])) ++begin;
+    size_t end = value.size();
+    while (end > begin && std::isspace((unsigned char)value[end - 1])) --end;
+    return value.substr(begin, end - begin);
+}
+
+std::string toUpperAsciiCopy(std::string value) {
+    for (char& c : value) c = (char)std::toupper((unsigned char)c);
+    return value;
+}
+
+std::string hostFromUrl(const std::string& url) {
+    const size_t scheme = url.find("://");
+    const size_t host_begin = scheme == std::string::npos ? 0 : scheme + 3;
+    if (host_begin >= url.size()) return {};
+    size_t host_end = url.find_first_of("/?#", host_begin);
+    if (host_end == std::string::npos) host_end = url.size();
+    return url.substr(host_begin, host_end - host_begin);
+}
+
+std::string titleCaseHostLabel(std::string host) {
+    if (host.empty()) return host;
+    std::replace(host.begin(), host.end(), '-', ' ');
+    std::replace(host.begin(), host.end(), '.', ' ');
+    bool new_word = true;
+    for (char& c : host) {
+        if (std::isspace((unsigned char)c)) {
+            new_word = true;
+            continue;
+        }
+        c = new_word ? (char)std::toupper((unsigned char)c) : (char)std::tolower((unsigned char)c);
+        new_word = false;
+    }
+    return host;
+}
+
+std::string inferAgencyFromUrl(const std::string& url) {
+    std::string host = hostFromUrl(url);
+    std::string lower = host;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    if (lower.find("hud") != std::string::npos) return "Housing and Urban Development";
+    if (lower.find("planning.maryland.gov") != std::string::npos || lower.find("mdgeodata.md.gov") != std::string::npos) {
+        return "Maryland Department of Planning";
+    }
+    if (lower.find("opendata.maryland.gov") != std::string::npos) return "Maryland Open Data";
+    if (lower.find("baltimorecity.gov") != std::string::npos) return "Baltimore City Open Data";
+    if (lower.find("baltimorecountymd.gov") != std::string::npos) return "Baltimore County";
+    if (lower.find("howardcountymd.gov") != std::string::npos) return "Howard County";
+    return titleCaseHostLabel(host);
+}
+
+std::string primaryParcelSourceLabel(const MapTabContext& ctx) {
+    if (!ctx.layers || ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return {};
+    const LayerDef& layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
+    for (const std::string& url : layer.source_urls) {
+        if (const std::string label = inferAgencyFromUrl(url); !label.empty()) return label;
+    }
+    if (const std::string label = inferAgencyFromUrl(layer.source_url); !label.empty()) return label;
+    if (const std::string label = inferAgencyFromUrl(layer.reference_url); !label.empty()) return label;
+    if (const std::string label = inferAgencyFromUrl(layer.import_url); !label.empty()) return label;
+    return trimCopy(layer.name);
+}
+
+void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& title, const std::string& source_label) {
+    if (!session.draw) return;
+    const std::string clean_title = trimCopy(title);
+    const std::string clean_source = trimCopy(source_label);
+    if (clean_title.empty() && clean_source.empty()) return;
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    if (!draw) return;
+
+    ImFont* font = getWorldsimMapTitleFont();
+    if (!font) font = ImGui::GetFont();
+    if (!font) return;
+    const float title_font_size = 48.0f;
+    const float source_font_size = ImGui::GetFontSize() * 1.0f;
+    const ImVec2 title_size =
+        clean_title.empty() ? ImVec2(0.0f, 0.0f) : font->CalcTextSizeA(title_font_size, FLT_MAX, 0.0f, clean_title.c_str());
+    const std::string source_text = clean_source.empty() ? std::string() : ("Source: " + clean_source);
+    const ImVec2 source_size =
+        source_text.empty() ? ImVec2(0.0f, 0.0f) : font->CalcTextSizeA(source_font_size, FLT_MAX, 0.0f, source_text.c_str());
+    const float content_w = std::max(title_size.x, source_size.x);
+    const float content_h = title_size.y + (source_text.empty() ? 0.0f : (6.0f + source_size.y));
+    const ImVec2 pad(18.0f, 12.0f);
+    const ImVec2 box_min(
+        session.origin.x + std::max(0.0f, (session.size.x - content_w) * 0.5f) - pad.x,
+        session.origin.y + 14.0f);
+    const ImVec2 box_max(box_min.x + content_w + pad.x * 2.0f, box_min.y + content_h + pad.y * 2.0f);
+
+    draw->PushClipRect(session.origin, ImVec2(session.origin.x + session.size.x, session.origin.y + session.size.y), true);
+    draw->AddRectFilled(box_min, box_max, IM_COL32(17, 24, 32, 205), 12.0f);
+    draw->AddRect(box_min, box_max, IM_COL32(255, 255, 255, 72), 12.0f);
+
+    float y = box_min.y + pad.y;
+    if (!clean_title.empty()) {
+        const float title_x = session.origin.x + session.size.x * 0.5f - title_size.x * 0.5f;
+        draw->AddText(font, title_font_size, ImVec2(title_x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 150), clean_title.c_str());
+        draw->AddText(font, title_font_size, ImVec2(title_x, y), IM_COL32(250, 250, 250, 245), clean_title.c_str());
+        y += title_size.y + 6.0f;
+    }
+    if (!source_text.empty()) {
+        const float source_x = session.origin.x + session.size.x * 0.5f - source_size.x * 0.5f;
+        draw->AddText(font, source_font_size, ImVec2(source_x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 140), source_text.c_str());
+        draw->AddText(font, source_font_size, ImVec2(source_x, y), IM_COL32(220, 226, 232, 235), source_text.c_str());
+    }
+    draw->PopClipRect();
+}
+
 MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const MapCanvasSession& session) {
     MapCornerControlState state;
     constexpr float button = 34.0f;
@@ -140,7 +254,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
         !ctx.layer_heatmap_use_gradient || !ctx.layer_choropleth_gamma || !ctx.layer_normalize_mode ||
         !ctx.parcel_jurisdiction_filter_state || !ctx.parcel_vac_notice_by_feature || !ctx.parcel_vac_rehab_by_feature ||
         !ctx.parcel_tax_lien_by_feature || !ctx.parcel_tax_sale_by_feature || !ctx.parcel_tax_lien_amount_by_feature ||
-        !ctx.parcel_tax_sale_amount_by_feature || !ctx.unified_parcels || !ctx.heatmap_runtime || !ctx.hover_inspector_enabled ||
+        !ctx.parcel_tax_sale_amount_by_feature || !ctx.unified_parcels || !ctx.heatmap_runtime ||
         !ctx.lazy_tile_download || !ctx.topo_tiles_available_cached || !ctx.topo_vector_available_cached ||
         !ctx.basemap_source_has_any_files_cached || !ctx.tile_root_dir_cached || !ctx.basemap_availability_last_check ||
         !ctx.prof_tiles_drawn_frame || !ctx.prof_features_considered_frame || !ctx.prof_features_drawn_frame ||
@@ -166,9 +280,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
     ImGui::SetNextWindowPos(ImVec2(ctx.map_x, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.map_w, ctx.main_panel_h), ImGuiCond_Always);
     ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    if (ImGui::BeginTabBar("main_view_tabs")) {
-        if (ImGui::BeginTabItem("Map")) {
-            MapCanvasSession map_canvas_session = beginMapCanvasSession(MapCanvasSessionContext{
+    MapCanvasSession map_canvas_session = beginMapCanvasSession(MapCanvasSessionContext{
                 ctx.center_lon,
                 ctx.center_lat,
                 ctx.zoom,
@@ -188,8 +300,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.layer_spatial,
                 ctx.layer_hover_enabled,
                 ctx.layer_inspect_enabled,
-                ctx.hover_inspector_mode,
-                ctx.hover_inspector_enabled,
+                ctx.active_hover_layer_idx,
+                ctx.active_click_layer_idx,
                 ctx.parcel_layer_idx,
                 ctx.zoning_layer_idx,
                 ctx.vacant_notice_layer_idx,
@@ -424,51 +536,55 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.prof_projection_cache_generation = ctx.prof_projection_cache_generation;
             map_frame_session_ctx.prof_features_considered_frame = ctx.prof_features_considered_frame;
             map_frame_session_ctx.prof_features_drawn_frame = ctx.prof_features_drawn_frame;
-            runMapFrameSession(map_frame_session_ctx);
-            drawMapCornerControlsVisual(ctx, map_canvas_session, map_corner_controls);
+    runMapFrameSession(map_frame_session_ctx);
+    drawMapCornerControlsVisual(ctx, map_canvas_session, map_corner_controls);
+            std::string map_title = ctx.app_settings ? ctx.app_settings->map_title_text : std::string();
+            if (ctx.app_settings && ctx.app_settings->map_title_all_caps) {
+                map_title = toUpperAsciiCopy(map_title);
+            }
+            const std::string parcel_source =
+                (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source)
+                    ? primaryParcelSourceLabel(ctx)
+            : std::string();
+    drawMapTitleOverlay(map_canvas_session, map_title, parcel_source);
 
-            TimeCubePanelContext time_cube_panel_ctx;
-            time_cube_panel_ctx.service = ctx.time_cube_service;
-            time_cube_panel_ctx.layers = ctx.layers;
-            time_cube_panel_ctx.result = ctx.time_cube_ui_result;
-            time_cube_panel_ctx.loaded = ctx.time_cube_ui_loaded;
-            time_cube_panel_ctx.status = ctx.time_cube_ui_status;
-            time_cube_panel_ctx.mutex = ctx.time_cube_ui_mutex;
-            time_cube_panel_ctx.worker = ctx.time_cube_ui_worker;
-            time_cube_panel_ctx.running = ctx.time_cube_ui_running;
-            time_cube_panel_ctx.done = ctx.time_cube_ui_done;
-            time_cube_panel_ctx.selected = ctx.time_cube_selected;
-            time_cube_panel_ctx.year_min = ctx.time_cube_year_min;
-            time_cube_panel_ctx.year_max = ctx.time_cube_year_max;
-            time_cube_panel_ctx.normalize_mode = ctx.time_cube_normalize_mode;
-            time_cube_panel_ctx.show_excluded = ctx.time_cube_show_excluded;
+    TimeCubePanelContext time_cube_panel_ctx;
+    time_cube_panel_ctx.service = ctx.time_cube_service;
+    time_cube_panel_ctx.layers = ctx.layers;
+    time_cube_panel_ctx.result = ctx.time_cube_ui_result;
+    time_cube_panel_ctx.loaded = ctx.time_cube_ui_loaded;
+    time_cube_panel_ctx.status = ctx.time_cube_ui_status;
+    time_cube_panel_ctx.mutex = ctx.time_cube_ui_mutex;
+    time_cube_panel_ctx.worker = ctx.time_cube_ui_worker;
+    time_cube_panel_ctx.running = ctx.time_cube_ui_running;
+    time_cube_panel_ctx.done = ctx.time_cube_ui_done;
+    time_cube_panel_ctx.selected = ctx.time_cube_selected;
+    time_cube_panel_ctx.year_min = ctx.time_cube_year_min;
+    time_cube_panel_ctx.year_max = ctx.time_cube_year_max;
+    time_cube_panel_ctx.normalize_mode = ctx.time_cube_normalize_mode;
+    time_cube_panel_ctx.show_excluded = ctx.time_cube_show_excluded;
 
-            PolicyPanelContext policy_panel_ctx;
-            policy_panel_ctx.hierarchy = ctx.policy_hierarchy;
-            policy_panel_ctx.hierarchy_loaded = ctx.policy_hierarchy_loaded;
-            policy_panel_ctx.hierarchy_error = ctx.policy_hierarchy_error;
-            policy_panel_ctx.query = ctx.policy_hierarchy_query;
-            policy_panel_ctx.query_capacity = ctx.policy_hierarchy_query_capacity;
-            policy_panel_ctx.scope = ctx.policy_hierarchy_scope;
-            policy_panel_ctx.roster = ctx.public_servant_roster;
-            policy_panel_ctx.people_pay_cached_query = ctx.people_pay_cached_query;
-            policy_panel_ctx.people_pay_cached_scope = ctx.people_pay_cached_scope;
-            policy_panel_ctx.people_pay_cache_matched_count = ctx.people_pay_cache_matched_count;
-            policy_panel_ctx.people_pay_visible_rows = ctx.people_pay_visible_rows;
-            policy_panel_ctx.people_pay_cache_rebuilds = ctx.people_pay_cache_rebuilds;
-            policy_panel_ctx.people_pay_rendered_rows_last = ctx.people_pay_rendered_rows_last;
-            policy_panel_ctx.viz_root = ctx.policy_viz_root;
-            policy_panel_ctx.viz_cached_query = ctx.policy_viz_cached_query;
-            policy_panel_ctx.viz_cached_scope = ctx.policy_viz_cached_scope;
-            policy_panel_ctx.viz_cached_metric = ctx.policy_viz_cached_metric;
-            policy_panel_ctx.viz_metric = ctx.policy_viz_metric;
-            policy_panel_ctx.viz_cache_rebuilds = ctx.policy_viz_cache_rebuilds;
-            policy_panel_ctx.viz_node_count = ctx.policy_viz_node_count;
-            drawMapOverlayPanelsPopup(map_canvas_session.origin, map_canvas_session.size, time_cube_panel_ctx, policy_panel_ctx, ctx.layers->size());
-
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
-    }
+    PolicyPanelContext policy_panel_ctx;
+    policy_panel_ctx.hierarchy = ctx.policy_hierarchy;
+    policy_panel_ctx.hierarchy_loaded = ctx.policy_hierarchy_loaded;
+    policy_panel_ctx.hierarchy_error = ctx.policy_hierarchy_error;
+    policy_panel_ctx.query = ctx.policy_hierarchy_query;
+    policy_panel_ctx.query_capacity = ctx.policy_hierarchy_query_capacity;
+    policy_panel_ctx.scope = ctx.policy_hierarchy_scope;
+    policy_panel_ctx.roster = ctx.public_servant_roster;
+    policy_panel_ctx.people_pay_cached_query = ctx.people_pay_cached_query;
+    policy_panel_ctx.people_pay_cached_scope = ctx.people_pay_cached_scope;
+    policy_panel_ctx.people_pay_cache_matched_count = ctx.people_pay_cache_matched_count;
+    policy_panel_ctx.people_pay_visible_rows = ctx.people_pay_visible_rows;
+    policy_panel_ctx.people_pay_cache_rebuilds = ctx.people_pay_cache_rebuilds;
+    policy_panel_ctx.people_pay_rendered_rows_last = ctx.people_pay_rendered_rows_last;
+    policy_panel_ctx.viz_root = ctx.policy_viz_root;
+    policy_panel_ctx.viz_cached_query = ctx.policy_viz_cached_query;
+    policy_panel_ctx.viz_cached_scope = ctx.policy_viz_cached_scope;
+    policy_panel_ctx.viz_cached_metric = ctx.policy_viz_cached_metric;
+    policy_panel_ctx.viz_metric = ctx.policy_viz_metric;
+    policy_panel_ctx.viz_cache_rebuilds = ctx.policy_viz_cache_rebuilds;
+    policy_panel_ctx.viz_node_count = ctx.policy_viz_node_count;
+    drawMapOverlayPanelsPopup(map_canvas_session.origin, map_canvas_session.size, time_cube_panel_ctx, policy_panel_ctx, ctx.layers->size());
     ImGui::End();
 }

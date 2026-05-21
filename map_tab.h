@@ -33,7 +33,7 @@ struct MapTabContext {
     float main_panel_h = 0.0f;
 
     const std::filesystem::path* root = nullptr;
-    const AppSettings* app_settings = nullptr;
+    AppSettings* app_settings = nullptr;
     DuckDbAnalytics* duckdb_analytics = nullptr;
 
     double* center_lon = nullptr;
@@ -117,8 +117,8 @@ struct MapTabContext {
     bool heatmap_controls_active = false;
     HeatmapRuntimeState* heatmap_runtime = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool* hover_inspector_enabled = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
 
     LazyTileDownloadState* lazy_tile_download = nullptr;
     bool* topo_tiles_available_cached = nullptr;

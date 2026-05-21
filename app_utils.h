@@ -48,15 +48,10 @@ bool layerUsesPointGeometry(const LayerDef& layer);
 bool isLikelyCrimePointLayer(const LayerDef& layer);
 uint32_t crimePointGlyphCode(const LayerDef::FeatureGeom& fg);
 const char* crimePointTypeLabel(const LayerDef::FeatureGeom& fg);
-bool geographyViewPreset(
-    const std::string& selected_nation_state,
-    const std::string& selected_state_region,
-    double& center_lon,
-    double& center_lat,
-    int& suggested_zoom);
 std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys);
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);
 std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg);
+std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureGeom& fg, size_t feature_idx);
 std::filesystem::path provenanceStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
 std::filesystem::path provenanceSourceArtifactPath(const std::filesystem::path& root, const LayerDef& layer, const std::string& artifact_name);
 std::filesystem::path resolveStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);

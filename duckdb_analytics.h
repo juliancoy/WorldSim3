@@ -30,12 +30,14 @@ struct DuckDbQueryResult {
 struct DuckDbSelectedParcel {
     size_t layer_idx = 0;
     size_t feature_idx = 0;
+    std::string feature_id;
     std::string blocklot;
 };
 
 struct DuckDbSearchHit {
     size_t layer_idx = 0;
     size_t feature_idx = 0;
+    std::string feature_id;
     std::string blocklot;
     std::string owner;
     std::string address;

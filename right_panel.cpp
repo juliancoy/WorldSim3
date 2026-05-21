@@ -7,15 +7,112 @@
 #include "gradient_tab.h"
 #include "gpu_profiler_tab.h"
 #include "imgui.h"
+#include "app_settings.h"
 #include "owner_info.h"
 #include "owners_tab.h"
 #include "selection.h"
 #include "sql_tab.h"
 #include "vacancy_parcel_tab.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+
+namespace {
+std::string trimCopy(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() && std::isspace((unsigned char)value[begin])) ++begin;
+    size_t end = value.size();
+    while (end > begin && std::isspace((unsigned char)value[end - 1])) --end;
+    return value.substr(begin, end - begin);
+}
+
+std::string hostFromUrl(const std::string& url) {
+    const size_t scheme = url.find("://");
+    const size_t host_begin = scheme == std::string::npos ? 0 : scheme + 3;
+    if (host_begin >= url.size()) return {};
+    size_t host_end = url.find_first_of("/?#", host_begin);
+    if (host_end == std::string::npos) host_end = url.size();
+    return url.substr(host_begin, host_end - host_begin);
+}
+
+std::string titleCaseHostLabel(std::string host) {
+    if (host.empty()) return host;
+    std::replace(host.begin(), host.end(), '-', ' ');
+    std::replace(host.begin(), host.end(), '.', ' ');
+    bool new_word = true;
+    for (char& c : host) {
+        if (std::isspace((unsigned char)c)) {
+            new_word = true;
+            continue;
+        }
+        c = new_word ? (char)std::toupper((unsigned char)c) : (char)std::tolower((unsigned char)c);
+        new_word = false;
+    }
+    return host;
+}
+
+std::string inferAgencyFromUrl(const std::string& url) {
+    std::string host = hostFromUrl(url);
+    std::string lower = host;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+    if (lower.find("hud") != std::string::npos) return "Housing and Urban Development";
+    if (lower.find("planning.maryland.gov") != std::string::npos || lower.find("mdgeodata.md.gov") != std::string::npos) {
+        return "Maryland Department of Planning";
+    }
+    if (lower.find("opendata.maryland.gov") != std::string::npos) return "Maryland Open Data";
+    if (lower.find("baltimorecity.gov") != std::string::npos) return "Baltimore City Open Data";
+    if (lower.find("baltimorecountymd.gov") != std::string::npos) return "Baltimore County";
+    if (lower.find("howardcountymd.gov") != std::string::npos) return "Howard County";
+    return titleCaseHostLabel(host);
+}
+
+std::string primaryParcelSourceLabel(const RightPanelContext& ctx) {
+    if (!ctx.layers || ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return {};
+    const LayerDef& layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
+    for (const std::string& url : layer.source_urls) {
+        if (const std::string label = inferAgencyFromUrl(url); !label.empty()) return label;
+    }
+    if (const std::string label = inferAgencyFromUrl(layer.source_url); !label.empty()) return label;
+    if (const std::string label = inferAgencyFromUrl(layer.reference_url); !label.empty()) return label;
+    if (const std::string label = inferAgencyFromUrl(layer.import_url); !label.empty()) return label;
+    return trimCopy(layer.name);
+}
+
+void drawMapTitleTab(const RightPanelContext& ctx) {
+    if (!ImGui::BeginTabItem("Title")) return;
+    if (ctx.app_settings && ctx.root) {
+        char title_buffer[256];
+        std::snprintf(title_buffer, sizeof(title_buffer), "%s", ctx.app_settings->map_title_text.c_str());
+        if (ImGui::InputText("Centered map title", title_buffer, sizeof(title_buffer))) {
+            ctx.app_settings->map_title_text = trimCopy(title_buffer);
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        ImGui::TextDisabled("Leave the title blank to hide the overlay.");
+        bool show_source = ctx.app_settings->map_title_show_primary_parcel_source;
+        if (ImGui::Checkbox("Show primary parcel source", &show_source)) {
+            ctx.app_settings->map_title_show_primary_parcel_source = show_source;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        bool all_caps = ctx.app_settings->map_title_all_caps;
+        if (ImGui::Checkbox("All caps", &all_caps)) {
+            ctx.app_settings->map_title_all_caps = all_caps;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        const std::string preview_source = primaryParcelSourceLabel(ctx);
+        if (!preview_source.empty()) {
+            ImGui::TextDisabled("Preview: Source: %s", preview_source.c_str());
+        } else {
+            ImGui::TextDisabled("Preview: no primary parcel source detected");
+        }
+    }
+    ImGui::EndTabItem();
+}
+}
+
 void drawRightPanelWindow(const RightPanelContext& ctx) {
-    if (!ctx.root || !ctx.duckdb_analytics || !ctx.layers || !ctx.unified_parcels || !ctx.map_filter_state ||
-        !ctx.query_layers || !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
+    if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.layers || !ctx.unified_parcels || !ctx.map_filter_state ||
+        !ctx.query_layers || !ctx.query_history || !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
         !ctx.selected_parcel_index_set || !ctx.selected_parcel_indices || !ctx.parcel_selection ||
         !ctx.element_info_state || !ctx.show_selected_parcel_details || !ctx.show_selected_zone_details ||
         !ctx.selected_zone_idx || !ctx.center_lon || !ctx.center_lat || !ctx.zoom || !ctx.layer_heatmap_enabled ||
@@ -122,37 +219,52 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             *ctx.layers,
             *ctx.unified_parcels,
             *ctx.map_filter_state,
+            *ctx.app_settings,
+            *ctx.root,
+            *ctx.center_lon,
+            *ctx.center_lat,
+            *ctx.zoom,
             *ctx.selected_parcel_indices,
             *ctx.show_selected_parcel_details,
             ctx.parcel_layer_idx,
             ctx.parcel_selection->active_idx,
-            *ctx.query_layers);
-	        drawActiveQueriesTab(ActiveQueriesTabContext{
+            *ctx.query_layers,
+            *ctx.query_history);
+        ActiveQueriesTabContext active_queries_ctx{
             ctx.map_filter_state,
+            ctx.app_settings,
+            ctx.root,
             ctx.query_layers,
+            ctx.query_history,
+            ctx.duckdb_analytics,
             &ctx.parcel_jurisdiction_filter_state->result_set,
             &ctx.parcel_jurisdiction_filter_state->status,
             ctx.layers,
             ctx.zoning_metadata,
             ctx.zoning_zone_enabled,
             ctx.layer_fill_enabled,
-	            ctx.zoning_layer_idx,
-	            ctx.crime_nibrs_layer_idx
-	        });
-	        drawGpuProfilerTab(GpuProfilerTabContext{
-	            ctx.profile_mutex,
-	            ctx.profile_samples,
-	            ctx.profile_sample_pos,
-	            ctx.profile_sample_count,
-	            ctx.prof_heatmap_gpu_splat_active,
-	            ctx.prof_heatmap_high_quality,
-	            ctx.prof_heatmap_texture_resident,
-	            ctx.prof_heatmap_async_inflight,
-	            ctx.prof_heatmap_texture_cache_entries,
-	            ctx.gpu_profiler_tab_requested,
-	            ctx.gpu_profiler_reload_requested
-	        });
-	        drawVacancyParcelTab(VacancyParcelTabContext{
+            ctx.center_lon,
+            ctx.center_lat,
+            ctx.zoom,
+            ctx.zoning_layer_idx,
+            ctx.crime_nibrs_layer_idx
+        };
+        drawActiveQueriesTab(active_queries_ctx);
+        drawQueryHistoryTab(active_queries_ctx);
+        drawGpuProfilerTab(GpuProfilerTabContext{
+            ctx.profile_mutex,
+            ctx.profile_samples,
+            ctx.profile_sample_pos,
+            ctx.profile_sample_count,
+            ctx.prof_heatmap_gpu_splat_active,
+            ctx.prof_heatmap_high_quality,
+            ctx.prof_heatmap_texture_resident,
+            ctx.prof_heatmap_async_inflight,
+            ctx.prof_heatmap_texture_cache_entries,
+            ctx.gpu_profiler_tab_requested,
+            ctx.gpu_profiler_reload_requested
+        });
+        drawVacancyParcelTab(VacancyParcelTabContext{
             ctx.cached_vac_notice_size,
             ctx.cached_vac_rehab_size,
             ctx.vacant_notice_rows_matched_total->load(std::memory_order_relaxed),
@@ -250,6 +362,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             &ownerClassItems(),
             sync_owner_aggregates_if_visible
         });
+        drawMapTitleTab(ctx);
         ImGui::EndTabBar();
     }
     ImGui::End();

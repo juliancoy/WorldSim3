@@ -125,50 +125,52 @@ void findHoveredPointFeature(const MapHoverQuery& query, MapHoverState& out) {
     float best_dist_sq = kPointHoverRadiusPx * kPointHoverRadiusPx;
     uint64_t best_order_key = 0;
 
-    for (size_t layer_idx = 0; layer_idx < query.layers->size(); ++layer_idx) {
-        if (layer_idx >= query.layer_spatial->size() || layer_idx >= query.layer_hover_enabled->size()) continue;
-        if (!(*query.layer_hover_enabled)[layer_idx]) continue;
+    if (query.active_hover_layer_idx < 0) return;
+    const size_t layer_idx = (size_t)query.active_hover_layer_idx;
+    if (layer_idx >= query.layers->size() || layer_idx >= query.layer_spatial->size() || layer_idx >= query.layer_hover_enabled->size()) {
+        return;
+    }
+    if (!(*query.layer_hover_enabled)[layer_idx]) return;
 
-        const LayerDef& layer = (*query.layers)[layer_idx];
-        if (!layer.enabled || !layerUsesPointGeometry(layer) || !(*query.layer_spatial)[layer_idx].built) continue;
+    const LayerDef& layer = (*query.layers)[layer_idx];
+    if (!layer.enabled || !layerUsesPointGeometry(layer) || !(*query.layer_spatial)[layer_idx].built) return;
 
-        std::vector<uint32_t> point_candidates;
-        if (!queryLayerSpatialIndex(
-                (*query.layer_spatial)[layer_idx],
-                query.mouse_ll.x - lon_pad,
-                query.mouse_ll.y - lat_pad,
-                query.mouse_ll.x + lon_pad,
-                query.mouse_ll.y + lat_pad,
-                point_candidates)) {
+    std::vector<uint32_t> point_candidates;
+    if (!queryLayerSpatialIndex(
+            (*query.layer_spatial)[layer_idx],
+            query.mouse_ll.x - lon_pad,
+            query.mouse_ll.y - lat_pad,
+            query.mouse_ll.x + lon_pad,
+            query.mouse_ll.y + lat_pad,
+            point_candidates)) {
+        return;
+    }
+
+    const auto& features = layer.features;
+    for (uint32_t fidx : point_candidates) {
+        if (fidx >= features.size()) continue;
+        const auto& fg = features[(size_t)fidx];
+        if (fg.extent.max_lon < query.view_min_lon || fg.extent.min_lon > query.view_max_lon ||
+            fg.extent.max_lat < query.view_min_lat || fg.extent.min_lat > query.view_max_lat) {
             continue;
         }
 
-        const auto& features = layer.features;
-        for (uint32_t fidx : point_candidates) {
-            if (fidx >= features.size()) continue;
-            const auto& fg = features[(size_t)fidx];
-            if (fg.extent.max_lon < query.view_min_lon || fg.extent.min_lon > query.view_max_lon ||
-                fg.extent.max_lat < query.view_min_lat || fg.extent.min_lat > query.view_max_lat) {
-                continue;
-            }
+        const ImVec2 point_world = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, query.math_zoom);
+        const ImVec2 point_screen = query.project_world(point_world);
+        const float dx = point_screen.x - query.mouse_screen.x;
+        const float dy = point_screen.y - query.mouse_screen.y;
+        const float dist_sq = dx * dx + dy * dy;
+        if (dist_sq > best_dist_sq) continue;
+        const uint64_t order_key = stablePointFeatureOrderKey(layer_idx, (size_t)fidx, fg);
+        const bool better_distance = dist_sq + 0.01f < best_dist_sq;
+        const bool equal_distance = std::fabs(dist_sq - best_dist_sq) <= 0.01f;
+        if (!better_distance && !(equal_distance && order_key >= best_order_key)) continue;
 
-            const ImVec2 point_world = lonLatToWorldPx(fg.extent.min_lon, fg.extent.min_lat, query.math_zoom);
-            const ImVec2 point_screen = query.project_world(point_world);
-            const float dx = point_screen.x - query.mouse_screen.x;
-            const float dy = point_screen.y - query.mouse_screen.y;
-            const float dist_sq = dx * dx + dy * dy;
-            if (dist_sq > best_dist_sq) continue;
-            const uint64_t order_key = stablePointFeatureOrderKey(layer_idx, (size_t)fidx, fg);
-            const bool better_distance = dist_sq + 0.01f < best_dist_sq;
-            const bool equal_distance = std::fabs(dist_sq - best_dist_sq) <= 0.01f;
-            if (!better_distance && !(equal_distance && order_key >= best_order_key)) continue;
-
-            best_dist_sq = dist_sq;
-            best_order_key = order_key;
-            out.hovered_point = &fg;
-            out.hovered_point_idx = (size_t)fidx;
-            out.hovered_point_layer_idx = (int)layer_idx;
-        }
+        best_dist_sq = dist_sq;
+        best_order_key = order_key;
+        out.hovered_point = &fg;
+        out.hovered_point_idx = (size_t)fidx;
+        out.hovered_point_layer_idx = (int)layer_idx;
     }
 }
 }

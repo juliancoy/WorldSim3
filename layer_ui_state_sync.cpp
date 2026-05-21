@@ -5,7 +5,7 @@
 
 LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     LayerUiStateSyncResult result;
-    if (!ctx.root || !ctx.layers || !ctx.last_hover_inspector_mode || !ctx.last_enabled_state ||
+    if (!ctx.root || !ctx.layers || !ctx.last_active_hover_layer_idx || !ctx.last_active_click_layer_idx || !ctx.last_enabled_state ||
         !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.status_mutex ||
         !ctx.zoning_zone_enabled || !ctx.layer_fill_enabled || !ctx.layer_hover_enabled ||
         !ctx.layer_inspect_enabled || !ctx.layer_heatmap_enabled || !ctx.layer_heatmap_max_zoom ||
@@ -25,7 +25,8 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     }
 
     result.ui_state_changed =
-        (ctx.hover_inspector_mode != *ctx.last_hover_inspector_mode) ||
+        (ctx.active_hover_layer_idx != *ctx.last_active_hover_layer_idx) ||
+        (ctx.active_click_layer_idx != *ctx.last_active_click_layer_idx) ||
         ctx.zoning_filters_changed ||
         ctx.event_sector_filters_changed ||
         ctx.layer_fill_state_changed ||
@@ -83,8 +84,9 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     saveLayerUiState(
         *ctx.root,
         *ctx.layers,
-        ctx.hover_inspector_enabled,
-        &ctx.hover_inspector_mode,
+        ctx.active_hover_layer_idx >= 0,
+        &ctx.active_hover_layer_idx,
+        &ctx.active_click_layer_idx,
         nullptr,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
@@ -117,9 +119,6 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
 
     saveFilterUiState(
         *ctx.root,
-        ctx.selected_nation_state,
-        ctx.selected_state_region,
-        ctx.selected_county_city,
         ctx.filter_enabled,
         ctx.filter_use_date,
         ctx.filter_year_min,
@@ -148,6 +147,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     ctx.last_enabled_state->clear();
     ctx.last_enabled_state->reserve(ctx.layers->size());
     for (const auto& layer : *ctx.layers) ctx.last_enabled_state->push_back(layer.enabled);
-    *ctx.last_hover_inspector_mode = ctx.hover_inspector_mode;
+    *ctx.last_active_hover_layer_idx = ctx.active_hover_layer_idx;
+    *ctx.last_active_click_layer_idx = ctx.active_click_layer_idx;
     return result;
 }

@@ -1,189 +1,210 @@
 # FILTER_FLOW
 
-This document defines the filter pipeline, the source of truth, and how UI-created filters should participate in map rendering.
+This document defines the runtime filter flow and the boundary between browse state and render state.
 
-## 1) Source Of Truth
+## 1) State Boundaries
 
-`MapFilterState` is the single source of truth for map filters created by UI elements.
+`MapFilterState` is the single source of truth for runtime UI filters.
 
-- Definition: [filters.h](/home/julian/Documents/worldsim3/filters.h:11)
-- Owner instance: [app_main_loop.cpp](/home/julian/Documents/worldsim3/app_main_loop.cpp:738)
-- Runtime evaluator: [filters.cpp](/home/julian/Documents/worldsim3/filters.cpp:60)
+- Definition: [filters.h](/mnt/Cancer/worldsim3/filters.h:34)
+- Owner instance: [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp:710)
+- Runtime evaluator: [filters.cpp](/mnt/Cancer/worldsim3/filters.cpp:218)
 
-UI tabs should mutate fields on `MapFilterState`; they should not create parallel filter state that the renderer also has to know about.
+`MapFilterState` contains only runtime filters:
 
-Current `MapFilterState` fields:
+- `enabled`
+- `use_date`, `year_min`, `year_max`
+- `blocklot`, `status`, `address`, `owner`, `zip`
+- `crime.*`
+- `selected_owners`
+- `event_sector_enabled`
 
-- Global map filter toggle: `enabled`
-- Date filter: `use_date`, `year_min`, `year_max`
-- Field filters: `blocklot`, `status`, `address`, `owner`, `zip`
-- Crime filters: `crime.enabled`, per-crime toggles, `crime.use_year`, `crime.year_min`, `crime.year_max`
-- Owner selection: `selected_owners`
+It does not contain geography browse state.
 
-The current run loop keeps reference aliases like `filter_enabled` and `selected_owners` so existing ImGui code remains readable, but storage still lives in `map_filter_state`.
+`LayerBrowseState` is separate UI state used only to decide which layers are shown in the left column.
 
-## 2) Evaluation Context
+- Definition: [filters.h](/mnt/Cancer/worldsim3/filters.h:29)
+- Left-panel owner: [left_panel.cpp](/mnt/Cancer/worldsim3/left_panel.cpp:239)
+- Browse matcher: [filters.cpp](/mnt/Cancer/worldsim3/filters.cpp:199)
 
-`FeatureFilterContext` is not filter state. It is the read-only evaluation context passed to filter functions for one frame.
+Rule:
+
+- If it changes rendered/runtime behavior, it belongs in `MapFilterState`, layer enablement, or per-layer settings.
+- If it only narrows the layer browser UI, it belongs in `LayerBrowseState`.
+
+## 2) Runtime Inputs
+
+Runtime map behavior is driven by:
+
+1. Enabled layers
+2. Per-layer settings
+3. `MapFilterState`
+4. Optional `FilterResultSet` / `QueryMapLayer` outputs
+
+Runtime map behavior is not driven by left-panel geography browse state.
+
+## 3) Evaluation Context
+
+`FeatureFilterContext` is read-only frame context, not persistent state.
 
 It contains:
 
-- Pointer to the SSOT: `map_filters`
-- Dataset references needed for joins: layers, real-property blocklot index, vacancy vectors
-- Layer identity indexes: parcel, real-property, crime layers
-- Optional canonical result set: `result_set`
+- `map_filters`
+- layer/dataset references used for joins
+- result-set gates
+- query overlays
+- parcel-related cached lookup tables
 
-Frame wiring:
+Builder:
 
-- [map_frame_session.cpp](/home/julian/Documents/worldsim3/map_frame_session.cpp:36)
+- [filter_context_builder.cpp](/mnt/Cancer/worldsim3/filter_context_builder.cpp:5)
 
-Rule: if a filter is created by a UI element, put it in `MapFilterState`. If a filter is produced by an engine/query operation, put its canonical output in `FilterResultSet`.
-
-## 3) Canonical Filter Outputs
-
-`FilterResultSet` is the bridge for non-UI filters such as SQL query results.
-
-It can carry:
-
-- `features`: exact `(layer_idx, feature_idx)` identities
-- `blocklots`: parcel-domain identities
-- `owners`: normalized owner identities
-
-Renderer code should not parse SQL rows or UI widget state directly. SQL and other engines should convert their output into `FilterResultSet`; the renderer continues to call `featurePassesFilters(...)`.
-
-When `FilterResultSet::active` is true and all identity sets are empty, no features pass that result-set gate. That represents a query/filter that returned zero matches.
-
-`QueryMapLayer` wraps a `FilterResultSet` with a user-visible name, enabled flag, SQL text, and RGBA color. Active query layers do not replace the base filter SSOT; they are color overlays resolved during rendering.
-
-SQL selection tables exposed to queries:
-
-- `ui_selected_owners(owner)`: owners selected in the Owners tab
-- `ui_selected_parcels(layer_idx, feature_idx, blocklot)`: active Parcel Info selection
-
-## 4) Runtime Predicate
+## 4) Visibility Predicate
 
 All feature visibility filtering flows through:
 
-- `featurePassesFilters(...)` in [filters.cpp](/home/julian/Documents/worldsim3/filters.cpp:60)
+- `featurePassesFilters(...)` in [filters.cpp](/mnt/Cancer/worldsim3/filters.cpp:218)
 
-The renderer wraps this as `feature_passes_filters(...)` and uses it consistently for direct layer drawing, heatmap sampling, and parcel overlays.
+High-level order:
 
-Pipeline:
-
-1. Optional `FilterResultSet` gate
-2. Crime-layer branch, if current layer is a crime layer
-3. Parcel-domain owner selection gate
+1. Active `FilterResultSet` gates
+2. Crime-layer branch, if applicable
+3. Parcel-domain owner-selection gate
 4. General field/date filters from `MapFilterState`
-5. Query color overlay resolution from active `QueryMapLayer` objects
-6. Layer-specific render gates outside generic filtering
+5. Layer-specific render gates outside generic filtering
 
-## 5) Crime Layers
+Color overlays are resolved separately through `queryMapColorForFeature(...)`.
 
-Crime layers use crime-specific filters only.
+Best practice:
 
-If both `MapFilterState::enabled` and `MapFilterState::crime.enabled` are false, crime features pass.
+- Keep visibility logic centralized in `featurePassesFilters(...)`.
+- Do not add geography gates to runtime filtering.
 
-If crime filtering is active, the evaluator applies:
+## 5) Left-Panel Geography Browse
 
-- Optional crime year range
-- Selected crime categories
+Nation/region selection in the left panel is browse state only.
+
+It affects:
+
+- which layer rows are visible in the left column
+- bulk left-panel actions that operate on the currently shown layer rows
+
+It does not affect:
+
+- map rendering
+- hover/inspection
+- query execution context
+- map-view restoration
+- runtime filter predicates
+
+Browse persistence:
+
+- [layer_state_io.cpp](/mnt/Cancer/worldsim3/layer_state_io.cpp:859)
 
 ## 6) Parcel-Domain Filters
 
-Parcel-domain means any layer whose manifest scale is `parcel`:
+Parcel-domain means layers whose manifest scale is `parcel`.
 
-- `layers[layer_idx].scale == "parcel"`
+Parcel-domain filters include:
 
-This intentionally includes more than the base parcel polygon layer: real property information, vacancy, rehab, tax, and other parcel-renderable layers all participate when they are configured as parcel scale.
+- selected owners
+- owner text query
+- real-property joins by normalized blocklot
+- parcel overlays
 
-Parcel-domain filters:
+Owner selection remains active even when the global filter toggle is off.
 
-- Selected owners
-- Owner text query
-- Real-property joins by normalized blocklot
-- Parcel overlays
+## 7) Unified Parcel Source
 
-Owner selection remains active even when the global filter toggle is off. That lets the Owners tab act as a direct selection/highlight mechanism.
-
-## 6.1) Unified Parcel Source
-
-Parcel-specific UI and SQL should use `UnifiedParcelRecord` / `unified_parcels` as the canonical parcel source.
-
-The unified record combines:
-
-- Base parcel geometry and feature identity
-- Real Property Information joined by normalized blocklot
-- Owner, address, zip, and status
-- Current assessed value fields: current land, current improvements, tax base, sale price, and computed current value
-- Vacancy notice/rehab counts
-- Tax lien/sale counts and amounts
+Parcel-specific UI and SQL should prefer `UnifiedParcelRecord` / `unified_parcels`.
 
 Runtime builder:
 
-- [parcel_unified.cpp](/home/julian/Documents/worldsim3/parcel_unified.cpp:45)
+- [parcel_unified.cpp](/mnt/Cancer/worldsim3/parcel_unified.cpp:45)
 
 DuckDB table:
 
 - `unified_parcels`
 
-Use `unified_parcels` for parcel queries when possible. Use `parcel_features` only when you need raw layer-row records for all parcel-scale layers.
+## 8) Zoning State
 
-## 7) Zoning Filters
+Zoning visibility is separate from parcel-owner and field filters.
 
-Zoning visibility is separate from owner and parcel field filters.
-
-Zoning uses its own class toggle map:
+Zoning class enablement uses:
 
 - `zoning_zone_enabled[zoning_code]`
 
-This prevents parcel owner filters from hiding zoning geometry. Zoning visibility is applied after generic feature filtering in the zoning draw paths.
+Derived zoning UI state is built from enabled zoning polygon layers:
 
-## 8) Draw Order
+- [derived_layer_caches.cpp](/mnt/Cancer/worldsim3/derived_layer_caches.cpp:137)
+
+Current limitation:
+
+- zoning class state is still global by raw zoning code string
+- hover/inspection still targets one active zoning layer at a time
+
+That limitation is independent of left-panel geography browse state.
+
+## 9) Hover Model
+
+Hover precedence is:
+
+1. Point features
+2. Parcels
+3. Zoning
+
+Implementation:
+
+- [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp:177)
+
+Implication:
+
+- zoning hover can still be masked by parcel hover in `All supported` mode
+
+## 10) Draw Order
 
 Layer draw order is intentionally grouped:
 
 1. Non-zoning, non-parcel layers
-2. Zoning layer
+2. Zoning layers
 3. Parcel-domain layers
-
-This keeps parcel-related geometry above zoning fills.
 
 Implementation:
 
-- [render_plan_builder.cpp](/home/julian/Documents/worldsim3/render_plan_builder.cpp:19)
+- [render_plan_builder.cpp](/mnt/Cancer/worldsim3/render_plan_builder.cpp:19)
 
-## 9) Persistence
+## 11) Persistence
 
-Filter persistence should read/write the SSOT fields from `MapFilterState`, including `selected_owners`.
+Runtime filter persistence should read/write `MapFilterState` only.
 
-Current persistence functions still use field-level parameters for compatibility:
+- Load filter state: [layer_state_io.cpp](/mnt/Cancer/worldsim3/layer_state_io.cpp:610)
+- Save filter state: [layer_state_io.cpp](/mnt/Cancer/worldsim3/layer_state_io.cpp:698)
 
-- Load: [layer_state_io.cpp](/home/julian/Documents/worldsim3/layer_state_io.cpp:428)
-- Save: [layer_state_io.cpp](/home/julian/Documents/worldsim3/layer_state_io.cpp:501)
+Map view persistence is global, not geography-scoped.
 
-The app passes references backed by `map_filter_state`, so persisted data still restores into the SSOT.
+- Load map view state: [layer_state_io.cpp](/mnt/Cancer/worldsim3/layer_state_io.cpp:778)
+- Save map view state: [layer_state_io.cpp](/mnt/Cancer/worldsim3/layer_state_io.cpp:822)
 
-## 10) Adding A New UI Filter
+Layer-browser geography is persisted separately from runtime filters.
 
-Use this workflow:
-
-1. Add a field to `MapFilterState` in [filters.h](/home/julian/Documents/worldsim3/filters.h:11).
-2. Render a UI control that mutates that field.
-3. Read that field inside `featurePassesFilters(...)` or a helper in [filters.cpp](/home/julian/Documents/worldsim3/filters.cpp:60).
-4. Include it in heatmap/cache keys if it changes rendered output.
-5. Persist it if users expect it to survive restart.
-
-Do not add renderer-local filter variables. They create ambiguous precedence and make map/query behavior diverge.
-
-## 11) Adding A SQL Filter
+## 12) Adding A New UI Filter
 
 Use this workflow:
 
-1. Execute SQL through the SQL tab or analytics layer.
-2. Include at least one canonical identity in the query result: `layer_idx + feature_idx`, `blocklot`, or `owner`.
-3. Convert query rows to `FilterResultSet` identities.
-4. Store the result in a `QueryMapLayer` with its own color.
-5. Attach query layers to `FeatureFilterContext::query_layers`.
-6. Let the renderer call `queryMapColorForFeature(...)` to color matching map elements.
+1. Add a field to `MapFilterState`.
+2. Mutate it from UI.
+3. Read it inside `featurePassesFilters(...)` or a helper it calls.
+4. Include it in cache keys if it changes rendered output.
+5. Persist it if it should survive restart.
 
-Do not make SQL directly toggle layer visibility or mutate ad-hoc UI fields unless the SQL result is explicitly being saved as a UI filter.
+Do not add runtime behavior to `LayerBrowseState`.
+
+## 13) Adding A New Browse Filter
+
+Use this workflow only for left-column catalog narrowing:
+
+1. Add a field to `LayerBrowseState`.
+2. Use it only in layer-list visibility/bulk layer-list actions.
+3. Persist it separately from runtime filter state.
+
+Do not let browse-only state affect rendering, hover, or query snapshots.

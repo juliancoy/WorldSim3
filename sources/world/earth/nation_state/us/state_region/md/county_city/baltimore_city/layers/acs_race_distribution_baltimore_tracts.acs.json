@@ -1,0 +1,12 @@
+
+<html>
+    <head>
+        <title>Missing Key</title>
+    </head>
+    <body>
+        <p>
+            A valid <em>key</em> must be included with each data API request.
+            You my signup for one <a href="key_signup.html">here</a>.
+        </p>
+    </body>
+</html>

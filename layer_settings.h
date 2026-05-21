@@ -6,6 +6,8 @@
 
 struct LayerSettingsPopupContext {
     LayerUiSharedContext* shared = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
     std::filesystem::path local_layer_path;
     size_t idx = 0;
     LayerDef* layer = nullptr;

@@ -6,11 +6,6 @@ FeatureFilterContext makeFeatureFilterContext(const FeatureFilterContextFactoryI
     FeatureFilterContext ctx;
     ctx.layers = input.layers;
     ctx.map_filters = input.map_filters;
-    if (input.map_filters) {
-        ctx.selected_nation_state_normalized = normalizeGeographyToken(input.map_filters->selected_nation_state);
-        ctx.selected_state_region_normalized = normalizeGeographyToken(input.map_filters->selected_state_region);
-        ctx.selected_county_city_normalized = normalizeGeographyToken(input.map_filters->selected_county_city);
-    }
     ctx.result_set = input.result_set;
     ctx.secondary_result_set = input.secondary_result_set;
     ctx.tertiary_result_set = input.tertiary_result_set;

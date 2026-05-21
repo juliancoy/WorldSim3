@@ -7,6 +7,18 @@
 #include <vector>
 #include <cstdint>
 
+enum class GeometryArtifactClass {
+    Unknown,
+    Point,
+    Polyline,
+    Polygon
+};
+
+struct StableFeatureId {
+    std::string layer_file;
+    std::string feature_id;
+};
+
 struct LayerDef {
     enum class Category {
         Housing,
@@ -27,6 +39,7 @@ struct LayerDef {
     std::string import_service_url;
     std::string import_where;
     std::string import_normalizer;
+    std::string import_query;
     std::string import_table;
     std::string import_year;
     std::string import_survey;

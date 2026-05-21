@@ -1,9 +1,11 @@
 #include "status_api.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
 #include "layer_import.h"
 #include "memory_utils.h"
 #include "net_http_utils.h"
+#include "repeatable_filters.h"
 #include "thread_utils.h"
 #include "worldsim_app.h"
 
@@ -59,9 +61,6 @@ json mapFilterStateJson(const MapFilterState& filters) {
     for (const auto& owner : filters.selected_owners) owners.push_back(owner);
     return {
         {"enabled", filters.enabled},
-        {"selected_nation_state", filters.selected_nation_state},
-        {"selected_state_region", filters.selected_state_region},
-        {"selected_county_city", filters.selected_county_city},
         {"use_date", filters.use_date},
         {"year_min", filters.year_min},
         {"year_max", filters.year_max},
@@ -336,6 +335,100 @@ std::string readTextFileIfExists(const std::string& path) {
     return ss.str();
 }
 
+struct HttpRequest {
+    std::string method = "GET";
+    std::string path = "/";
+    std::string query;
+    std::unordered_map<std::string, std::string> headers;
+    std::string body;
+};
+
+std::string trimAscii(std::string s) {
+    auto is_space = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!s.empty() && is_space((unsigned char)s.front())) s.erase(s.begin());
+    while (!s.empty() && is_space((unsigned char)s.back())) s.pop_back();
+    return s;
+}
+
+bool readHttpRequest(NetSocket fd, HttpRequest& out) {
+    constexpr size_t kMaxHeaderBytes = 64 * 1024;
+    constexpr size_t kMaxBodyBytes = 256 * 1024;
+    std::string raw;
+    raw.reserve(4096);
+    char buf[4096];
+    size_t header_end = std::string::npos;
+    while (header_end == std::string::npos) {
+        NetSSize n = netRead(fd, buf, sizeof(buf));
+        if (n <= 0) return false;
+        raw.append(buf, (size_t)n);
+        if (raw.size() > kMaxHeaderBytes) return false;
+        header_end = raw.find("\r\n\r\n");
+    }
+
+    const std::string header_text = raw.substr(0, header_end);
+    std::istringstream headers_in(header_text);
+    std::string request_line;
+    if (!std::getline(headers_in, request_line)) return false;
+    if (!request_line.empty() && request_line.back() == '\r') request_line.pop_back();
+    {
+        std::istringstream rl(request_line);
+        std::string path_q;
+        rl >> out.method >> path_q;
+        if (out.method.empty() || path_q.empty()) return false;
+        const size_t q = path_q.find('?');
+        out.path = path_q.substr(0, q);
+        out.query = q == std::string::npos ? std::string() : path_q.substr(q + 1);
+    }
+
+    std::string line;
+    while (std::getline(headers_in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string key = toLowerAscii(trimAscii(line.substr(0, colon)));
+        std::string value = trimAscii(line.substr(colon + 1));
+        out.headers[key] = value;
+    }
+
+    size_t content_length = 0;
+    auto cl_it = out.headers.find("content-length");
+    if (cl_it != out.headers.end()) {
+        try {
+            content_length = (size_t)std::stoull(cl_it->second);
+        } catch (...) {
+            return false;
+        }
+    }
+    if (content_length > kMaxBodyBytes) return false;
+
+    const size_t body_offset = header_end + 4;
+    out.body = raw.size() > body_offset ? raw.substr(body_offset) : std::string();
+    while (out.body.size() < content_length) {
+        NetSSize n = netRead(fd, buf, sizeof(buf));
+        if (n <= 0) return false;
+        out.body.append(buf, (size_t)n);
+        if (out.body.size() > kMaxBodyBytes) return false;
+    }
+    if (out.body.size() > content_length) out.body.resize(content_length);
+    return true;
+}
+
+std::unordered_map<std::string, std::string> parseQueryString(const std::string& query) {
+    std::unordered_map<std::string, std::string> out;
+    size_t pos = 0;
+    while (pos < query.size()) {
+        size_t amp = query.find('&', pos);
+        std::string kv = query.substr(pos, (amp == std::string::npos ? query.size() : amp) - pos);
+        size_t eq = kv.find('=');
+        std::string k = urlDecode(eq == std::string::npos ? kv : kv.substr(0, eq));
+        std::string v = eq == std::string::npos ? std::string() : urlDecode(kv.substr(eq + 1));
+        if (!k.empty()) out[k] = v;
+        if (amp == std::string::npos) break;
+        pos = amp + 1;
+    }
+    return out;
+}
+
 int currentProcessId() {
 #if defined(_WIN32)
     return _getpid();
@@ -424,6 +517,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         const char* kAppVersion = ctx.app_version;
         const int kProtocolVersion = ctx.protocol_version;
         const size_t kMaxTileCache = ctx.tile_cache_max;
+        const fs::path root = ctx.root ? *ctx.root : fs::current_path();
 
         if (!initNetworkSockets()) return;
         NetSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -455,68 +549,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
             NetSocket client_fd = accept(server_fd, nullptr, nullptr);
             if (client_fd == kInvalidNetSocket) continue;
 
-            char buf[1024];
-            NetSSize n = netRead(client_fd, buf, sizeof(buf) - 1);
-            if (n <= 0) {
+            HttpRequest http_req;
+            if (!readHttpRequest(client_fd, http_req)) {
                 netClose(client_fd);
                 continue;
             }
-            buf[n] = '\0';
-            std::string req(buf);
-            size_t method_sp = req.find(' ');
-            size_t path_sp = method_sp == std::string::npos ? std::string::npos : req.find(' ', method_sp + 1);
-            std::string path_q = (method_sp != std::string::npos && path_sp != std::string::npos)
-                ? req.substr(method_sp + 1, path_sp - method_sp - 1)
-                : "/";
-            auto split_q = [&](const std::string& pq) {
-                size_t q = pq.find('?');
-                return std::make_pair(pq.substr(0, q), q == std::string::npos ? std::string() : pq.substr(q + 1));
-            };
-            auto [path, query] = split_q(path_q);
-            auto url_decode = [](const std::string& in) -> std::string {
-                std::string out;
-                out.reserve(in.size());
-                for (size_t i = 0; i < in.size(); ++i) {
-                    const char ch = in[i];
-                    if (ch == '+') {
-                        out.push_back(' ');
-                        continue;
-                    }
-                    if (ch == '%' && i + 2 < in.size()) {
-                        auto hex = [](char c) -> int {
-                            if (c >= '0' && c <= '9') return c - '0';
-                            if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
-                            if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
-                            return -1;
-                        };
-                        const int hi = hex(in[i + 1]);
-                        const int lo = hex(in[i + 2]);
-                        if (hi >= 0 && lo >= 0) {
-                            out.push_back((char)((hi << 4) | lo));
-                            i += 2;
-                            continue;
-                        }
-                    }
-                    out.push_back(ch);
-                }
-                return out;
-            };
+            const std::string method = toLowerAscii(http_req.method);
+            const std::string& path = http_req.path;
+            const std::string& query = http_req.query;
+            const auto query_params = parseQueryString(query);
             auto get_q = [&](const std::string& key) -> std::string {
-                size_t pos = 0;
-                while (pos < query.size()) {
-                    size_t amp = query.find('&', pos);
-                    std::string kv = query.substr(pos, (amp == std::string::npos ? query.size() : amp) - pos);
-                    size_t eq = kv.find('=');
-                    std::string k = eq == std::string::npos ? kv : kv.substr(0, eq);
-                    k = url_decode(k);
-                    if (k == key) {
-                        if (eq == std::string::npos) return {};
-                        return url_decode(kv.substr(eq + 1));
-                    }
-                    if (amp == std::string::npos) break;
-                    pos = amp + 1;
-                }
-                return {};
+                auto it = query_params.find(key);
+                return it == query_params.end() ? std::string() : it->second;
             };
             auto send_json = [&](int code, const char* reason, const json& out) {
                 std::string body = out.dump();
@@ -906,6 +950,13 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"status", s},
                         {"display_status", display_status},
                         {"features", st.feature_count},
+                        {"geometry_artifact_class", geometryArtifactClassName(st.geometry_artifact_class)},
+                        {"geometry_artifact_path", st.geometry_artifact_path},
+                        {"geometry_phase", st.geometry_phase},
+                        {"geometry_source_signature", st.geometry_source_signature},
+                        {"geometry_loaded_from_artifact", st.geometry_loaded_from_artifact},
+                        {"geometry_gpu_resident", st.geometry_gpu_resident},
+                        {"geometry_gpu_pick_ready", st.geometry_gpu_pick_ready},
                         {"hydration_source_kind", st.hydration_source_kind},
                         {"hydration_phase", st.hydration_phase},
                         {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
@@ -1082,6 +1133,159 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/api/filters" || path.rfind("/api/filters/", 0) == 0) {
+                const std::string filter_prefix = "/api/filters/";
+                if (path == "/api/filters") {
+                    if (method == "get") {
+                        json filters = json::array();
+                        for (const auto& spec : loadAllRepeatableFilterSpecs(root)) {
+                            filters.push_back(repeatableFilterSummary(spec));
+                        }
+                        send_json(200, "OK", {
+                            {"ok", true},
+                            {"storage_dir", repeatableFilterDir(root).string()},
+                            {"methods", json::array({"GET", "POST"})},
+                            {"apply_endpoint", "/api/filters/{id}/apply"},
+                            {"filters", std::move(filters)}
+                        });
+                    } else if (method == "post") {
+                        try {
+                            json spec = http_req.body.empty() ? json() : json::parse(http_req.body);
+                            std::string error;
+                            if (!saveRepeatableFilterSpec(root, spec, error)) {
+                                send_json(400, "Bad Request", {{"ok", false}, {"error", error}});
+                            } else {
+                                const std::string id = sanitizeRepeatableFilterId(spec.value("id", ""));
+                                send_json(200, "OK", {
+                                    {"ok", true},
+                                    {"saved", id},
+                                    {"path", repeatableFilterPath(root, id).string()},
+                                    {"summary", repeatableFilterSummary(loadRepeatableFilterSpec(root, id))}
+                                });
+                            }
+                        } catch (const std::exception& e) {
+                            send_json(400, "Bad Request", {{"ok", false}, {"error", std::string("invalid JSON body: ") + e.what()}});
+                        }
+                    } else {
+                        send_json(405, "Method Not Allowed", {{"ok", false}, {"error", "use GET to list filters or POST with a JSON body to save one"}});
+                    }
+                } else {
+                    std::string remainder = path.substr(filter_prefix.size());
+                    bool apply = false;
+                    if (remainder.size() > 6 && remainder.rfind("/apply") == remainder.size() - 6) {
+                        apply = true;
+                        remainder.resize(remainder.size() - 6);
+                        while (!remainder.empty() && remainder.back() == '/') remainder.pop_back();
+                    }
+                    const std::string filter_id = sanitizeRepeatableFilterId(remainder);
+                    if (filter_id.empty()) {
+                        send_json(400, "Bad Request", {{"ok", false}, {"error", "filter id is required"}});
+                    } else if (apply) {
+                        if (method != "post") {
+                            send_json(405, "Method Not Allowed", {{"ok", false}, {"error", "use POST to apply a repeatable filter"}});
+                        } else {
+                            const json spec = loadRepeatableFilterSpec(root, filter_id);
+                            if (spec.is_null()) {
+                                send_json(404, "Not Found", {{"ok", false}, {"error", "filter definition not found"}});
+                            } else {
+                                const std::string sql = repeatableFilterSql(spec);
+                                size_t max_rows = 100;
+                                const std::string limit_raw = get_q("limit");
+                                if (!limit_raw.empty()) {
+                                    try {
+                                        max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 5000);
+                                    } catch (...) {
+                                        max_rows = 100;
+                                    }
+                                }
+                                const ApiQueryControlCommand::ApplyMode apply_mode = parseControlApplyMode(get_q("apply"));
+                                const std::string name = get_q("name").empty()
+                                    ? ("Saved Filter " + filter_id)
+                                    : get_q("name");
+                                DuckDbQueryResult result;
+                                if (!duckdb_analytics.status().last_rebuild_ok && !duckdb_analytics.validateExistingCache()) {
+                                    result.ok = false;
+                                    result.message = duckdb_analytics.status().message;
+                                } else {
+                                    result = duckdb_analytics.executeMapQuery(
+                                        sql,
+                                        map_filter_state.selected_owners,
+                                        {},
+                                        max_rows);
+                                }
+                                json rows = json::array();
+                                for (const auto& row : result.rows) {
+                                    json row_json = json::object();
+                                    for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+                                        row_json[result.columns[i]] = row[i];
+                                    }
+                                    rows.push_back(std::move(row_json));
+                                }
+                                float response_color[4] = {1.0f, 0.16f, 0.12f, 1.0f};
+                                if (result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None) {
+                                    ApiQueryControlCommand cmd;
+                                    cmd.apply_mode = apply_mode;
+                                    cmd.layer.enabled = true;
+                                    cmd.layer.name = name;
+                                    cmd.layer.sql = sql;
+                                    applyControlColor(
+                                        cmd.layer,
+                                        get_q("color"),
+                                        get_q("r"),
+                                        get_q("g"),
+                                        get_q("b"),
+                                        get_q("a"));
+                                    for (int i = 0; i < 4; ++i) response_color[i] = cmd.layer.color[i];
+                                    cmd.layer.result_set = std::move(result.result_set);
+                                    cmd.layer.row_count = result.rows.size();
+                                    cmd.layer.status = result.message;
+                                    {
+                                        std::lock_guard<std::mutex> lk(api_control_mutex);
+                                        api_query_control_cmds.push_back(std::move(cmd));
+                                    }
+                                }
+                                send_json(result.ok ? 200 : 400, result.ok ? "OK" : "Bad Request", {
+                                    {"ok", result.ok},
+                                    {"id", filter_id},
+                                    {"entity", spec.value("entity", "")},
+                                    {"version", spec.value("version", 0)},
+                                    {"sql", sql},
+                                    {"message", result.message},
+                                    {"apply", controlApplyModeName(apply_mode)},
+                                    {"queued", result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None},
+                                    {"color", {
+                                        {"r", response_color[0]},
+                                        {"g", response_color[1]},
+                                        {"b", response_color[2]},
+                                        {"a", response_color[3]}
+                                    }},
+                                    {"columns", result.columns},
+                                    {"rows", std::move(rows)},
+                                    {"result_set", filterResultSetSummary(result.result_set)}
+                                });
+                            }
+                        }
+                    } else if (method == "get") {
+                        const json spec = loadRepeatableFilterSpec(root, filter_id);
+                        if (spec.is_null()) {
+                            send_json(404, "Not Found", {{"ok", false}, {"error", "filter definition not found"}});
+                        } else {
+                            send_json(200, "OK", {
+                                {"ok", true},
+                                {"path", repeatableFilterPath(root, filter_id).string()},
+                                {"spec", spec}
+                            });
+                        }
+                    } else if (method == "delete") {
+                        if (deleteRepeatableFilterSpec(root, filter_id)) {
+                            send_json(200, "OK", {{"ok", true}, {"deleted", filter_id}});
+                        } else {
+                            send_json(404, "Not Found", {{"ok", false}, {"error", "filter definition not found"}});
+                        }
+                    } else {
+                        send_json(405, "Method Not Allowed", {{"ok", false}, {"error", "use GET, DELETE, or POST /apply for saved filters"}});
+                    }
+                }
             } else if (path == "/controls" || path == "/controls/filter" || path == "/controls/query") {
                 if (path == "/controls") {
                     json layer_summaries = json::array();
@@ -1471,6 +1675,8 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     g_ScreenshotState.logical_height = 0;
                     g_ScreenshotState.output_width = 0;
                     g_ScreenshotState.output_height = 0;
+                    g_ScreenshotState.requested_output_width = 0;
+                    g_ScreenshotState.requested_output_height = 0;
                     g_ScreenshotState.framebuffer_scale_x = 1.0f;
                     g_ScreenshotState.framebuffer_scale_y = 1.0f;
                 }

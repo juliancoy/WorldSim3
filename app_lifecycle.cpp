@@ -71,7 +71,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         *ctx.root,
         *ctx.layers,
         ctx.hover_inspector_enabled,
-        ctx.hover_inspector_mode,
+        ctx.active_hover_layer_idx,
+        ctx.active_click_layer_idx,
         ctx.parcel_parameter_mode,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
@@ -127,9 +128,6 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.event_sector_enabled) {
         saveFilterUiState(
             *ctx.root,
-            ctx.selected_nation_state,
-            ctx.selected_state_region,
-            ctx.selected_county_city,
             *ctx.filter_enabled,
             *ctx.filter_use_date,
             *ctx.filter_year_min,
@@ -162,14 +160,14 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.selected_parcel_indices) {
         saveMapUiState(
             *ctx.root,
-            ctx.selected_nation_state,
-            ctx.selected_state_region,
-            ctx.selected_county_city,
             *ctx.center_lon,
             *ctx.center_lat,
             *ctx.zoom,
             *ctx.selected_parcel_idx,
             *ctx.selected_parcel_indices);
+    }
+    if (ctx.query_history) {
+        saveQueryHistoryUiState(*ctx.root, *ctx.query_history);
     }
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);

@@ -223,6 +223,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 layer_file VARCHAR,
                 duckdb_role VARCHAR,
                 feature_idx UBIGINT,
+                feature_id VARCHAR,
                 scale VARCHAR,
                 category VARCHAR,
                 provenance_world VARCHAR,
@@ -264,6 +265,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             const std::string duckdb_role = layer.duckdb_role.empty() ? "layer_feature" : layer.duckdb_role;
             for (size_t fi = 0; fi < layer.features.size(); ++fi) {
                 const auto& fg = layer.features[fi];
+                const std::string feature_id = featureStableIdForLayerFeature(layer, fg, fi);
                 const std::string blocklot = featureBlockLotJoinKey(fg);
                 std::string owner = toLowerAscii(trimDisplayValue(prop(fg, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"})));
                 const std::string address = prop(fg, {
@@ -298,6 +300,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<const char*>(layer.file.c_str());
                 appender.Append<const char*>(duckdb_role.c_str());
                 appender.Append<uint64_t>((uint64_t)fi);
+                appender.Append<const char*>(feature_id.c_str());
                 appender.Append<const char*>(layer.scale.c_str());
                 appender.Append<const char*>(category.c_str());
                 appender.Append<const char*>(layer.provenance_world.c_str());
@@ -404,6 +407,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         }
 
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_blocklot ON layer_features(blocklot)", "index layer_features blocklot");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_feature_id ON layer_features(layer_file, feature_id)", "index layer_features feature_id");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_owner ON layer_features(owner)", "index layer_features owner");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)", "index layer_features layer_file");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_geography ON layer_features(provenance_nation_state, provenance_state_region)", "index layer_features geography");
@@ -791,12 +795,13 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
         for (const auto& owner : selected_owners) {
             con.Query("INSERT INTO ui_selected_owners VALUES ('" + sqlQuote(owner) + "')");
         }
-        con.Query("CREATE TEMP TABLE ui_selected_parcels(layer_idx UBIGINT, feature_idx UBIGINT, blocklot VARCHAR)");
+        con.Query("CREATE TEMP TABLE ui_selected_parcels(layer_idx UBIGINT, feature_idx UBIGINT, feature_id VARCHAR, blocklot VARCHAR)");
         for (const auto& parcel : selected_parcels) {
             con.Query(
                 "INSERT INTO ui_selected_parcels VALUES (" +
                 std::to_string((uint64_t)parcel.layer_idx) + ", " +
                 std::to_string((uint64_t)parcel.feature_idx) + ", '" +
+                sqlQuote(parcel.feature_id) + "', '" +
                 sqlQuote(parcel.blocklot) + "')");
         }
 
@@ -1027,6 +1032,7 @@ std::vector<DuckDbSearchHit> DuckDbAnalytics::searchParcels(const std::string& q
                 DuckDbSearchHit hit;
                 hit.layer_idx = (size_t)chunk->GetValue(0, row).GetValue<uint64_t>();
                 hit.feature_idx = (size_t)chunk->GetValue(1, row).GetValue<uint64_t>();
+                hit.feature_id.clear();
                 hit.blocklot = chunk->GetValue(2, row).ToString();
                 hit.owner = chunk->GetValue(3, row).ToString();
                 hit.address = chunk->GetValue(4, row).ToString();

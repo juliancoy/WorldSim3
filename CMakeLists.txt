@@ -108,6 +108,7 @@ add_executable(worldsim3
   dataset_library.cpp
   duckdb_analytics.cpp
   sql_tab.cpp
+  repeatable_filters.cpp
   net_http_utils.cpp
   status_api.cpp
   dataset_lan_api.cpp

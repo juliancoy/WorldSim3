@@ -21,6 +21,7 @@ struct MapHoverQuery {
     bool zoning_hover_active = false;
     bool zoning_inspect_active = false;
     bool point_hover_active = false;
+    int active_hover_layer_idx = -1;
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;

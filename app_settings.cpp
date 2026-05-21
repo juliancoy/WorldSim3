@@ -83,6 +83,15 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("reserve_cpu_cores") && j["reserve_cpu_cores"].is_number_integer()) {
         out.reserve_cpu_cores = std::max(0, j["reserve_cpu_cores"].get<int>());
     }
+    if (j.contains("map_title_text") && j["map_title_text"].is_string()) {
+        out.map_title_text = j["map_title_text"].get<std::string>();
+    }
+    if (j.contains("map_title_show_primary_parcel_source") && j["map_title_show_primary_parcel_source"].is_boolean()) {
+        out.map_title_show_primary_parcel_source = j["map_title_show_primary_parcel_source"].get<bool>();
+    }
+    if (j.contains("map_title_all_caps") && j["map_title_all_caps"].is_boolean()) {
+        out.map_title_all_caps = j["map_title_all_caps"].get<bool>();
+    }
     return out;
 }
 
@@ -107,6 +116,9 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     j["topo_vector_enabled"] = settings.topo_vector_enabled;
     j["zoning_use_simcity_colors"] = settings.zoning_use_simcity_colors;
     j["reserve_cpu_cores"] = std::max(0, settings.reserve_cpu_cores);
+    j["map_title_text"] = settings.map_title_text;
+    j["map_title_show_primary_parcel_source"] = settings.map_title_show_primary_parcel_source;
+    j["map_title_all_caps"] = settings.map_title_all_caps;
     std::ofstream out(root / "data" / "app_settings.json");
     if (out) out << j.dump(2);
 }

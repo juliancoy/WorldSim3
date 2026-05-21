@@ -13,6 +13,10 @@ double profMsSince(const std::chrono::steady_clock::time_point& begin) {
 bool layerToggleEnabled(const std::vector<bool>* values, int idx) {
     return values && idx >= 0 && (size_t)idx < values->size() && (*values)[(size_t)idx];
 }
+
+bool activeLayerMatches(int active_layer_idx, int layer_idx) {
+    return active_layer_idx >= 0 && active_layer_idx == layer_idx;
+}
 }
 
 MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
@@ -21,7 +25,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
         !ctx.lazy_tile_download || !ctx.topo_tiles_available_cached || !ctx.topo_vector_available_cached ||
         !ctx.basemap_source_has_any_files_cached || !ctx.tile_root_dir_cached || !ctx.basemap_availability_last_check ||
         !ctx.layers || !ctx.layer_spatial || !ctx.layer_hover_enabled || !ctx.layer_inspect_enabled ||
-        !ctx.hover_inspector_enabled || !ctx.prof_tiles_drawn_frame || !ctx.prof_tile_ms_last ||
+        !ctx.prof_tiles_drawn_frame || !ctx.prof_tile_ms_last ||
         !ctx.persistent_projection_cache || !ctx.persistent_projection_generation ||
         !ctx.prof_projection_world_ring_cache_entries || !ctx.prof_projection_world_extent_cache_entries ||
         !ctx.prof_projection_cache_generation) {
@@ -52,14 +56,23 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.view_max_lat = map_viewport.view_max_lat;
     session.project_world = [map_viewport](const ImVec2& wp) { return map_viewport.projectWorld(wp); };
 
-    const bool hover_parcels_enabled = (ctx.hover_inspector_mode == 1 || ctx.hover_inspector_mode == 3);
-    const bool hover_zoning_enabled = (ctx.hover_inspector_mode == 2 || ctx.hover_inspector_mode == 3);
-    const bool hover_points_enabled = (ctx.hover_inspector_mode != 0);
-    *ctx.hover_inspector_enabled = (ctx.hover_inspector_mode != 0);
-    session.parcel_hover_active = hover_parcels_enabled && layerToggleEnabled(ctx.layer_hover_enabled, ctx.parcel_layer_idx);
-    session.parcel_inspect_active = layerToggleEnabled(ctx.layer_inspect_enabled, ctx.parcel_layer_idx);
-    session.zoning_hover_active = hover_zoning_enabled && layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
-    session.zoning_inspect_active = layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
+    session.parcel_hover_active =
+        activeLayerMatches(ctx.active_hover_layer_idx, ctx.parcel_layer_idx) &&
+        layerToggleEnabled(ctx.layer_hover_enabled, ctx.parcel_layer_idx);
+    session.parcel_inspect_active =
+        activeLayerMatches(ctx.active_click_layer_idx, ctx.parcel_layer_idx) &&
+        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.parcel_layer_idx);
+    session.zoning_hover_active =
+        activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
+        layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
+    session.zoning_inspect_active =
+        activeLayerMatches(ctx.active_click_layer_idx, ctx.zoning_layer_idx) &&
+        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
+    const bool hover_points_enabled =
+        ctx.active_hover_layer_idx >= 0 &&
+        ctx.active_hover_layer_idx != ctx.parcel_layer_idx &&
+        ctx.active_hover_layer_idx != ctx.zoning_layer_idx &&
+        layerToggleEnabled(ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
 
     const bool suppress_hover_lookup =
         session.map_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
@@ -70,6 +83,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     hover_query.zoning_hover_active = session.zoning_hover_active;
     hover_query.zoning_inspect_active = session.zoning_inspect_active;
     hover_query.point_hover_active = hover_points_enabled;
+    hover_query.active_hover_layer_idx = ctx.active_hover_layer_idx;
     hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
     hover_query.zoning_layer_idx = ctx.zoning_layer_idx;
     hover_query.layers = ctx.layers;

@@ -3,7 +3,10 @@
 #include "app_utils.h"
 #include "feature_props.h"
 #include "imgui.h"
+#include "layer_state_io.h"
+#include "repeatable_filters.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <initializer_list>
@@ -11,7 +14,14 @@
 #include <string>
 #include <vector>
 
+using json = nlohmann::json;
+
 namespace {
+void copyStringToBuffer(std::string_view src, char* dst, size_t dst_size) {
+    if (!dst || dst_size == 0) return;
+    std::snprintf(dst, dst_size, "%s", std::string(src).c_str());
+}
+
 void drawResultSetSummary(const char* label, const FilterResultSet& result_set) {
     ImGui::Text("%s", label);
     ImGui::BulletText(
@@ -220,6 +230,75 @@ void addReason(std::vector<std::string>& reasons, const std::string& reason) {
     reasons.push_back(reason);
 }
 
+std::string suggestedRepeatableFilterId(const QueryHistoryEntry& entry) {
+    const std::string source = !entry.name.empty() ? entry.name : (!entry.executed_at_utc.empty() ? entry.executed_at_utc : "query_history");
+    std::string candidate;
+    candidate.reserve(source.size());
+    for (char c : source) {
+        if (std::isalnum((unsigned char)c)) candidate.push_back((char)std::tolower((unsigned char)c));
+        else if (c == ' ' || c == '-' || c == '.' || c == ':') candidate.push_back('_');
+    }
+    candidate = sanitizeRepeatableFilterId(candidate);
+    if (candidate.empty()) candidate = "query_history";
+    return candidate;
+}
+
+void restoreQuerySnapshot(ActiveQueriesTabContext& ctx, const QueryExecutionContextSnapshot& snapshot) {
+    if (!ctx.map_filter_state || !ctx.app_settings || !ctx.center_lon || !ctx.center_lat || !ctx.zoom) return;
+    MapFilterState& filters = *ctx.map_filter_state;
+    filters.enabled = snapshot.filter_enabled;
+    filters.use_date = snapshot.filter_use_date;
+    filters.year_min = snapshot.filter_year_min;
+    filters.year_max = snapshot.filter_year_max;
+    copyStringToBuffer(snapshot.filter_blocklot, filters.blocklot, sizeof(filters.blocklot));
+    copyStringToBuffer(snapshot.filter_status, filters.status, sizeof(filters.status));
+    copyStringToBuffer(snapshot.filter_address, filters.address, sizeof(filters.address));
+    copyStringToBuffer(snapshot.filter_owner, filters.owner, sizeof(filters.owner));
+    copyStringToBuffer(snapshot.filter_zip, filters.zip, sizeof(filters.zip));
+    filters.crime = snapshot.crime;
+    filters.selected_owners.clear();
+    for (const auto& owner : snapshot.selected_owners) filters.selected_owners.insert(owner);
+    filters.event_sector_enabled = snapshot.event_sector_enabled;
+    *ctx.center_lon = snapshot.center_lon;
+    *ctx.center_lat = std::clamp(snapshot.center_lat, -85.0, 85.0);
+    *ctx.zoom = snapshot.zoom;
+    ctx.app_settings->map_title_text = snapshot.map_title_text;
+    ctx.app_settings->map_title_show_primary_parcel_source = snapshot.map_title_show_primary_parcel_source;
+}
+
+std::vector<DuckDbSelectedParcel> selectedParcelsFromSnapshot(const QueryExecutionContextSnapshot& snapshot) {
+    std::vector<DuckDbSelectedParcel> out;
+    out.reserve(snapshot.selected_parcel_blocklots.size());
+    for (const auto& blocklot : snapshot.selected_parcel_blocklots) {
+        if (blocklot.empty()) continue;
+        out.push_back(DuckDbSelectedParcel{0, 0, std::string(), blocklot});
+    }
+    return out;
+}
+
+bool rerunHistoryEntry(ActiveQueriesTabContext& ctx, const QueryHistoryEntry& entry) {
+    if (!ctx.duckdb_analytics || !ctx.query_layers) return false;
+    const std::unordered_set<std::string> selected_owner_set(
+        entry.snapshot.selected_owners.begin(),
+        entry.snapshot.selected_owners.end());
+    DuckDbQueryResult result = ctx.duckdb_analytics->executeMapQuery(
+        entry.sql,
+        selected_owner_set,
+        selectedParcelsFromSnapshot(entry.snapshot),
+        1000);
+    if (!result.ok) return false;
+    QueryMapLayer layer;
+    layer.enabled = true;
+    layer.name = entry.name.empty() ? "History Query" : entry.name;
+    layer.sql = entry.sql;
+    for (int i = 0; i < 4; ++i) layer.color[i] = entry.color[i];
+    layer.result_set = std::move(result.result_set);
+    layer.row_count = result.rows.size();
+    layer.status = result.message;
+    ctx.query_layers->push_back(std::move(layer));
+    return true;
+}
+
 void drawPerLayerReasonSummary(const ActiveQueriesTabContext& ctx) {
     if (!ctx.layers) return;
     ImGui::SeparatorText("Per-Layer Visibility Reasons");
@@ -292,6 +371,135 @@ void drawPerLayerReasonSummary(const ActiveQueriesTabContext& ctx) {
     }
     ImGui::EndChild();
 }
+
+}  // namespace
+
+void drawQueryHistoryTab(ActiveQueriesTabContext& ctx) {
+    if (!ImGui::BeginTabItem("Query History")) return;
+    if (!ctx.query_history || !ctx.app_settings || !ctx.map_filter_state) {
+        ImGui::TextDisabled("Query history context is incomplete.");
+        ImGui::EndTabItem();
+        return;
+    }
+
+    static int selected_history = -1;
+    static int configured_history = -1;
+    static char save_filter_id[96] = "";
+    static char save_filter_name[128] = "";
+    static int save_filter_version = 1;
+    static std::string save_filter_status;
+    if (ctx.query_history->empty()) {
+        ImGui::TextDisabled("No saved query history yet.");
+        ImGui::TextDisabled("History entries are captured when SQL queries are executed from the SQL tab.");
+        ImGui::EndTabItem();
+        return;
+    }
+    if (selected_history >= (int)ctx.query_history->size()) selected_history = (int)ctx.query_history->size() - 1;
+
+    if (ImGui::BeginChild("query_history_list", ImVec2(0, 180), true)) {
+        for (size_t i = 0; i < ctx.query_history->size(); ++i) {
+            QueryHistoryEntry& entry = (*ctx.query_history)[i];
+            ImGui::PushID((int)i);
+            const std::string label = entry.name.empty()
+                ? (entry.executed_at_utc.empty() ? "Unnamed Query" : entry.executed_at_utc)
+                : (entry.name + "##" + std::to_string(i));
+            if (ImGui::Selectable(label.c_str(), selected_history == (int)i)) selected_history = (int)i;
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s | %s | %zu rows",
+                entry.mode.empty() ? "run" : entry.mode.c_str(),
+                entry.executed_at_utc.empty() ? "unknown time" : entry.executed_at_utc.c_str(),
+                entry.row_count);
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+
+    if (selected_history >= 0 && selected_history < (int)ctx.query_history->size()) {
+        QueryHistoryEntry& entry = (*ctx.query_history)[(size_t)selected_history];
+        if (configured_history != selected_history) {
+            configured_history = selected_history;
+            const std::string suggested_id = suggestedRepeatableFilterId(entry);
+            const std::string suggested_name = entry.name.empty() ? "Saved Query" : entry.name;
+            std::snprintf(save_filter_id, sizeof(save_filter_id), "%s", suggested_id.c_str());
+            std::snprintf(save_filter_name, sizeof(save_filter_name), "%s", suggested_name.c_str());
+            save_filter_version = 1;
+            save_filter_status.clear();
+        }
+        ImGui::SeparatorText("Selected Entry");
+        ImGui::TextWrapped("%s", entry.name.empty() ? "Unnamed Query" : entry.name.c_str());
+        ImGui::TextDisabled("Executed: %s", entry.executed_at_utc.empty() ? "unknown" : entry.executed_at_utc.c_str());
+        ImGui::TextDisabled("Mode: %s | Rows: %zu", entry.mode.empty() ? "run" : entry.mode.c_str(), entry.row_count);
+        if (!entry.status.empty()) ImGui::TextWrapped("Status: %s", entry.status.c_str());
+        ImGui::ColorButton("History Color", ImVec4(entry.color[0], entry.color[1], entry.color[2], entry.color[3]));
+        ImGui::SameLine();
+        if (ImGui::Button("Restore Context")) {
+            restoreQuerySnapshot(ctx, entry.snapshot);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Run Again")) {
+            restoreQuerySnapshot(ctx, entry.snapshot);
+            rerunHistoryEntry(ctx, entry);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Delete Entry")) {
+            ctx.query_history->erase(ctx.query_history->begin() + selected_history);
+            if (ctx.root) saveQueryHistoryUiState(*ctx.root, *ctx.query_history);
+            if (selected_history >= (int)ctx.query_history->size()) selected_history = (int)ctx.query_history->size() - 1;
+            ImGui::EndTabItem();
+            return;
+        }
+
+        ImGui::SeparatorText("Snapshot");
+        ImGui::BulletText("View: lon %.5f | lat %.5f | zoom %.2f",
+            entry.snapshot.center_lon,
+            entry.snapshot.center_lat,
+            entry.snapshot.zoom);
+        ImGui::BulletText("Title: %s", entry.snapshot.map_title_text.empty() ? "(blank)" : entry.snapshot.map_title_text.c_str());
+        ImGui::BulletText("Owners snapshot: %zu", entry.snapshot.selected_owners.size());
+        ImGui::BulletText("Selected parcel blocklots: %zu", entry.snapshot.selected_parcel_blocklots.size());
+        ImGui::BulletText("Filters enabled: %s", entry.snapshot.filter_enabled ? "true" : "false");
+        if (entry.snapshot.filter_use_date) {
+            ImGui::BulletText("Year range: %d-%d", entry.snapshot.filter_year_min, entry.snapshot.filter_year_max);
+        }
+        if (!entry.snapshot.filter_blocklot.empty()) ImGui::BulletText("Block/Lot: %s", entry.snapshot.filter_blocklot.c_str());
+        if (!entry.snapshot.filter_status.empty()) ImGui::BulletText("Status: %s", entry.snapshot.filter_status.c_str());
+        if (!entry.snapshot.filter_address.empty()) ImGui::BulletText("Address: %s", entry.snapshot.filter_address.c_str());
+        if (!entry.snapshot.filter_owner.empty()) ImGui::BulletText("Owner: %s", entry.snapshot.filter_owner.c_str());
+        if (!entry.snapshot.filter_zip.empty()) ImGui::BulletText("ZIP: %s", entry.snapshot.filter_zip.c_str());
+
+        ImGui::SeparatorText("Promote To Repeatable Filter");
+        ImGui::InputText("Filter ID", save_filter_id, sizeof(save_filter_id));
+        ImGui::InputText("Filter Name", save_filter_name, sizeof(save_filter_name));
+        ImGui::InputInt("Filter Version", &save_filter_version);
+        if (ImGui::Button("Save History Entry As Repeatable Filter")) {
+            if (!ctx.root) {
+                save_filter_status = "Save failed: missing app root";
+            } else {
+                std::string error;
+                const json spec = makeSqlRepeatableFilterSpec(
+                    entry,
+                    save_filter_id,
+                    save_filter_name,
+                    std::max(save_filter_version, 1),
+                    "query_history");
+                if (saveRepeatableFilterSpec(*ctx.root, spec, error)) {
+                    save_filter_status = "Saved " + sanitizeRepeatableFilterId(save_filter_id);
+                } else {
+                    save_filter_status = "Save failed: " + error;
+                }
+            }
+        }
+        if (!save_filter_status.empty()) {
+            ImGui::TextWrapped("%s", save_filter_status.c_str());
+        }
+
+        ImGui::SeparatorText("SQL");
+        ImGui::BeginChild("query_history_sql", ImVec2(0, 160), true);
+        ImGui::TextUnformatted(entry.sql.c_str());
+        ImGui::EndChild();
+    }
+
+    ImGui::EndTabItem();
 }
 
 void drawActiveQueriesTab(const ActiveQueriesTabContext& ctx) {

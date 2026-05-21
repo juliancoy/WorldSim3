@@ -40,8 +40,8 @@ struct MapCanvasSessionContext {
     const std::vector<bool>* layer_hover_enabled = nullptr;
     const std::vector<bool>* layer_inspect_enabled = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool* hover_inspector_enabled = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     int vacant_notice_layer_idx = -1;

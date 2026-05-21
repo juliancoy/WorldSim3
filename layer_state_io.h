@@ -8,13 +8,16 @@
 #include <unordered_set>
 #include <vector>
 
+struct QueryHistoryEntry;
+
 std::vector<LayerDef> loadManifest(const std::filesystem::path& root);
 
 void loadLayerUiState(
     const std::filesystem::path& root,
     std::vector<LayerDef>& layers,
     bool& hover_inspector_enabled,
-    int* hover_inspector_mode = nullptr,
+    int* active_hover_layer_idx = nullptr,
+    int* active_click_layer_idx = nullptr,
     int* parcel_parameter_mode = nullptr,
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     std::vector<bool>* layer_fill_enabled = nullptr,
@@ -49,7 +52,8 @@ void saveLayerUiState(
     const std::filesystem::path& root,
     const std::vector<LayerDef>& layers,
     bool hover_inspector_enabled,
-    const int* hover_inspector_mode = nullptr,
+    const int* active_hover_layer_idx = nullptr,
+    const int* active_click_layer_idx = nullptr,
     const int* parcel_parameter_mode = nullptr,
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     const std::vector<bool>* layer_fill_enabled = nullptr,
@@ -82,9 +86,6 @@ void saveLayerUiState(
 
 void loadFilterUiState(
     const std::filesystem::path& root,
-    std::string* selected_nation_state = nullptr,
-    std::string* selected_state_region = nullptr,
-    std::string* selected_county_city = nullptr,
     bool* filter_enabled = nullptr,
     bool* filter_use_date = nullptr,
     int* filter_year_min = nullptr,
@@ -118,9 +119,6 @@ void loadFilterUiState(
 
 void saveFilterUiState(
     const std::filesystem::path& root,
-    const std::string* selected_nation_state,
-    const std::string* selected_state_region,
-    const std::string* selected_county_city,
     bool filter_enabled,
     bool filter_use_date,
     int filter_year_min,
@@ -148,9 +146,6 @@ void saveFilterUiState(
 
 void loadMapUiState(
     const std::filesystem::path& root,
-    const std::string* selected_nation_state = nullptr,
-    const std::string* selected_state_region = nullptr,
-    const std::string* selected_county_city = nullptr,
     double* center_lon = nullptr,
     double* center_lat = nullptr,
     double* zoom = nullptr,
@@ -159,11 +154,26 @@ void loadMapUiState(
 
 void saveMapUiState(
     const std::filesystem::path& root,
-    const std::string* selected_nation_state,
-    const std::string* selected_state_region,
-    const std::string* selected_county_city,
     double center_lon,
     double center_lat,
     double zoom,
     size_t selected_parcel_idx,
     const std::vector<size_t>& selected_parcel_indices);
+
+void loadQueryHistoryUiState(
+    const std::filesystem::path& root,
+    std::vector<QueryHistoryEntry>* query_history);
+
+void saveQueryHistoryUiState(
+    const std::filesystem::path& root,
+    const std::vector<QueryHistoryEntry>& query_history);
+
+void loadLayerBrowseUiState(
+    const std::filesystem::path& root,
+    std::string* selected_nation_state = nullptr,
+    std::string* selected_state_region = nullptr);
+
+void saveLayerBrowseUiState(
+    const std::filesystem::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region);

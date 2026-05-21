@@ -55,6 +55,13 @@ struct CanonicalFeatureCollectionMetadata {
     uintmax_t file_size_bytes = 0;
 };
 
+const char* geometryArtifactClassName(GeometryArtifactClass cls);
+const char* geometryArtifactFileSuffix(GeometryArtifactClass cls);
+std::filesystem::path geometryArtifactCachePathForLayerFile(
+    const std::filesystem::path& root,
+    const std::string& layer_file,
+    GeometryArtifactClass cls);
+
 std::string fileSignature(const std::filesystem::path& p);
 bool resolveLayerSourceSignature(
     const std::filesystem::path& layer_path,

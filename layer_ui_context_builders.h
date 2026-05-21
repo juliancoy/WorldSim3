@@ -48,13 +48,17 @@ struct LayerUiContextFactoryInput {
     bool* layer_heatmap_state_changed = nullptr;
     bool* heatmap_controls_active = nullptr;
     MapFilterState* map_filter_state = nullptr;
+    LayerBrowseState* layer_browse_state = nullptr;
 };
 
 struct LayersPanelContextFactoryInput {
     LayerUiSharedContext* shared = nullptr;
     int parcel_layer_idx = -1;
+    int zoning_layer_idx = -1;
     int zoom = 0;
     const char* layer_search_query = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
     bool* crime_filter_enabled = nullptr;
     bool* crime_filter_use_year = nullptr;
     int* crime_year_min = nullptr;
@@ -71,6 +75,7 @@ struct LayersPanelContextFactoryInput {
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
     ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
     MapFilterState* map_filter_state = nullptr;
+    LayerBrowseState* layer_browse_state = nullptr;
 };
 
 LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& input);

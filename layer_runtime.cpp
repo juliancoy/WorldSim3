@@ -24,6 +24,16 @@ const char* statusToString(LayerPipelineStatus s) {
 }
 
 std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std::string& layer_file) {
+    if (!state.geometry_phase.empty()) {
+        if (state.geometry_phase == "artifact_loading") {
+            return std::string("reading ") +
+                (state.geometry_artifact_path.empty() ? layer_file : state.geometry_artifact_path);
+        }
+        if (state.geometry_phase == "artifact_missing") return "compiled geometry artifact missing";
+        if (state.geometry_phase == "artifact_validated") return "compiled geometry artifact ready";
+        if (state.geometry_phase == "gpu_upload_pending") return "compiled geometry queued for GPU upload";
+        if (state.geometry_phase == "gpu_ready") return "ready via compiled geometry artifact";
+    }
     if (state.status == LayerPipelineStatus::Hydrating) {
         if (state.hydration_phase == "loading_binary_cache" ||
             state.hydration_phase == "binary_cache_hit_queueing" ||

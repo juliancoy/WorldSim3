@@ -147,34 +147,45 @@ static bool writePpmRgbResized(
     }
 
     out << "P6\n" << out_width << " " << out_height << "\n255\n";
-    std::vector<uint8_t> line((size_t)out_width * 3);
-    for (uint32_t y = 0; y < out_height; ++y) {
-        const uint32_t sy0 = (uint32_t)(((uint64_t)y * src_height) / out_height);
-        uint32_t sy1 = (uint32_t)(((uint64_t)(y + 1) * src_height + out_height - 1) / out_height);
-        sy1 = std::max(sy0 + 1, std::min(sy1, src_height));
-        for (uint32_t x = 0; x < out_width; ++x) {
-            const uint32_t sx0 = (uint32_t)(((uint64_t)x * src_width) / out_width);
-            uint32_t sx1 = (uint32_t)(((uint64_t)(x + 1) * src_width + out_width - 1) / out_width);
-            sx1 = std::max(sx0 + 1, std::min(sx1, src_width));
+    std::vector<uint8_t> line((size_t)out_width * 3, 0);
+    const double scale = std::min((double)out_width / (double)src_width, (double)out_height / (double)src_height);
+    const uint32_t fit_width = std::max(1u, std::min(out_width, (uint32_t)std::lround((double)src_width * scale)));
+    const uint32_t fit_height = std::max(1u, std::min(out_height, (uint32_t)std::lround((double)src_height * scale)));
+    const uint32_t offset_x = (out_width - fit_width) / 2;
+    const uint32_t offset_y = (out_height - fit_height) / 2;
 
-            uint64_t r_sum = 0;
-            uint64_t g_sum = 0;
-            uint64_t b_sum = 0;
-            uint64_t count = 0;
-            for (uint32_t sy = sy0; sy < sy1; ++sy) {
-                const uint8_t* row = pixels + (size_t)sy * row_pitch;
-                for (uint32_t sx = sx0; sx < sx1; ++sx) {
-                    const uint8_t* px = row + (size_t)sx * 4;
-                    r_sum += rgba ? px[0] : px[2];
-                    g_sum += px[1];
-                    b_sum += rgba ? px[2] : px[0];
-                    count++;
+    auto sample_channel = [&](uint32_t sx, uint32_t sy, int channel) -> uint8_t {
+        const uint8_t* row = pixels + (size_t)sy * row_pitch;
+        const uint8_t* px = row + (size_t)sx * 4;
+        if (channel == 0) return rgba ? px[0] : px[2];
+        if (channel == 1) return px[1];
+        return rgba ? px[2] : px[0];
+    };
+
+    for (uint32_t y = 0; y < out_height; ++y) {
+        std::fill(line.begin(), line.end(), 0);
+        if (y >= offset_y && y < offset_y + fit_height) {
+            const double src_y = ((double)(y - offset_y) + 0.5) * (double)src_height / (double)fit_height - 0.5;
+            const uint32_t y0 = (uint32_t)std::clamp((int)std::floor(src_y), 0, (int)src_height - 1);
+            const uint32_t y1 = std::min(y0 + 1, src_height - 1);
+            const double fy = std::clamp(src_y - (double)y0, 0.0, 1.0);
+            for (uint32_t x = offset_x; x < offset_x + fit_width; ++x) {
+                const double src_x = ((double)(x - offset_x) + 0.5) * (double)src_width / (double)fit_width - 0.5;
+                const uint32_t x0 = (uint32_t)std::clamp((int)std::floor(src_x), 0, (int)src_width - 1);
+                const uint32_t x1 = std::min(x0 + 1, src_width - 1);
+                const double fx = std::clamp(src_x - (double)x0, 0.0, 1.0);
+                const size_t i = (size_t)x * 3;
+                for (int channel = 0; channel < 3; ++channel) {
+                    const double c00 = (double)sample_channel(x0, y0, channel);
+                    const double c10 = (double)sample_channel(x1, y0, channel);
+                    const double c01 = (double)sample_channel(x0, y1, channel);
+                    const double c11 = (double)sample_channel(x1, y1, channel);
+                    const double c0 = c00 + (c10 - c00) * fx;
+                    const double c1 = c01 + (c11 - c01) * fx;
+                    const double c = c0 + (c1 - c0) * fy;
+                    line[i + (size_t)channel] = (uint8_t)std::clamp((int)std::lround(c), 0, 255);
                 }
             }
-            const size_t i = (size_t)x * 3;
-            line[i + 0] = (uint8_t)(r_sum / count);
-            line[i + 1] = (uint8_t)(g_sum / count);
-            line[i + 2] = (uint8_t)(b_sum / count);
         }
         out.write(reinterpret_cast<const char*>(line.data()), (std::streamsize)line.size());
     }
@@ -3551,11 +3562,15 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
 
     uint64_t shot_req_id = 0;
     bool shot_request_native = false;
+    uint32_t shot_requested_output_width = 0;
+    uint32_t shot_requested_output_height = 0;
     {
         std::lock_guard<std::mutex> lk(g_ScreenshotState.mutex);
         if (g_ScreenshotState.pending) {
             shot_req_id = g_ScreenshotState.req_id;
             shot_request_native = g_ScreenshotState.request_native;
+            shot_requested_output_width = g_ScreenshotState.requested_output_width;
+            shot_requested_output_height = g_ScreenshotState.requested_output_height;
         }
     }
     if (shot_req_id == 0) return;
@@ -3612,8 +3627,12 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     const float scale_y = framebuffer_scale.y > 0.0f ? framebuffer_scale.y : 1.0f;
     const uint32_t logical_width = std::max(1u, (uint32_t)std::lround((float)width / scale_x));
     const uint32_t logical_height = std::max(1u, (uint32_t)std::lround((float)height / scale_y));
-    const uint32_t output_width = shot_request_native ? width : std::min(width, logical_width);
-    const uint32_t output_height = shot_request_native ? height : std::min(height, logical_height);
+    const uint32_t output_width =
+        shot_request_native ? width :
+        (shot_requested_output_width > 0 ? shot_requested_output_width : std::min(width, logical_width));
+    const uint32_t output_height =
+        shot_request_native ? height :
+        (shot_requested_output_height > 0 ? shot_requested_output_height : std::min(height, logical_height));
     const VkDeviceSize image_size = (VkDeviceSize)width * (VkDeviceSize)height * 4;
     createBuffer(
         image_size,
@@ -3712,13 +3731,13 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     vkGetBufferMemoryRequirements(g_Device, staging, &req);
     void* mapped = nullptr;
     check_vk_result(vkMapMemory(g_Device, staging_mem, 0, req.size, 0, &mapped));
-    const fs::path shot_dir = fs::current_path() / "data" / "cache" / "screenshots";
+    const fs::path shot_dir = fs::current_path() / "screenshot";
     std::error_code ec;
     fs::create_directories(shot_dir, ec);
     auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::system_clock::now().time_since_epoch())
                   .count();
-    fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + ".ppm");
+    fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + "_" + std::to_string(output_width) + "x" + std::to_string(output_height) + ".ppm");
     const bool ok = writePpmRgbResized(
         out_file,
         static_cast<const uint8_t*>(mapped),

@@ -11,6 +11,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <iomanip>
@@ -18,13 +19,63 @@
 #include <unordered_map>
 
 namespace {
-bool drawColorCircleButton(const char* id, const char* tooltip, const ImVec4& color) {
+struct ClipboardToastState {
+    std::string message;
+    double expires_at = 0.0;
+};
+
+ClipboardToastState& clipboardToastState() {
+    static ClipboardToastState state;
+    return state;
+}
+
+void copyLayerNameToClipboard(const std::string& layer_name) {
+    if (layer_name.empty()) return;
+    ImGui::SetClipboardText(layer_name.c_str());
+    ClipboardToastState& toast = clipboardToastState();
+    toast.message = "Copied to Clipboard!";
+    toast.expires_at = ImGui::GetTime() + 1.2;
+}
+
+void drawClipboardToastOverlay() {
+    ClipboardToastState& toast = clipboardToastState();
+    if (toast.message.empty()) return;
+    const double now = ImGui::GetTime();
+    if (now >= toast.expires_at) {
+        toast.message.clear();
+        return;
+    }
+
+    const ImVec2 window_pos = ImGui::GetWindowPos();
+    const ImVec2 window_size = ImGui::GetWindowSize();
+    const ImVec2 padding(12.0f, 8.0f);
+    const ImVec2 text_size = ImGui::CalcTextSize(toast.message.c_str());
+    const ImVec2 box_size(text_size.x + padding.x * 2.0f, text_size.y + padding.y * 2.0f);
+    const ImVec2 box_min(
+        window_pos.x + window_size.x - box_size.x - 18.0f,
+        window_pos.y + 18.0f);
+    const ImVec2 box_max(box_min.x + box_size.x, box_min.y + box_size.y);
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    draw->AddRectFilled(box_min, box_max, IM_COL32(18, 24, 20, 230), 6.0f);
+    draw->AddRect(box_min, box_max, IM_COL32(96, 180, 120, 255), 6.0f, 0, 1.5f);
+    draw->AddText(ImVec2(box_min.x + padding.x, box_min.y + padding.y), IM_COL32(232, 245, 236, 255), toast.message.c_str());
+}
+
+struct ColorCircleButtonResult {
+    bool left_clicked = false;
+    bool right_clicked = false;
+};
+
+ColorCircleButtonResult drawColorCircleButton(const char* id, const char* tooltip, const ImVec4& color) {
     ImGui::PushID(id);
     const float radius = 5.0f;
     const ImVec2 pos = ImGui::GetCursorScreenPos();
     const ImVec2 size(radius * 2.0f + 6.0f, radius * 2.0f + 6.0f);
     ImGui::InvisibleButton("##color_circle", size);
-    const bool clicked = ImGui::IsItemClicked();
+    ColorCircleButtonResult result;
+    result.left_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    result.right_clicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
     const bool hovered = ImGui::IsItemHovered();
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 center(pos.x + size.x * 0.5f, pos.y + size.y * 0.5f);
@@ -36,7 +87,80 @@ bool drawColorCircleButton(const char* id, const char* tooltip, const ImVec4& co
         ImGui::EndTooltip();
     }
     ImGui::PopID();
-    return clicked;
+    return result;
+}
+
+bool alphaNearlyEquals(float a, float b) {
+    return std::abs(a - b) <= 0.02f;
+}
+
+float nextOutlineAlphaForRightClick(ImGuiID button_id, float current_alpha) {
+    static std::unordered_map<ImGuiID, int> cycle_index_by_button;
+    constexpr std::array<float, 3> kCycle = {0.0f, 1.0f, 0.5f};
+
+    auto reset_cycle_index = [&]() {
+        if (alphaNearlyEquals(current_alpha, kCycle[0])) return 0;
+        if (alphaNearlyEquals(current_alpha, kCycle[1])) return 1;
+        if (alphaNearlyEquals(current_alpha, kCycle[2])) return 2;
+        return -1;
+    };
+
+    auto it = cycle_index_by_button.find(button_id);
+    if (it == cycle_index_by_button.end()) {
+        if (alphaNearlyEquals(current_alpha, 1.0f)) {
+            cycle_index_by_button[button_id] = 0;
+            return kCycle[0];
+        }
+        const int reset_index = reset_cycle_index();
+        const int next_index = reset_index >= 0 ? (reset_index + 1) % (int)kCycle.size() : 0;
+        cycle_index_by_button[button_id] = next_index;
+        return kCycle[(size_t)next_index];
+    }
+
+    const int reset_index = reset_cycle_index();
+    if (reset_index >= 0 && !alphaNearlyEquals(current_alpha, kCycle[(size_t)it->second])) {
+        it->second = reset_index;
+    }
+    it->second = (it->second + 1) % (int)kCycle.size();
+    return kCycle[(size_t)it->second];
+}
+
+bool layerSupportsHoverSelection(const LayersPanelUiContext& ctx, size_t idx) {
+    return ctx.shared &&
+        ctx.shared->layer_hover_enabled &&
+        ctx.active_hover_layer_idx &&
+        idx < ctx.shared->layer_hover_enabled->size();
+}
+
+bool layerIsSelectedHoverTarget(const LayersPanelUiContext& ctx, size_t idx) {
+    return layerSupportsHoverSelection(ctx, idx) && *ctx.active_hover_layer_idx == (int)idx;
+}
+
+void selectHoverTargetLayer(LayersPanelUiContext& ctx, size_t idx) {
+    if (!layerSupportsHoverSelection(ctx, idx)) return;
+    (*ctx.shared->layer_hover_enabled)[idx] = true;
+    *ctx.active_hover_layer_idx = (int)idx;
+    if (ctx.shared->layer_hover_state_changed) *ctx.shared->layer_hover_state_changed = true;
+}
+
+bool layerSupportsClickSelection(const LayersPanelUiContext& ctx, size_t idx) {
+    return ctx.shared &&
+        ctx.shared->layer_inspect_enabled &&
+        ctx.active_click_layer_idx &&
+        ((int)idx == ctx.parcel_layer_idx || (int)idx == ctx.zoning_layer_idx);
+}
+
+bool layerIsSelectedClickTarget(const LayersPanelUiContext& ctx, size_t idx) {
+    return layerSupportsClickSelection(ctx, idx) &&
+        ctx.active_click_layer_idx &&
+        *ctx.active_click_layer_idx == (int)idx;
+}
+
+void selectClickTargetLayer(LayersPanelUiContext& ctx, size_t idx) {
+    if (!layerSupportsClickSelection(ctx, idx) || idx >= ctx.shared->layer_inspect_enabled->size()) return;
+    (*ctx.shared->layer_inspect_enabled)[idx] = true;
+    if (ctx.active_click_layer_idx) *ctx.active_click_layer_idx = (int)idx;
+    if (ctx.shared->layer_inspect_state_changed) *ctx.shared->layer_inspect_state_changed = true;
 }
 
 std::string compactMoney(double value) {
@@ -329,15 +453,23 @@ bool drawFillColorEditor(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer)
 }
 
 bool drawFillColorCircleButton(const LayersPanelUiContext& ctx, size_t idx, const LayerDef& layer) {
-    const bool clicked = drawColorCircleButton("fill_color", "Fill color and continuous scale", layer.color);
-    if (clicked && ctx.shared && ctx.shared->open_layer_color_editor) ctx.shared->open_layer_color_editor(idx, false);
-    return clicked;
+    const ColorCircleButtonResult result = drawColorCircleButton("fill_color", "Fill color and continuous scale", layer.color);
+    if (result.left_clicked && ctx.shared && ctx.shared->open_layer_color_editor) ctx.shared->open_layer_color_editor(idx, false);
+    return result.left_clicked;
 }
 
-bool drawOutlineColorCircleButton(const LayersPanelUiContext& ctx, size_t idx, const LayerDef& layer) {
-    const bool clicked = drawColorCircleButton("outline_color", "Outline color", layer.outline_color);
-    if (clicked && ctx.shared && ctx.shared->open_layer_color_editor) ctx.shared->open_layer_color_editor(idx, true);
-    return clicked;
+bool drawOutlineColorCircleButton(const LayersPanelUiContext& ctx, size_t idx, LayerDef& layer) {
+    const ImGuiID button_id = ImGui::GetID("outline_color");
+    const ColorCircleButtonResult result = drawColorCircleButton(
+        "outline_color",
+        "Outline color\nLeft click: open editor\nRight click: cycle alpha 0%, 100%, 50%",
+        layer.outline_color);
+    if (result.right_clicked) {
+        layer.outline_color.w = nextOutlineAlphaForRightClick(button_id, layer.outline_color.w);
+        if (ctx.shared && ctx.shared->layer_heatmap_state_changed) *ctx.shared->layer_heatmap_state_changed = true;
+    }
+    if (result.left_clicked && ctx.shared && ctx.shared->open_layer_color_editor) ctx.shared->open_layer_color_editor(idx, true);
+    return result.left_clicked || result.right_clicked;
 }
 
 const char* geographicScopeLabel(const LayerDef& layer) {
@@ -397,7 +529,7 @@ bool layerMatchesSearch(const LayersPanelUiContext& ctx, const LayerDef& layer) 
 }
 
 bool layerVisibleInHierarchy(const LayersPanelUiContext& ctx, const LayerDef& layer) {
-    if (ctx.map_filter_state && !layerMatchesSelectedGeography(layer, *ctx.map_filter_state)) return false;
+    if (ctx.layer_browse_state && !layerMatchesBrowseGeography(layer, *ctx.layer_browse_state)) return false;
     return layerMatchesSearch(ctx, layer);
 }
 
@@ -496,6 +628,7 @@ bool drawParcelJurisdictionFilterRow(LayersPanelUiContext& ctx, size_t idx, Laye
     drawOutlineColorCircleButton(ctx, idx, layer);
     ImGui::SameLine(0.0f, 6.0f);
     drawLayerNameBadge(layer.name, layer.color);
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) copyLayerNameToClipboard(layer.name);
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
         ImGui::TextUnformatted(layer.name.c_str());
@@ -608,6 +741,8 @@ LayerSettingsPopupContext makeLayerSettingsPopupContext(
     bool local_layer_exists) {
     LayerSettingsPopupContext settings_ctx;
     settings_ctx.shared = ctx.shared;
+    settings_ctx.active_hover_layer_idx = ctx.active_hover_layer_idx;
+    settings_ctx.active_click_layer_idx = ctx.active_click_layer_idx;
     settings_ctx.local_layer_path = local_layer_path;
     settings_ctx.idx = idx;
     settings_ctx.layer = &layer;
@@ -725,6 +860,30 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
             ImGui::SameLine();
         }
 
+        const bool hover_selected = layerIsSelectedHoverTarget(ctx, idx);
+        if (layerSupportsHoverSelection(ctx, idx)) {
+            if (ImGui::RadioButton("##hover_target", hover_selected)) {
+                selectHoverTargetLayer(ctx, idx);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Set active hover inspector target");
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+        }
+        const bool click_selected = layerIsSelectedClickTarget(ctx, idx);
+        if (layerSupportsClickSelection(ctx, idx)) {
+            if (ImGui::RadioButton("##click_target", click_selected)) {
+                selectClickTargetLayer(ctx, idx);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Set active click action target");
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+        }
         drawIconToggleButton("show", "V", layer.enabled, "Show layer");
         if (ImGui::SmallButton("?")) ImGui::OpenPopup("layer_display_settings");
         if (ImGui::IsItemHovered()) {
@@ -743,6 +902,7 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
         drawOutlineColorCircleButton(ctx, idx, layer);
         ImGui::SameLine(0.0f, 6.0f);
         drawLayerNameBadge(layer.name, layer.color);
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) copyLayerNameToClipboard(layer.name);
         const bool row_hovered = ImGui::IsItemHovered();
         ImGui::SameLine();
         LayerRuntimeState st;
@@ -812,4 +972,5 @@ void drawLayerCategoriesPanel(LayersPanelUiContext& ctx) {
     drawLayerCategory(ctx, LayerDef::Category::Safety, "Safety");
     drawLayerCategory(ctx, LayerDef::Category::Infrastructure, "Infrastructure");
     drawLayerCategory(ctx, LayerDef::Category::Zoning, "Zoning");
+    drawClipboardToastOverlay();
 }

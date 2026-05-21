@@ -48,5 +48,30 @@
       "state_region": "",
       "county_city": ""
     }
+  },
+  {
+    "name": "USA OSM Places of Worship Source",
+    "file": "usa_osm_places_of_worship.overpass.json",
+    "color": "#8e5ad0",
+    "description": "Canonical national source definition for OpenStreetMap places of worship. State and city operational layers should derive scoped views from this source pattern rather than redefining the upstream source ad hoc.",
+    "download": false,
+    "reason": "National Overpass query would be too large for routine runtime hydration; use scoped state/city layers derived from this source definition.",
+    "reference_url": "https://wiki.openstreetmap.org/Overpass_API",
+    "source_urls": [
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://wiki.openstreetmap.org/Overpass_API/Language_Guide"
+    ],
+    "category": "infrastructure",
+    "subcategory": "Faith & Worship",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "",
+      "county_city": ""
+    }
   }
 ]
