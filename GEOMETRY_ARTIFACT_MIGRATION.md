@@ -2,6 +2,11 @@
 
 This document defines the implementation plan for removing CPU geometry from the WorldSim3 runtime architecture.
 
+Use this document as the current narrative status source of truth.
+
+- [GEOMETRY_ARTIFACT_CHECKLIST.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_CHECKLIST.md) is the file-by-file task tracker.
+- [GEOMETRY_ARTIFACT_IMPLEMENTATION_SLICES.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_IMPLEMENTATION_SLICES.md) is the sequencing plan.
+
 ## Progress Snapshot
 
 Status as of `2026-05-21`.
@@ -24,17 +29,31 @@ Implemented:
 - zoning polygon artifact loading is active in runtime
 - parcel selection overlays use the parcel render blob instead of CPU rings
 - parcel hover hit-testing uses the parcel render blob instead of CPU polygon tests
+- parcel hover/click state no longer stores parcel `FeatureRecord*`
+- parcel selection persistence now carries stable IDs, with feature indices treated as a runtime cache
+- parcel detail and runtime timeline fallback now prefer unified parcel metadata and blocklot lookup over parcel feature geometry
 - zoning hover/inspection now prefers polygon artifacts instead of CPU polygon tests
 - hydrated layers now transition directly to `Ready` in artifact mode instead of entering triangulation
 - the live app no longer starts a triangulation worker thread
+- runtime feature properties now live in `layer.feature_properties` sidecars rather than inline on `LayerDef::FeatureRecord`
+- shared parcel metric helpers and shared real-property summary helpers are centralized to reduce geometry-cutover drift
 
 Not implemented yet:
 
 - GPU picking
-- full parcel workflow cutover away from `LayerDef::FeatureGeom`
+- full parcel workflow cutover away from `LayerDef::FeatureRecord`
 - deletion of hydration workers
 - deletion of triangulation worker codepaths and types
 - removal of CPU feature geometry as a normal runtime structure
+- full removal of hydration caches and hydration-oriented CLI/status terminology
+
+Recommended remaining implementation order:
+
+1. implement GPU picking for point and polygon workflows
+2. finish replacing the remaining interaction-time `FeatureRecord*` fallbacks with stable-ID + artifact metadata lookups
+3. delete hydration workers and hydration cache tooling from normal runtime operation
+4. remove the last parcel/business workflows that still require `FeatureRecord` geometry
+5. delete transitional terminology and compatibility code after those paths are gone
 
 Target outcome:
 
@@ -354,7 +373,11 @@ Consumers to migrate:
 
 Exit criteria:
 
-- no production workflow requires `LayerDef::FeatureGeom`
+- no production workflow requires `LayerDef::FeatureRecord`
+
+Current note:
+
+- parcel hover/click/selection is partially migrated: parcel pointers are gone from interaction state, stable IDs are persisted for selection, and parcel detail prefers unified data; remaining fallbacks still exist in some runtime consumers
 
 ### Milestone 7: Deletion
 
@@ -368,7 +391,7 @@ Delete:
 
 Exit criteria:
 
-- `LayerDef::FeatureGeom` is no longer part of the normal render/interaction architecture
+- `LayerDef::FeatureRecord` is no longer part of the normal render/interaction architecture
 - hydration and triangulation commands are removed from user-facing tooling
 
 ## Codebase Work Breakdown

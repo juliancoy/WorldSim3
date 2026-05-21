@@ -68,6 +68,8 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.query_history = input.query_history;
     ctx.selected_parcel_idx = input.selected_parcel_idx;
     ctx.selected_parcel_indices = input.selected_parcel_indices;
+    ctx.selected_parcel_stable_id = input.selected_parcel_stable_id;
+    ctx.selected_parcel_stable_ids = input.selected_parcel_stable_ids;
     ctx.hydration_stop = input.hydration_stop;
     ctx.time_cube_ui_worker = input.time_cube_ui_worker;
     ctx.hydrate_req_cv = input.hydrate_req_cv;

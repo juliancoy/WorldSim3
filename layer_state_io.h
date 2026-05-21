@@ -150,7 +150,9 @@ void loadMapUiState(
     double* center_lat = nullptr,
     double* zoom = nullptr,
     size_t* selected_parcel_idx = nullptr,
-    std::vector<size_t>* selected_parcel_indices = nullptr);
+    std::vector<size_t>* selected_parcel_indices = nullptr,
+    std::string* selected_parcel_stable_id = nullptr,
+    std::vector<std::string>* selected_parcel_stable_ids = nullptr);
 
 void saveMapUiState(
     const std::filesystem::path& root,
@@ -158,7 +160,9 @@ void saveMapUiState(
     double center_lat,
     double zoom,
     size_t selected_parcel_idx,
-    const std::vector<size_t>& selected_parcel_indices);
+    const std::vector<size_t>& selected_parcel_indices,
+    const std::string& selected_parcel_stable_id = {},
+    const std::vector<std::string>& selected_parcel_stable_ids = {});
 
 void loadQueryHistoryUiState(
     const std::filesystem::path& root,

@@ -18,5 +18,5 @@ struct ZoneMetadata {
 bool parseHexColor(const std::string& hex, ImVec4& out);
 std::unordered_map<std::string, ZoneMetadata> loadZoneMetadata(const std::filesystem::path& root);
 std::string zoningDescription(
-    const LayerDef::FeatureGeom& zone,
+    const LayerDef::FeatureRecord& zone,
     const std::unordered_map<std::string, ZoneMetadata>& zoning_metadata);

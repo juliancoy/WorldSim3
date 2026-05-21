@@ -28,6 +28,7 @@ struct LayerDef {
         Safety
     };
     std::string name;
+    std::string logical_id;
     std::string file;
     std::string source_url;
     std::string reference_url;
@@ -74,12 +75,15 @@ struct LayerDef {
         float max_lon = 0.0f;
         float max_lat = 0.0f;
     };
-    struct FeatureGeom {
+    struct FeatureRecord {
         FeatureExtent extent;
         std::vector<std::vector<ImVec2>> rings;
         std::vector<std::vector<ImVec2>> paths;
         std::vector<uint32_t> triangles;
-        std::vector<std::pair<std::string, std::string>> properties;
     };
-    std::vector<FeatureGeom> features;
+    struct FeatureProperties {
+        std::vector<std::pair<std::string, std::string>> values;
+    };
+    std::vector<FeatureRecord> features;
+    std::vector<FeatureProperties> feature_properties;
 };

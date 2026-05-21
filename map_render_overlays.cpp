@@ -3,6 +3,7 @@
 #include "choropleth_histogram.h"
 #include "geo.h"
 #include "map_render_utils.h"
+#include "parcel_metrics.h"
 #include "worldsim_app.h"
 
 #include <algorithm>
@@ -11,8 +12,6 @@
 #include <numbers>
 
 namespace {
-constexpr double kDegToMetersLat = 111320.0;
-
 bool layerFillEnabled(const MapRenderContext& ctx, int layer_idx) {
     return layer_idx >= 0 &&
            ctx.layer_fill_enabled &&
@@ -20,7 +19,7 @@ bool layerFillEnabled(const MapRenderContext& ctx, int layer_idx) {
            (*ctx.layer_fill_enabled)[(size_t)layer_idx];
 }
 
-bool featureOnScreen(const MapRenderContext& ctx, size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureGeom& fg) {
+bool featureOnScreen(const MapRenderContext& ctx, size_t layer_idx, uint32_t feature_idx, const LayerDef::FeatureRecord& fg) {
     if (ctx.parcel_render_blob && layer_idx == ctx.parcel_layer_idx && feature_idx < ctx.parcel_render_blob->features.size()) {
         const ParcelRenderFeatureRecord& rec = ctx.parcel_render_blob->features[feature_idx];
         ImVec2 a = ctx.projection->projectWorld(lonLatToWorldPx(rec.min_lon, rec.max_lat, ctx.math_zoom));
@@ -56,73 +55,15 @@ const ParcelRenderFeatureRecord* parcelRenderFeature(const MapRenderContext& ctx
     return nullptr;
 }
 
-bool parcelOverlayHasGeometry(const MapRenderContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
+bool parcelOverlayHasGeometry(const MapRenderContext& ctx, size_t parcel_idx, const LayerDef::FeatureRecord& fg) {
     (void)fg;
     return parcelRenderFeature(ctx, parcel_idx) != nullptr;
-}
-
-double triangleAreaSqM(const ImVec2& a, const ImVec2& b, const ImVec2& c) {
-    const double lat0 = ((double)a.y + (double)b.y + (double)c.y) / 3.0;
-    const double sx = kDegToMetersLat * std::cos(lat0 * std::numbers::pi / 180.0);
-    const double ax = (double)a.x * sx;
-    const double ay = (double)a.y * kDegToMetersLat;
-    const double bx = (double)b.x * sx;
-    const double by = (double)b.y * kDegToMetersLat;
-    const double cx = (double)c.x * sx;
-    const double cy = (double)c.y * kDegToMetersLat;
-    return std::abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) * 0.5;
-}
-
-double parcelAreaSqM(const MapRenderContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
-    if (const ParcelRenderFeatureRecord* rec = parcelRenderFeature(ctx, parcel_idx)) {
-        const uint32_t end = rec->index_offset + rec->index_count;
-        if (!ctx.parcel_render_blob || end > ctx.parcel_render_blob->indices.size()) return 0.0;
-        double total = 0.0;
-        for (uint32_t i = rec->index_offset; i + 2 < end; i += 3) {
-            const uint32_t ia = ctx.parcel_render_blob->indices[i];
-            const uint32_t ib = ctx.parcel_render_blob->indices[i + 1];
-            const uint32_t ic = ctx.parcel_render_blob->indices[i + 2];
-            if (ia >= ctx.parcel_render_blob->vertices.size() ||
-                ib >= ctx.parcel_render_blob->vertices.size() ||
-                ic >= ctx.parcel_render_blob->vertices.size()) continue;
-            total += triangleAreaSqM(
-                ctx.parcel_render_blob->vertices[ia],
-                ctx.parcel_render_blob->vertices[ib],
-                ctx.parcel_render_blob->vertices[ic]);
-        }
-        return total;
-    }
-    (void)fg;
-    return 0.0;
-}
-
-double parcelParameterValue(const MapRenderContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
-    switch (ctx.parcel_parameter_mode) {
-        case 1:
-            return parcelAreaSqM(ctx, parcel_idx, fg);
-        case 2: {
-            if (!ctx.unified_parcels) return 0.0;
-            const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
-            return rec ? rec->current_value : 0.0;
-        }
-        case 3: {
-            if (!ctx.unified_parcels) return 0.0;
-            const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
-            const double area = parcelAreaSqM(ctx, parcel_idx, fg);
-            if (!rec || !(area > 0.0) || !std::isfinite(area)) return 0.0;
-            return rec->current_value > 0.0 && std::isfinite(rec->current_value)
-                ? rec->current_value / area
-                : 0.0;
-        }
-        default:
-            return 0.0;
-    }
 }
 
 void drawParcelOverlayRings(
     const MapRenderContext& ctx,
     size_t parcel_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     const std::vector<std::vector<ImVec2>>& world_rings,
     ImU32 outline) {
     if (parcelGpuOutlineDrawActive()) {
@@ -172,7 +113,12 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
             const auto& fg = parcel_layer.features[i];
             if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
             if (!parcelOverlayHasGeometry(ctx, i, fg)) continue;
-            const double v = parcelParameterValue(ctx, i, fg);
+            const double v = parcelParameterValue(
+                ctx.parcel_parameter_mode,
+                ctx.unified_parcels,
+                ctx.parcel_render_blob,
+                i,
+                fg);
             if (v > 0.0 && std::isfinite(v)) values.push_back(v);
         }
         const int normalize_mode =
@@ -190,7 +136,12 @@ MapOverlayResult renderParcelSourceOverlays(const MapRenderContext& ctx) {
                 if (!ctx.feature_passes_filters(ctx.parcel_layer_idx, i, fg)) continue;
                 if (!featureOnScreen(ctx, ctx.parcel_layer_idx, (uint32_t)i, fg)) continue;
                 if (!parcelOverlayHasGeometry(ctx, i, fg)) continue;
-                const double v = parcelParameterValue(ctx, i, fg);
+                const double v = parcelParameterValue(
+                    ctx.parcel_parameter_mode,
+                    ctx.unified_parcels,
+                    ctx.parcel_render_blob,
+                    i,
+                    fg);
                 if (v <= 0.0 || !std::isfinite(v)) continue;
                 const float normalized =
                     normalize_mode == 0

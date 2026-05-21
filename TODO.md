@@ -2,11 +2,10 @@
 
 ## Current State
 
-The statewide parcel stack has been materialized, but the canonical parcel binary is not yet the sole primary runtime artifact.
+The statewide parcel stack is being migrated so the canonical parcel binary is the sole primary runtime artifact.
 
-Present artifacts:
+Target persisted artifacts:
 
-- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson`
 - `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
 - `data/cache/hydration/regional_parcels.geojson.bin`
 - `data/cache/triangulation/regional_parcels.geojson.tri.bin`
@@ -20,7 +19,6 @@ Implemented support:
 - Hydration can read the canonical parcel binary when the hydration cache is missing or stale.
 - Parcel render sidecar can be warmed from binary hydration and triangulation caches.
 - Hydration, triangulation, and parcel render cache warming operate under the canonical statewide parcel signature.
-- `--warm-parcel-runtime-stack [regional_parcels.geojson]` warms hydration, triangulation, and parcel render caches in order without implicitly rebuilding canonical source artifacts or DuckDB.
 - `--parcel-artifact-health` reports parcel artifact presence, signatures, counts, sizes, and recommended rebuild steps.
 - DuckDB is treated as analytics/search/detail cache, not render geometry.
 - Runtime status text identifies which hydration/triangulation artifact is being read.
@@ -28,11 +26,9 @@ Implemented support:
 
 ## Highest Priority
 
-- Remove remaining operational reliance on `regional_parcels.geojson` outside explicit GeoJSON validation/export flows.
-- Keep `regional_parcels.geojson` as optional export/debug interchange only.
-- Add explicit source/analytics rebuild commands that can be safely composed with `--warm-parcel-runtime-stack` for full parcel-stack refreshes:
+- Keep `regional_parcels.geojson` out of the runtime/analytics path entirely.
+- Do not produce `regional_parcels.geojson` from current builders.
   - canonical parcel binary
-  - optional GeoJSON export
   - DuckDB analytics cache
 - Keep runtime-cache refreshes non-destructive by default: hydration, triangulation, and parcel render sidecar are rebuildable performance artifacts; canonical binary and DuckDB require explicit rebuild intent.
 - Update docs/status output with final statewide parcel count, jurisdiction counts, and artifact sizes.
@@ -42,7 +38,6 @@ Implemented support:
 - Refactor `worldsim_regional_parcel_builder` into explicit stages:
   - normalize county/state inputs into per-jurisdiction shards
   - merge shards deterministically into canonical statewide output
-  - export GeoJSON only when requested
 - Remove whole-file DOM parsing where practical.
 - Prefer streaming readers/writers for large county inputs and statewide outputs.
 - Use temp-file plus atomic-rename behavior for every statewide output.
@@ -50,7 +45,6 @@ Implemented support:
 - Add dedicated CLI modes:
   - build shards
   - merge shards
-  - export GeoJSON from canonical binary
   - rebuild full parcel stack
 
 ## Canonical Parcel Binary
@@ -74,16 +68,16 @@ Implemented support:
 
 ## Runtime Hydration
 
-- Prefer canonical parcel binary before source GeoJSON for `regional_parcels.geojson` cache rebuilds.
-- Avoid parsing 7 GB GeoJSON during normal interactive startup.
-- Make `/status` clearly report canonical-binary source use, cache source use, and fallback source use.
+- Require canonical parcel binary for `regional_parcels.geojson` cache rebuilds.
+- Avoid parsing GeoJSON during normal interactive startup.
+- Make `/status` clearly report canonical-binary source use and cache source use.
 - Add a headless validation command that compares:
   - GeoJSON feature count, when GeoJSON exists
   - canonical binary feature count
   - hydration cache feature count
   - source signatures
   - representative geometry/property samples
-- Ensure missing GeoJSON is a supported normal condition when canonical binary and required caches exist.
+- Ensure missing GeoJSON is a supported normal condition.
 
 ## Render Pipeline
 
@@ -162,7 +156,6 @@ Implemented support:
   - output bytes written
   - current output artifact
 - Keep disk-usage reporting current for the parcel artifact stack:
-  - optional GeoJSON
   - canonical binary
   - hydration cache
   - triangulation cache
@@ -174,7 +167,7 @@ Implemented support:
 
 - Document the primary parcel artifact contract:
   - canonical binary is the primary parcel source
-  - GeoJSON is optional export/debug interchange
+  - no maintained GeoJSON layer export
   - hydration cache is CPU runtime geometry
   - triangulation cache is CPU fill geometry acceleration
   - render sidecar is GPU-oriented retained parcel geometry

@@ -2,6 +2,7 @@
 
 #include "duckdb_analytics.h"
 #include "filters.h"
+#include "parcel_unified.h"
 #include "types.h"
 #include "zoning.h"
 
@@ -23,9 +24,12 @@ struct FiltersTabContext {
     const std::filesystem::path* root = nullptr;
     MapFilterState* filters = nullptr;
     const std::vector<LayerDef>* layers = nullptr;
+    const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     const std::unordered_set<size_t>* selected_parcel_index_set = nullptr;
+    const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     int parcel_layer_idx = -1;
+    int real_property_layer_idx = -1;
     int zoning_layer_idx = -1;
     bool* show_selected_parcel_details = nullptr;
     bool* show_selected_zone_details = nullptr;
@@ -51,7 +55,6 @@ struct FiltersTabContext {
     std::vector<std::string>* selected_record_year_samples = nullptr;
     std::function<void()> clear_parcel_selection;
     std::function<bool(size_t, bool)> select_parcel_idx;
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };
 
 void drawFiltersTab(const FiltersTabContext& ctx);

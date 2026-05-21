@@ -44,7 +44,7 @@ struct MapRenderContext {
     const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
 
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;
     MapProjectionCache* projection = nullptr;
 };

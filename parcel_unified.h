@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "types.h"
 
 #include <cstddef>
@@ -17,6 +18,7 @@ struct UnifiedParcelRecord {
     std::string parcel_source_file;
     std::string property_source_file;
     bool parcel_has_geometry = false;
+    LayerDef::FeatureExtent parcel_extent;
     bool has_property_record = false;
 
     std::string owner;
@@ -43,9 +45,10 @@ struct UnifiedParcelRecord {
 
 struct UnifiedParcelBuildRequest {
     const std::vector<LayerDef>* layers = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     int parcel_layer_idx = -1;
     int real_property_layer_idx = -1;
-    const std::vector<LayerDef::FeatureGeom>* real_property_features = nullptr;
+    const std::vector<LayerDef::FeatureRecord>* real_property_features = nullptr;
     const std::vector<std::string>* real_property_source_files = nullptr;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;
@@ -59,9 +62,14 @@ struct UnifiedParcelBuildRequest {
 std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildRequest& request);
 
 const UnifiedParcelRecord* unifiedParcelAt(const std::vector<UnifiedParcelRecord>& parcels, size_t parcel_feature_idx);
-const LayerDef::FeatureGeom* unifiedParcelGeometry(
+const LayerDef::FeatureRecord* unifiedParcelGeometry(
     const UnifiedParcelRecord& record,
     const std::vector<LayerDef>& layers);
-const LayerDef::FeatureGeom* unifiedRealPropertyGeometry(
+const LayerDef::FeatureRecord* unifiedRealPropertyGeometry(
     const UnifiedParcelRecord& record,
     const std::vector<LayerDef>& layers);
+const LayerDef::FeatureRecord* resolveRealPropertyForBlocklot(
+    const std::vector<LayerDef>& layers,
+    int real_property_layer_idx,
+    const std::unordered_map<std::string, size_t>* real_property_by_blocklot,
+    const std::string& blocklot);

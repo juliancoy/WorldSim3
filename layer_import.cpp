@@ -1,5 +1,6 @@
 #include "layer_import.h"
 #include "app_utils.h"
+#include "cache_io.h"
 #include "layer_geometry.h"
 
 #include <zlib.h>
@@ -25,6 +26,12 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
+bool sourceGeometryFilenameMatchesTargetLayer(
+    const fs::path& source_geometry_path,
+    const fs::path& target_layer_path) {
+    return source_geometry_path.filename() == target_layer_path.filename();
+}
+
 struct ZipEntry {
     std::string name;
     uint16_t method = 0;
@@ -45,6 +52,64 @@ struct HttpResponse {
     long code = 0;
     std::string body;
 };
+
+void persistCanonicalLayerBinaryAndRemoveGeoJson(const fs::path& geojson_path);
+void saveCanonicalLayerBinary(
+    const fs::path& target_layer_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>& feature_properties);
+void saveCanonicalLayerBinaryForSourceGeometry(
+    const fs::path& source_geometry_path,
+    const fs::path& target_layer_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>& feature_properties);
+void appendGeoJsonFeatureRecords(
+    const json& feature,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+void buildArcgisFeatureLayerFeatures(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const std::string& normalizer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+struct CensusAcsJoinStats;
+CensusAcsJoinStats buildCensusAcsArcgisLayerFeatures(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const std::unordered_map<std::string, json>& acs_rows_by_geoid,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+void buildXlsxPointTableFeatures(
+    const fs::path& xlsx_path,
+    const std::string& sheet_name,
+    const std::string& lon_field,
+    const std::string& lat_field,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+void buildJsonPointFeedFeatures(
+    const fs::path& json_path,
+    const std::string& item_path,
+    const std::string& lon_field,
+    const std::string& lat_field,
+    const std::string& base_url,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+void buildSocrataHowardPropertyFeatures(
+    const fs::path& csv_path,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
+std::vector<std::pair<std::string, std::string>> parcelPropertyPairs(
+    const std::map<std::string, std::string>& props,
+    const std::string& jurisdiction,
+    const std::string& source_file);
+void appendFeatureWithProperties(
+    LayerDef::FeatureRecord&& fg,
+    const std::vector<std::pair<std::string, std::string>>& props,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties);
 
 uint16_t le16(const std::vector<uint8_t>& b, size_t off) {
     if (off + 2 > b.size()) throw std::runtime_error("unexpected EOF");
@@ -523,6 +588,23 @@ bool tryParseDouble(const std::string& text, double& out) {
     }
 }
 
+void appendGeoJsonFeatureRecords(
+    const json& feature,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    if (!feature.is_object() || !feature.contains("geometry")) return;
+    const std::vector<LayerDef::FeatureRecord> records = extractFeatureRecords(feature["geometry"]);
+    if (records.empty()) return;
+    std::vector<std::pair<std::string, std::string>> props;
+    if (feature.contains("properties") && feature["properties"].is_object()) {
+        props.reserve(feature["properties"].size());
+        for (auto it = feature["properties"].begin(); it != feature["properties"].end(); ++it) {
+            props.push_back({it.key(), jsonValueToString(it.value())});
+        }
+    }
+    for (auto record : records) appendFeatureWithProperties(std::move(record), props, features, feature_properties);
+}
+
 void writeXlsxPointTableGeoJson(
     const fs::path& xlsx_path,
     const fs::path& out_path,
@@ -650,6 +732,120 @@ void writeXlsxPointTableGeoJson(
     out << "\n";
 }
 
+void buildXlsxPointTableFeatures(
+    const fs::path& xlsx_path,
+    const std::string& sheet_name,
+    const std::string& lon_field,
+    const std::string& lat_field,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    const auto members = extractZipEntriesByName(xlsx_path);
+    const std::vector<std::string> shared_strings = parseXlsxSharedStrings(members);
+    const std::string sheet_path = parseFirstWorkbookSheetTarget(members, sheet_name);
+    auto sheet_it = members.find(sheet_path);
+    if (sheet_it == members.end()) throw std::runtime_error("xlsx missing worksheet " + sheet_path);
+    const std::string xml(sheet_it->second.begin(), sheet_it->second.end());
+
+    std::vector<std::vector<std::string>> rows;
+    size_t pos = 0;
+    while (true) {
+        const size_t row_open = xml.find("<row", pos);
+        if (row_open == std::string::npos) break;
+        const size_t row_open_end = xml.find('>', row_open);
+        const size_t row_close = xml.find("</row>", row_open_end + 1);
+        if (row_open_end == std::string::npos || row_close == std::string::npos) break;
+        const std::string row_xml = xml.substr(row_open_end + 1, row_close - row_open_end - 1);
+        std::vector<std::string> row;
+        size_t cell_pos = 0;
+        while (true) {
+            const size_t cell_open = row_xml.find("<c", cell_pos);
+            if (cell_open == std::string::npos) break;
+            const size_t cell_open_end = row_xml.find('>', cell_open);
+            if (cell_open_end == std::string::npos) break;
+            const bool self_closing = cell_open_end > cell_open && row_xml[cell_open_end - 1] == '/';
+            const std::string cell_tag = row_xml.substr(cell_open, cell_open_end - cell_open + 1);
+            const int col_idx = xlsxColumnIndex(xmlAttribute(cell_tag, "r"));
+            if (col_idx >= 0 && (size_t)(col_idx + 1) > row.size()) row.resize((size_t)col_idx + 1);
+            std::string value;
+            size_t next_pos = cell_open_end + 1;
+            if (!self_closing) {
+                const size_t cell_close = row_xml.find("</c>", cell_open_end + 1);
+                if (cell_close == std::string::npos) break;
+                const std::string cell_inner = row_xml.substr(cell_open_end + 1, cell_close - cell_open_end - 1);
+                const std::string type = xmlAttribute(cell_tag, "t");
+                if (type == "s") {
+                    const std::string raw = xmlFirstText(cell_inner, "v");
+                    double idx_num = 0.0;
+                    if (tryParseDouble(raw, idx_num)) {
+                        const size_t idx = (size_t)idx_num;
+                        if (idx < shared_strings.size()) value = shared_strings[idx];
+                    }
+                } else if (type == "inlineStr") {
+                    value = xmlFirstText(cell_inner, "t");
+                } else {
+                    value = xmlFirstText(cell_inner, "v");
+                }
+                next_pos = cell_close + 4;
+            }
+            if (col_idx >= 0) row[(size_t)col_idx] = trim(value);
+            cell_pos = next_pos;
+        }
+        bool non_empty = false;
+        for (const auto& field : row) {
+            if (!field.empty()) {
+                non_empty = true;
+                break;
+            }
+        }
+        if (non_empty) rows.push_back(std::move(row));
+        pos = row_close + 6;
+    }
+
+    if (rows.empty()) throw std::runtime_error("xlsx worksheet has no rows");
+    const std::vector<std::string>& headers = rows.front();
+    if (headers.empty()) throw std::runtime_error("xlsx worksheet header row is empty");
+
+    auto find_header_index = [&](const std::string& configured_name, std::initializer_list<const char*> fallbacks) -> int {
+        if (!configured_name.empty()) {
+            for (size_t i = 0; i < headers.size(); ++i) {
+                if (trim(headers[i]) == configured_name) return (int)i;
+            }
+        }
+        for (const char* candidate : fallbacks) {
+            for (size_t i = 0; i < headers.size(); ++i) {
+                if (lower(trim(headers[i])) == lower(candidate)) return (int)i;
+            }
+        }
+        return -1;
+    };
+
+    const int lon_idx = find_header_index(lon_field, {"longitude", "lon", "x"});
+    const int lat_idx = find_header_index(lat_field, {"latitude", "lat", "y"});
+    if (lon_idx < 0 || lat_idx < 0) throw std::runtime_error("xlsx worksheet is missing configured lon/lat columns");
+
+    for (size_t row_idx = 1; row_idx < rows.size(); ++row_idx) {
+        const auto& row = rows[row_idx];
+        const auto field_at = [&](int idx) -> std::string {
+            return (idx >= 0 && (size_t)idx < row.size()) ? trim(row[(size_t)idx]) : std::string();
+        };
+        double lon = 0.0;
+        double lat = 0.0;
+        if (!tryParseDouble(field_at(lon_idx), lon) || !tryParseDouble(field_at(lat_idx), lat)) continue;
+        LayerDef::FeatureRecord fg{};
+        fg.extent.min_lon = fg.extent.max_lon = (float)lon;
+        fg.extent.min_lat = fg.extent.max_lat = (float)lat;
+        std::vector<std::pair<std::string, std::string>> props;
+        props.reserve(headers.size());
+        for (size_t i = 0; i < headers.size(); ++i) {
+            const std::string key = trim(headers[i]);
+            if (key.empty()) continue;
+            props.push_back({key, i < row.size() ? trim(row[i]) : ""});
+        }
+        appendFeatureWithProperties(std::move(fg), props, features, feature_properties);
+    }
+    if (features.empty()) throw std::runtime_error("xlsx worksheet produced no point features");
+}
+
 std::vector<std::map<std::string, std::string>> parseDbf(const std::vector<uint8_t>& dbf) {
     if (dbf.size() < 32) throw std::runtime_error("dbf too small");
     const uint32_t record_count = le32(dbf, 4);
@@ -761,24 +957,7 @@ void writeParcelProperties(
         out << '"' << jsonEscape(k) << "\":\"" << jsonEscape(v) << '"';
     };
     out << '{';
-    put("jurisdiction", jurisdiction);
-    put("source_file", source_file);
-    for (const auto& kv : props) put(kv.first, kv.second);
-    auto get = [&](std::initializer_list<const char*> keys) -> std::string {
-        for (const char* k : keys) {
-            auto it = props.find(k);
-            if (it != props.end() && !it->second.empty()) return it->second;
-        }
-        return {};
-    };
-    const std::string acct = get({"ACCTID", "ACCOUNTID", "ACCOUNT_ID"});
-    const std::string parcel = get({"PARCEL", "MAP", "LOT"});
-    put("source_parcel_id", !acct.empty() ? acct : parcel);
-    put("account_id", acct);
-    put("blocklot", !acct.empty() ? acct : parcel);
-    put("address", get({"ADDRESS", "ADDR", "PREMISE_ADDRESS"}));
-    put("owner", get({"OWNNAME1", "OWNER", "OWNER_NAME"}));
-    put("sdat_link", get({"SDAT_Link", "SDAT_LINK"}));
+    for (const auto& kv : parcelPropertyPairs(props, jurisdiction, source_file)) put(kv.first, kv.second);
     out << '}';
 }
 
@@ -857,6 +1036,107 @@ void writeHowardShapefileGeoJson(const std::vector<uint8_t>& shp, const std::vec
         true);
 }
 
+std::vector<std::pair<std::string, std::string>> parcelPropertyPairs(
+    const std::map<std::string, std::string>& props,
+    const std::string& jurisdiction,
+    const std::string& source_file) {
+    std::vector<std::pair<std::string, std::string>> out;
+    out.emplace_back("jurisdiction", jurisdiction);
+    out.emplace_back("source_file", source_file);
+    for (const auto& kv : props) out.push_back(kv);
+    auto get = [&](std::initializer_list<const char*> keys) -> std::string {
+        for (const char* k : keys) {
+            auto it = props.find(k);
+            if (it != props.end() && !it->second.empty()) return it->second;
+        }
+        return {};
+    };
+    const std::string acct = get({"ACCTID", "ACCOUNTID", "ACCOUNT_ID"});
+    const std::string parcel = get({"PARCEL", "MAP", "LOT"});
+    out.emplace_back("source_parcel_id", !acct.empty() ? acct : parcel);
+    out.emplace_back("account_id", acct);
+    out.emplace_back("blocklot", !acct.empty() ? acct : parcel);
+    out.emplace_back("address", get({"ADDRESS", "ADDR", "PREMISE_ADDRESS"}));
+    out.emplace_back("owner", get({"OWNNAME1", "OWNER", "OWNER_NAME"}));
+    out.emplace_back("sdat_link", get({"SDAT_Link", "SDAT_LINK"}));
+    return out;
+}
+
+void appendFeatureWithProperties(
+    LayerDef::FeatureRecord&& fg,
+    const std::vector<std::pair<std::string, std::string>>& props,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    feature_properties.push_back(LayerDef::FeatureProperties{props});
+    features.push_back(std::move(fg));
+}
+
+void buildStateplaneParcelShapefileFeatures(
+    const std::vector<uint8_t>& shp,
+    const std::vector<std::map<std::string, std::string>>& dbf,
+    const std::string& jurisdiction,
+    const std::string& source_file,
+    bool us_feet,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    if (shp.size() < 100 || be32s(shp, 0) != 9994) throw std::runtime_error("invalid shapefile header");
+    size_t record_index = 0;
+    for (size_t off = 100; off + 8 <= shp.size();) {
+        const int32_t content_words = be32s(shp, off + 4);
+        const size_t content_off = off + 8;
+        const size_t content_len = (size_t)content_words * 2;
+        off = content_off + content_len;
+        if (content_off + content_len > shp.size() || content_len < 4) break;
+        const int32_t shape_type = le32s(shp, content_off);
+        if (shape_type == 0) { record_index++; continue; }
+        if (shape_type != 5 && shape_type != 15) { record_index++; continue; }
+        if (content_len < 44) { record_index++; continue; }
+        const int32_t num_parts = le32s(shp, content_off + 36);
+        const int32_t num_points = le32s(shp, content_off + 40);
+        if (num_parts <= 0 || num_points <= 0) { record_index++; continue; }
+        const size_t parts_off = content_off + 44;
+        const size_t points_off = parts_off + (size_t)num_parts * 4;
+        if (points_off + (size_t)num_points * 16 > content_off + content_len) { record_index++; continue; }
+
+        LayerDef::FeatureRecord fg{};
+        fg.rings.reserve((size_t)num_parts);
+        bool has_extent = false;
+        for (int32_t part = 0; part < num_parts; ++part) {
+            const int32_t start = le32s(shp, parts_off + (size_t)part * 4);
+            const int32_t end = (part + 1 < num_parts) ? le32s(shp, parts_off + (size_t)(part + 1) * 4) : num_points;
+            std::vector<ImVec2> ring;
+            ring.reserve((size_t)std::max(0, end - start));
+            for (int32_t pi = start; pi < end; ++pi) {
+                const double x = leDouble(shp, points_off + (size_t)pi * 16);
+                const double y = leDouble(shp, points_off + (size_t)pi * 16 + 8);
+                const PointD ll = us_feet ? maryland2248ToLonLat(x, y) : maryland26985ToLonLat(x, y);
+                ring.emplace_back((float)ll.x, (float)ll.y);
+                if (!has_extent) {
+                    fg.extent.min_lon = fg.extent.max_lon = (float)ll.x;
+                    fg.extent.min_lat = fg.extent.max_lat = (float)ll.y;
+                    has_extent = true;
+                } else {
+                    fg.extent.min_lon = std::min(fg.extent.min_lon, (float)ll.x);
+                    fg.extent.min_lat = std::min(fg.extent.min_lat, (float)ll.y);
+                    fg.extent.max_lon = std::max(fg.extent.max_lon, (float)ll.x);
+                    fg.extent.max_lat = std::max(fg.extent.max_lat, (float)ll.y);
+                }
+            }
+            if (!ring.empty()) fg.rings.push_back(std::move(ring));
+        }
+        if (fg.rings.empty()) { record_index++; continue; }
+        const std::vector<std::pair<std::string, std::string>> props =
+            record_index < dbf.size()
+                ? parcelPropertyPairs(dbf[record_index], jurisdiction, source_file)
+                : std::vector<std::pair<std::string, std::string>>{
+                    {"jurisdiction", jurisdiction},
+                    {"source_file", source_file}
+                };
+        appendFeatureWithProperties(std::move(fg), props, features, feature_properties);
+        record_index++;
+    }
+}
+
 void writeSocrataHowardPropertyGeoJson(const fs::path& csv_path, const fs::path& out_path) {
     const auto rows = parseCsv(readFileBytes(csv_path));
     if (rows.empty()) throw std::runtime_error("Socrata CSV is empty");
@@ -913,6 +1193,50 @@ void writeSocrataHowardPropertyGeoJson(const fs::path& csv_path, const fs::path&
     std::error_code ec;
     fs::rename(tmp, out_path, ec);
     if (ec) throw std::runtime_error("rename failed: " + ec.message());
+}
+
+void buildSocrataHowardPropertyFeatures(
+    const fs::path& csv_path,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    const auto rows = parseCsv(readFileBytes(csv_path));
+    if (rows.empty()) throw std::runtime_error("Socrata CSV is empty");
+    std::unordered_map<std::string, size_t> col;
+    for (size_t i = 0; i < rows.front().size(); ++i) col[rows.front()[i]] = i;
+    auto get = [&](const std::vector<std::string>& row, const char* name) -> std::string {
+        auto it = col.find(name);
+        if (it == col.end() || it->second >= row.size()) return {};
+        return row[it->second];
+    };
+
+    for (size_t r = 1; r < rows.size(); ++r) {
+        const auto& row = rows[r];
+        const std::string acct = get(row, "account_id_mdp_field_acctid");
+        if (acct.empty()) continue;
+        LayerDef::FeatureRecord fg{};
+        std::vector<std::pair<std::string, std::string>> props;
+        props.reserve(col.size() + 16);
+        props.push_back({"jurisdiction", "Howard County"});
+        props.push_back({"source_file", "Maryland Real Property Assessments"});
+        for (const auto& [name, idx] : col) {
+            if (idx < row.size()) props.push_back({name, row[idx]});
+        }
+        props.push_back({"source_parcel_id", acct});
+        props.push_back({"account_id", acct});
+        props.push_back({"blocklot", acct});
+        props.push_back({"address", get(row, "mdp_street_address_mdp_field_address")});
+        props.push_back({"owner", ""});
+        props.push_back({"land_value", get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164")});
+        props.push_back({"improvement_value", get(row, "current_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165")});
+        props.push_back({"current_value", get(row, "current_assessment_year_total_assessment_sdat_field_172")});
+        props.push_back({"sale_price", get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")});
+        props.push_back({"sale_date", get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89")});
+        props.push_back({"year_built", get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")});
+        props.push_back({"sdat_link", get(row, "real_property_search_link")});
+        props.push_back({"finder_online_link", get(row, "finder_online_link")});
+        appendFeatureWithProperties(std::move(fg), props, features, feature_properties);
+    }
+    if (features.empty()) throw std::runtime_error("Socrata CSV produced no assessment records");
 }
 
 std::string jsonText(const json& props, std::initializer_list<const char*> keys) {
@@ -1219,6 +1543,65 @@ CensusAcsJoinStats writeCensusAcsArcgisLayerGeoJson(
     return CensusAcsJoinStats{written, missing};
 }
 
+CensusAcsJoinStats buildCensusAcsArcgisLayerFeatures(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const std::unordered_map<std::string, json>& acs_rows_by_geoid,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
+    const std::string where = where_clause.empty() ? "1=1" : where_clause;
+    json ids = json::parse(httpPostForm(service_url + "/query", {
+        {"where", where},
+        {"returnIdsOnly", "true"},
+        {"f", "json"}
+    }).body);
+    if (ids.contains("error")) throw std::runtime_error("ArcGIS object ID query failed: " + ids["error"].dump());
+    std::vector<int64_t> object_ids;
+    for (const auto& id : ids.value("objectIds", json::array())) object_ids.push_back(id.get<int64_t>());
+    std::sort(object_ids.begin(), object_ids.end());
+    if (object_ids.empty()) throw std::runtime_error("ArcGIS service returned no object IDs");
+
+    size_t written = 0;
+    size_t missing = 0;
+    const size_t page_size = std::max<size_t>(1, std::min<size_t>(1000, arcgisServiceMaxRecordCount(service_url)));
+    for (size_t off = 0; off < object_ids.size(); off += page_size) {
+        std::ostringstream id_list;
+        const size_t end = std::min(object_ids.size(), off + page_size);
+        for (size_t i = off; i < end; ++i) {
+            if (i > off) id_list << ',';
+            id_list << object_ids[i];
+        }
+        json page = json::parse(httpPostForm(service_url + "/query", {
+            {"objectIds", id_list.str()},
+            {"outFields", "*"},
+            {"returnGeometry", "true"},
+            {"outSR", "4326"},
+            {"f", "geojson"}
+        }).body);
+        if (page.contains("error")) throw std::runtime_error("ArcGIS feature query failed: " + page["error"].dump());
+        for (auto& feature : page.value("features", json::array())) {
+            json& props = feature["properties"];
+            const std::string geoid = jsonText(props, {"GEOID", "GEOID20", "GEOID10"});
+            if (geoid.empty()) {
+                missing++;
+                continue;
+            }
+            const auto it = acs_rows_by_geoid.find(geoid);
+            if (it == acs_rows_by_geoid.end()) {
+                missing++;
+                continue;
+            }
+            props = buildJoinedCensusAcsProperties(props, it->second);
+            const size_t before = features.size();
+            appendGeoJsonFeatureRecords(feature, features, feature_properties);
+            written += features.size() - before;
+        }
+    }
+    if (written == 0) throw std::runtime_error("joined Census/ACS import produced no features");
+    return CensusAcsJoinStats{written, missing};
+}
+
 size_t arcgisServiceMaxRecordCount(const std::string& service_url) {
     try {
         json meta = json::parse(httpPostForm(service_url, {
@@ -1231,6 +1614,48 @@ size_t arcgisServiceMaxRecordCount(const std::string& service_url) {
     } catch (...) {
     }
     return 1000;
+}
+
+void buildArcgisFeatureLayerFeatures(
+    const std::string& service_url,
+    const std::string& where_clause,
+    const std::string& normalizer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    if (service_url.empty()) throw std::runtime_error("missing ArcGIS service URL");
+    json ids = json::parse(httpPostForm(service_url + "/query", {
+        {"where", where_clause.empty() ? "1=1" : where_clause},
+        {"returnIdsOnly", "true"},
+        {"f", "json"}
+    }).body);
+    if (ids.contains("error")) throw std::runtime_error("ArcGIS object ID query failed: " + ids["error"].dump());
+    std::vector<int64_t> object_ids;
+    for (const auto& id : ids.value("objectIds", json::array())) object_ids.push_back(id.get<int64_t>());
+    std::sort(object_ids.begin(), object_ids.end());
+    if (object_ids.empty()) throw std::runtime_error("ArcGIS service returned no object IDs");
+
+    const size_t page_size = std::max<size_t>(1, std::min<size_t>(1000, arcgisServiceMaxRecordCount(service_url)));
+    for (size_t off = 0; off < object_ids.size(); off += page_size) {
+        std::ostringstream id_list;
+        const size_t end = std::min(object_ids.size(), off + page_size);
+        for (size_t i = off; i < end; ++i) {
+            if (i > off) id_list << ',';
+            id_list << object_ids[i];
+        }
+        json page = json::parse(httpPostForm(service_url + "/query", {
+            {"objectIds", id_list.str()},
+            {"outFields", "*"},
+            {"returnGeometry", "true"},
+            {"outSR", "4326"},
+            {"f", "geojson"}
+        }).body);
+        if (page.contains("error")) throw std::runtime_error("ArcGIS feature query failed: " + page["error"].dump());
+        for (auto& feature : page.value("features", json::array())) {
+            maybeNormalizeArcgisFeature(normalizer, feature);
+            appendGeoJsonFeatureRecords(feature, features, feature_properties);
+        }
+    }
+    if (features.empty()) throw std::runtime_error("ArcGIS service returned no features");
 }
 
 void writeArcgisFeatureLayerGeoJson(const std::string& service_url, const fs::path& out_path, const std::string& normalizer) {
@@ -1403,9 +1828,14 @@ bool ensureRegionalParcelInputAvailable(const fs::path& root, const std::string&
         if (err) *err = "no configured parcel source for " + file;
         return false;
     }
-    const fs::path input = resolveStoredLayerPath(root, source);
+    const fs::path input = canonicalLayerPathForFile(root, file);
     if (fs::exists(input)) return true;
-    VersionedDownloadResult res = downloadOrImportLayer(source, input, root);
+    const fs::path legacy_output = resolveStoredLayerPath(root, source);
+    if (fs::exists(legacy_output)) {
+        persistCanonicalLayerBinaryAndRemoveGeoJson(legacy_output);
+        if (fs::exists(input)) return true;
+    }
+    VersionedDownloadResult res = downloadOrImportLayer(source, legacy_output, root);
     if (!res.ok) {
         if (err) *err = "failed to materialize " + file + ": " + res.message;
         return false;
@@ -1449,7 +1879,7 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
              {"wicomico_county_parcels.geojson", ""},
              {"worcester_county_parcels.geojson", ""}
          }) {
-        const fs::path input = resolveStoredLayerPathForFile(root, file);
+        const fs::path input = canonicalLayerPathForFile(root, file);
         if (!fs::exists(input)) {
             std::string import_err;
             ensureRegionalParcelInputAvailable(root, file, &import_err);
@@ -1462,7 +1892,7 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
         input_count++;
     }
     if (input_count == 0) {
-        res.message = "no local county parcel layers are available to build regional_parcels.geojson";
+        res.message = "no local county parcel layers are available to build the regional parcel canonical binary";
         return res;
     }
     cmd += " --output ";
@@ -1476,7 +1906,7 @@ VersionedDownloadResult buildRegionalParcelLayer(const fs::path& out_path, const
     res.ok = true;
     res.changed = true;
     res.not_modified = false;
-    res.message = "generated from " + std::to_string(input_count) + " local parcel layer(s)";
+    res.message = "generated canonical parcel binary from " + std::to_string(input_count) + " local parcel layer(s)";
     return res;
 }
 
@@ -1630,6 +2060,73 @@ void writeJsonPointFeedGeoJson(
     fs::rename(tmp, out_path, ec);
     if (ec) throw std::runtime_error("rename failed: " + ec.message());
 }
+
+void buildJsonPointFeedFeatures(
+    const fs::path& json_path,
+    const std::string& item_path,
+    const std::string& lon_field,
+    const std::string& lat_field,
+    const std::string& base_url,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    std::ifstream in(json_path);
+    if (!in) throw std::runtime_error("failed to open json feed");
+    json root;
+    in >> root;
+    const json* items = item_path.empty() ? &root : jsonPathValue(root, item_path);
+    if (!items || !items->is_array()) throw std::runtime_error("json feed items path is not an array");
+
+    std::unordered_map<std::string, std::pair<double, double>> inferred_coords_by_key;
+    for (const auto& item : *items) {
+        if (!item.is_object()) continue;
+        double lon = 0.0;
+        double lat = 0.0;
+        if ((!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) &&
+            (!jsonPathDoubleAny(item, {"center.lon", "geometry.0.lon"}, lon) ||
+             !jsonPathDoubleAny(item, {"center.lat", "geometry.0.lat"}, lat))) {
+            continue;
+        }
+        for (const std::string& key : locationKeysForItem(item)) {
+            inferred_coords_by_key.emplace(key, std::make_pair(lon, lat));
+        }
+    }
+
+    for (const auto& item : *items) {
+        if (!item.is_object()) continue;
+        double lon = 0.0;
+        double lat = 0.0;
+        if ((!jsonPathDouble(item, lon_field, lon) || !jsonPathDouble(item, lat_field, lat)) &&
+            (!jsonPathDoubleAny(item, {"center.lon", "geometry.0.lon"}, lon) ||
+             !jsonPathDoubleAny(item, {"center.lat", "geometry.0.lat"}, lat))) {
+            bool inferred = false;
+            for (const std::string& key : locationKeysForItem(item)) {
+                auto it = inferred_coords_by_key.find(key);
+                if (it == inferred_coords_by_key.end()) continue;
+                lon = it->second.first;
+                lat = it->second.second;
+                inferred = true;
+                break;
+            }
+            if (!inferred) continue;
+        }
+
+        LayerDef::FeatureRecord fg{};
+        fg.extent.min_lon = fg.extent.max_lon = (float)lon;
+        fg.extent.min_lat = fg.extent.max_lat = (float)lat;
+        std::vector<std::pair<std::string, std::string>> props;
+        flattenJsonProperties(item, "", props);
+        const std::string org_image = item.value("orgImageUrl", "");
+        const std::string image_url = item.value("imageUrl", "");
+        const std::string resolved_org_image = resolveRelativeUrl(org_image, base_url);
+        const std::string resolved_image = resolveRelativeUrl(image_url, base_url);
+        if (!resolved_org_image.empty()) props.push_back({"orgImageUrl", resolved_org_image});
+        if (!resolved_image.empty()) props.push_back({"imageUrl", resolved_image});
+        if (!resolved_image.empty()) props.push_back({"image_url_resolved", resolved_image});
+        if (!resolved_org_image.empty()) props.push_back({"org_image_url_resolved", resolved_org_image});
+        appendFeatureWithProperties(std::move(fg), props, features, feature_properties);
+    }
+    if (features.empty()) throw std::runtime_error("json feed produced no point features");
+}
 }
 
 bool layerHasImportSource(const LayerDef& layer) {
@@ -1653,6 +2150,30 @@ VersionedDownloadResult downloadOrImportLayer(
     const fs::path& root,
     const DownloadProgressCallback& on_progress) {
     if (!layer.source_url.empty()) {
+        if (out_path.extension() == ".geojson") {
+            const fs::path source_path = provenanceSourceArtifactPath(
+                root,
+                layer,
+                out_path.filename().string());
+            VersionedDownloadResult res = downloadUrlVersioned(layer.source_url, source_path, root / "data" / "versions", on_progress);
+            if (!res.ok) return res;
+            try {
+                std::vector<LayerDef::FeatureProperties> feature_properties;
+                const std::vector<LayerDef::FeatureRecord> features =
+                    loadLayerPointsFromFile(source_path, &feature_properties);
+                saveCanonicalLayerBinaryForSourceGeometry(
+                    source_path,
+                    out_path,
+                    fileSignature(source_path),
+                    features,
+                    feature_properties);
+                res.message = "materialized canonical layer binary via " + res.message;
+            } catch (const std::exception& e) {
+                res.ok = false;
+                res.message = std::string("canonicalization failed: ") + e.what();
+            }
+            return res;
+        }
         return downloadUrlVersioned(layer.source_url, out_path, root / "data" / "versions", on_progress);
     }
     VersionedDownloadResult res;
@@ -1667,25 +2188,30 @@ VersionedDownloadResult downloadOrImportLayer(
         const fs::path csv_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string() + ".source.csv");
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, csv_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
-        try {
-            writeSocrataHowardPropertyGeoJson(csv_path, out_path);
-            res.ok = true;
-            res.changed = true;
-            res.not_modified = false;
-            res.message = "imported Socrata CSV properties via " + dl.message;
-        } catch (const std::exception& e) {
-            res.ok = false;
-            res.message = std::string("import failed: ") + e.what();
-        }
+        std::error_code ec;
+        fs::remove(out_path, ec);
+        fs::remove(fs::path(out_path.string() + ".canonical.bin"), ec);
+        res.ok = true;
+        res.changed = dl.changed;
+        res.not_modified = dl.not_modified;
+        res.message = "downloaded Socrata CSV source artifact for DuckDB ingest via " + dl.message;
         return res;
     }
     if (layer.import_type == "arcgis_feature_layer") {
         try {
-            writeArcgisFeatureLayerGeoJson(layer.import_service_url, out_path, layer.import_normalizer);
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            buildArcgisFeatureLayerFeatures(
+                layer.import_service_url,
+                "1=1",
+                layer.import_normalizer,
+                features,
+                feature_properties);
+            saveCanonicalLayerBinary(out_path, layer.import_service_url, features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
-            res.message = "imported ArcGIS feature layer";
+            res.message = "imported ArcGIS feature layer as canonical layer binary";
         } catch (const std::exception& e) {
             res.ok = false;
             res.message = std::string("import failed: ") + e.what();
@@ -1706,11 +2232,15 @@ VersionedDownloadResult downloadOrImportLayer(
                 layer.import_table,
                 layer.import_year,
                 layer.import_survey);
-            const CensusAcsJoinStats stats = writeCensusAcsArcgisLayerGeoJson(
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            const CensusAcsJoinStats stats = buildCensusAcsArcgisLayerFeatures(
                 layer.import_service_url,
                 layer.import_where,
-                out_path,
-                acs_rows);
+                acs_rows,
+                features,
+                feature_properties);
+            saveCanonicalLayerBinary(out_path, fileSignature(acs_json_path), features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
@@ -1735,12 +2265,16 @@ VersionedDownloadResult downloadOrImportLayer(
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, xlsx_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
         try {
-            writeXlsxPointTableGeoJson(
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            buildXlsxPointTableFeatures(
                 xlsx_path,
-                out_path,
                 layer.import_sheet_name,
                 layer.import_lon_field,
-                layer.import_lat_field);
+                layer.import_lat_field,
+                features,
+                feature_properties);
+            saveCanonicalLayerBinary(out_path, fileSignature(xlsx_path), features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
@@ -1760,13 +2294,17 @@ VersionedDownloadResult downloadOrImportLayer(
         VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, json_path, root / "data" / "versions", on_progress);
         if (!dl.ok) return dl;
         try {
-            writeJsonPointFeedGeoJson(
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            buildJsonPointFeedFeatures(
                 json_path,
-                out_path,
                 layer.import_item_path,
                 layer.import_lon_field,
                 layer.import_lat_field,
-                layer.import_url);
+                layer.import_url,
+                features,
+                feature_properties);
+            saveCanonicalLayerBinary(out_path, fileSignature(json_path), features, feature_properties);
             res.ok = true;
             res.changed = true;
             res.not_modified = false;
@@ -1791,13 +2329,17 @@ VersionedDownloadResult downloadOrImportLayer(
             if (!writeTextFileIfChanged(json_path, resp.body, &body_changed)) {
                 throw std::runtime_error("failed to write overpass artifact");
             }
-            writeJsonPointFeedGeoJson(
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            buildJsonPointFeedFeatures(
                 json_path,
-                out_path,
                 layer.import_item_path,
                 layer.import_lon_field,
                 layer.import_lat_field,
-                layer.import_url);
+                layer.import_url,
+                features,
+                feature_properties);
+            saveCanonicalLayerBinary(out_path, fileSignature(json_path), features, feature_properties);
             res.ok = true;
             res.changed = body_changed;
             res.not_modified = !body_changed;
@@ -1822,22 +2364,24 @@ VersionedDownloadResult downloadOrImportLayer(
     try {
         const auto members = extractShapefileMembers(archive_path, layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile);
         const auto dbf = parseDbf(members.at(".dbf"));
-        const std::string collection_name = lower(out_path.stem().string());
         const std::string source_file = layer.import_shapefile.empty() ? "Property.shp" : layer.import_shapefile;
         const std::string jurisdiction =
             layer.name.size() > 8 && layer.name.ends_with(" Parcels")
                 ? layer.name.substr(0, layer.name.size() - 8)
                 : layer.name;
-        writeStateplaneParcelShapefileGeoJson(
+        std::vector<LayerDef::FeatureRecord> features;
+        std::vector<LayerDef::FeatureProperties> feature_properties;
+        buildStateplaneParcelShapefileFeatures(
             members.at(".shp"),
             dbf,
-            out_path,
-            collection_name,
             jurisdiction,
             source_file,
             layer.import_source_crs == "EPSG:2248" ||
                 layer.import_source_crs == "EPSG:6488" ||
-                layer.import_source_crs == "ESRI:103069");
+                layer.import_source_crs == "ESRI:103069",
+            features,
+            feature_properties);
+        saveCanonicalLayerBinary(out_path, fileSignature(archive_path), features, feature_properties);
         res.ok = true;
         res.changed = true;
         res.not_modified = false;
@@ -1847,4 +2391,40 @@ VersionedDownloadResult downloadOrImportLayer(
         res.message = std::string("import failed: ") + e.what();
     }
     return res;
+}
+namespace {
+void saveCanonicalLayerBinaryForSourceGeometry(
+    const fs::path& source_geometry_path,
+    const fs::path& target_layer_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    if (!sourceGeometryFilenameMatchesTargetLayer(source_geometry_path, target_layer_path)) {
+        throw std::runtime_error(
+            "source geometry filename must match target layer filename before writing canonical Vulkan binary");
+    }
+    saveCanonicalLayerBinary(target_layer_path, sig, features, feature_properties);
+}
+
+void saveCanonicalLayerBinary(
+    const fs::path& target_layer_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>& feature_properties) {
+    const fs::path canonical_path = fs::path(target_layer_path.string() + ".canonical.bin");
+    saveBinaryCanonicalFeatureCollection(canonical_path, sig, features, &feature_properties);
+    std::error_code ec;
+    fs::remove(target_layer_path, ec);
+}
+
+void persistCanonicalLayerBinaryAndRemoveGeoJson(const fs::path& geojson_path) {
+    if (geojson_path.extension() != ".geojson") return;
+    std::vector<LayerDef::FeatureProperties> feature_properties;
+    const std::vector<LayerDef::FeatureRecord> features = loadLayerPointsFromFile(geojson_path, &feature_properties);
+    const std::string sig = fileSignature(geojson_path);
+    const fs::path canonical_path = fs::path(geojson_path.string() + ".canonical.bin");
+    saveBinaryCanonicalFeatureCollection(canonical_path, sig, features, &feature_properties);
+    std::error_code ec;
+    fs::remove(geojson_path, ec);
+}
 }

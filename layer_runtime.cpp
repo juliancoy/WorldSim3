@@ -43,13 +43,14 @@ std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std:
             return artifactReadStatus("reading canonical parcel binary", layer_file, ".canonical.bin");
         }
         if (state.hydration_phase == "parsing_source_cache_disabled" ||
+            state.hydration_phase == "canonical_source_cache_missing" ||
             state.hydration_phase == "parsing_source_cache_missing" ||
             state.hydration_phase == "parsing_source_cache_miss_or_stale" ||
             state.hydration_phase == "source_parse") {
-            return artifactReadStatus("reading source GeoJSON", layer_file);
+            return "reading deprecated source layer artifact";
         }
         if (state.hydration_phase == "parsing_source_cache_rejected") {
-            return "rebuilding from source GeoJSON";
+            return "rebuilding from deprecated source layer artifact";
         }
         if (state.hydration_phase == "loading_canonical_binary_source_failed") {
             return "canonical binary read failed";

@@ -1,5 +1,6 @@
 #include "layer_pipeline_drain.h"
 
+#include "feature_props.h"
 #include "memory_utils.h"
 
 #include <algorithm>
@@ -27,7 +28,9 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
         if (ready.index < ctx.layers->size()) {
             bool source_signature_changed = false;
             if (ready.replace_existing) {
+                clearFeaturePropertyRegistryForLayer((*ctx.layers)[ready.index]);
                 releaseContainerStorage((*ctx.layers)[ready.index].features);
+                releaseContainerStorage((*ctx.layers)[ready.index].feature_properties);
                 if (ctx.layer_spatial && ready.index < ctx.layer_spatial->size()) {
                     (*ctx.layer_spatial)[ready.index] = LayerSpatialIndex{};
                 }
@@ -55,19 +58,26 @@ void drainHydratedLayerQueue(LayerPipelineDrainContext& ctx) {
             }
             if (!ready.features.empty()) {
                 auto& dst = (*ctx.layers)[ready.index].features;
+                auto& dst_props = (*ctx.layers)[ready.index].feature_properties;
+                dst_props.reserve(dst_props.size() + ready.feature_properties.size());
                 if (ctx.layer_profile_accumulators && ready.index < ctx.layer_profile_accumulators->size()) {
                     auto& acc = (*ctx.layer_profile_accumulators)[ready.index];
                     for (const auto& fg : ready.features) {
                         acc.features += 1;
                         acc.rings += fg.rings.size();
-                        acc.properties += fg.properties.size();
                         for (const auto& r : fg.rings) acc.ring_points += r.size();
                     }
+                    for (const auto& props : ready.feature_properties) acc.properties += props.values.size();
                 }
+                dst_props.insert(
+                    dst_props.end(),
+                    std::make_move_iterator(ready.feature_properties.begin()),
+                    std::make_move_iterator(ready.feature_properties.end()));
                 dst.insert(
                     dst.end(),
                     std::make_move_iterator(ready.features.begin()),
                     std::make_move_iterator(ready.features.end()));
+                rebuildFeaturePropertyRegistryForLayer((*ctx.layers)[ready.index]);
                 if (ready.index < ctx.layer_profile_dirty->size()) (*ctx.layer_profile_dirty)[ready.index] = true;
                 std::lock_guard<std::mutex> lk3(*ctx.status_mutex);
                 if (ready.index < ctx.layer_states->size()) {

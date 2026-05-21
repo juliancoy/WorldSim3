@@ -1,7 +1,9 @@
 #include "app_utils.h"
+#include "cache_io.h"
 #include "cpu_affinity.h"
 #include "duckdb_analytics.h"
-#include "headless_layer_hydration.h"
+#include "feature_props.h"
+#include "layer_geometry.h"
 #include "layer_state_io.h"
 #include "memory_utils.h"
 #include "parcel_consolidation.h"
@@ -34,6 +36,24 @@ struct OwnerDumpOptions {
     bool verbose = true;
     bool summary_only = false;
     fs::path output_path;
+};
+
+struct LocalLayerLoadFailure {
+    size_t layer_index = 0;
+    std::string layer_file;
+    std::string error;
+};
+
+struct LocalLayerLoadSummary {
+    size_t local_layer_count = 0;
+    size_t requested_layer_count = 0;
+    size_t loaded_layer_count = 0;
+    size_t failed_layer_count = 0;
+    size_t skipped_missing_layer_count = 0;
+    size_t total_feature_count = 0;
+    double elapsed_ms = 0.0;
+    std::vector<size_t> requested_indices;
+    std::vector<LocalLayerLoadFailure> failures;
 };
 
 std::optional<unsigned int> parseUnsigned(const char* value) {
@@ -230,6 +250,73 @@ std::string diagnoseZeroFeatureLayer(const fs::path& path) {
     }
     return "supported geometry types were present, but no features were extracted";
 }
+
+bool loadLocalLayerFeatures(
+    const fs::path& root,
+    const LayerDef& layer,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    const fs::path layer_path = resolveStoredLayerPath(root, layer);
+    std::string sig;
+    std::string sig_source_kind;
+    if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
+        error = "failed to resolve source signature";
+        return false;
+    }
+    if (loadCanonicalLayerFeatureCollection(root, layer.file, sig, features, &feature_properties)) {
+        source_used = "canonical_binary";
+        return true;
+    }
+    if (error.empty()) error = "no readable canonical layer binary";
+    return false;
+}
+
+bool loadLocalLayers(
+    const fs::path& root,
+    std::vector<LayerDef>& layers,
+    bool verbose,
+    LocalLayerLoadSummary& summary) {
+    summary = {};
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const bool exists = layerRuntimeSourceMaterialized(root, layers[i]);
+        if (!exists) {
+            summary.skipped_missing_layer_count += 1;
+            continue;
+        }
+        summary.local_layer_count += 1;
+        summary.requested_indices.push_back(i);
+    }
+    summary.requested_layer_count = summary.requested_indices.size();
+    const auto started_at = std::chrono::steady_clock::now();
+    for (size_t idx : summary.requested_indices) {
+        std::vector<LayerDef::FeatureRecord> features;
+        std::vector<LayerDef::FeatureProperties> feature_properties;
+        std::string source_used;
+        std::string error;
+        if (!loadLocalLayerFeatures(root, layers[idx], features, feature_properties, source_used, error)) {
+            summary.failed_layer_count += 1;
+            summary.failures.push_back({idx, layers[idx].file, error});
+            if (verbose) std::cerr << "  failed " << layers[idx].file << ": " << error << '\n';
+            continue;
+        }
+        layers[idx].features = std::move(features);
+        layers[idx].feature_properties = std::move(feature_properties);
+        rebuildFeaturePropertyRegistryForLayer(layers[idx]);
+        summary.loaded_layer_count += 1;
+        summary.total_feature_count += layers[idx].features.size();
+        if (verbose) {
+            std::cerr << "  [" << summary.loaded_layer_count + summary.failed_layer_count
+                      << "/" << summary.requested_layer_count << "] "
+                      << layers[idx].file << " -> " << layers[idx].features.size()
+                      << " features via " << source_used << '\n';
+        }
+    }
+    summary.elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    return summary.failed_layer_count == 0;
+}
 }
 
 int main(int argc, char** argv) {
@@ -245,7 +332,7 @@ int main(int argc, char** argv) {
     const fs::path root = resolveAppRoot(fs::current_path(), argc > 0 ? argv[0] : nullptr);
     const unsigned int worker_count = chooseWorkerCount(options.workers);
     std::cerr << "Resolving app root: " << root << '\n';
-    std::cerr << "Hydration workers: " << worker_count << '\n';
+    std::cerr << "Worker budget hint: " << worker_count << '\n';
 
     if (options.reserve_cores > 0) {
         std::string affinity_message;
@@ -262,24 +349,20 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::cerr << "Hydrating locally available layers using worker/cache pipeline...\n";
-    HeadlessLayerHydrationSummary hydration_summary;
-    const auto hydration_started_at = std::chrono::steady_clock::now();
-    if (!hydrateLocalLayersHeadless(
-            root,
-            layers,
-            HeadlessLayerHydrationOptions{worker_count, options.verbose},
-            hydration_summary)) {
-        std::cerr << "Hydration failed for " << hydration_summary.failed_layer_count << " layer(s).\n";
-        for (const auto& failure : hydration_summary.failures) {
+    std::cerr << "Loading locally available layers from canonical/source inputs...\n";
+    LocalLayerLoadSummary load_summary;
+    const auto load_started_at = std::chrono::steady_clock::now();
+    if (!loadLocalLayers(root, layers, options.verbose, load_summary)) {
+        std::cerr << "Source load failed for " << load_summary.failed_layer_count << " layer(s).\n";
+        for (const auto& failure : load_summary.failures) {
             std::cerr << "  " << failure.layer_file << ": " << failure.error << '\n';
         }
         return 1;
     }
-    const double hydration_wall_ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - hydration_started_at).count();
+    const double load_wall_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - load_started_at).count();
     std::vector<std::pair<std::string, std::string>> zero_feature_diagnostics;
-    for (size_t idx : hydration_summary.requested_indices) {
+    for (size_t idx : load_summary.requested_indices) {
         if (idx >= layers.size() || !layers[idx].features.empty()) continue;
         zero_feature_diagnostics.push_back({
             layers[idx].file,
@@ -375,11 +458,11 @@ int main(int argc, char** argv) {
 
     std::cout << "Root: " << root << '\n';
     std::cout << "Hydration workers: " << worker_count << '\n';
-    std::cout << "Local layers hydrated: " << hydration_summary.hydrated_layer_count
-              << "/" << hydration_summary.requested_layer_count << '\n';
-    std::cout << "Missing local layers skipped: " << hydration_summary.skipped_missing_layer_count << '\n';
-    std::cout << "Hydrated features: " << hydration_summary.total_feature_count << '\n';
-    std::cout << "Hydration time (ms): " << hydration_wall_ms << '\n';
+    std::cout << "Local layers loaded: " << load_summary.loaded_layer_count
+              << "/" << load_summary.requested_layer_count << '\n';
+    std::cout << "Missing local layers skipped: " << load_summary.skipped_missing_layer_count << '\n';
+    std::cout << "Loaded features: " << load_summary.total_feature_count << '\n';
+    std::cout << "Source load time (ms): " << load_wall_ms << '\n';
     std::cout << "DuckDB rebuild time (ms): " << rebuild_ms << '\n';
     std::cout << duckdb.status().message << '\n';
     std::cout << "Unified parcels: " << unified_row_count << '\n';

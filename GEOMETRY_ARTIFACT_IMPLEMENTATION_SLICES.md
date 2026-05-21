@@ -7,6 +7,11 @@ Use this with:
 - [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_MIGRATION.md)
 - [GEOMETRY_ARTIFACT_CHECKLIST.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_CHECKLIST.md)
 
+This file owns slice ordering and slice completion, not the full narrative status summary.
+
+- For the current implementation snapshot, use [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_MIGRATION.md).
+- Use this document to decide landing order and remaining slice boundaries.
+
 ## Current Status
 
 Status as of `2026-05-21`.
@@ -33,33 +38,6 @@ Still open:
 - Slice 10: GPU picking for polygons
 - Slice 13: delete CPU geometry runtime paths
 - Slice 14: final simplification pass
-
-What is true in the current codebase:
-
-- `--build-geometry-duckdb-artifacts` works and emits explicit artifact and DuckDB inventory.
-- `.point.bin`, `.polyline.bin`, and `.polygon.bin` compile and validate.
-- point rendering uses compiled point artifacts
-- point hover uses compiled point artifacts
-- crime point GPU upload uses compiled point artifacts
-- generic polyline rendering uses compiled polyline artifacts
-- generic polygon rendering uses compiled polygon artifacts
-- generic render-time CPU fallback has been removed for point, polyline, and generic polygon draw paths
-- parcel selection overlays and polygon hover/inspection paths are artifact-aware
-- parcel overlays now require the parcel render blob path rather than CPU ring fallback
-- parcel selection rendering now uses the parcel render blob directly
-- parcel hover hit-testing now uses the parcel render blob directly
-- zoning polygon artifacts now load in runtime and back zoning hover/inspection
-- hydrated layers now bypass triangulation and transition straight to `Ready`
-- the app no longer starts a triangulation worker thread
-
-What is still blocking completion:
-
-- GPU picking is not implemented
-- interaction still keeps CPU feature objects alive for selection/detail/property lookup
-- parcel-specific analytics and business logic in runtime still read `LayerDef::FeatureGeom`
-- hydration workers still exist
-- triangulation worker code and cache code still exist, but are no longer on the live startup path
-- `LayerDef::FeatureGeom` is still a normal runtime data structure
 
 ## Sequencing Rules
 
@@ -359,6 +337,7 @@ Changes:
 Exit:
 
 - Polygon hit testing no longer requires CPU geometry.
+- Parcel hover/click state no longer stores parcel `FeatureRecord*`, but the generic picked-feature-ID path is still incomplete.
 
 ## Slice 11: Derived Parcel Workflow Cutover
 
@@ -382,11 +361,12 @@ Changes:
 
 - Re-key parcel workflows around stable feature IDs and derived tables.
 - Ensure detail panels, recoloring, and overlays resolve through DuckDB/derived facts.
+- Prefer unified parcel extents and blocklot-based lookup over parcel feature geometry where possible.
 
 Exit:
 
 - Parcel overlays and selection visualization are artifact-aware.
-- Parcel business workflows still depend on `LayerDef::FeatureGeom`.
+- Parcel business workflows still have some `LayerDef::FeatureRecord` fallbacks, but they are no longer the default path.
 
 ## Slice 12: Runtime Status And CLI Cleanup
 
@@ -433,14 +413,14 @@ Files:
 - [types.h](/mnt/Cancer/worldsim3/types.h)
 - [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp)
 - [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
-- any remaining consumers of `LayerDef::FeatureGeom`
+- any remaining consumers of `LayerDef::FeatureRecord`
 
 Changes:
 
 - Delete hydration cache code.
 - Delete triangulation cache code.
 - Delete CPU geometry fallback paths.
-- Remove `LayerDef::FeatureGeom` from normal runtime usage.
+- Remove `LayerDef::FeatureRecord` from normal runtime usage.
 
 Exit:
 

@@ -1,17 +1,10 @@
 # WorldSim3 Data Flow
 
-This document describes how layer data should move from source files into compiled geometry artifacts, DuckDB attribute tables, derived records, and runtime GPU state.
+This document describes how layer data should move from SSOT source payloads into canonical layer binaries, compiled geometry artifacts, DuckDB attribute tables, derived records, and runtime GPU state.
 
 ## Source Identity
 
-Every source layer file under `data/.../layers/` is identified by `fileSignature(path)` from `cache_io.cpp`.
-
-The signature is:
-
-- source file size
-- source file modification time
-
-If the source file is missing, the signature is a `missing:<filename>` sentinel, so an old cache file is not accepted as a substitute for absent source data.
+Every runtime-readable layer is identified by the embedded `source_signature` in its `.canonical.bin` artifact from `cache_io.cpp`.
 
 This signature is the invalidation key shared by compiled geometry artifacts, derived caches, and DuckDB analytics.
 
@@ -19,14 +12,15 @@ This signature is the invalidation key shared by compiled geometry artifacts, de
 
 WorldSim3 should converge on three broad classes of disk artifacts:
 
-- Authoritative or source-adjacent data under `data/`, `sources/`, and `data/inbox/`.
+- Authoritative source payloads and metadata under `sources/` and `data/inbox/`.
+- Canonical layer binaries under `data/world/.../layers/*.geojson.canonical.bin`.
 - Compiled geometry artifacts under `data/cache/geometry/`.
-- Attribute/query artifacts under `data/worldsim.duckdb` and optional exports under `data/analytics/`.
+- Attribute/query artifacts under `data/worldsim.duckdb` and analytical outputs under `data/analytics/`.
 - Runtime/user state JSON files under `data/`.
 
 The startup rule should be intentionally simple:
 
-- Geometry startup reads compiled geometry artifacts that are already shaped for GPU upload.
+- Geometry startup reads canonical layer binaries and compiled geometry artifacts that are already shaped for runtime use.
 - DuckDB is the universal durable attribute store for text, numeric, and query-oriented feature data.
 - Runtime state should orchestrate GPU artifact residency and query readiness, not retain CPU geometry as an interaction fallback.
 
@@ -52,7 +46,8 @@ That is lower-grade than a single pipeline because it creates contradictory read
 The preferred pattern is:
 
 ```text
-source files
+source payloads / SSOT
+  -> canonical layer binaries
   -> geometry compiler
      -> direct-uploadable geometry artifact
   -> attribute ingester
@@ -64,16 +59,16 @@ source files
 The key simplification is:
 
 - geometry artifacts should not carry full property bags
-- DuckDB should not be asked to hydrate render geometry
+- DuckDB should not be asked to provide render geometry
 - runtime should stop treating full CPU geometry objects as the primary durable interface between import and rendering
 
 ## Explicit Boundaries
 
 WorldSim3 should keep hard boundaries between source artifacts, canonical domain artifacts, runtime state, and analytics materializations.
 
-### 1. Source Layer Boundary
+### 1. Source Payload Boundary
 
-Files under `data/world/.../layers/*.geojson` and source-adjacent payloads under `sources/` are the persisted input boundary.
+Files under `sources/` and source-adjacent payloads under `data/inbox/` are the persisted input boundary.
 
 They may:
 
@@ -87,9 +82,15 @@ They must not:
 - depend on runtime-only in-memory joins
 - silently change meaning based on whether the app was previously opened
 
+Files under `data/world/.../layers/*.geojson` are deprecated and should not be produced or maintained. If any remain from older runs, they are stale legacy artifacts and must not be required for startup, hydration, signature resolution, or normal layer availability checks.
+
+Layer identifiers in manifests and code may still retain `.geojson` suffixes as stable logical IDs. That suffix does not imply that a stored layer GeoJSON file is an accepted runtime artifact.
+
 ### 2. Canonical Domain Artifact Boundary
 
 Canonical domain artifacts are persisted, rebuildable outputs that define the authoritative geometry and attribute facts for a workflow.
+
+For SSOT geometry inputs, each geometry file downloaded directly from the upstream source should correspond to exactly one canonical Vulkan binary containing the same geometry data in a representation that can be uploaded directly to Vulkan.
 
 For all feature families, this should mean:
 
@@ -131,7 +132,7 @@ Runtime-only joins are acceptable as accelerators or temporary assembly steps, b
 
 ### 4. Derived Runtime Boundary
 
-Derived runtime caches are allowed to compute narrowly scoped facts from hydrated layers.
+Derived runtime caches are allowed to compute narrowly scoped facts from artifact-backed layers.
 
 Examples:
 
@@ -162,7 +163,7 @@ DuckDB may:
 
 DuckDB must not:
 
-- be required to hydrate map geometry
+- be required to provide map geometry
 - be treated as the render-geometry source
 - be bypassed by large parallel property bags persisted inside geometry caches
 - redefine canonical truth through DB-only transforms that cannot be rebuilt from persisted inputs
@@ -181,7 +182,7 @@ Not:
 
 ```text
 persisted sources
-  -> full CPU hydration cache
+  -> source-shaped cache
   -> per-layer special-case render cache
   -> separate attribute copies in runtime memory and DuckDB
   -> implied canonical truth
@@ -391,9 +392,10 @@ The main artifacts are:
 
 | Path | Kind | Producer | Consumer | Notes |
 | --- | --- | --- | --- | --- |
-| `data/world/.../layers/*.geojson` | Source/interchange layer data | Download queue, import tools, builders, scripts | Hydration workers, layer registry, derived builders | The normal source of truth for most map layers. File size and mtime form the source signature. Paths encode geographic provenance from world down to county/city when applicable. |
-| `data/world/.../layers/*.geojson.part` | In-progress layer download | Layer download queue | Download finalization only | Temporary artifact; should not be accepted as a layer source. |
-| `sources/world/.../**/*` excluding tracked manifests | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV/XLSX/PDF payloads used to generate normalized GeoJSON layers or document the upstream source. Paths mirror the same geographic provenance hierarchy as stored layer outputs. These files are local-only working artifacts and should normally be ignored by git. |
+| `data/world/.../layers/*.geojson.canonical.bin` | Canonical runtime layer binary | Explicit builders/importers | Hydration workers, layer registry, compiled geometry builders, runtime detail/query glue | Required runtime-readable layer artifact. Embedded `source_signature` replaces GeoJSON file metadata as the normal invalidation key. |
+| `data/world/.../layers/*.geojson` | Legacy removed artifact class | None | None | Deprecated path. These files should not be produced by current builders and must not be required for startup, hydration, signature resolution, or normal layer availability checks. |
+| `data/world/.../layers/*.geojson.part` | In-progress legacy export/download write | Export or download tooling | Download/export finalization only | Temporary artifact; not a valid runtime layer source. |
+| `sources/world/.../**/*` excluding tracked manifests | Raw imported/downloaded upstream payloads | Dataset download/import tools | Builders and audit/debug workflows | Preserves upstream ZIP/CSV/XLSX/PDF payloads used to generate canonical binaries or document the upstream source. These files are local-only working artifacts and should normally be ignored by git. |
 | `data/inbox/**` | Manual drop-zone inputs | User or external process | Builder scripts/tools | Used for datasets that are copied in manually, such as HUD PIT files. |
 | `data/cache/geometry/<layer-file>.point.bin` | Compiled point geometry artifact | Geometry compiler/builders | Vulkan upload path, GPU picking path | Direct-uploadable point geometry artifact with stable feature refs and picking metadata. |
 | `data/cache/geometry/<layer-file>.polyline.bin` | Compiled polyline geometry artifact | Geometry compiler/builders | Vulkan upload path, GPU picking path | Direct-uploadable polyline geometry artifact with stable feature refs and picking metadata. |
@@ -403,7 +405,7 @@ The main artifacts are:
 | `data/cache/derived/parcel_vacancy_status.json` | Derived parcel status cache | Derived cache refresh | Derived cache refresh and parcel styling | Stores derived parcel vacancy status records. Invalidated by propagated source signatures/generations. |
 | `data/filters/*.json` | Persisted repeatable filter definitions | REST filter registry and future analytics tooling | Repeatable filter apply workflows, audit/export tooling | Versioned declarative filter specs over canonical normalized fields. Distinct from `MapFilterState` and renderer-local UI state. |
 | `data/cache/screenshots/*` | User screenshots | Screenshot capture path | User/debug workflows | Output artifacts, not inputs to the layer pipeline. |
-| `data/worldsim.duckdb` | Canonical attribute and query store | Explicit DuckDB analytics rebuild / future ingest pipeline | Query/search/right-panel analytics, repeatable filters, detail panels, derived analytics | Durable home for normalized feature attributes and query-oriented denormalizations. It is not a geometry hydration or render cache and should not be asked to become one. |
+| `data/worldsim.duckdb` | Canonical attribute and query store | Explicit DuckDB analytics rebuild / future ingest pipeline | Query/search/right-panel analytics, repeatable filters, detail panels, derived analytics | Durable home for normalized feature attributes and query-oriented denormalizations. It is not a render-geometry cache and should not be asked to become one. |
 | `data/analytics/*` | Offline analytics exports | Scripts | User/audit workflows | Example: vacancy timeseries CSV/QA JSON. Not used for normal startup geometry acquisition. |
 | `data/tiles/<z>/<x>/<y>.png` | OSM raster tile cache | Basemap lazy downloader or preseeded data | Basemap renderer | On-disk basemap PNGs. Disk presence is memoized in memory and can be cleared without deleting PNGs. |
 | `data/tiles_topo*/<z>/<x>/<y>.png` | Topographic raster tile cache | Basemap lazy downloader or preseeded data | Basemap renderer | Topographic raster tiles. `data/tiles_topographic` may be used as an alternate/preferred topo source when present. |
@@ -418,18 +420,19 @@ The main artifacts are:
 
 Files under `data/cache/` are rebuildable and should be treated as performance artifacts. Files under `data/`, `sources/`, and `data/inbox/` are source or source-adjacent artifacts and should not be cleared as routine cache cleanup unless the intended result is to force reimport or redownload.
 
-Use artifact-health and warm/build commands that operate directly on compiled geometry artifacts by layer file and geometry class. The target system should not expose separate hydration or triangulation maintenance commands.
+Use artifact-health and warm/build commands that operate directly on compiled geometry artifacts by layer file and geometry class. The target system should not expose separate intermediate geometry maintenance stages.
 
 ## Startup Layer Scheduling
 
 On startup, `app_main_loop.cpp` should enqueue every enabled geometry layer for geometry-artifact acquisition.
 
-That does not mean every source GeoJSON should be reparsed. The preferred path is:
+That does not mean a text interchange export should ever be reparsed during normal startup. The preferred path is:
 
 ```text
-source layer
+source payloads / SSOT
+  -> canonical layer binary
   -> compiled geometry artifact on disk
-  -> runtime loads compiled artifact
+  -> runtime loads binary artifacts
   -> runtime uploads artifact-shaped buffers to Vulkan
 ```
 
@@ -536,7 +539,7 @@ duckdb_analytics.cpp -> DuckDbAnalytics::executeMapQuery()
 
 DuckDB is the canonical attribute and query store, not the render cache. The intended end state is direct ingest from persisted canonical inputs and derived artifacts rather than any session-only CPU geometry state.
 
-DuckDB stores extracted feature attributes in `layer_features` and parcel-level property/detail fields in `unified_parcels`. This is the intended home for searchable owner/address/value/detail data. It is not the source used to hydrate geometry for startup rendering.
+DuckDB stores extracted feature attributes in `layer_features` and parcel-level property/detail fields in `unified_parcels`. This is the intended home for searchable owner/address/value/detail data. It is not the source of startup render geometry.
 
 The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied.
 

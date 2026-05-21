@@ -5,6 +5,8 @@
 #include "feature_props.h"
 #include "imgui.h"
 #include "layer_geometry.h"
+#include "parcel_unified.h"
+#include "real_property_ui.h"
 #include "stb_image.h"
 #include "worldsim_app_internal.h"
 
@@ -82,10 +84,10 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     return hs.find(nd) != std::string::npos;
 }
 
-std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg);
-std::string eventFeatureOpenUrl(const LayerDef::FeatureGeom& fg);
+std::string pointFeatureTitle(const LayerDef::FeatureRecord& fg);
+std::string eventFeatureOpenUrl(const LayerDef::FeatureRecord& fg);
 
-const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
     if (fg && isLikelyCrimePointLayer(layer)) return crimePointTypeLabel(*fg);
     if (containsCaseInsensitive(layer.name, "water")) return "Waterpoint";
     if (containsCaseInsensitive(layer.name, "health")) return "Health facility";
@@ -111,7 +113,7 @@ const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureGeo
     }
 }
 
-PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+PointMarkerGlyph pointMarkerGlyphForLayer(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
     if (fg && isLikelyCrimePointLayer(layer)) {
         return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
     }
@@ -303,7 +305,7 @@ HoverImageCacheEntry* getHoverImage(const std::string& url) {
     return entry.get();
 }
 
-std::string eventFeatureImageUrl(const LayerDef::FeatureGeom& fg) {
+std::string eventFeatureImageUrl(const LayerDef::FeatureRecord& fg) {
     std::string url = firstDisplayProperty(
         fg,
         {"image_url_resolved", "org_image_url_resolved", "imageUrl", "image_url", "orgImageUrl"});
@@ -311,16 +313,16 @@ std::string eventFeatureImageUrl(const LayerDef::FeatureGeom& fg) {
     return url;
 }
 
-bool samePointLocation(const LayerDef::FeatureGeom& a, const LayerDef::FeatureGeom& b) {
+bool samePointLocation(const LayerDef::FeatureRecord& a, const LayerDef::FeatureRecord& b) {
     constexpr double eps = 1e-7;
     return std::abs((double)a.extent.min_lon - (double)b.extent.min_lon) <= eps &&
            std::abs((double)a.extent.min_lat - (double)b.extent.min_lat) <= eps;
 }
 
-std::vector<const LayerDef::FeatureGeom*> collectColocatedEventFeatures(
+std::vector<const LayerDef::FeatureRecord*> collectColocatedEventFeatures(
     const LayerDef& layer,
-    const LayerDef::FeatureGeom& anchor) {
-    std::vector<const LayerDef::FeatureGeom*> matches;
+    const LayerDef::FeatureRecord& anchor) {
+    std::vector<const LayerDef::FeatureRecord*> matches;
     matches.reserve(8);
     for (const auto& fg : layer.features) {
         if (samePointLocation(fg, anchor)) matches.push_back(&fg);
@@ -328,7 +330,7 @@ std::vector<const LayerDef::FeatureGeom*> collectColocatedEventFeatures(
     return matches;
 }
 
-void drawEventAvatar(const LayerDef::FeatureGeom& fg, float max_w, float max_h) {
+void drawEventAvatar(const LayerDef::FeatureRecord& fg, float max_w, float max_h) {
     const std::string image_url = eventFeatureImageUrl(fg);
     if (HoverImageCacheEntry* image = getHoverImage(image_url); image && image->tex.descriptor != VK_NULL_HANDLE) {
         float draw_w = (float)image->width;
@@ -349,7 +351,7 @@ void drawEventAvatar(const LayerDef::FeatureGeom& fg, float max_w, float max_h) 
     ImGui::Dummy(size);
 }
 
-void drawEventListEntry(const LayerDef::FeatureGeom& fg, const char* row_id, bool clickable) {
+void drawEventListEntry(const LayerDef::FeatureRecord& fg, const char* row_id, bool clickable) {
     const std::string title = pointFeatureTitle(fg);
     const std::string org_name = firstDisplayProperty(fg, {"org_name", "orgName", "organization", "source_group"});
     const std::string start = firstDisplayProperty(fg, {"startDate", "start_date", "date_start"});
@@ -392,7 +394,7 @@ void drawEventListEntry(const LayerDef::FeatureGeom& fg, const char* row_id, boo
     ImGui::PopID();
 }
 
-void drawPointLayerHeader(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+void drawPointLayerHeader(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const float icon_size = 22.0f;
     ImGui::Dummy(ImVec2(icon_size, icon_size));
@@ -414,39 +416,18 @@ void drawPointLayerHeader(const LayerDef& layer, const LayerDef::FeatureGeom* fg
     ImGui::EndGroup();
 }
 
-void drawFeatureProperties(const char* title, const LayerDef::FeatureGeom& fg) {
+void drawFeatureProperties(const char* title, const LayerDef::FeatureRecord& fg) {
     ImGui::TextUnformatted(title);
-    for (const auto& kv : fg.properties) {
+    const FeaturePropertyPairs* props = getPropertyPairs(fg);
+    if (!props) return;
+    for (const auto& kv : *props) {
         std::string v = trimDisplayValue(kv.second);
         if (v.empty()) continue;
         ImGui::TextWrapped("%s: %s", kv.first.c_str(), v.c_str());
     }
 }
 
-void drawRealPropertySummary(const LayerDef::FeatureGeom* rp) {
-    if (!rp) {
-        ImGui::TextDisabled("No matching real-property record.");
-        return;
-    }
-    auto text_prop = [&](const char* label, const std::string& value) {
-        if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
-    };
-    text_prop("Address", firstDisplayProperty(*rp, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"}));
-    text_prop("Owner", firstDisplayProperty(*rp, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"}));
-    text_prop("Use", firstDisplayProperty(*rp, {"LU", "LANDUSE", "USE_CODE", "USE"}));
-    text_prop("Tax Base", firstDisplayProperty(*rp, {"TAXBASE", "ARTAXBAS"}));
-    text_prop("Current Land", firstDisplayProperty(*rp, {"CURRLAND"}));
-    text_prop("Current Improvements", firstDisplayProperty(*rp, {"CURRIMPR"}));
-    text_prop("Sale Price", firstDisplayProperty(*rp, {"SALEPRIC"}));
-    text_prop("Sale Date", firstDisplayProperty(*rp, {"SALEDATE"}));
-    std::string deed_book = firstDisplayProperty(*rp, {"DEEDBOOK"});
-    std::string deed_page = firstDisplayProperty(*rp, {"DEEDPAGE"});
-    text_prop("Deed", deed_book.empty() ? "" : deed_book + (deed_page.empty() ? "" : " / " + deed_page));
-    text_prop("SDAT Link", firstDisplayProperty(*rp, {"SDATLINK"}));
-    ImGui::TextDisabled("Source: Local property records when available");
-}
-
-std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg) {
+std::string pointFeatureTitle(const LayerDef::FeatureRecord& fg) {
     return firstDisplayProperty(
         fg,
         {"name", "Name", "NAME", "facility_name", "facility_n", "school_name", "school_nam",
@@ -454,19 +435,19 @@ std::string pointFeatureTitle(const LayerDef::FeatureGeom& fg) {
          "industry_name", "station_name", "waterpoint_name"});
 }
 
-std::string eventFeatureOpenUrl(const LayerDef::FeatureGeom& fg) {
+std::string eventFeatureOpenUrl(const LayerDef::FeatureRecord& fg) {
     std::string url = firstDisplayProperty(fg, {"url", "URL"});
     if (!url.empty()) return url;
     return firstDisplayProperty(fg, {"source_url", "source", "Source"});
 }
 
-std::string pointFeatureOpenUrl(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
+std::string pointFeatureOpenUrl(const LayerDef& layer, const LayerDef::FeatureRecord& fg) {
     if (!isLikelyEventPointLayer(layer)) return {};
     return eventFeatureOpenUrl(fg);
 }
 
-void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
-    const std::vector<const LayerDef::FeatureGeom*> colocated = collectColocatedEventFeatures(layer, fg);
+void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg) {
+    const std::vector<const LayerDef::FeatureRecord*> colocated = collectColocatedEventFeatures(layer, fg);
     const std::string title = pointFeatureTitle(fg);
     const std::string description = firstDisplayProperty(fg, {"description", "Description", "DESC"});
     const std::string address = firstDisplayProperty(
@@ -534,7 +515,7 @@ void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureGeom& f
     ImGui::EndTooltip();
 }
 
-void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureGeom& fg) {
+void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg) {
     if (isLikelyEventPointLayer(layer)) {
         drawEventPointSummary(layer, fg);
         return;
@@ -570,40 +551,45 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     static float event_stack_lat = 0.0f;
 
     if (!ctx.hover_state || !ctx.layers || !ctx.parcel_selection) return;
-    const LayerDef::FeatureGeom* hovered_parcel = ctx.hover_state->hovered_parcel;
     const size_t hovered_parcel_idx = ctx.hover_state->hovered_parcel_idx;
-    const LayerDef::FeatureGeom* hovered_zone = ctx.hover_state->hovered_zone;
+    const LayerDef::FeatureRecord* hovered_zone = ctx.hover_state->hovered_zone;
     const size_t hovered_zone_idx = ctx.hover_state->hovered_zone_idx;
-    const LayerDef::FeatureGeom* hovered_point = ctx.hover_state->hovered_point;
+    const LayerDef::FeatureRecord* hovered_point = ctx.hover_state->hovered_point;
     const int hovered_point_layer_idx = ctx.hover_state->hovered_point_layer_idx;
+    const LayerDef::FeatureRecord* inspect_point = ctx.hover_state->inspect_point;
+    const int inspect_point_layer_idx = ctx.hover_state->inspect_point_layer_idx;
+    const bool hovered_parcel_hit = hovered_parcel_idx != (size_t)-1;
+    const UnifiedParcelRecord* hovered_unified =
+        (ctx.unified_parcels && hovered_parcel_hit)
+        ? unifiedParcelAt(*ctx.unified_parcels, hovered_parcel_idx)
+        : nullptr;
 
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
         ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
 
-    if (ctx.map_hovered && click_select && hovered_point && hovered_point_layer_idx >= 0 &&
-        (size_t)hovered_point_layer_idx < ctx.layers->size()) {
-        const LayerDef& hovered_point_layer = (*ctx.layers)[(size_t)hovered_point_layer_idx];
-        if (isLikelyEventPointLayer(hovered_point_layer)) {
-            const std::vector<const LayerDef::FeatureGeom*> colocated =
-                collectColocatedEventFeatures(hovered_point_layer, *hovered_point);
+    if (ctx.map_hovered && click_select && inspect_point && inspect_point_layer_idx >= 0 &&
+        (size_t)inspect_point_layer_idx < ctx.layers->size()) {
+        const LayerDef& inspect_point_layer = (*ctx.layers)[(size_t)inspect_point_layer_idx];
+        if (isLikelyEventPointLayer(inspect_point_layer)) {
+            const std::vector<const LayerDef::FeatureRecord*> colocated =
+                collectColocatedEventFeatures(inspect_point_layer, *inspect_point);
             if (colocated.size() > 1) {
                 event_stack_popup_open = true;
-                event_stack_layer_idx = hovered_point_layer_idx;
-                event_stack_lon = hovered_point->extent.min_lon;
-                event_stack_lat = hovered_point->extent.min_lat;
+                event_stack_layer_idx = inspect_point_layer_idx;
+                event_stack_lon = inspect_point->extent.min_lon;
+                event_stack_lat = inspect_point->extent.min_lat;
                 ImGui::OpenPopup("Event Location List");
-                hovered_parcel = nullptr;
                 hovered_zone = nullptr;
             } else {
-                const std::string open_url = pointFeatureOpenUrl(hovered_point_layer, *hovered_point);
+                const std::string open_url = pointFeatureOpenUrl(inspect_point_layer, *inspect_point);
                 if (!open_url.empty()) {
                     openUrlInBrowser(open_url);
                     return;
                 }
             }
         } else {
-            const std::string open_url = pointFeatureOpenUrl(hovered_point_layer, *hovered_point);
+            const std::string open_url = pointFeatureOpenUrl(inspect_point_layer, *inspect_point);
             if (!open_url.empty()) {
                 openUrlInBrowser(open_url);
                 return;
@@ -611,13 +597,17 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         }
     }
 
-    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel != nullptr) {
+    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_unified && ctx.unified_parcels) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
-        if (ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
-            if (selectParcel(*ctx.parcel_selection, hovered_parcel_idx, (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size(), ctrl) &&
-                ctx.open_parcel_element) {
-                ctx.open_parcel_element(hovered_parcel_idx);
-            }
+        const std::string stable_id = normalizeJoinKey(hovered_unified->blocklot);
+        if (selectParcel(
+                *ctx.parcel_selection,
+                hovered_parcel_idx,
+                stable_id,
+                ctx.unified_parcels->size(),
+                ctrl) &&
+            ctx.open_parcel_element) {
+            ctx.open_parcel_element(hovered_parcel_idx);
         }
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
@@ -627,8 +617,8 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         clearParcelSelection(*ctx.parcel_selection);
     }
 
-    if (ctx.parcel_hover_active && ctx.map_hovered && hovered_parcel) {
-        std::string blocklot_raw = getPropertyValue(*hovered_parcel, "BLOCKLOT");
+    if (ctx.parcel_hover_active && ctx.map_hovered && hovered_unified) {
+        const std::string& blocklot_raw = hovered_unified->blocklot;
         const auto& vac_notice_vec = ctx.parcel_vac_notice_by_feature ? *ctx.parcel_vac_notice_by_feature : std::vector<int>{};
         const auto& vac_rehab_vec = ctx.parcel_vac_rehab_by_feature ? *ctx.parcel_vac_rehab_by_feature : std::vector<int>{};
         const auto& tax_lien_vec = ctx.parcel_tax_lien_by_feature ? *ctx.parcel_tax_lien_by_feature : std::vector<int>{};
@@ -641,10 +631,12 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         int tax_sale = (hovered_parcel_idx < tax_sale_vec.size()) ? tax_sale_vec[hovered_parcel_idx] : 0;
         double tax_lien_amount = (hovered_parcel_idx < tax_lien_amount_vec.size()) ? tax_lien_amount_vec[hovered_parcel_idx] : 0.0;
         double tax_sale_amount = (hovered_parcel_idx < tax_sale_amount_vec.size()) ? tax_sale_amount_vec[hovered_parcel_idx] : 0.0;
-        const LayerDef::FeatureGeom* hovered_zoning = hovered_zone;
-        if (ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < ctx.layers->size()) {
-            const float qlon = (hovered_parcel->extent.min_lon + hovered_parcel->extent.max_lon) * 0.5f;
-            const float qlat = (hovered_parcel->extent.min_lat + hovered_parcel->extent.max_lat) * 0.5f;
+        const LayerDef::FeatureRecord* hovered_zoning = hovered_zone;
+        if (hovered_unified->parcel_has_geometry &&
+            ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < ctx.layers->size()) {
+            const LayerDef::FeatureExtent& parcel_extent = hovered_unified->parcel_extent;
+            const float qlon = (parcel_extent.min_lon + parcel_extent.max_lon) * 0.5f;
+            const float qlat = (parcel_extent.min_lat + parcel_extent.max_lat) * 0.5f;
             std::vector<uint32_t> zoning_candidates;
             bool have_zoning_candidates = false;
             if (ctx.layer_spatial && (size_t)ctx.zoning_layer_idx < ctx.layer_spatial->size() && (*ctx.layer_spatial)[(size_t)ctx.zoning_layer_idx].built) {
@@ -684,7 +676,17 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         ImGui::Text("Tax Sale 2021 Records: %d", tax_sale);
         if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
 
-        const LayerDef::FeatureGeom* hovered_rp = ctx.real_property_for_parcel ? ctx.real_property_for_parcel(*hovered_parcel) : nullptr;
+        const LayerDef::FeatureRecord* hovered_rp =
+            (hovered_unified && ctx.layers)
+                ? unifiedRealPropertyGeometry(*hovered_unified, *ctx.layers)
+                : nullptr;
+        if (!hovered_rp && ctx.layers) {
+            hovered_rp = resolveRealPropertyForBlocklot(
+                *ctx.layers,
+                ctx.real_property_layer_idx,
+                ctx.real_property_by_blocklot,
+                blocklot_raw);
+        }
         drawRealPropertySummary(hovered_rp);
 
         ImGui::Separator();
@@ -706,8 +708,19 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         ImGui::TextDisabled("Open the parcel details panel for full parcel and property fields.");
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
+    } else if (ctx.parcel_hover_active && ctx.map_hovered && hovered_parcel_hit) {
+        ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(300.0f);
+        ImGui::TextUnformatted("Parcel Details");
+        ImGui::Separator();
+        ImGui::TextDisabled("Loading...");
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
     }
-    if (ctx.zoning_hover_active && ctx.map_hovered && !(ctx.parcel_hover_active && hovered_parcel) && hovered_zone && ctx.zoning_metadata) {
+    if (ctx.zoning_hover_active && ctx.map_hovered &&
+        !(ctx.parcel_hover_active && hovered_parcel_hit) &&
+        hovered_zone && ctx.zoning_metadata) {
         drawZoningHoverTooltip(*hovered_zone, *ctx.zoning_metadata);
     } else if (ctx.map_hovered && hovered_point && hovered_point_layer_idx >= 0 &&
                (size_t)hovered_point_layer_idx < ctx.layers->size()) {
@@ -720,10 +733,10 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         if (keep_open) {
             if (event_stack_layer_idx >= 0 && (size_t)event_stack_layer_idx < ctx.layers->size()) {
                 const LayerDef& layer = (*ctx.layers)[(size_t)event_stack_layer_idx];
-                LayerDef::FeatureGeom anchor;
+                LayerDef::FeatureRecord anchor;
                 anchor.extent.min_lon = event_stack_lon;
                 anchor.extent.min_lat = event_stack_lat;
-                const std::vector<const LayerDef::FeatureGeom*> colocated = collectColocatedEventFeatures(layer, anchor);
+                const std::vector<const LayerDef::FeatureRecord*> colocated = collectColocatedEventFeatures(layer, anchor);
                 drawPointLayerHeader(layer, colocated.empty() ? nullptr : colocated.front());
                 ImGui::Separator();
                 ImGui::TextWrapped("%zu events at %.6f, %.6f", colocated.size(), event_stack_lat, event_stack_lon);

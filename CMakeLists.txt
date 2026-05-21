@@ -104,6 +104,7 @@ add_executable(worldsim3
   memory_utils.cpp
   zoning.cpp
   parcel_matched_layers.cpp
+  parcel_metrics.cpp
   vacancy_overlay.cpp
   dataset_library.cpp
   duckdb_analytics.cpp
@@ -129,12 +130,14 @@ add_executable(worldsim3
   map_render_projection.cpp
   map_render_selection.cpp
   map_render_utils.cpp
+  gpu_picking.cpp
   map_canvas_session.cpp
   map_frame_render.cpp
   map_frame_session.cpp
   map_tab.cpp
   left_panel.cpp
   map_viewport.cpp
+  real_property_ui.cpp
   parcel_timeline.cpp
   parcel_unified.cpp
   parcel_consolidation.cpp
@@ -211,7 +214,6 @@ add_executable(worldsim3
   arkavo_signaling_transport_curl.cpp
   arkavo_rtc_session_manager.cpp
   time_cube.cpp
-  headless_layer_hydration.cpp
   layer_state_io.cpp
   layer_import.cpp
   filters.cpp
@@ -236,6 +238,10 @@ target_compile_definitions(worldsim3 PRIVATE
   WS3_PARCEL_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
   WS3_CRIME_POINT_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert"
   WS3_CRIME_POINT_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag"
+  WS3_GPU_PICK_POLYGON_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert"
+  WS3_GPU_PICK_POLYGON_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag"
+  WS3_GPU_PICK_POINT_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert"
+  WS3_GPU_PICK_POINT_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag"
 )
 
 target_include_directories(worldsim3 PRIVATE
@@ -256,6 +262,10 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   set(WS3_PARCEL_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.frag.spv")
   set(WS3_CRIME_POINT_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/point_marker.vert.spv")
   set(WS3_CRIME_POINT_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/point_marker.frag.spv")
+  set(WS3_GPU_PICK_POLYGON_VERT_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_polygon.vert.spv")
+  set(WS3_GPU_PICK_POLYGON_FRAG_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_polygon.frag.spv")
+  set(WS3_GPU_PICK_POINT_VERT_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_point.vert.spv")
+  set(WS3_GPU_PICK_POINT_FRAG_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_point.frag.spv")
   add_custom_command(
     OUTPUT "${WS3_GPU_SPLAT_SHADER_SPV}"
     COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp" -o "${WS3_GPU_SPLAT_SHADER_SPV}"
@@ -312,6 +322,34 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     COMMENT "Compiling point_marker.frag -> SPIR-V"
     VERBATIM
   )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert" -o "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert"
+    COMMENT "Compiling gpu_pick_polygon.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag" -o "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag"
+    COMMENT "Compiling gpu_pick_polygon.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert" -o "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert"
+    COMMENT "Compiling gpu_pick_point.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag" -o "${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag"
+    COMMENT "Compiling gpu_pick_point.frag -> SPIR-V"
+    VERBATIM
+  )
   add_custom_target(worldsim3_shaders DEPENDS
     "${WS3_GPU_SPLAT_SHADER_SPV}"
     "${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
@@ -321,6 +359,10 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     "${WS3_PARCEL_GPU_FRAG_SPV}"
     "${WS3_CRIME_POINT_GPU_VERT_SPV}"
     "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    "${WS3_GPU_PICK_POINT_FRAG_SPV}"
   )
   add_dependencies(worldsim3 worldsim3_shaders)
   target_compile_definitions(worldsim3 PRIVATE
@@ -332,6 +374,10 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     WS3_PARCEL_GPU_FRAG_SPV="${WS3_PARCEL_GPU_FRAG_SPV}"
     WS3_CRIME_POINT_GPU_VERT_SPV="${WS3_CRIME_POINT_GPU_VERT_SPV}"
     WS3_CRIME_POINT_GPU_FRAG_SPV="${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    WS3_GPU_PICK_POLYGON_VERT_SPV="${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    WS3_GPU_PICK_POLYGON_FRAG_SPV="${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    WS3_GPU_PICK_POINT_VERT_SPV="${WS3_GPU_PICK_POINT_VERT_SPV}"
+    WS3_GPU_PICK_POINT_FRAG_SPV="${WS3_GPU_PICK_POINT_FRAG_SPV}"
   )
 endif()
 
@@ -447,13 +493,13 @@ add_executable(worldsim3_duckdb_owner_dump
   event_sectors.cpp
   feature_props.cpp
   geo.cpp
-  headless_layer_hydration.cpp
   layer_geometry.cpp
   layer_runtime.cpp
   layer_state_io.cpp
   layer_workers.cpp
   memory_utils.cpp
   parcel_consolidation.cpp
+  parcel_metrics.cpp
   parcel_unified.cpp
 )
 target_include_directories(worldsim3_duckdb_owner_dump PRIVATE

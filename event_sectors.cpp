@@ -16,7 +16,7 @@ ImVec4 hexColor(const char* hex) {
     return ImVec4(chan(1), chan(3), chan(5), 1.0f);
 }
 
-std::vector<std::string> extractEventTags(const LayerDef::FeatureGeom& fg) {
+std::vector<std::string> extractEventTags(const LayerDef::FeatureRecord& fg) {
     std::vector<std::string> out;
     const std::string raw = firstDisplayProperty(fg, {"tags", "Tags", "tag", "category", "Category"});
     if (raw.empty()) return out;
@@ -77,7 +77,7 @@ bool isCommunitySectorEventLayer(const LayerDef& layer) {
            containsCaseInsensitive(layer.name, "event");
 }
 
-std::string classifyCommunitySector(const LayerDef::FeatureGeom& fg) {
+std::string classifyCommunitySector(const LayerDef::FeatureRecord& fg) {
     const std::vector<std::string> tags = extractEventTags(fg);
     for (const auto& def : communitySectorDefs()) {
         if (def.label == "Other") continue;

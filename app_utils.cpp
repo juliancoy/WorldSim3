@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cctype>
+#include <cstring>
 #include <cstdlib>
 #include <fstream>
 #include <iomanip>
@@ -40,7 +41,7 @@ fs::path provenanceHierarchyRoot(
 const LayerDef* findManifestLayerByFile(const fs::path& root, const std::string& file, std::vector<LayerDef>& scratch) {
     scratch = loadManifest(root);
     for (auto& layer : scratch) {
-        if (layer.file == file) return &layer;
+        if (layerMatchesIdentifier(layer, file)) return &layer;
     }
     return nullptr;
 }
@@ -69,9 +70,13 @@ const LayerDef* findManifestLayerByFileIncludingNonRuntime(
         }
         if (!arr.is_array()) continue;
         for (const auto& item : arr) {
-            if (!item.is_object() || item.value("file", std::string()) != file) continue;
+            if (!item.is_object()) continue;
+            const std::string item_file = item.value("file", std::string());
+            const std::string item_logical_id = item.value("id", defaultLayerLogicalIdForFile(item_file));
+            if (file != item_file && file != item_logical_id) continue;
             LayerDef layer;
-            layer.file = file;
+            layer.file = item_file;
+            layer.logical_id = item_logical_id;
             if (item.contains("provenance") && item["provenance"].is_object()) {
                 const auto& provenance = item["provenance"];
                 layer.provenance_world = provenance.value("world", std::string());
@@ -91,9 +96,6 @@ fs::path wellKnownStoredLayerPathForFile(const fs::path& root, const std::string
     if (file == "parcel.geojson") {
         return root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "county_city" /
                "baltimore_city" / "layers" / file;
-    }
-    if (file == "regional_parcels.geojson") {
-        return root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / file;
     }
     return {};
 }
@@ -203,7 +205,7 @@ bool isLikelyCrimePointLayer(const LayerDef& layer) {
 
 namespace {
 
-std::string firstCrimeProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+std::string firstCrimeProp(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
     for (const char* k : keys) {
         std::string v = getPropertyValue(fg, k);
         if (!v.empty()) return v;
@@ -211,7 +213,7 @@ std::string firstCrimeProp(const LayerDef::FeatureGeom& fg, std::initializer_lis
     return {};
 }
 
-std::string normalizedCrimeDescriptor(const LayerDef::FeatureGeom& fg) {
+std::string normalizedCrimeDescriptor(const LayerDef::FeatureRecord& fg) {
     const std::string desc = toLowerAscii(firstCrimeProp(fg, {"Description", "description", "OFFENSE", "UCRDescription"}));
     const std::string code = toLowerAscii(firstCrimeProp(fg, {"CrimeCode", "UCR_CODE", "UCRCode"}));
     if (desc.empty()) return code;
@@ -225,7 +227,7 @@ bool crimeDescriptorHas(const std::string& descriptor, const char* needle) {
 
 } // namespace
 
-uint32_t crimePointGlyphCode(const LayerDef::FeatureGeom& fg) {
+uint32_t crimePointGlyphCode(const LayerDef::FeatureRecord& fg) {
     const std::string descriptor = normalizedCrimeDescriptor(fg);
     if (crimeDescriptorHas(descriptor, "shooting")) return 5; // Cross
     if (crimeDescriptorHas(descriptor, "homicide") || crimeDescriptorHas(descriptor, "murder")) return 4; // Plus
@@ -240,7 +242,7 @@ uint32_t crimePointGlyphCode(const LayerDef::FeatureGeom& fg) {
     return 0; // Circle
 }
 
-const char* crimePointTypeLabel(const LayerDef::FeatureGeom& fg) {
+const char* crimePointTypeLabel(const LayerDef::FeatureRecord& fg) {
     const std::string descriptor = normalizedCrimeDescriptor(fg);
     if (crimeDescriptorHas(descriptor, "shooting")) return "Shooting";
     if (crimeDescriptorHas(descriptor, "homicide") || crimeDescriptorHas(descriptor, "murder")) return "Homicide";
@@ -506,11 +508,38 @@ std::filesystem::path resolveStoredLayerPathForFile(const fs::path& root, const 
     return root / "data" / "layers" / file;
 }
 
+std::filesystem::path canonicalLayerPathForFile(const fs::path& root, const std::string& file) {
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
+    return layer_path.parent_path() / (file + ".canonical.bin");
+}
+
+bool layerRuntimeSourceMaterializedForFile(const fs::path& root, const std::string& file) {
+    std::error_code ec;
+    return fs::exists(canonicalLayerPathForFile(root, file), ec) && !ec;
+}
+
+bool layerRuntimeSourceMaterialized(const fs::path& root, const LayerDef& layer) {
+    return layerRuntimeSourceMaterializedForFile(root, layer.file);
+}
+
 std::string trimDisplayValue(std::string s) {
     auto is_ws = [](unsigned char ch) { return std::isspace(ch) != 0; };
     while (!s.empty() && is_ws((unsigned char)s.front())) s.erase(s.begin());
     while (!s.empty() && is_ws((unsigned char)s.back())) s.pop_back();
     return s;
+}
+
+std::string defaultLayerLogicalIdForFile(const std::string& file) {
+    if (file.ends_with(".geojson")) return file.substr(0, file.size() - std::strlen(".geojson"));
+    return file;
+}
+
+std::string layerLogicalId(const LayerDef& layer) {
+    return layer.logical_id.empty() ? defaultLayerLogicalIdForFile(layer.file) : layer.logical_id;
+}
+
+bool layerMatchesIdentifier(const LayerDef& layer, std::string_view key) {
+    return layer.file == key || layerLogicalId(layer) == key;
 }
 
 bool layerUsesPointGeometry(const LayerDef& layer) {
@@ -521,7 +550,7 @@ bool layerUsesPointGeometry(const LayerDef& layer) {
     if (containsCaseInsensitive(layer.scale, "line")) return false;
     if (containsCaseInsensitive(layer.import_type, "line")) return false;
     if (!layer.features.empty()) {
-        return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
+        return std::all_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureRecord& fg) {
             return fg.rings.empty() && fg.paths.empty();
         });
     }
@@ -532,16 +561,24 @@ bool layerUsesPolylineGeometry(const LayerDef& layer) {
     if (containsCaseInsensitive(layer.scale, "line")) return true;
     if (containsCaseInsensitive(layer.import_type, "line")) return true;
     if (!layer.features.empty()) {
-        return std::any_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureGeom& fg) {
+        return std::any_of(layer.features.begin(), layer.features.end(), [](const LayerDef::FeatureRecord& fg) {
             return !fg.paths.empty();
         });
     }
     return false;
 }
 
-std::string firstDisplayProperty(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+std::string firstDisplayProperty(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
     for (const char* key : keys) {
         std::string v = trimDisplayValue(getPropertyValue(fg, key));
+        if (!v.empty()) return v;
+    }
+    return "";
+}
+
+std::string firstDisplayProperty(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys) {
+    for (const char* key : keys) {
+        std::string v = trimDisplayValue(getPropertyValue(layer, feature_idx, key));
         if (!v.empty()) return v;
     }
     return "";
@@ -554,7 +591,7 @@ std::string blockLotJoinKeyFromParts(const std::string& block, const std::string
     return b + l;
 }
 
-std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg) {
+std::string featureBlockLotJoinKey(const LayerDef::FeatureRecord& fg) {
     std::string bl = normalizeJoinKey(getPropertyValue(fg, "BLOCKLOT"));
     if (!bl.empty()) return bl;
     bl = normalizeJoinKey(getPropertyValue(fg, "blocklot"));
@@ -572,7 +609,7 @@ std::string featureBlockLotJoinKey(const LayerDef::FeatureGeom& fg) {
     return blockLotJoinKeyFromParts(getPropertyValue(fg, "block"), getPropertyValue(fg, "lot"));
 }
 
-std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureGeom& fg, size_t feature_idx) {
+std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
     auto candidate = [&](std::initializer_list<const char*> keys) {
         for (const char* key : keys) {
             std::string v = trimDisplayValue(getPropertyValue(fg, key));

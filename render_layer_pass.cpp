@@ -55,7 +55,7 @@ struct PointClusterBucket {
     PointMarkerGlyph glyph = PointMarkerGlyph::Circle;
     size_t count = 0;
     size_t representative_feature_idx = (size_t)-1;
-    const LayerDef::FeatureGeom* representative_feature = nullptr;
+    const LayerDef::FeatureRecord* representative_feature = nullptr;
     float min_lon = 0.0f;
     float max_lon = 0.0f;
     float min_lat = 0.0f;
@@ -66,7 +66,7 @@ struct DeferredPointRenderJob {
     size_t layer_idx = 0;
     size_t feature_idx = (size_t)-1;
     const LayerDef* layer = nullptr;
-    const LayerDef::FeatureGeom* feature = nullptr;
+    const LayerDef::FeatureRecord* feature = nullptr;
     ImU32 color = 0;
     uint64_t order_key = 0;
 };
@@ -75,7 +75,7 @@ ImVec2 pointWorldPosition(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg) {
+    const LayerDef::FeatureRecord& fg) {
     if (ctx.point_geometry_artifacts) {
         auto it = ctx.point_geometry_artifacts->find(layer_idx);
         if (it != ctx.point_geometry_artifacts->end()) {
@@ -118,7 +118,7 @@ bool featureHasPolygonGeometry(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg) {
+    const LayerDef::FeatureRecord& fg) {
     (void)fg;
     if ((int)layer_idx == ctx.parcel_layer_idx) {
         return parcelRenderFeature(ctx, feature_idx) != nullptr;
@@ -133,7 +133,7 @@ bool featureHasPointGeometry(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg) {
+    const LayerDef::FeatureRecord& fg) {
     if (ctx.point_geometry_artifacts) {
         auto it = ctx.point_geometry_artifacts->find(layer_idx);
         if (it != ctx.point_geometry_artifacts->end()) {
@@ -147,7 +147,7 @@ bool featureHasPolylineGeometry(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg) {
+    const LayerDef::FeatureRecord& fg) {
     if (const PolylineGeometryArtifact* artifact = polylineArtifactForLayer(ctx, layer_idx)) {
         if (feature_idx < artifact->features.size()) return true;
     }
@@ -181,7 +181,7 @@ void drawPolylineFeatureFromArtifact(
 
 void drawPolylineFeatureCpuFallback(
     const RenderLayerPassContext& ctx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32 color) {
     for (const auto& path : fg.paths) {
         if (path.size() < 2) continue;
@@ -272,7 +272,7 @@ bool isHoveredPointFeature(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg) {
+    const LayerDef::FeatureRecord& fg) {
     if (!ctx.hover_state) return false;
     if (ctx.hover_state->hovered_point_layer_idx < 0) return false;
     if ((size_t)ctx.hover_state->hovered_point_layer_idx != layer_idx) return false;
@@ -340,12 +340,12 @@ ImU32 computeFeatureColor(
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef& layer,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32 base_color,
     bool is_heat_layer,
     bool is_zoning_layer,
     const HeatNormalizationState& heat_normalization,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key,
     float& feature_heat_value,
     float& feature_normalized_value,
     bool& feature_heat_value_valid) {
@@ -377,14 +377,6 @@ ImU32 computeFeatureColor(
     }
     ctx.query_map_color(layer_idx, feature_idx, fg, feature_c);
     return feature_c;
-}
-
-std::string firstProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
-    for (const char* k : keys) {
-        std::string v = getPropertyValue(fg, k);
-        if (!v.empty()) return v;
-    }
-    return {};
 }
 
 bool pointInWorldRings(const std::vector<std::vector<ImVec2>>& rings, float x, float y) {
@@ -440,7 +432,7 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     return hs.find(nd) != std::string::npos;
 }
 
-PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const LayerDef::FeatureGeom* fg = nullptr) {
+PointMarkerGlyph pointMarkerGlyphForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
     if (fg && isLikelyCrimePointLayer(layer)) {
         return static_cast<PointMarkerGlyph>(crimePointGlyphCode(*fg));
     }
@@ -610,17 +602,27 @@ bool shouldClusterPointLayer(
 bool layerHasPrimaryGpuDraw(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
-    const LayerDef& layer) {
+    const LayerDef& layer,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw) {
     if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) return true;
     if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) return true;
-    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive(layer_idx)) return true;
+    if (layerUsesPointGeometry(layer)) {
+        if (layer_uses_heatmap_for_cache || layer_uses_lod_for_draw) return false;
+        if (ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx)) return false;
+        return pointLayerGpuDrawActive(layer_idx);
+    }
+    if (layerUsesPolylineGeometry(layer)) return polylineLayerGpuDrawActive(layer_idx);
+    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuDrawActive(layer_idx)) return true;
     return false;
 }
 
 void enqueuePrimaryGpuDrawForLayer(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
-    const LayerDef& layer) {
+    const LayerDef& layer,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw) {
     if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
         enqueueParcelGpuDraw(ctx.draw);
         return;
@@ -629,7 +631,21 @@ void enqueuePrimaryGpuDrawForLayer(
         enqueueCrimePointGpuDraw(ctx.draw);
         return;
     }
-    if (isZoningPolygonLayer(layer) && zoningGpuDrawActive(layer_idx)) {
+    if (layerUsesPointGeometry(layer)) {
+        if (layer_uses_heatmap_for_cache || layer_uses_lod_for_draw) return;
+        if (ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx)) return;
+        if (pointLayerGpuDrawActive(layer_idx)) {
+            enqueuePointLayerGpuDraw(ctx.draw, layer_idx);
+        }
+        return;
+    }
+    if (layerUsesPolylineGeometry(layer)) {
+        if (polylineLayerGpuDrawActive(layer_idx)) {
+            enqueuePolylineLayerGpuDraw(ctx.draw, layer_idx);
+        }
+        return;
+    }
+    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuDrawActive(layer_idx)) {
         enqueueZoningGpuDraw(ctx.draw, layer_idx);
         if (zoningGpuOutlineDrawActive(layer_idx)) {
             enqueueZoningGpuOutlineDraw(ctx.draw, layer_idx);
@@ -642,12 +658,12 @@ bool resolveFeatureRenderStyle(
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef& layer,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32 base_color,
     bool is_heat_layer,
     bool is_zoning_layer,
     const HeatNormalizationState& heat_normalization,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key,
     ImU32& feature_c,
     float& feature_heat_value,
     float& feature_normalized_value,
@@ -707,7 +723,7 @@ bool projectFeatureScreenBounds(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImVec2& p0w,
     ImVec2& p1w,
     ImVec2& p0,
@@ -731,7 +747,7 @@ void renderClusteredPointCandidates(
     bool is_heat_layer,
     bool is_zoning_layer,
     const HeatNormalizationState& heat_normalization,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key) {
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key) {
     std::unordered_map<PointClusterCellKey, PointClusterBucket, PointClusterCellKeyHash> buckets;
     buckets.reserve(feature_indices.size());
     for (uint32_t fidx : feature_indices) {
@@ -837,7 +853,7 @@ void addHeatSamplesForFeature(
     const RenderLayerPassContext& ctx,
     size_t sample_layer_idx,
     uint32_t feature_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     const ImVec2& p0w,
     const ImVec2& p1w,
     ImU32 feature_c,
@@ -895,12 +911,12 @@ void addHeatSamplesForFeature(
     ctx.heat_samples->push_back(hs);
 }
 
-void drawFeatureGeometry(
+void drawFeatureRecordetry(
     const RenderLayerPassContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef& layer,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32 feature_c,
     bool layer_uses_lod_for_draw,
     std::vector<DeferredPointRenderJob>* deferred_point_jobs) {
@@ -1058,12 +1074,12 @@ void renderFeature(
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef& layer,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32 base_color,
     bool is_heat_layer,
     bool is_zoning_layer,
     const HeatNormalizationState& heat_normalization,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key,
     bool layer_uses_heatmap,
     bool layer_uses_lod_for_draw,
     bool apply_smooth_stride,
@@ -1113,7 +1129,7 @@ void renderFeature(
         return;
     }
 
-    drawFeatureGeometry(ctx, layer_idx, feature_idx, layer, fg, feature_c, layer_uses_lod_for_draw, deferred_point_jobs);
+    drawFeatureRecordetry(ctx, layer_idx, feature_idx, layer, fg, feature_c, layer_uses_lod_for_draw, deferred_point_jobs);
 }
 
 } // namespace
@@ -1139,8 +1155,8 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
         const bool is_zoning_layer = isZoningPolygonLayer(l);
-        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l);
-        if (layerHasPrimaryGpuDraw(ctx, layer_idx, l)) {
+        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw);
+        if (layerHasPrimaryGpuDraw(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw)) {
             continue;
         }
 
@@ -1150,8 +1166,8 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
             continue;
         }
         const bool is_heat_layer = !l.heatmap_field.empty();
-        auto normalization_group_key = [&](const LayerDef::FeatureGeom& fg) {
-            std::string key = firstProp(fg, {
+        auto normalization_group_key = [&](const LayerDef::FeatureRecord& fg) {
+            std::string key = firstDisplayProperty(fg, {
                 "ZONECODE", "ZONING", "ZONE", "zoning", "zoning_group",
                 "group_key", "LANDUSE", "LAND_USE", "USE", "CATEGORY", "category"
             });

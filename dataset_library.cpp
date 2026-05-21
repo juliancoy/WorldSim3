@@ -607,6 +607,7 @@ static fs::path layerOutputDirForManifestItem(const fs::path& root, const json& 
     if (item.contains("provenance") && item["provenance"].is_object()) {
         const auto& provenance = item["provenance"];
         LayerDef layer;
+        layer.logical_id = item.value("id", defaultLayerLogicalIdForFile(item.value("file", std::string())));
         layer.file = item.value("file", std::string());
         layer.provenance_world = provenance.value("world", std::string());
         layer.provenance_nation_state = provenance.value("nation_state", std::string());
@@ -685,6 +686,7 @@ LayerDownloadSummary downloadLayerManifestPhase(
         } else {
             LayerDef layer;
             layer.name = name;
+            layer.logical_id = item.value("id", defaultLayerLogicalIdForFile(file));
             layer.file = file;
             const auto& import = item["import"];
             layer.import_type = import.value("type", std::string());

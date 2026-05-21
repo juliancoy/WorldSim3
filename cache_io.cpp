@@ -1,6 +1,7 @@
 #include "cache_io.h"
 
 #include "app_utils.h"
+#include "feature_props.h"
 #include "layer_geometry.h"
 #include "memory_utils.h"
 
@@ -248,13 +249,23 @@ bool readPolylinePaths(std::istream& in, std::vector<std::vector<ImVec2>>& paths
     return true;
 }
 
+const FeaturePropertyPairs* propertiesForFeatureRecord(
+    const LayerDef::FeatureRecord& fg,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties,
+    size_t feature_idx) {
+    if (feature_properties && feature_idx < feature_properties->size()) {
+        return &(*feature_properties)[feature_idx].values;
+    }
+    return getPropertyPairs(fg);
+}
+
 struct FlattenedParcelFeature {
     std::vector<ImVec2> vertices;
     std::vector<uint32_t> indices;
     std::vector<uint32_t> line_indices;
 };
 
-bool flattenParcelFeatureForRender(const LayerDef::FeatureGeom& fg, FlattenedParcelFeature& out) {
+bool flattenParcelFeatureForRender(const LayerDef::FeatureRecord& fg, FlattenedParcelFeature& out) {
     out.vertices.clear();
     out.indices.clear();
     out.line_indices.clear();
@@ -323,7 +334,7 @@ std::filesystem::path geometryArtifactCachePathForLayerFile(
 
 bool buildPointGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PointGeometryArtifact& out,
     size_t chunk_feature_budget) {
@@ -383,7 +394,7 @@ bool buildPointGeometryArtifact(
 
 bool buildPolylineGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PolylineGeometryArtifact& out,
     size_t chunk_feature_budget) {
@@ -459,7 +470,7 @@ bool buildPolylineGeometryArtifact(
 
 bool buildPolygonGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PolygonGeometryArtifact& out,
     size_t chunk_feature_budget) {
@@ -476,7 +487,7 @@ bool buildPolygonGeometryArtifact(
         const auto& fg = features[feature_idx];
         if (fg.rings.empty()) continue;
 
-        LayerDef::FeatureGeom triangulated = fg;
+        LayerDef::FeatureRecord triangulated = fg;
         if (triangulated.triangles.empty()) {
             triangulated.triangles = triangulateRings(triangulated.rings);
         }
@@ -1044,24 +1055,6 @@ bool loadBinaryCanonicalMetadata(const fs::path& cache_path, CanonicalFeatureCol
 
 bool resolveLayerSourceSignature(const fs::path& layer_path, std::string& out_sig, std::string* out_source_kind) {
     const fs::path canonical_path = fs::path(layer_path.string() + ".canonical.bin");
-    const bool prefer_canonical =
-        layer_path.filename().string() == "regional_parcels.geojson";
-    if (prefer_canonical) {
-        CanonicalFeatureCollectionMetadata meta;
-        if (loadBinaryCanonicalMetadata(canonical_path, meta) && !meta.source_signature.empty()) {
-            out_sig = meta.source_signature;
-            if (out_source_kind) *out_source_kind = "canonical_binary";
-            return true;
-        }
-    }
-
-    std::error_code exists_ec;
-    if (fs::exists(layer_path, exists_ec) && !exists_ec) {
-        out_sig = fileSignature(layer_path);
-        if (out_source_kind) *out_source_kind = "geojson";
-        return true;
-    }
-
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(canonical_path, meta) || meta.source_signature.empty()) return false;
     out_sig = meta.source_signature;
@@ -1069,7 +1062,11 @@ bool resolveLayerSourceSignature(const fs::path& layer_path, std::string& out_si
     return true;
 }
 
-bool loadBinaryHydrationCache(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
+bool loadBinaryHydrationCache(
+    const fs::path& cache_path,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties) {
     std::ifstream in(cache_path, std::ios::binary);
     if (!in) return false;
     bool ok = false;
@@ -1090,9 +1087,11 @@ bool loadBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
         if (!readU64(in, feature_count) || feature_count > kMaxBinaryHydrationFeatures) return false;
 
         out.clear();
+        if (out_feature_properties) out_feature_properties->clear();
         out.reserve(static_cast<size_t>(feature_count));
+        if (out_feature_properties) out_feature_properties->reserve(static_cast<size_t>(feature_count));
         for (uint64_t fi = 0; fi < feature_count; ++fi) {
-            LayerDef::FeatureGeom fg{};
+            LayerDef::FeatureRecord fg{};
             if (!readFloat(in, fg.extent.min_lon) ||
                 !readFloat(in, fg.extent.min_lat) ||
                 !readFloat(in, fg.extent.max_lon) ||
@@ -1119,21 +1118,28 @@ bool loadBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
 
             uint32_t property_count = 0;
             if (!readU32(in, property_count) || property_count > kMaxBinaryHydrationPropertiesPerFeature) return false;
-            fg.properties.reserve(property_count);
+            LayerDef::FeatureProperties props;
+            props.values.reserve(property_count);
             for (uint32_t pi = 0; pi < property_count; ++pi) {
                 std::string key;
                 std::string value;
                 if (!readString(in, key) || !readString(in, value)) return false;
-                fg.properties.push_back({std::move(key), std::move(value)});
+                props.values.push_back({std::move(key), std::move(value)});
             }
             out.push_back(std::move(fg));
+            setTransientFeatureProperties(out.back(), props.values);
+            if (out_feature_properties) out_feature_properties->push_back(std::move(props));
         }
         ok = true;
     }
     return ok;
 }
 
-void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig, const std::vector<LayerDef::FeatureGeom>& features) {
+void saveBinaryHydrationCache(
+    const fs::path& cache_path,
+    const std::string& sig,
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties) {
     if (!hostIsLittleEndian()) return;
     fs::create_directories(cache_path.parent_path());
     const fs::path tmp_path = tempCachePathFor(cache_path);
@@ -1147,11 +1153,13 @@ void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
              writeU32(out, 0x01020304u) &&
              writeString(out, sig) &&
              writeU64(out, static_cast<uint64_t>(features.size()));
-        for (const auto& fg : features) {
+        for (size_t fi = 0; fi < features.size(); ++fi) {
+            const auto& fg = features[fi];
+            const FeaturePropertyPairs* props = propertiesForFeatureRecord(fg, feature_properties, fi);
             if (!ok) break;
             if (fg.rings.size() > std::numeric_limits<uint32_t>::max() ||
                 fg.paths.size() > std::numeric_limits<uint32_t>::max() ||
-                fg.properties.size() > std::numeric_limits<uint32_t>::max()) {
+                (props && props->size() > std::numeric_limits<uint32_t>::max())) {
                 ok = false;
                 break;
             }
@@ -1173,7 +1181,7 @@ void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
                 }
             }
             ok = ok && writePolylinePaths(out, fg.paths);
-            ok = ok && writeHydrationProperties(out, cache_path, fg.properties);
+            ok = ok && writeHydrationProperties(out, cache_path, props ? *props : FeaturePropertyPairs{});
         }
         out.flush();
         ok = ok && bool(out);
@@ -1196,16 +1204,18 @@ void saveBinaryHydrationCache(const fs::path& cache_path, const std::string& sig
 
 bool binaryHydrationCacheShouldBeCompacted(
     const fs::path& cache_path,
-    const std::vector<LayerDef::FeatureGeom>& features) {
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties) {
     if (!isRegionalParcelHydrationCachePath(cache_path)) return false;
-    for (const auto& fg : features) {
-        if (fg.properties.size() > kRegionalParcelCompactionPropertyThreshold) return true;
+    for (size_t fi = 0; fi < features.size(); ++fi) {
+        const FeaturePropertyPairs* props = propertiesForFeatureRecord(features[fi], feature_properties, fi);
+        if (props && props->size() > kRegionalParcelCompactionPropertyThreshold) return true;
     }
     return false;
 }
 
 bool buildParcelRenderCacheBlob(
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     ParcelRenderCacheBlob& out,
     size_t chunk_feature_budget) {
@@ -1445,7 +1455,8 @@ void saveBinaryParcelRenderCache(const fs::path& cache_path, const ParcelRenderC
 void saveBinaryCanonicalFeatureCollection(
     const fs::path& cache_path,
     const std::string& sig,
-    const std::vector<LayerDef::FeatureGeom>& features) {
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties) {
     if (!hostIsLittleEndian()) return;
     fs::create_directories(cache_path.parent_path());
     const fs::path tmp_path = tempCachePathFor(cache_path);
@@ -1464,11 +1475,13 @@ void saveBinaryCanonicalFeatureCollection(
         std::memcpy(sig_buf.data(), sig.data(), sig_bytes);
         ok = ok && writeExact(out, sig_buf.data(), sig_buf.size());
 
-        for (const auto& fg : features) {
+        for (size_t fi = 0; fi < features.size(); ++fi) {
+            const auto& fg = features[fi];
+            const FeaturePropertyPairs* props = propertiesForFeatureRecord(fg, feature_properties, fi);
             if (!ok) break;
             if (fg.rings.size() > std::numeric_limits<uint32_t>::max() ||
                 fg.paths.size() > std::numeric_limits<uint32_t>::max() ||
-                fg.properties.size() > std::numeric_limits<uint32_t>::max()) {
+                (props && props->size() > std::numeric_limits<uint32_t>::max())) {
                 ok = false;
                 break;
             }
@@ -1490,8 +1503,8 @@ void saveBinaryCanonicalFeatureCollection(
                 }
             }
             ok = ok && writePolylinePaths(out, fg.paths);
-            ok = ok && writeU32(out, static_cast<uint32_t>(fg.properties.size()));
-            for (const auto& kv : fg.properties) {
+            ok = ok && writeU32(out, static_cast<uint32_t>(props ? props->size() : 0));
+            if (props) for (const auto& kv : *props) {
                 if (!ok) break;
                 ok = writeString(out, kv.first) && writeString(out, kv.second);
             }
@@ -1515,7 +1528,11 @@ void saveBinaryCanonicalFeatureCollection(
     }
 }
 
-bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std::string& sig, std::vector<LayerDef::FeatureGeom>& out) {
+bool loadBinaryCanonicalFeatureCollection(
+    const fs::path& cache_path,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties) {
     std::ifstream in(cache_path, std::ios::binary);
     if (!in) return false;
 
@@ -1526,9 +1543,11 @@ bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std:
     if (!in) return false;
 
     out.clear();
+    if (out_feature_properties) out_feature_properties->clear();
     out.reserve(static_cast<size_t>(meta.feature_count));
+    if (out_feature_properties) out_feature_properties->reserve(static_cast<size_t>(meta.feature_count));
     for (uint64_t fi = 0; fi < meta.feature_count; ++fi) {
-        LayerDef::FeatureGeom fg{};
+        LayerDef::FeatureRecord fg{};
         if (!readFloat(in, fg.extent.min_lon) ||
             !readFloat(in, fg.extent.min_lat) ||
             !readFloat(in, fg.extent.max_lon) ||
@@ -1555,16 +1574,32 @@ bool loadBinaryCanonicalFeatureCollection(const fs::path& cache_path, const std:
 
         uint32_t property_count = 0;
         if (!readU32(in, property_count) || property_count > kMaxBinaryHydrationPropertiesPerFeature) return false;
-        fg.properties.reserve(property_count);
+        LayerDef::FeatureProperties props;
+        props.values.reserve(property_count);
         for (uint32_t pi = 0; pi < property_count; ++pi) {
             std::string key;
             std::string value;
             if (!readString(in, key) || !readString(in, value)) return false;
-            fg.properties.push_back({std::move(key), std::move(value)});
+            props.values.push_back({std::move(key), std::move(value)});
         }
         out.push_back(std::move(fg));
+        setTransientFeatureProperties(out.back(), props.values);
+        if (out_feature_properties) out_feature_properties->push_back(std::move(props));
     }
     return true;
+}
+
+bool loadCanonicalLayerFeatureCollection(
+    const fs::path& root,
+    const std::string& layer_file,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties) {
+    return loadBinaryCanonicalFeatureCollection(
+        canonicalLayerPathForFile(root, layer_file),
+        sig,
+        out,
+        out_feature_properties);
 }
 
 bool loadBinaryOwnerSearchCache(

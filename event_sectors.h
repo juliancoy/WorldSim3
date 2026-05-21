@@ -16,4 +16,4 @@ struct EventSectorDef {
 const std::vector<EventSectorDef>& communitySectorDefs();
 void ensureCommunitySectorFilterDefaults(std::unordered_map<std::string, bool>& enabled);
 bool isCommunitySectorEventLayer(const LayerDef& layer);
-std::string classifyCommunitySector(const LayerDef::FeatureGeom& fg);
+std::string classifyCommunitySector(const LayerDef::FeatureRecord& fg);

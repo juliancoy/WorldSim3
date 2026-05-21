@@ -69,6 +69,17 @@ struct ParcelGpuDrawConfig {
     float view_max_lat = 0.0f;
 };
 
+struct GpuPickRequest {
+    int math_zoom = 0;
+    float zoom_scale = 1.0f;
+    ImVec2 center_world = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_origin = ImVec2(0.0f, 0.0f);
+    ImVec2 viewport_size = ImVec2(0.0f, 0.0f);
+    ImVec2 framebuffer_size = ImVec2(0.0f, 0.0f);
+    ImVec2 mouse_screen = ImVec2(0.0f, 0.0f);
+    float marker_radius_px = 5.0f;
+};
+
 bool ensureParcelGpuBuffersResident(const ParcelRenderCacheBlob& blob, std::string* error = nullptr);
 bool updateParcelGpuColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
 bool updateParcelGpuOverlayColorBuffer(const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
@@ -117,3 +128,41 @@ bool configureCrimePointGpuDrawState(const ParcelGpuDrawConfig& config, std::str
 void clearCrimePointGpuDrawState();
 bool crimePointGpuDrawActive();
 void enqueueCrimePointGpuDraw(ImDrawList* draw_list);
+
+bool ensurePointLayerGpuBuffersResident(
+    size_t layer_idx,
+    const PointGeometryArtifact& artifact,
+    std::string* error = nullptr);
+bool updatePointLayerGpuColorBuffer(size_t layer_idx, const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+bool updatePointLayerGpuGlyphBuffer(size_t layer_idx, const std::vector<uint32_t>& glyph_codes, std::string* error = nullptr);
+void clearPointLayerGpuBuffers(size_t layer_idx);
+void clearAllPointLayerGpuBuffers();
+bool pointLayerGpuBuffersResident(size_t layer_idx);
+bool configurePointLayerGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& config, std::string* error = nullptr);
+void clearPointLayerGpuDrawState(size_t layer_idx);
+void clearAllPointLayerGpuDrawStates();
+bool pointLayerGpuDrawActive(size_t layer_idx);
+void enqueuePointLayerGpuDraw(ImDrawList* draw_list, size_t layer_idx);
+
+bool ensurePolylineLayerGpuBuffersResident(
+    size_t layer_idx,
+    const PolylineGeometryArtifact& artifact,
+    std::string* error = nullptr);
+bool updatePolylineLayerGpuColorBuffer(size_t layer_idx, const std::vector<ImU32>& colors_rgba, std::string* error = nullptr);
+void clearPolylineLayerGpuBuffers(size_t layer_idx);
+void clearAllPolylineLayerGpuBuffers();
+bool polylineLayerGpuBuffersResident(size_t layer_idx);
+bool configurePolylineLayerGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& config, std::string* error = nullptr);
+void clearPolylineLayerGpuDrawState(size_t layer_idx);
+void clearAllPolylineLayerGpuDrawStates();
+bool polylineLayerGpuDrawActive(size_t layer_idx);
+void enqueuePolylineLayerGpuDraw(ImDrawList* draw_list, size_t layer_idx);
+
+bool gpuPickParcelFeature(const GpuPickRequest& request, size_t* out_feature_idx, std::string* error = nullptr);
+bool gpuPickZoningFeature(size_t layer_idx, const GpuPickRequest& request, size_t* out_feature_idx, std::string* error = nullptr);
+bool gpuPickPointFeature(
+    const PointGeometryArtifact& artifact,
+    const std::string& source_signature,
+    const GpuPickRequest& request,
+    size_t* out_feature_idx,
+    std::string* error = nullptr);

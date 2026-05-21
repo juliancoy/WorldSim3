@@ -136,7 +136,6 @@ struct MapFrameSessionContext {
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::function<void(size_t)> open_parcel_element;
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 
     std::atomic<double>* prof_layer_ms_last = nullptr;
     std::atomic<double>* prof_owner_filter_ms_last = nullptr;

@@ -3,9 +3,9 @@
     "name": "Maryland Parcels",
     "file": "regional_parcels.geojson",
     "color": "#ffd92f",
-    "description": "Canonical generated parcel layer for Maryland jurisdictions. Preferred source is Maryland Planning MdProperty View parcel polygons, with county-native parcel feeds used only when they are materially better than the statewide Maryland Planning product. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
+    "description": "Optional statewide export/debug parcel layer generated from jurisdiction parcel/property downloads. It is no longer the operational runtime geometry source; runtime geometry should come from direct per-layer compiled artifacts built from the independent parcel layers themselves.",
     "download": false,
-    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder. Prefer Maryland Planning MdProperty View parcel polygons and Maryland statewide real-property assessments for broad county coverage; use county-native feeds only when they provide meaningfully better geometry or attributes.",
+    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder as an interchange/export product only. Do not treat it as the primary runtime geometry input; direct parcel layers should compile straight to independent geometry artifacts.",
     "import": {
       "type": "regional_parcel_builder"
     },
@@ -31,9 +31,9 @@
     "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false,
-    "runtime_load": true,
-    "duckdb_ingest": true,
-    "duckdb_role": "parcel_record",
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "duckdb_role": "staging",
     "provenance": {
       "world": "earth",
       "nation_state": "us",

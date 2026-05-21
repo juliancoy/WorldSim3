@@ -197,8 +197,6 @@ struct MapTabContext {
     int* policy_viz_metric = nullptr;
     size_t* policy_viz_cache_rebuilds = nullptr;
     size_t* policy_viz_node_count = nullptr;
-
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
     std::function<void()> toggle_map_fullscreen;
     std::function<void()> request_snapshot;
     bool map_fullscreen = false;

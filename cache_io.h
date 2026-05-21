@@ -130,7 +130,7 @@ std::filesystem::path geometryArtifactCachePathForLayerFile(
     GeometryArtifactClass cls);
 bool buildPointGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PointGeometryArtifact& out,
     size_t chunk_feature_budget = 4096);
@@ -143,7 +143,7 @@ void saveBinaryPointGeometryArtifact(
     const PointGeometryArtifact& artifact);
 bool buildPolylineGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PolylineGeometryArtifact& out,
     size_t chunk_feature_budget = 4096);
@@ -156,7 +156,7 @@ void saveBinaryPolylineGeometryArtifact(
     const PolylineGeometryArtifact& artifact);
 bool buildPolygonGeometryArtifact(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     PolygonGeometryArtifact& out,
     size_t chunk_feature_budget = 4096);
@@ -177,19 +177,22 @@ bool resolveLayerSourceSignature(
 bool loadBinaryHydrationCache(
     const std::filesystem::path& cache_path,
     const std::string& sig,
-    std::vector<LayerDef::FeatureGeom>& out);
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties = nullptr);
 
 void saveBinaryHydrationCache(
     const std::filesystem::path& cache_path,
     const std::string& sig,
-    const std::vector<LayerDef::FeatureGeom>& features);
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties = nullptr);
 
 bool binaryHydrationCacheShouldBeCompacted(
     const std::filesystem::path& cache_path,
-    const std::vector<LayerDef::FeatureGeom>& features);
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties = nullptr);
 
 bool buildParcelRenderCacheBlob(
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     const std::string& sig,
     ParcelRenderCacheBlob& out,
     size_t chunk_feature_budget = 4096);
@@ -210,12 +213,21 @@ bool loadBinaryCanonicalMetadata(
 void saveBinaryCanonicalFeatureCollection(
     const std::filesystem::path& cache_path,
     const std::string& sig,
-    const std::vector<LayerDef::FeatureGeom>& features);
+    const std::vector<LayerDef::FeatureRecord>& features,
+    const std::vector<LayerDef::FeatureProperties>* feature_properties = nullptr);
 
 bool loadBinaryCanonicalFeatureCollection(
     const std::filesystem::path& cache_path,
     const std::string& sig,
-    std::vector<LayerDef::FeatureGeom>& out);
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties = nullptr);
+
+bool loadCanonicalLayerFeatureCollection(
+    const std::filesystem::path& root,
+    const std::string& layer_file,
+    const std::string& sig,
+    std::vector<LayerDef::FeatureRecord>& out,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties = nullptr);
 
 bool loadBinaryOwnerSearchCache(
     const std::filesystem::path& cache_path,

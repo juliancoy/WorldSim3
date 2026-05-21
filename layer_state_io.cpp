@@ -140,7 +140,7 @@ std::string encodeHexLayerColor(const ImVec4& color) {
 
 int findLayerIndexByFile(const std::vector<LayerDef>& layers, const std::string& file) {
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].file == file) return (int)i;
+        if (layerMatchesIdentifier(layers[i], file)) return (int)i;
     }
     return -1;
 }
@@ -281,6 +281,7 @@ static void appendManifestEntries(
 
         LayerDef ld;
         ld.name = arr[i].value("name", file);
+        ld.logical_id = arr[i].value("id", defaultLayerLogicalIdForFile(file));
         ld.file = file;
         ld.source_url = arr[i].contains("url") ? arr[i]["url"].get<std::string>() : "";
         ld.reference_url = arr[i].contains("reference_url") ? arr[i]["reference_url"].get<std::string>() : "";
@@ -335,14 +336,13 @@ static void appendManifestEntries(
 
 std::vector<LayerDef> loadManifest(const fs::path& root) {
     std::vector<LayerDef> layers;
-    const fs::path regional_parcels_path =
-        root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / "regional_parcels.geojson";
-    const fs::path legacy_regional_parcels_path = root / "data" / "layers" / "regional_parcels.geojson";
+    const fs::path regional_parcels_canonical_path =
+        root / "data" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md" / "layers" / "regional_parcels.geojson.canonical.bin";
+    const fs::path legacy_regional_parcels_canonical_path =
+        root / "data" / "layers" / "regional_parcels.geojson.canonical.bin";
     const bool regional_parcels_available =
-        fs::exists(regional_parcels_path) ||
-        fs::exists(regional_parcels_path.parent_path() / "regional_parcels.geojson.canonical.bin") ||
-        fs::exists(legacy_regional_parcels_path) ||
-        fs::exists(legacy_regional_parcels_path.parent_path() / "regional_parcels.geojson.canonical.bin");
+        fs::exists(regional_parcels_canonical_path) ||
+        fs::exists(legacy_regional_parcels_canonical_path);
     std::unordered_set<std::string> seen_files;
     const std::vector<fs::path> manifest_paths = discoverManifestPaths(root);
     for (const auto& manifest_path : manifest_paths) {
@@ -781,7 +781,9 @@ void loadMapUiState(
     double* center_lat,
     double* zoom,
     size_t* selected_parcel_idx,
-    std::vector<size_t>* selected_parcel_indices) {
+    std::vector<size_t>* selected_parcel_indices,
+    std::string* selected_parcel_stable_id,
+    std::vector<std::string>* selected_parcel_stable_ids) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -816,6 +818,20 @@ void loadMapUiState(
                 if (v.is_number_unsigned()) selected_parcel_indices->push_back(v.get<size_t>());
             }
         }
+        if (selected_parcel_stable_id) {
+            selected_parcel_stable_id->clear();
+            if (s.contains("active_stable_id") && s["active_stable_id"].is_string()) {
+                *selected_parcel_stable_id = s["active_stable_id"].get<std::string>();
+            }
+        }
+        if (selected_parcel_stable_ids) {
+            selected_parcel_stable_ids->clear();
+            if (s.contains("stable_ids") && s["stable_ids"].is_array()) {
+                for (const auto& v : s["stable_ids"]) {
+                    if (v.is_string()) selected_parcel_stable_ids->push_back(v.get<std::string>());
+                }
+            }
+        }
     }
 }
 
@@ -825,7 +841,9 @@ void saveMapUiState(
     double center_lat,
     double zoom,
     size_t selected_parcel_idx,
-    const std::vector<size_t>& selected_parcel_indices) {
+    const std::vector<size_t>& selected_parcel_indices,
+    const std::string& selected_parcel_stable_id,
+    const std::vector<std::string>& selected_parcel_stable_ids) {
     fs::create_directories(root / "data");
     json j = json::object();
     {
@@ -849,8 +867,11 @@ void saveMapUiState(
     json selection = json::object();
     if (selected_parcel_idx == (size_t)-1) selection["active_idx"] = nullptr;
     else selection["active_idx"] = selected_parcel_idx;
+    selection["active_stable_id"] = selected_parcel_stable_id.empty() ? json(nullptr) : json(selected_parcel_stable_id);
     selection["indices"] = json::array();
     for (size_t idx : selected_parcel_indices) selection["indices"].push_back(idx);
+    selection["stable_ids"] = json::array();
+    for (const std::string& stable_id : selected_parcel_stable_ids) selection["stable_ids"].push_back(stable_id);
     j["parcel_selection"] = std::move(selection);
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);

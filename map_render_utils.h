@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <string>
 
-bool tryGetFeaturePropertyFloat(const LayerDef::FeatureGeom& fg, const std::string& key, float& out);
+bool tryGetFeaturePropertyFloat(const LayerDef::FeatureRecord& fg, const std::string& key, float& out);
 ImVec4 heatColor(float t);
 float applyPowerGamma(float t, float gamma);
 ImU32 colorWithAlpha(const ImVec4& c, int alpha);

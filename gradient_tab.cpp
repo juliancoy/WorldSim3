@@ -3,6 +3,7 @@
 #include "aggregate_visualization_strategies.h"
 #include "imgui.h"
 #include "map_render_utils.h"
+#include "parcel_metrics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -46,37 +47,6 @@ std::string formatGradientValue(const std::string& field, double value) {
     return compactNumber(value);
 }
 
-double parcelAreaSqM(const LayerDef::FeatureGeom& fg) {
-    if (fg.rings.empty()) return 0.0;
-    constexpr double kDegToMetersLat = 111320.0;
-    double total = 0.0;
-    for (const auto& ring : fg.rings) {
-        if (ring.size() < 3) continue;
-        double lat_sum = 0.0;
-        for (const auto& p : ring) lat_sum += (double)p.y;
-        const double lat0 = lat_sum / (double)ring.size();
-        const double sx = kDegToMetersLat * std::cos(lat0 * std::numbers::pi / 180.0);
-        double a = 0.0;
-        for (size_t i = 0, n = ring.size(); i < n; ++i) {
-            const auto& p = ring[i];
-            const auto& q = ring[(i + 1) % n];
-            a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                 ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-        }
-        total += std::abs(a) * 0.5;
-    }
-    return total;
-}
-
-double parcelParameterValue(const GradientTabContext& ctx, size_t parcel_idx, const LayerDef::FeatureGeom& fg) {
-    if (ctx.parcel_parameter_mode == 1) return parcelAreaSqM(fg);
-    if (ctx.parcel_parameter_mode == 2 && ctx.unified_parcels) {
-        const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, parcel_idx);
-        return rec ? rec->current_value : 0.0;
-    }
-    return 0.0;
-}
-
 void drawPowerLegend(const std::string& field, float min_v, float max_v, float gamma) {
     const float stops[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
     for (float stop : stops) {
@@ -110,7 +80,12 @@ void drawGradientTab(const GradientTabContext& ctx) {
         for (size_t fi = 0; fi < parcel_layer.features.size(); ++fi) {
             const auto& fg = parcel_layer.features[fi];
             if (ctx.feature_passes_filters && !ctx.feature_passes_filters((size_t)ctx.parcel_layer_idx, fi, fg)) continue;
-            const double v = parcelParameterValue(ctx, fi, fg);
+            const double v = parcelParameterValue(
+                ctx.parcel_parameter_mode,
+                ctx.unified_parcels,
+                nullptr,
+                fi,
+                fg);
             if (v > 0.0 && std::isfinite(v)) values.push_back((float)v);
         }
         if (!values.empty()) {

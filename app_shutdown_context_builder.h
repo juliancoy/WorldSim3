@@ -69,6 +69,8 @@ struct AppShutdownContextFactoryInput {
     std::vector<QueryHistoryEntry>* query_history = nullptr;
     size_t* selected_parcel_idx = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
+    std::string* selected_parcel_stable_id = nullptr;
+    std::vector<std::string>* selected_parcel_stable_ids = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;
     std::thread* time_cube_ui_worker = nullptr;
     std::condition_variable* hydrate_req_cv = nullptr;

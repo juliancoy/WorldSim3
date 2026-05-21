@@ -110,8 +110,8 @@ struct RenderFrameOrchestrationContext {
     std::function<bool(size_t)> layer_uses_heatmap_aggregate;
     std::function<bool(size_t)> layer_uses_lod_geometry;
     std::function<bool(size_t)> layer_passes_filters;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&, ImU32&)> query_map_color;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&, ImU32&)> query_map_color;
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
 

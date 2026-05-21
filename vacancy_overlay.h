@@ -7,7 +7,7 @@
 
 void saveDerivedVacancyStatus(
     const std::filesystem::path& out_path,
-    const std::vector<LayerDef::FeatureGeom>& parcel_features,
+    const std::vector<LayerDef::FeatureRecord>& parcel_features,
     const std::vector<int>& notice_counts,
     const std::vector<int>& rehab_counts,
     size_t vacant_notice_rows_total,

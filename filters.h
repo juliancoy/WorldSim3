@@ -155,13 +155,13 @@ bool featurePassesFilters(
     const FeatureFilterContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg);
+    const LayerDef::FeatureRecord& fg);
 
 bool queryMapColorForFeature(
     const FeatureFilterContext& ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     float out_color[4]);
 
 bool layerMatchesBrowseGeography(const LayerDef& layer, const LayerBrowseState& browse_state);

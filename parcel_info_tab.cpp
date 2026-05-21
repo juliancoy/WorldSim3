@@ -4,6 +4,7 @@
 #include "feature_props.h"
 #include "imgui.h"
 #include "parcel_value_ui.h"
+#include "real_property_ui.h"
 
 namespace {
 struct DuckDbParcelDetailSnapshot {
@@ -120,34 +121,6 @@ void drawUnifiedParcelDetail(OwnerInfoUiState* owner_info_state, const UnifiedPa
     ImGui::TextDisabled("Source: in-memory unified parcel record");
 }
 
-std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
-    if (!rp) return "";
-    std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
-    return toLowerAscii(trimDisplayValue(o));
-}
-
-void drawRealPropertySummary(const LayerDef::FeatureGeom* rp) {
-    if (!rp) {
-        ImGui::TextDisabled("No matching real-property record.");
-        return;
-    }
-    auto text_prop = [&](const char* label, const std::string& value) {
-        if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
-    };
-    text_prop("Address", firstDisplayProperty(*rp, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"}));
-    text_prop("Owner", firstDisplayProperty(*rp, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"}));
-    text_prop("Use", firstDisplayProperty(*rp, {"LU", "LANDUSE", "USE_CODE", "USE"}));
-    text_prop("Tax Base", firstDisplayProperty(*rp, {"TAXBASE", "ARTAXBAS"}));
-    text_prop("Current Land", firstDisplayProperty(*rp, {"CURRLAND"}));
-    text_prop("Current Improvements", firstDisplayProperty(*rp, {"CURRIMPR"}));
-    text_prop("Sale Price", firstDisplayProperty(*rp, {"SALEPRIC"}));
-    text_prop("Sale Date", firstDisplayProperty(*rp, {"SALEDATE"}));
-    std::string deed_book = firstDisplayProperty(*rp, {"DEEDBOOK"});
-    std::string deed_page = firstDisplayProperty(*rp, {"DEEDPAGE"});
-    text_prop("Deed", deed_book.empty() ? "" : deed_book + (deed_page.empty() ? "" : " / " + deed_page));
-    text_prop("SDAT Link", firstDisplayProperty(*rp, {"SDATLINK"}));
-    ImGui::TextDisabled("Source: Local property records when available");
-}
 }
 
 void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
@@ -167,7 +140,6 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
     if (!parcel_info_valid) {
         ImGui::TextDisabled("Select a parcel from the map or address results to view parcel details.");
     } else {
-        const auto& selected = (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features[ctx.selected_parcel_idx];
         if (ImGui::Button("Clear Parcel Selection")) {
             if (ctx.clear_parcel_selection) ctx.clear_parcel_selection();
         } else {
@@ -176,7 +148,7 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                 : nullptr;
             const DuckDbParcelDetailSnapshot duckdb_detail =
                 loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx);
-            std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
+            std::string blocklot_raw = selected_unified ? selected_unified->blocklot : std::string();
             int vac_notice = 0;
             int vac_rehab = 0;
             int tax_lien = 0;
@@ -207,9 +179,15 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                 tax_sale_amount = duckdb_detail.tax_sale_amount;
                 current_value_total = duckdb_detail.current_value;
             }
-            const LayerDef::FeatureGeom* selected_rp =
+            const LayerDef::FeatureRecord* selected_rp =
                 (selected_unified && ctx.layers) ? unifiedRealPropertyGeometry(*selected_unified, *ctx.layers) : nullptr;
-            if (!selected_rp && ctx.real_property_for_parcel) selected_rp = ctx.real_property_for_parcel(selected);
+            if (!selected_rp && ctx.layers) {
+                selected_rp = resolveRealPropertyForBlocklot(
+                    *ctx.layers,
+                    ctx.real_property_layer_idx,
+                    ctx.real_property_by_blocklot,
+                    blocklot_raw);
+            }
 
             ImGui::Separator();
             ImGui::Text("Selected Parcels: %zu", ctx.selected_parcel_indices->size());
@@ -222,8 +200,7 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
             drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
-            std::string summary_owner = selected_unified ? selected_unified->owner : ownerNameFor(selected_rp);
-            if (summary_owner.empty()) summary_owner = ownerNameFor(&selected);
+            std::string summary_owner = selected_unified ? selected_unified->owner : normalizedRealPropertyOwnerName(selected_rp);
             if (!summary_owner.empty() && ctx.owner_info_state) {
                 drawOwnerInfoLink(*ctx.owner_info_state, summary_owner, "open_owner_info_parcel_tab");
             }

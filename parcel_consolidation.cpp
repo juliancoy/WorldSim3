@@ -9,17 +9,12 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
-bool isPropertyOnlySupplementalLayer(const LayerDef& layer) {
-    return layer.import_type == "socrata_csv_properties";
-}
-
 bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     if (!needle || !*needle) return false;
     std::string hs = haystack;
@@ -38,35 +33,14 @@ int zoningLayerMatchScore(const LayerDef& layer) {
     return 0;
 }
 
-std::vector<LayerDef::FeatureGeom> loadPropertyOnlyFeaturesFromGeoJson(const fs::path& path) {
-    std::vector<LayerDef::FeatureGeom> features;
-    std::ifstream in(path);
-    if (!in) return features;
-    json source;
-    in >> source;
-    if (!source.contains("features") || !source["features"].is_array()) return features;
-    features.reserve(source["features"].size());
-    for (const auto& feature : source["features"]) {
-        if (!feature.contains("properties") || !feature["properties"].is_object()) continue;
-        LayerDef::FeatureGeom fg{};
-        for (auto it = feature["properties"].begin(); it != feature["properties"].end(); ++it) {
-            if (it.value().is_null()) continue;
-            if (it.value().is_string()) fg.properties.push_back({it.key(), it.value().get<std::string>()});
-            else fg.properties.push_back({it.key(), it.value().dump()});
-        }
-        if (!fg.properties.empty()) features.push_back(std::move(fg));
-    }
-    return features;
+bool layerFileMaterialized(const fs::path& root, const std::string& file) {
+    return layerRuntimeSourceMaterializedForFile(root, file);
 }
 
-std::vector<fs::path> supplementalPropertyLayerPaths(const fs::path& root, const std::vector<LayerDef>& layers) {
-    std::vector<fs::path> paths;
-    for (const auto& layer : layers) {
-        if (!isPropertyOnlySupplementalLayer(layer)) continue;
-        const fs::path path = resolveStoredLayerPath(root, layer);
-        if (fs::exists(path)) paths.push_back(path);
-    }
-    return paths;
+bool isDirectOperationalParcelLayer(const LayerDef& layer) {
+    return layer.scale == "parcel" &&
+           layer.duckdb_role == "parcel_record" &&
+           layer.file != "regional_parcels.geojson";
 }
 
 void accumulateBlocklotCounts(
@@ -99,15 +73,17 @@ WorldsimLayerIndices detectWorldsimLayerIndices(
     const fs::path& root,
     const std::vector<LayerDef>& layers) {
     WorldsimLayerIndices indices;
-    const bool regional_parcels_available =
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
-    const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
+    const bool regional_real_property_available =
+        layerRuntimeSourceMaterializedForFile(root, "regional_real_property.geojson");
     int best_zoning_match = 0;
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices.parcel_layer_idx = (int)i;
-        else if (layers[i].file == "parcel.geojson" && indices.parcel_layer_idx < 0) indices.parcel_layer_idx = (int)i;
-        else if (layers[i].file == "regional_real_property.geojson" && regional_real_property_available) indices.real_property_layer_idx = (int)i;
+        if (indices.parcel_layer_idx < 0 &&
+            isDirectOperationalParcelLayer(layers[i]) &&
+            layerFileMaterialized(root, layers[i].file)) {
+            indices.parcel_layer_idx = (int)i;
+        } else if (layers[i].file == "parcel.geojson" && indices.parcel_layer_idx < 0) {
+            indices.parcel_layer_idx = (int)i;
+        } else if (layers[i].file == "regional_real_property.geojson" && regional_real_property_available) indices.real_property_layer_idx = (int)i;
         else if (layers[i].file == "real_property_information.geojson" && indices.real_property_layer_idx < 0) {
             indices.real_property_layer_idx = (int)i;
         } else if (layers[i].file == "vacant_building_notices.geojson") {
@@ -134,17 +110,13 @@ std::string computeHarmonizedRealPropertySignature(
     const fs::path& root,
     const std::vector<LayerDef>& layers,
     int real_property_layer_idx) {
+    (void)root;
+    (void)layers;
     std::string signature = "rp:";
     if (real_property_layer_idx >= 0 && (size_t)real_property_layer_idx < layers.size()) {
         signature += std::to_string(layers[(size_t)real_property_layer_idx].features.size());
     } else {
         signature += "none";
-    }
-    for (const auto& path : supplementalPropertyLayerPaths(root, layers)) {
-        signature += "|supp:";
-        signature += path.filename().string();
-        signature += ":";
-        signature += fileSignature(path);
     }
     return signature;
 }
@@ -153,7 +125,7 @@ void rebuildHarmonizedRealPropertyFeatures(
     const fs::path& root,
     const std::vector<LayerDef>& layers,
     int real_property_layer_idx,
-    std::vector<LayerDef::FeatureGeom>& harmonized_features,
+    std::vector<LayerDef::FeatureRecord>& harmonized_features,
     std::vector<std::string>& harmonized_source_files,
     std::unordered_map<std::string, size_t>& real_property_by_blocklot) {
     harmonized_features.clear();
@@ -167,17 +139,6 @@ void rebuildHarmonizedRealPropertyFeatures(
             harmonized_source_files.end(),
             real_property_features.size(),
             layers[(size_t)real_property_layer_idx].file);
-    }
-    for (const auto& layer : layers) {
-        if (!isPropertyOnlySupplementalLayer(layer)) continue;
-        const fs::path path = resolveStoredLayerPath(root, layer);
-        if (!fs::exists(path)) continue;
-        auto extra_features = loadPropertyOnlyFeaturesFromGeoJson(path);
-        harmonized_source_files.insert(harmonized_source_files.end(), extra_features.size(), layer.file);
-        harmonized_features.insert(
-            harmonized_features.end(),
-            std::make_move_iterator(extra_features.begin()),
-            std::make_move_iterator(extra_features.end()));
     }
     for (size_t i = 0; i < harmonized_features.size(); ++i) {
         const std::string blocklot = featureBlockLotJoinKey(harmonized_features[i]);
@@ -288,6 +249,7 @@ ParcelConsolidationArtifacts buildParcelConsolidationArtifacts(
 
     artifacts.unified_parcels = buildUnifiedParcels(UnifiedParcelBuildRequest{
         &layers,
+        nullptr,
         layer_indices.parcel_layer_idx,
         layer_indices.real_property_layer_idx,
         &artifacts.harmonized_real_property_features,

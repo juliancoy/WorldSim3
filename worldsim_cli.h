@@ -6,9 +6,6 @@
 struct WorldsimCliOptions {
     bool show_help = false;
     bool run_vacancy_selftest = false;
-    bool run_cache_selftest = false;
-    bool run_warm_hydration_cache = false;
-    bool run_warm_hydration_cache_all = false;
     bool run_warm_parcel_render_cache = false;
     bool run_warm_parcel_render_cache_all = false;
     bool run_projection_cache_selftest = false;
@@ -33,10 +30,11 @@ struct WorldsimCliOptions {
     bool run_compile_polygon_geometry = false;
     bool run_validate_polygon_geometry = false;
     bool run_build_geometry_duckdb_artifacts = false;
-    bool run_warm_parcel_runtime_stack = false;
     bool run_download_layers = false;
+    bool run_generate_canonical_files = false;
     bool run_rebuild_duckdb_analytics = false;
     bool run_inspect_duckdb_geography_tables = false;
+    bool run_report_duckdb_coverage = false;
     bool run_build_parcel_matched_layers = false;
     bool force_build_parcel_matched_layers = false;
     bool run_color_editor = false;
@@ -44,9 +42,8 @@ struct WorldsimCliOptions {
     int reserve_cores = 0;
     bool reserve_cores_set = false;
     std::string download_phase;
-    std::string warm_hydration_cache_file;
+    std::string generate_canonical_phase;
     std::string warm_parcel_render_cache_file;
-    std::string warm_parcel_runtime_stack_file;
     std::string canonical_parcel_binary_file;
     std::string point_geometry_file;
     std::string polyline_geometry_file;

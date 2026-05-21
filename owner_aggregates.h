@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "owners_tab.h"
 #include "parcel_unified.h"
 
@@ -16,6 +17,7 @@ struct OwnerAggregatesContext {
     const std::filesystem::path* root = nullptr;
     const std::vector<LayerDef>* layers = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
 
     int parcel_layer_idx = -1;
     int real_property_layer_idx = -1;

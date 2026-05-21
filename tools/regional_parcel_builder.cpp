@@ -39,7 +39,7 @@ const std::vector<std::pair<std::string, std::vector<std::string>>> kFieldAliase
 };
 
 constexpr char kCanonicalMagic[8] = {'W', 'S', '3', 'C', 'A', 'N', '1', '\0'};
-constexpr uint32_t kCanonicalVersion = 1;
+constexpr uint32_t kCanonicalVersion = 2;
 constexpr size_t kCanonicalSignatureBytes = 256;
 
 fs::path tempOutputPathFor(const fs::path& path) {
@@ -108,6 +108,49 @@ bool writeExact(std::ostream& out, const void* src, size_t n) {
     return bool(out);
 }
 
+bool readExact(std::istream& in, void* dst, size_t n) {
+    in.read(static_cast<char*>(dst), static_cast<std::streamsize>(n));
+    return bool(in);
+}
+
+bool readU32(std::istream& in, uint32_t& out) {
+    uint8_t b[4];
+    if (!readExact(in, b, sizeof(b))) return false;
+    out = uint32_t(b[0]) |
+          (uint32_t(b[1]) << 8) |
+          (uint32_t(b[2]) << 16) |
+          (uint32_t(b[3]) << 24);
+    return true;
+}
+
+bool readU64(std::istream& in, uint64_t& out) {
+    uint8_t b[8];
+    if (!readExact(in, b, sizeof(b))) return false;
+    out = uint64_t(b[0]) |
+          (uint64_t(b[1]) << 8) |
+          (uint64_t(b[2]) << 16) |
+          (uint64_t(b[3]) << 24) |
+          (uint64_t(b[4]) << 32) |
+          (uint64_t(b[5]) << 40) |
+          (uint64_t(b[6]) << 48) |
+          (uint64_t(b[7]) << 56);
+    return true;
+}
+
+bool readFloat(std::istream& in, float& out) {
+    uint32_t bits = 0;
+    if (!readU32(in, bits)) return false;
+    std::memcpy(&out, &bits, sizeof(out));
+    return true;
+}
+
+bool readString(std::istream& in, std::string& out) {
+    uint32_t len = 0;
+    if (!readU32(in, len)) return false;
+    out.assign(len, '\0');
+    return len == 0 || readExact(in, out.data(), len);
+}
+
 bool writeU32(std::ostream& out, uint32_t v) {
     const uint8_t b[4] = {
         static_cast<uint8_t>(v & 0xffu),
@@ -160,6 +203,25 @@ std::string fileSignatureForPath(const fs::path& p) {
     if (time_ec) return std::to_string((unsigned long long)sz) + "_mtime_unavailable";
     const auto ticks = wt.time_since_epoch().count();
     return std::to_string((unsigned long long)sz) + "_" + std::to_string((long long)ticks);
+}
+
+std::string buildInputSignature(
+    const std::vector<SourceSpec>& inputs,
+    const std::vector<SourceSpec>& property_inputs) {
+    std::string sig = "regional_parcels_v1";
+    auto append_specs = [&](const char* kind, const std::vector<SourceSpec>& specs) {
+        for (const auto& spec : specs) {
+            sig += "|";
+            sig += kind;
+            sig += ":";
+            sig += spec.jurisdiction;
+            sig += ":";
+            sig += fileSignatureForPath(spec.path);
+        }
+    };
+    append_specs("geom", inputs);
+    append_specs("prop", property_inputs);
+    return sig;
 }
 
 template <class Fn>
@@ -239,6 +301,7 @@ struct CanonicalBinaryWriter {
                     ok = ok && writeFloat(out, lon) && writeFloat(out, lat);
                 }
             }
+            ok = ok && writeU32(out, 0u);
             const uint32_t property_count = props.is_object() ? static_cast<uint32_t>(props.size()) : 0u;
             ok = ok && writeU32(out, property_count);
             if (props.is_object()) {
@@ -309,6 +372,125 @@ json readFeatureCollection(const fs::path& path) {
     return j;
 }
 
+json geometryFromCanonicalFeature(
+    const std::vector<std::vector<std::pair<float, float>>>& rings,
+    const std::vector<std::vector<std::pair<float, float>>>& paths,
+    float min_lon,
+    float min_lat) {
+    if (!rings.empty()) {
+        json coords = json::array();
+        for (const auto& ring : rings) {
+            json ring_json = json::array();
+            for (const auto& [lon, lat] : ring) ring_json.push_back({lon, lat});
+            coords.push_back(std::move(ring_json));
+        }
+        return json{{"type", "Polygon"}, {"coordinates", std::move(coords)}};
+    }
+    if (!paths.empty()) {
+        if (paths.size() == 1) {
+            json coords = json::array();
+            for (const auto& [lon, lat] : paths.front()) coords.push_back({lon, lat});
+            return json{{"type", "LineString"}, {"coordinates", std::move(coords)}};
+        }
+        json coords = json::array();
+        for (const auto& path : paths) {
+            json path_json = json::array();
+            for (const auto& [lon, lat] : path) path_json.push_back({lon, lat});
+            coords.push_back(std::move(path_json));
+        }
+        return json{{"type", "MultiLineString"}, {"coordinates", std::move(coords)}};
+    }
+    return json{{"type", "Point"}, {"coordinates", {min_lon, min_lat}}};
+}
+
+json readCanonicalFeatureCollection(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("failed to open " + path.string());
+    std::array<char, 8> magic{};
+    if (!readExact(in, magic.data(), magic.size()) ||
+        std::memcmp(magic.data(), kCanonicalMagic, sizeof(kCanonicalMagic)) != 0) {
+        throw std::runtime_error(path.string() + " is not a canonical layer binary");
+    }
+    uint32_t version = 0;
+    uint32_t endian = 0;
+    uint64_t feature_count = 0;
+    std::array<char, kCanonicalSignatureBytes> sig{};
+    if (!readU32(in, version) || !readU32(in, endian) || !readU64(in, feature_count) ||
+        !readExact(in, sig.data(), sig.size())) {
+        throw std::runtime_error("failed to read canonical header from " + path.string());
+    }
+    if (version != kCanonicalVersion || endian != 0x01020304u) {
+        throw std::runtime_error("unsupported canonical binary header in " + path.string());
+    }
+    json features = json::array();
+    for (uint64_t i = 0; i < feature_count; ++i) {
+        float min_lon = 0.0f, min_lat = 0.0f, max_lon = 0.0f, max_lat = 0.0f;
+        if (!readFloat(in, min_lon) || !readFloat(in, min_lat) ||
+            !readFloat(in, max_lon) || !readFloat(in, max_lat)) {
+            throw std::runtime_error("failed to read canonical extents from " + path.string());
+        }
+        uint32_t ring_count = 0;
+        if (!readU32(in, ring_count)) throw std::runtime_error("failed to read ring count from " + path.string());
+        std::vector<std::vector<std::pair<float, float>>> rings;
+        rings.reserve(ring_count);
+        for (uint32_t ri = 0; ri < ring_count; ++ri) {
+            uint32_t point_count = 0;
+            if (!readU32(in, point_count)) throw std::runtime_error("failed to read ring point count from " + path.string());
+            std::vector<std::pair<float, float>> ring;
+            ring.reserve(point_count);
+            for (uint32_t pi = 0; pi < point_count; ++pi) {
+                float lon = 0.0f, lat = 0.0f;
+                if (!readFloat(in, lon) || !readFloat(in, lat)) {
+                    throw std::runtime_error("failed to read ring coordinate from " + path.string());
+                }
+                ring.push_back({lon, lat});
+            }
+            rings.push_back(std::move(ring));
+        }
+        uint32_t path_count = 0;
+        if (!readU32(in, path_count)) throw std::runtime_error("failed to read path count from " + path.string());
+        std::vector<std::vector<std::pair<float, float>>> paths;
+        paths.reserve(path_count);
+        for (uint32_t pi = 0; pi < path_count; ++pi) {
+            uint32_t point_count = 0;
+            if (!readU32(in, point_count)) throw std::runtime_error("failed to read path point count from " + path.string());
+            std::vector<std::pair<float, float>> path_points;
+            path_points.reserve(point_count);
+            for (uint32_t vi = 0; vi < point_count; ++vi) {
+                float lon = 0.0f, lat = 0.0f;
+                if (!readFloat(in, lon) || !readFloat(in, lat)) {
+                    throw std::runtime_error("failed to read path coordinate from " + path.string());
+                }
+                path_points.push_back({lon, lat});
+            }
+            paths.push_back(std::move(path_points));
+        }
+        uint32_t property_count = 0;
+        if (!readU32(in, property_count)) throw std::runtime_error("failed to read property count from " + path.string());
+        json props = json::object();
+        for (uint32_t pi = 0; pi < property_count; ++pi) {
+            std::string key;
+            std::string value;
+            if (!readString(in, key) || !readString(in, value)) {
+                throw std::runtime_error("failed to read property from " + path.string());
+            }
+            props[key] = value;
+        }
+        features.push_back({
+            {"type", "Feature"},
+            {"properties", std::move(props)},
+            {"geometry", geometryFromCanonicalFeature(rings, paths, min_lon, min_lat)}
+        });
+    }
+    return json{{"type", "FeatureCollection"}, {"features", std::move(features)}};
+}
+
+json readSourceCollection(const fs::path& path) {
+    return path.filename().string().ends_with(".canonical.bin")
+        ? readCanonicalFeatureCollection(path)
+        : readFeatureCollection(path);
+}
+
 json canonicalProps(const std::string& jurisdiction, const fs::path& source_file, const json& props, const json* property_props = nullptr) {
     json merged = props.is_object() ? props : json::object();
     if (property_props && property_props->is_object()) {
@@ -346,15 +528,16 @@ json canonicalProps(const std::string& jurisdiction, const fs::path& source_file
 SourceSpec parseSourceSpec(const std::string& raw) {
     const size_t pos = raw.find(':');
     if (pos == std::string::npos || pos == 0 || pos + 1 >= raw.size()) {
-        throw std::runtime_error("source specs must be Jurisdiction:path.geojson: " + raw);
+        throw std::runtime_error("source specs must be Jurisdiction:path: " + raw);
     }
     return {raw.substr(0, pos), fs::path(raw.substr(pos + 1))};
 }
 
 void usage(const char* argv0) {
     std::cerr << "Usage: " << argv0
-              << " --input Jurisdiction:path.geojson [--property-input Jurisdiction:path.geojson]"
-              << " --output data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson\n";
+              << " --input Jurisdiction:path.geojson.canonical.bin [--property-input Jurisdiction:path.geojson.canonical.bin]"
+              << " --output data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin\n"
+              << "Writes only the canonical binary output.\n";
 }
 }
 
@@ -362,7 +545,7 @@ int main(int argc, char** argv) {
     try {
         std::vector<SourceSpec> inputs;
         std::vector<SourceSpec> property_inputs;
-        fs::path output = "data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson";
+        fs::path output = "data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin";
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             auto need_value = [&](const char* name) -> std::string {
@@ -382,7 +565,7 @@ int main(int argc, char** argv) {
 
         std::unordered_map<std::string, std::unordered_map<std::string, json>> property_indexes;
         for (const auto& spec : property_inputs) {
-            json fc = readFeatureCollection(spec.path);
+            json fc = readSourceCollection(spec.path);
             auto& index = property_indexes[spec.jurisdiction];
             for (const auto& feature : fc["features"]) {
                 const json props = feature.value("properties", json::object());
@@ -394,31 +577,22 @@ int main(int argc, char** argv) {
             }
         }
 
-        json counts = json::object();
-        json fields = json::array({"jurisdiction", "source_file", "regional_parcel_id"});
-        for (const auto& [field, _] : kFieldAliases) fields.push_back(field);
-
         fs::create_directories(output.parent_path());
-        const fs::path output_tmp = tempOutputPathFor(output);
-        const fs::path canonical_output = fs::path(output.string() + ".canonical.bin");
+        const fs::path canonical_output =
+            output.filename().string().ends_with(".canonical.bin")
+                ? output
+                : fs::path(output.string() + ".canonical.bin");
         const fs::path canonical_tmp = tempOutputPathFor(canonical_output);
         std::error_code cleanup_ec;
-        fs::remove(output_tmp, cleanup_ec);
         fs::remove(canonical_tmp, cleanup_ec);
-
-        std::ofstream out_file(output_tmp);
-        if (!out_file) throw std::runtime_error("failed to open output " + output.string());
         CanonicalBinaryWriter canonical_writer(canonical_tmp);
         if (!canonical_writer.begin()) {
             throw std::runtime_error("failed to open canonical binary output " + canonical_output.string());
         }
-        out_file << "{\"type\":\"FeatureCollection\",\"name\":\"regional_parcels\",\"features\":[";
 
-        bool wrote_feature = false;
         size_t feature_count = 0;
         for (const auto& spec : inputs) {
-            json fc = readFeatureCollection(spec.path);
-            counts[spec.jurisdiction] = fc["features"].size();
+            json fc = readSourceCollection(spec.path);
             for (const auto& feature : fc["features"]) {
                 if (!feature.is_object() || !feature.contains("geometry") || feature["geometry"].is_null()) continue;
                 const json props = feature.value("properties", json::object());
@@ -439,33 +613,19 @@ int main(int argc, char** argv) {
                     {"properties", std::move(regional_props)},
                     {"geometry", feature["geometry"]}
                 };
-                if (wrote_feature) out_file << ',';
-                out_file << out_feature.dump();
                 if (!canonical_writer.appendFeature(feature["geometry"], out_feature["properties"])) {
                     throw std::runtime_error("failed to append canonical binary feature");
                 }
-                wrote_feature = true;
                 ++feature_count;
             }
         }
-        out_file << "],\"metadata\":"
-                 << json({
-                        {"schema_version", 1},
-                        {"generated_by", "worldsim_regional_parcel_builder"},
-                        {"source_counts", counts},
-                        {"canonical_fields", fields}
-                    }).dump()
-                 << "}";
-        out_file.flush();
-        if (!out_file) throw std::runtime_error("failed to finish writing " + output.string());
-        out_file.close();
-        const std::string output_sig = fileSignatureForPath(output_tmp);
+        const std::string output_sig = buildInputSignature(inputs, property_inputs);
         if (!canonical_writer.finalize(output_sig)) {
             throw std::runtime_error("failed to finalize canonical binary output " + canonical_output.string());
         }
-        replaceAtomically(output_tmp, output);
         replaceAtomically(canonical_tmp, canonical_output);
-        std::cout << "wrote " << output << " with " << feature_count << " features\n";
+        if (output != canonical_output) fs::remove(output, cleanup_ec);
+        std::cout << "wrote " << canonical_output << " with " << feature_count << " features\n";
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

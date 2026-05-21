@@ -12,14 +12,6 @@
 
 namespace {
 
-std::string firstNonemptyProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
-    for (const char* k : keys) {
-        std::string v = trimDisplayValue(getPropertyValue(fg, k));
-        if (!v.empty()) return v;
-    }
-    return {};
-}
-
 int findLayerIdxByFile(const std::vector<LayerDef>& layers, const char* file_name) {
     for (size_t i = 0; i < layers.size(); ++i) {
         if (layers[i].file == file_name) return (int)i;
@@ -27,11 +19,18 @@ int findLayerIdxByFile(const std::vector<LayerDef>& layers, const char* file_nam
     return -1;
 }
 
-bool extentsOverlap(const LayerDef::FeatureGeom& a, const LayerDef::FeatureGeom& b) {
+bool extentsOverlap(const LayerDef::FeatureRecord& a, const LayerDef::FeatureRecord& b) {
     return !(a.extent.max_lon < b.extent.min_lon ||
              a.extent.min_lon > b.extent.max_lon ||
              a.extent.max_lat < b.extent.min_lat ||
              a.extent.min_lat > b.extent.max_lat);
+}
+
+bool extentsOverlap(const LayerDef::FeatureExtent& a, const LayerDef::FeatureRecord& b) {
+    return !(a.max_lon < b.extent.min_lon ||
+             a.min_lon > b.extent.max_lon ||
+             a.max_lat < b.extent.min_lat ||
+             a.min_lat > b.extent.max_lat);
 }
 
 std::string digitsOnly(const std::string& s) {
@@ -190,14 +189,14 @@ void addEvent(
 }
 
 void appendOwnershipTransfer(
-    const LayerDef::FeatureGeom* rp,
+    const LayerDef::FeatureRecord* rp,
     std::vector<ParcelTimelineEvent>& out) {
     if (!rp) return;
-    const std::string sale_date = firstNonemptyProp(*rp, {"SALEDATE", "SALE_DATE", "TRANSFER_DATE", "DEED_DATE"});
-    const std::string owner = firstNonemptyProp(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME"});
-    const std::string deed_book = firstNonemptyProp(*rp, {"DEEDBOOK", "DEED_BOOK"});
-    const std::string deed_page = firstNonemptyProp(*rp, {"DEEDPAGE", "DEED_PAGE"});
-    const std::string sale_price = firstNonemptyProp(*rp, {"SALEPRIC", "SALE_PRICE", "PRICE", "CONSIDERATION"});
+    const std::string sale_date = firstDisplayProperty(*rp, {"SALEDATE", "SALE_DATE", "TRANSFER_DATE", "DEED_DATE"});
+    const std::string owner = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME"});
+    const std::string deed_book = firstDisplayProperty(*rp, {"DEEDBOOK", "DEED_BOOK"});
+    const std::string deed_page = firstDisplayProperty(*rp, {"DEEDPAGE", "DEED_PAGE"});
+    const std::string sale_price = firstDisplayProperty(*rp, {"SALEPRIC", "SALE_PRICE", "PRICE", "CONSIDERATION"});
     if (sale_date.empty() && owner.empty() && deed_book.empty() && deed_page.empty() && sale_price.empty()) return;
 
     std::string status;
@@ -212,13 +211,13 @@ void appendOwnershipTransfer(
 }
 
 void appendAssessmentSnapshot(
-    const LayerDef::FeatureGeom* rp,
+    const LayerDef::FeatureRecord* rp,
     std::vector<ParcelTimelineEvent>& out) {
     if (!rp) return;
-    const std::string ldate = firstNonemptyProp(*rp, {"LDATE", "LAST_UPDATE", "UPDATED_DATE"});
+    const std::string ldate = firstDisplayProperty(*rp, {"LDATE", "LAST_UPDATE", "UPDATED_DATE"});
     if (ldate.empty()) return;
-    const std::string tax_base = firstNonemptyProp(*rp, {"TAXBASE", "ARTAXBAS"});
-    const std::string status = firstNonemptyProp(*rp, {"USEGROUP", "DHCDUSE1", "ZONECODE"});
+    const std::string tax_base = firstDisplayProperty(*rp, {"TAXBASE", "ARTAXBAS"});
+    const std::string status = firstDisplayProperty(*rp, {"USEGROUP", "DHCDUSE1", "ZONECODE"});
     addEvent(out, ldate, "Assessment / Property Record Update", status, tax_base, "Real Property Information");
 }
 
@@ -235,14 +234,14 @@ void appendEventsFromBlocklotLayer(
     const auto& layer = layers[(size_t)layer_idx];
     for (const auto& feat : layer.features) {
         std::string ev_blocklot = featureBlockLotJoinKey(feat);
-        if (ev_blocklot.empty()) ev_blocklot = normalizeJoinKey(firstNonemptyProp(feat, {"BlockLot", "blocklot"}));
+        if (ev_blocklot.empty()) ev_blocklot = normalizeJoinKey(firstDisplayProperty(feat, {"BlockLot", "blocklot"}));
         if (ev_blocklot.empty() || ev_blocklot != parcel_blocklot) continue;
         addEvent(
             out,
-            firstNonemptyProp(feat, date_keys),
+            firstDisplayProperty(feat, date_keys),
             event_type,
-            firstNonemptyProp(feat, status_keys),
-            firstNonemptyProp(feat, amount_keys),
+            firstDisplayProperty(feat, status_keys),
+            firstDisplayProperty(feat, amount_keys),
             layer.name);
     }
 }
@@ -250,7 +249,7 @@ void appendEventsFromBlocklotLayer(
 void appendEventsFromSpatialLayer(
     const std::vector<LayerDef>& layers,
     int layer_idx,
-    const LayerDef::FeatureGeom& parcel,
+    const LayerDef::FeatureExtent& parcel_extent,
     const char* event_type,
     std::initializer_list<const char*> date_keys,
     std::initializer_list<const char*> status_keys,
@@ -259,13 +258,13 @@ void appendEventsFromSpatialLayer(
     if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return;
     const auto& layer = layers[(size_t)layer_idx];
     for (const auto& feat : layer.features) {
-        if (!extentsOverlap(parcel, feat)) continue;
+        if (!extentsOverlap(parcel_extent, feat)) continue;
         addEvent(
             out,
-            firstNonemptyProp(feat, date_keys),
+            firstDisplayProperty(feat, date_keys),
             event_type,
-            firstNonemptyProp(feat, status_keys),
-            firstNonemptyProp(feat, amount_keys),
+            firstDisplayProperty(feat, status_keys),
+            firstDisplayProperty(feat, amount_keys),
             layer.name);
     }
 }
@@ -279,10 +278,10 @@ void appendParcelIntelligenceEvent(
     const auto& layer = layers[(size_t)layer_idx];
     for (const auto& feat : layer.features) {
         if (featureBlockLotJoinKey(feat) != parcel_blocklot) continue;
-        const std::string latest = firstNonemptyProp(feat, {"latest_event_date"});
+        const std::string latest = firstDisplayProperty(feat, {"latest_event_date"});
         if (latest.empty()) continue;
-        std::string status = firstNonemptyProp(feat, {"risk_band", "risk_drivers"});
-        const std::string drivers = firstNonemptyProp(feat, {"risk_drivers"});
+        std::string status = firstDisplayProperty(feat, {"risk_band", "risk_drivers"});
+        const std::string drivers = firstDisplayProperty(feat, {"risk_drivers"});
         if (!drivers.empty() && status.find(drivers) == std::string::npos) {
             if (!status.empty()) status += " | ";
             status += drivers;
@@ -292,7 +291,7 @@ void appendParcelIntelligenceEvent(
             latest,
             "Parcel Intelligence Signal",
             status,
-            firstNonemptyProp(feat, {"risk_score", "investment_5y_usd", "tax_lien_amount_usd"}),
+            firstDisplayProperty(feat, {"risk_score", "investment_5y_usd", "tax_lien_amount_usd"}),
             layer.name);
         return;
     }
@@ -302,11 +301,10 @@ void appendParcelIntelligenceEvent(
 
 std::vector<ParcelTimelineEvent> buildParcelTimeline(const ParcelTimelineRequest& request) {
     std::vector<ParcelTimelineEvent> out;
-    if (!request.layers || !request.parcel) return out;
+    if (!request.layers) return out;
 
     const auto& layers = *request.layers;
-    const auto& parcel = *request.parcel;
-    const std::string blocklot = featureBlockLotJoinKey(parcel);
+    const std::string blocklot = normalizeJoinKey(request.parcel_blocklot);
 
     appendOwnershipTransfer(request.real_property, out);
     appendAssessmentSnapshot(request.real_property, out);
@@ -363,26 +361,28 @@ std::vector<ParcelTimelineEvent> buildParcelTimeline(const ParcelTimelineRequest
         {"Status", "STATUS", "STATE", "CASE_STATUS", "Description"},
         {"Amount", "AMOUNT", "TOTAL", "TOTAL_LIEN"}, out);
 
-    appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "cip_fy14_20_projects_point.geojson"), parcel, "CIP Project Allocation",
-        {"FY", "FiscalYear", "DATE"},
-        {"Project_Title", "Name", "agency", "Project_Name"},
-        {"Totals_1", "City_Bond_Funds", "Federal_Funds", "State_Funds", "Utility_Funds", "Revenue_Loans"}, out);
-    appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_storm_ms4_projects.geojson"), parcel, "DPW CIP Storm MS4 Project",
-        {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
-        {"Project_Title", "ProjectName", "Name", "Status"},
-        {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
-    appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_stormwater_projects.geojson"), parcel, "DPW CIP Stormwater Project",
-        {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
-        {"Project_Title", "ProjectName", "Name", "Status"},
-        {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
-    appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_water_projects.geojson"), parcel, "DPW CIP Water Project",
-        {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
-        {"Project_Title", "ProjectName", "Name", "Status"},
-        {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
-    appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_wastewater_projects.geojson"), parcel, "DPW CIP Wastewater Project",
-        {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
-        {"Project_Title", "ProjectName", "Name", "Status"},
-        {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
+    if (request.has_parcel_extent) {
+        appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "cip_fy14_20_projects_point.geojson"), request.parcel_extent, "CIP Project Allocation",
+            {"FY", "FiscalYear", "DATE"},
+            {"Project_Title", "Name", "agency", "Project_Name"},
+            {"Totals_1", "City_Bond_Funds", "Federal_Funds", "State_Funds", "Utility_Funds", "Revenue_Loans"}, out);
+        appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_storm_ms4_projects.geojson"), request.parcel_extent, "DPW CIP Storm MS4 Project",
+            {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
+            {"Project_Title", "ProjectName", "Name", "Status"},
+            {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
+        appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_stormwater_projects.geojson"), request.parcel_extent, "DPW CIP Stormwater Project",
+            {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
+            {"Project_Title", "ProjectName", "Name", "Status"},
+            {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
+        appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_water_projects.geojson"), request.parcel_extent, "DPW CIP Water Project",
+            {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
+            {"Project_Title", "ProjectName", "Name", "Status"},
+            {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
+        appendEventsFromSpatialLayer(layers, findLayerIdxByFile(layers, "dpw_cip_wastewater_projects.geojson"), request.parcel_extent, "DPW CIP Wastewater Project",
+            {"FY", "FiscalYear", "DATE", "CREATED_DATE"},
+            {"Project_Title", "ProjectName", "Name", "Status"},
+            {"Amount", "AMOUNT", "TOTAL", "Total"}, out);
+    }
 
     appendParcelIntelligenceEvent(layers, blocklot, out);
 

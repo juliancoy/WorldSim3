@@ -1,12 +1,12 @@
 # WorldSim3 Target Architecture
 
-This document describes the professional target architecture for keeping the app responsive while large geospatial data, cache hydration, derived joins, aggregation, and rendering continue in the background.
+This document describes the professional target architecture for keeping the app responsive while large geospatial data, compiled geometry artifacts, derived joins, aggregation, and rendering continue in the background.
 
-The current application already has worker threads for hydration, triangulation, status APIs, dataset APIs, and some async heatmap work. The remaining problem is that expensive work still propagates into the UI/render frame. The target is to make the frame loop consume completed snapshots, never perform large rebuilds directly.
+This document describes the target artifact-first runtime. Geometry artifacts are the persisted runtime geometry input, DuckDB is the persisted attribute/query store, and the frame loop should only consume completed background results.
 
 ## Goals
 
-- Keep UI input responsive during hydration, triangulation, aggregation, and DuckDB rebuilds.
+- Keep UI input responsive during geometry artifact acquisition, aggregation, and DuckDB rebuilds.
 - Keep rendering stable by drawing the latest complete render snapshot.
 - Move expensive data mutation and rebuild work off the UI/render frame.
 - Make cache, layer, derived, and render state transitions explicit and observable.
@@ -33,8 +33,7 @@ Owns:
 Must not do:
 
 - GeoJSON parsing
-- hydration cache serialization/deserialization
-- triangulation
+- geometry artifact validation/compilation
 - spatial index rebuilds for large layers
 - owner aggregate rebuilds
 - DuckDB rebuilds
@@ -51,7 +50,7 @@ Owns:
 
 Must not block on:
 
-- hydration completion
+- artifact acquisition or GPU upload completion
 - aggregate generation
 - DuckDB
 - cache writes
@@ -63,9 +62,8 @@ The render thread should draw the latest complete `RenderSnapshot`. If a newer s
 
 Own:
 
-- layer hydration
-- hydration cache reads/writes
-- triangulation
+- geometry artifact validation and compilation
+- geometry artifact staging/load
 - spatial index construction
 - derived vacancy/tax/unified parcel joins
 - owner aggregate rebuilds
@@ -104,7 +102,7 @@ The exact fields can evolve, but the contract should stay stable:
 
 - snapshots are immutable after publication
 - publication is atomic from the render thread's point of view
-- the render thread never observes half-applied hydration or derived data
+- the render thread never observes half-applied geometry or derived data
 - each snapshot carries source signatures/generations for provenance
 
 Recommended ownership:
@@ -121,11 +119,8 @@ Target flow:
 
 ```text
 source files
-  -> hydration worker
-  -> hydration cache
-  -> hydrated layer records
-  -> triangulation worker
-  -> triangulation cache
+  -> geometry compiler / validator
+  -> compiled geometry artifacts
   -> spatial index worker
   -> derived data workers
   -> render snapshot builder
@@ -136,7 +131,7 @@ source files
 DuckDB flow:
 
 ```text
-hydrated layers + unified parcels
+canonical feature attributes + unified parcels
   -> DuckDB rebuild worker
   -> data/worldsim.duckdb
   -> SQL/query UI
@@ -148,8 +143,7 @@ Target render-cache flow:
 
 ```text
 source parcel geometry
-  -> hydration cache
-  -> triangulation cache
+  -> compiled geometry artifact
   -> parcel render sidecar cache
   -> async upload staging
   -> retained GPU vertex/index buffers
@@ -232,8 +226,7 @@ Required behavior:
 Use explicit generations instead of scattered boolean dirtiness:
 
 - `layer_source_generation`
-- `hydration_generation`
-- `triangulation_generation`
+- `geometry_artifact_generation`
 - `spatial_index_generation`
 - `derived_generation`
 - `filter_generation`
@@ -265,7 +258,7 @@ Parcel-level rendering and aggregate-level rendering should be treated as separa
 Current state:
 
 - Parcel geometry is not rendered through a zero-copy GPU path.
-- Parcel features are hydrated into CPU `LayerDef::FeatureGeom` records.
+- Parcel business logic still keeps CPU `LayerDef::FeatureRecord` instances alive.
 - The render frame queries the CPU spatial index for visible feature candidates.
 - Ring coordinates are projected on CPU into world/screen-space caches.
 - Parcel base fills can now bypass the CPU/ImGui fill path when GPU residency and draw state are ready.
@@ -278,20 +271,20 @@ Current state:
 Target state:
 
 - Parcel geometry should become a retained GPU geometry path.
-- Hydration and triangulation workers should produce immutable parcel render batches keyed by layer, tile or chunk, source signature, style generation, and LOD generation.
+- Geometry compilation and parcel render packaging should produce immutable parcel render batches keyed by layer, tile or chunk, source signature, style generation, and LOD generation.
 - A GPU upload worker should build vertex/index buffers once per valid generation.
 - The render frame should bind existing buffers and issue draw calls for visible chunks.
 - Per-frame CPU work should be limited to visibility selection, uniforms, small style/filter buffers, and command submission.
 - Parcel picking and metadata lookup should remain CPU-accessible through immutable feature metadata, not by reading geometry back from the GPU.
-- Stale parcel buffers may continue rendering while newer hydration, triangulation, filtering, or style jobs complete.
+- Stale parcel buffers may continue rendering while newer artifact, filtering, or style jobs complete.
 
-The parcel-level target is not strict zero-copy from source file to GPU. GeoJSON parsing, projection preparation, triangulation, simplification, metadata indexing, and picking support are CPU responsibilities. The target is zero-copy on the frame path: once a valid parcel GPU buffer exists, the render frame should not rebuild or recopy parcel vertices each frame.
+The parcel-level target is not strict zero-copy from source payload to GPU. Canonical layer decoding, geometry compilation, simplification, metadata indexing, and picking support are CPU responsibilities. The target is zero-copy on the frame path: once a valid parcel GPU buffer exists, the render frame should not rebuild or recopy parcel vertices each frame.
 
-The professional path should not send hydrated GeoJSON-style feature records directly to the GPU. It should compile parcel data into render-specific buffers first. The GPU receives retained vertex/index buffers and small per-frame uniform/style/filter buffers. CPU feature metadata remains available for search, selection, picking, joins, and status reporting.
+The professional path should not send source-shaped feature records directly to the GPU. It should compile parcel data into render-specific buffers first. The GPU receives retained vertex/index buffers and small per-frame uniform/style/filter buffers. CPU feature metadata remains available for search, selection, picking, joins, and status reporting.
 
 Parcel-level buffer contract:
 
-- Buffers carry `source_signature`, `hydration_generation`, `triangulation_generation`, `style_generation`, and `lod_generation`.
+- Buffers carry `source_signature`, `geometry_artifact_generation`, `style_generation`, and `lod_generation`.
 - Buffers are immutable after publication.
 - Buffers are retired only after the render thread is done with them.
 - Stale buffers are discarded when their source signature no longer matches the layer source.
@@ -301,9 +294,9 @@ Parcel-level data flow:
 
 ```text
 source file
-  -> hydration worker
-  -> CPU feature metadata + rings
-  -> triangulation/simplification worker
+  -> geometry compiler
+  -> CPU feature metadata + compiled geometry
+  -> simplification / render-batch builder
   -> chunk/tile render batch builder
   -> render-binary cache
   -> GPU upload worker
@@ -314,23 +307,17 @@ source file
 
 ### Render Binary Format
 
-The current hydration cache is a persistence cache for CPU feature records. It avoids reparsing GeoJSON, but it is still expensive for very large parcel layers because it recreates many CPU vectors and strings. It is not the ideal format for render startup.
+The target architecture should treat compiled geometry artifacts as the only persisted runtime geometry input. Intermediate source-shaped caches should not define the normal startup or render-readiness path.
 
-The target architecture should add a separate render-binary cache. This cache is downstream of hydration and triangulation, and upstream of GPU upload.
+The first implemented step is explicit compiled geometry artifacts by class under `data/cache/geometry/`. Those artifacts establish stable signatures, versioned binary contracts, and a geometry-first startup path.
 
-The first implemented step is a binary hydration cache at `data/cache/hydration/<layer-file>.bin`. That cache still stores CPU feature records, not final GPU buffers, but it establishes explicit binary signatures, atomic writes, and status phases. The retained render-binary cache described below is the next downstream cache layer.
+The second implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when compiled geometry changes. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work. A dedicated CLI self-test now verifies reuse at stable zoom and invalidation on zoom change.
 
-The second implemented step is a binary triangulation cache at `data/cache/triangulation/<layer-file>.tri.bin`. That cache stores the per-feature triangle index vectors keyed by the same source signature and makes parcel fill readiness observable through explicit triangulation cache phases.
+The third implemented step is asynchronous spatial-index construction. Full-layer `LayerSpatialIndex` rebuilds no longer happen inline in the frame loop. Stable artifact-backed layer geometry now publishes extent snapshots into a background spatial-index job queue, the worker builds the index off-frame, and the main thread only drains completed results. Results are accepted only when their source signature and feature count still match the current layer; stale results are discarded explicitly.
 
-The third implemented step is a persistent CPU projection cache. `MapProjectionCache` is now owned outside the single frame, reused while `math_zoom` is stable, and invalidated when hydrated layer geometry is replaced. This does not yet create retained GPU buffers, but it removes one source of repeated per-frame world-coordinate reconstruction and establishes the correct invalidation boundary for later render-binary work. A dedicated CLI self-test now verifies reuse at stable zoom and invalidation on zoom change.
+The fourth implemented step is maintained layer-profile accounting. The `/profile/layers` snapshot path no longer rescans every feature in dirty layers on the main thread just to recount rings, points, triangle indices, properties, and spatial-index stats. Those counters are now maintained at the actual mutation boundaries during geometry publication and spatial-index apply, and the snapshot builder only copies the already-maintained totals.
 
-The fourth implemented step is budgeted triangulation-result apply on the main thread. Triangulation and cache decode still happen on workers, but the final move of triangle vectors into live `LayerDef::FeatureGeom` records no longer commits an entire large parcel layer in one frame. The drain path now applies bounded batches per frame, publishes explicit `applying_binary_cache` or `applying_built_result` phases while work remains, and marks the layer `Ready` only after the final batch lands.
-
-The fifth implemented step is asynchronous spatial-index construction. Full-layer `LayerSpatialIndex` rebuilds no longer happen inline in the frame loop. Stable hydrated layers now publish extent snapshots into a background spatial-index job queue, the worker builds the index off-frame, and the main thread only drains completed results. Results are accepted only when their source signature and feature count still match the current hydrated layer; stale results are discarded explicitly.
-
-The sixth implemented step is maintained layer-profile accounting. The `/profile/layers` snapshot path no longer rescans every feature in dirty layers on the main thread just to recount rings, points, triangle indices, properties, and spatial-index stats. Those counters are now maintained at the actual mutation boundaries during hydration drain, triangulation apply, and spatial-index apply, and the snapshot builder only copies the already-maintained totals.
-
-The seventh implemented step is bounded no-index render fallback. When a large layer is hydrated but its spatial index is not ready yet, the render pass no longer falls back to scanning every feature in one frame. Large no-index layers now advance through a rolling bounded scan budget per frame using persistent cursors. This keeps raw parcel rendering responsive while the spatial index worker catches up. Heatmap recomputation for large no-index layers is deferred rather than generated from a partial feature scan.
+The fifth implemented step is bounded no-index render fallback. When a large layer is loaded but its spatial index is not ready yet, the render pass no longer falls back to scanning every feature in one frame. Large no-index layers now advance through a rolling bounded scan budget per frame using persistent cursors. This keeps raw parcel rendering responsive while the spatial index worker catches up. Heatmap recomputation for large no-index layers is deferred rather than generated from a partial feature scan.
 
 The eighth implemented step is cached heat normalization. Heat layers no longer rebuild percentile and grouped normalization distributions every frame when filter/domain state is unchanged. The render path now reuses normalization state keyed by the stable heatmap data key plus layer index, with bounded cache retention inside `HeatmapRuntimeState`.
 
@@ -367,7 +354,7 @@ At this point the parcel layer is off the ImGui geometry path for base fills, ov
 The thirteenth implemented step is asynchronous parcel render-cache load/build. The UI/frame loop no longer loads or rebuilds the parcel render sidecar inline. Instead:
 
 - the frame loop publishes a parcel render-cache request keyed by layer file and source signature
-- a background parcel render worker loads the binary sidecar, or rebuilds it from persisted hydration and triangulation caches when needed
+- a background parcel render worker loads the binary sidecar, or rebuilds it from compiled geometry artifacts when needed
 - the main thread only consumes completed blobs, uploads retained GPU buffers, and updates the small mutable RGBA streams
 
 This is the first real separation between parcel render-cache IO/build work and the frame loop. GPU buffer creation and upload still happen on the main/render side in this step because the Vulkan upload path is still using the shared upload command pool and command buffer.
@@ -400,25 +387,19 @@ The sixteenth implemented step is session-static parcel GPU geometry. Parcel geo
 
 This is the correct professional boundary for the current product model. DuckDB filters and query state can continue to restyle parcels by writing color, but parcel geometry itself is now session-static.
 
-The seventeenth implemented step is a compact canonical parcel binary companion for the statewide parcel layer. `worldsim_regional_parcel_builder` now emits:
+The seventeenth implemented step is a compact canonical parcel binary for the statewide parcel layer. `worldsim_regional_parcel_builder` now emits:
 
-- `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson`
 - `data/world/earth/nation_state/us/state_region/md/layers/regional_parcels.geojson.canonical.bin`
 
-The GeoJSON file remains the human-readable interchange and debugging artifact. The companion binary stores the hydrated parcel feature content in a dense binary layout keyed to the final GeoJSON file signature. Hydration workers can consume that binary companion directly when the normal hydration cache is absent or stale, instead of reparsing multi-gigabyte GeoJSON text.
+The canonical binary is the required runtime artifact and the only maintained parcel-layer build output. The binary stores parcel feature content in a dense layout keyed by embedded source signature rather than GeoJSON file metadata.
 
 The tenth implemented step is independent retained parcel color storage. `MapProjectionCache` now stores a per-feature style record keyed by layer, feature index, and style generation, with a feature-wide color plus a subpolygon color vector. The current feature model still represents a parcel as one polygon-with-holes, so the subpolygon vector presently defaults to one entry for polygonal parcel features. The storage boundary is now explicit, though: geometry and color are retained separately, and color storage survives pan/zoom projection churn until a real source replacement resets the cache owner.
 
 Operationally, the supported migration path is:
 
-- runtime hydration workers read `.bin` hydration caches, canonical parcel binaries, or source GeoJSON
-- `worldsim3 --warm-hydration-cache <layer-file>` validates or rebuilds one binary hydration cache
-- `worldsim3 --warm-hydration-cache-all` processes local layers that already have a binary hydration cache artifact
-- triangulation workers read `.tri.bin` caches or rebuild from hydrated geometry
-- `worldsim3 --warm-triangulation-cache <layer-file>` validates or rebuilds one binary triangulation cache
-- `worldsim3 --warm-triangulation-cache-all` processes local binary triangulation artifacts
-- the map frame reuses a persistent world-ring/world-extent projection cache until `math_zoom` or hydrated source generation changes
-- large triangulation results are applied into live feature records incrementally across frames instead of a single unbounded main-thread commit
+- runtime reads compiled geometry artifacts and canonical parcel binaries only
+- geometry build and validation commands operate directly on compiled geometry artifacts
+- the map frame reuses a persistent world-ring/world-extent projection cache until `math_zoom` or geometry source generation changes
 - large spatial-index rebuilds are built asynchronously from extent snapshots and applied only when their source signature and feature count still match the current layer
 - layer profile snapshots now copy maintained counters instead of rescanning full layers on the frame thread
 - large no-index layers use a bounded rolling fallback scan instead of a full-layer render pass while waiting for async spatial-index completion
@@ -426,7 +407,7 @@ Operationally, the supported migration path is:
 - polygon fill rendering reuses retained world-space fill geometry and prevalidated triangle indices instead of rebuilding those CPU buffers every frame
 - parcel features now have independent retained color storage with room for per-subpolygon colors
 
-This keeps the architecture migration incremental. Teams can materialize the faster binary hydration layer without waiting for the later retained-GPU-buffer work.
+This keeps the architecture migration incremental while preserving an artifact-first normal runtime story.
 
 Recommended parcel render-binary contents:
 
@@ -450,7 +431,7 @@ Binary format requirements:
 - cache writes must be atomic
 - GPU upload should happen on a worker or upload queue, not inside the UI frame
 
-A render-ready binary format will be faster than the current CPU-feature hydration cache for render startup if it avoids object reconstruction and stores data in the same contiguous layout the renderer needs. The expected win is not just smaller bytes on disk; it is fewer allocations, less pointer chasing, and less per-frame geometry preparation.
+A render-ready binary format will be faster for render startup if it avoids object reconstruction and stores data in the same contiguous layout the renderer needs. The expected win is not just smaller bytes on disk; it is fewer allocations, less pointer chasing, and less per-frame geometry preparation.
 
 Strict disk-to-GPU zero-copy is not the target. Vulkan normally uploads device-local buffers through staging memory or a dedicated transfer path. The professional target is direct enough for the frame loop: render-ready binary chunks are loaded, uploaded asynchronously into retained GPU buffers, and then reused without rebuilding or recopying during normal frames.
 
@@ -517,8 +498,7 @@ Expose enough state to diagnose stalls without attaching a debugger:
 - queue depths
 - cache hits/misses/stale/rebuilt counts
 - per-layer source signature
-- per-layer hydration source: cache or source parse
-- per-layer triangulation cache hit/miss
+- per-layer geometry artifact source and validation result
 - latest snapshot build time
 - dropped stale job results
 - frame phase timings
@@ -538,7 +518,7 @@ The existing `/status`, `/profile`, and `/profile/layers` endpoints are good pla
 ### Phase 2: Snapshot Render Inputs
 
 - Introduce `RenderSnapshot`.
-- Publish immutable layer render data after hydration/triangulation/index completion.
+- Publish immutable layer render data after artifact acquisition and index completion.
 - Make the render frame read one snapshot pointer at frame start.
 - Move derived vacancy/tax overlay arrays into the snapshot.
 
@@ -559,10 +539,8 @@ The existing `/status`, `/profile`, and `/profile/layers` endpoints are good pla
 
 Add deterministic tests for:
 
-- hydration cache hit/miss/rebuild
 - large-layer cache rebuild behavior
 - source signature propagation
-- rehydration replacement semantics
 - stale job result discard
 - snapshot atomicity
 - aggregate `None` preserving per-feature rendering
@@ -571,10 +549,10 @@ Add deterministic tests for:
 
 The architecture is working when:
 
-- panning/zooming stays responsive during hydration
-- large layer hydration no longer causes multi-second UI frames
+- panning/zooming stays responsive during artifact acquisition
+- large layer artifact acquisition no longer causes multi-second UI frames
 - DuckDB rebuilds never freeze the UI
 - owner aggregate rebuilds never freeze the UI
 - render snapshots never contain mixed source generations
 - status endpoints can explain what background work is active
-- restarting after a successful large-layer hydration uses the cache instead of reparsing source
+- restarting after a successful large-layer artifact build uses the compiled geometry artifact instead of reparsing source

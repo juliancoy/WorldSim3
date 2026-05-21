@@ -1,5 +1,6 @@
 #include "map_tab.h"
 
+#include "app_utils.h"
 #include "map_overlay_panels.h"
 #include "owner_info.h"
 #include "ui_fonts.h"
@@ -240,6 +241,10 @@ bool isZoningPolygonLayerForGpu(const LayerDef& layer) {
     return file_lower.find("zoning") != std::string::npos ||
            name_lower.find("zoning") != std::string::npos;
 }
+
+bool isGenericPolygonLayerForGpu(const LayerDef& layer) {
+    return !layerUsesPointGeometry(layer) && !layerUsesPolylineGeometry(layer);
+}
 }
 
 void drawMapTabWindow(const MapTabContext& ctx) {
@@ -327,7 +332,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->mouse_screen_y = ImGui::GetIO().MousePos.y;
                 ctx.hover_debug_state->mouse_lon = map_canvas_session.mouse_ll.x;
                 ctx.hover_debug_state->mouse_lat = map_canvas_session.mouse_ll.y;
-                ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel != nullptr;
+                ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel_idx != (size_t)-1;
                 ctx.hover_debug_state->hovered_parcel_idx = map_canvas_session.hover_state.hovered_parcel_idx;
                 ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
                 ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
@@ -361,34 +366,86 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 configureParcelGpuDrawState(parcel_draw_cfg);
             }
             bool any_zoning_gpu_layer_enabled = false;
+            bool any_point_gpu_layer_enabled = false;
+            bool any_polyline_gpu_layer_enabled = false;
             const ImGuiIO& io = ImGui::GetIO();
             const ImVec2 fb_scale = io.DisplayFramebufferScale;
             for (size_t layer_idx = 0; layer_idx < ctx.layers->size(); ++layer_idx) {
                 const LayerDef& layer = (*ctx.layers)[layer_idx];
-                if (!layer.enabled || !isZoningPolygonLayerForGpu(layer)) {
+                if (!layer.enabled || !isGenericPolygonLayerForGpu(layer) || (int)layer_idx == ctx.parcel_layer_idx) {
                     clearZoningGpuDrawState(layer_idx);
-                    continue;
+                } else {
+                    any_zoning_gpu_layer_enabled = true;
+                    ParcelGpuDrawConfig zoning_draw_cfg;
+                    zoning_draw_cfg.active = true;
+                    zoning_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                    zoning_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                    zoning_draw_cfg.center_world = map_canvas_session.center_world;
+                    zoning_draw_cfg.viewport_origin =
+                        ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                    zoning_draw_cfg.viewport_size =
+                        ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                    zoning_draw_cfg.framebuffer_size =
+                        ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                    zoning_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                    zoning_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                    zoning_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                    zoning_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                    configureZoningGpuDrawState(layer_idx, zoning_draw_cfg);
                 }
-                any_zoning_gpu_layer_enabled = true;
-                ParcelGpuDrawConfig zoning_draw_cfg;
-                zoning_draw_cfg.active = true;
-                zoning_draw_cfg.math_zoom = map_canvas_session.math_zoom;
-                zoning_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
-                zoning_draw_cfg.center_world = map_canvas_session.center_world;
-                zoning_draw_cfg.viewport_origin =
-                    ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
-                zoning_draw_cfg.viewport_size =
-                    ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
-                zoning_draw_cfg.framebuffer_size =
-                    ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
-                zoning_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
-                zoning_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
-                zoning_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
-                zoning_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
-                configureZoningGpuDrawState(layer_idx, zoning_draw_cfg);
+
+                if (!layer.enabled || !layerUsesPointGeometry(layer) || (int)layer_idx == ctx.crime_nibrs_layer_idx) {
+                    clearPointLayerGpuDrawState(layer_idx);
+                } else {
+                    any_point_gpu_layer_enabled = true;
+                    ParcelGpuDrawConfig point_draw_cfg;
+                    point_draw_cfg.active = true;
+                    point_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                    point_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                    point_draw_cfg.center_world = map_canvas_session.center_world;
+                    point_draw_cfg.viewport_origin =
+                        ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                    point_draw_cfg.viewport_size =
+                        ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                    point_draw_cfg.framebuffer_size =
+                        ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                    point_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                    point_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                    point_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                    point_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                    configurePointLayerGpuDrawState(layer_idx, point_draw_cfg);
+                }
+
+                if (!layer.enabled || !layerUsesPolylineGeometry(layer)) {
+                    clearPolylineLayerGpuDrawState(layer_idx);
+                } else {
+                    any_polyline_gpu_layer_enabled = true;
+                    ParcelGpuDrawConfig polyline_draw_cfg;
+                    polyline_draw_cfg.active = true;
+                    polyline_draw_cfg.math_zoom = map_canvas_session.math_zoom;
+                    polyline_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                    polyline_draw_cfg.center_world = map_canvas_session.center_world;
+                    polyline_draw_cfg.viewport_origin =
+                        ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
+                    polyline_draw_cfg.viewport_size =
+                        ImVec2(map_canvas_session.size.x * fb_scale.x, map_canvas_session.size.y * fb_scale.y);
+                    polyline_draw_cfg.framebuffer_size =
+                        ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+                    polyline_draw_cfg.view_min_lon = map_canvas_session.view_min_lon;
+                    polyline_draw_cfg.view_min_lat = map_canvas_session.view_min_lat;
+                    polyline_draw_cfg.view_max_lon = map_canvas_session.view_max_lon;
+                    polyline_draw_cfg.view_max_lat = map_canvas_session.view_max_lat;
+                    configurePolylineLayerGpuDrawState(layer_idx, polyline_draw_cfg);
+                }
             }
             if (!any_zoning_gpu_layer_enabled) {
                 clearAllZoningGpuDrawStates();
+            }
+            if (!any_point_gpu_layer_enabled) {
+                clearAllPointLayerGpuDrawStates();
+            }
+            if (!any_polyline_gpu_layer_enabled) {
+                clearAllPolylineLayerGpuDrawStates();
             }
             if (ctx.crime_nibrs_layer_idx >= 0 &&
                 (size_t)ctx.crime_nibrs_layer_idx < ctx.layers->size() &&
@@ -518,7 +575,6 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.should_fill_layer_polygon = map_canvas_session.should_fill_layer_polygon;
             map_frame_session_ctx.project_world = map_canvas_session.project_world;
             map_frame_session_ctx.open_parcel_element = [&](size_t idx) { openElementParcelPage(*ctx.element_info_state, idx); };
-            map_frame_session_ctx.real_property_for_parcel = ctx.real_property_for_parcel;
             map_frame_session_ctx.prof_layer_ms_last = ctx.prof_layer_ms_last;
             map_frame_session_ctx.prof_owner_filter_ms_last = ctx.prof_owner_filter_ms_last;
             map_frame_session_ctx.prof_heatmap_ms_last = ctx.prof_heatmap_ms_last;

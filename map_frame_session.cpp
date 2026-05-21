@@ -76,7 +76,7 @@ bool queryMapColorU32(
     const FeatureFilterContext& filter_ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32& out_color) {
     float query_color[4] = {0, 0, 0, 0};
     if (!queryMapColorForFeature(filter_ctx, layer_idx, feature_idx, fg, query_color)) return false;
@@ -170,11 +170,11 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
         return !filter_ctx.layers || layer_idx < filter_ctx.layers->size();
     };
     render_frame_ctx.feature_passes_filters =
-        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) {
+        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg) {
             return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
         };
     render_frame_ctx.query_map_color =
-        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg, ImU32& out_color) {
+        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg, ImU32& out_color) {
             return queryMapColorU32(filter_ctx, layer_idx, feature_idx, fg, out_color);
         };
     render_frame_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
@@ -267,6 +267,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_layer_idx,
         ctx.zoning_layer_idx,
         ctx.layers,
+        ctx.unified_parcels,
         ctx.polygon_geometry_artifacts,
         ctx.layer_spatial,
         ctx.zoning_metadata,
@@ -281,6 +282,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_tax_sale_by_feature,
         ctx.parcel_tax_lien_amount_by_feature,
         ctx.parcel_tax_sale_amount_by_feature,
-        ctx.real_property_for_parcel
+        ctx.real_property_by_blocklot,
+        ctx.real_property_layer_idx
     });
 }

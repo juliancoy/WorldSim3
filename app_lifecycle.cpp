@@ -164,7 +164,9 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
             *ctx.center_lat,
             *ctx.zoom,
             *ctx.selected_parcel_idx,
-            *ctx.selected_parcel_indices);
+            *ctx.selected_parcel_indices,
+            ctx.selected_parcel_stable_id ? *ctx.selected_parcel_stable_id : std::string(),
+            ctx.selected_parcel_stable_ids ? *ctx.selected_parcel_stable_ids : std::vector<std::string>{});
     }
     if (ctx.query_history) {
         saveQueryHistoryUiState(*ctx.root, *ctx.query_history);

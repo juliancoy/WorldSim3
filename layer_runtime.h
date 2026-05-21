@@ -9,7 +9,8 @@
 
 struct HydratedLayer {
     size_t index = 0;
-    std::vector<LayerDef::FeatureGeom> features;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> feature_properties;
     bool done = false;
     bool failed = false;
     bool replace_existing = false;

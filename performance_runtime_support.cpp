@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "arkavo_signaling_transport_curl.h"
+#include "feature_props.h"
 #include "memory_utils.h"
 #include "worldsim_app_internal.h"
 
@@ -184,7 +185,9 @@ void runPerformanceRuntimeSupport(const PerformanceRuntimeContext& ctx) {
                 0);
             for (auto& sig : *ctx.spatial_index_requested_signature) sig.clear();
             for (size_t i = 0; i < ctx.layers->size(); ++i) {
+                clearFeaturePropertyRegistryForLayer((*ctx.layers)[i]);
                 releaseContainerStorage((*ctx.layers)[i].features);
+                releaseContainerStorage((*ctx.layers)[i].feature_properties);
                 (*ctx.layer_spatial)[i] = LayerSpatialIndex{};
                 if (i < ctx.layer_fallback_scan_cursor->size()) {
                     (*ctx.layer_fallback_scan_cursor)[i] = 0;

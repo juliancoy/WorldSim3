@@ -40,7 +40,9 @@ struct OwnerInfoTabContext {
     DuckDbAnalytics* duckdb_analytics = nullptr;
     const std::vector<LayerDef>* layers = nullptr;
     int parcel_layer_idx = -1;
+    int real_property_layer_idx = -1;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     const std::unordered_set<size_t>* selected_parcel_index_set = nullptr;
     const std::vector<size_t>* selected_parcel_indices = nullptr;
     bool show_selected_parcel_details = false;
@@ -57,7 +59,6 @@ struct OwnerInfoTabContext {
     float map_view_h = 0.0f;
     std::function<void()> clear_parcel_selection;
     std::function<bool(size_t, bool)> select_parcel_idx;
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };
 
 void openElementParcelPage(ElementInfoUiState& state, size_t parcel_idx);

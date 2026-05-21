@@ -4,6 +4,11 @@ This checklist maps the geometry-artifact migration to the current codebase.
 
 Use this together with [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_MIGRATION.md).
 
+This file is the file-by-file task list, not the narrative status summary.
+
+- For current implementation status, use the Progress Snapshot in [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GEOMETRY_ARTIFACT_MIGRATION.md).
+- Use partial notes here only as local guidance for a specific file or phase.
+
 ## Phase 1: Contracts And Schemas
 
 ### [types.h](/mnt/Cancer/worldsim3/types.h)
@@ -14,11 +19,11 @@ Use this together with [GEOMETRY_ARTIFACT_MIGRATION.md](/mnt/Cancer/worldsim3/GE
   - [ ] `PolygonGeometryArtifact`
 - [ ] Introduce stable feature ID types used across runtime and DuckDB.
 - [ ] Add runtime state that tracks artifact signature, geometry class, and GPU residency.
-- [ ] Mark `LayerDef::FeatureGeom` for removal from normal runtime paths.
+- [ ] Mark `LayerDef::FeatureRecord` for removal from normal runtime paths.
 
 Exit:
 
-- [ ] No new runtime subsystem depends on `LayerDef::FeatureGeom`.
+- [ ] No new runtime subsystem depends on `LayerDef::FeatureRecord`.
 
 ### [cache_io.h](/mnt/Cancer/worldsim3/cache_io.h)
 
@@ -169,7 +174,7 @@ Exit:
 
 ### [map_render_layers.h](/mnt/Cancer/worldsim3/map_render_layers.h)
 
-- [ ] Update interfaces to use artifact-backed draw state, not `LayerDef::FeatureGeom`.
+- [ ] Update interfaces to use artifact-backed draw state, not `LayerDef::FeatureRecord`.
 
 ### [map_render_layers.cpp](/mnt/Cancer/worldsim3/map_render_layers.cpp)
 
@@ -178,6 +183,7 @@ Exit:
 ### [map_render_hover.h](/mnt/Cancer/worldsim3/map_render_hover.h)
 
 - [ ] Reframe hover contracts around picked feature IDs.
+- [~] Parcel hover no longer stores `FeatureRecord*`; generic picked-feature-ID contract is still unfinished.
 
 ### [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp)
 
@@ -198,6 +204,7 @@ Exit:
 ### [map_inspection.cpp](/mnt/Cancer/worldsim3/map_inspection.cpp)
 
 - [ ] Remove CPU geometry dependency for feature detail resolution.
+- [~] Parcel inspection now prefers unified parcel metadata and blocklot lookup, but still has feature fallback paths.
 
 ### [selection.h](/mnt/Cancer/worldsim3/selection.h)
 
@@ -206,6 +213,7 @@ Exit:
 ### [selection.cpp](/mnt/Cancer/worldsim3/selection.cpp)
 
 - [ ] Migrate selection persistence and state updates to stable feature IDs.
+- [~] Parcel selection persists stable IDs now; feature indices are still kept as runtime caches.
 
 Exit:
 
@@ -287,7 +295,7 @@ Exit:
 
 ### CPU Geometry Infrastructure
 
-- [ ] Remove `LayerDef::FeatureGeom` from normal runtime ownership.
+- [ ] Remove `LayerDef::FeatureRecord` from normal runtime ownership.
 - [ ] Remove production codepaths that require full source-shaped geometry in RAM.
 - [ ] Remove CPU hit-testing paths.
 - [ ] Remove CPU selection scan paths.

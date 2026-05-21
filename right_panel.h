@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "app_utils.h"
 #include "active_queries_tab.h"
+#include "cache_io.h"
 #include "duckdb_analytics.h"
 #include "filters.h"
 #include "filters_tab.h"
@@ -41,6 +42,7 @@ struct RightPanelContext {
 
     std::vector<LayerDef>* layers = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
     std::vector<QueryHistoryEntry>* query_history = nullptr;
@@ -143,8 +145,6 @@ struct RightPanelContext {
     std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
     bool* gpu_profiler_tab_requested = nullptr;
     bool* gpu_profiler_reload_requested = nullptr;
-
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };
 
 void drawRightPanelWindow(const RightPanelContext& ctx);

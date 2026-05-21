@@ -7,6 +7,7 @@
 #include "layer_settings.h"
 #include "layer_ui_actions.h"
 #include "map_render_utils.h"
+#include "parcel_metrics.h"
 
 #include "imgui.h"
 
@@ -195,28 +196,6 @@ std::string formatContinuousValue(std::string field, double value) {
     return compactNumber(value);
 }
 
-double parcelAreaSqM(const LayerDef::FeatureGeom& fg) {
-    if (fg.rings.empty()) return 0.0;
-    constexpr double kDegToMetersLat = 111320.0;
-    double total = 0.0;
-    for (const auto& ring : fg.rings) {
-        if (ring.size() < 3) continue;
-        double lat_sum = 0.0;
-        for (const auto& p : ring) lat_sum += (double)p.y;
-        const double lat0 = lat_sum / (double)ring.size();
-        const double sx = kDegToMetersLat * std::cos(lat0 * 3.14159265358979323846 / 180.0);
-        double a = 0.0;
-        for (size_t i = 0, n = ring.size(); i < n; ++i) {
-            const auto& p = ring[i];
-            const auto& q = ring[(i + 1) % n];
-            a += ((double)p.x * sx) * ((double)q.y * kDegToMetersLat) -
-                 ((double)q.x * sx) * ((double)p.y * kDegToMetersLat);
-        }
-        total += std::abs(a) * 0.5;
-    }
-    return total;
-}
-
 int parcelContinuousControlLayerIndex(const LayersPanelUiContext& ctx) {
     if (!ctx.shared || !ctx.shared->layers || ctx.parcel_layer_idx < 0) return -1;
     const int parameter_mode = ctx.shared->parcel_parameter_mode ? *ctx.shared->parcel_parameter_mode : 0;
@@ -280,7 +259,7 @@ std::vector<double> collectParcelAreaValues(const LayerDef& layer) {
     values.reserve(layer.features.size());
     for (const auto& fg : layer.features) {
         if (fg.rings.empty()) continue;
-        const double area = parcelAreaSqM(fg);
+        const double area = parcelAreaSqMFromFeature(fg);
         if (area > 0.0 && std::isfinite(area)) values.push_back(area);
     }
     return values;
@@ -295,7 +274,7 @@ std::vector<double> collectParcelValuePerAreaValues(
     for (size_t i = 0; i < n; ++i) {
         const auto& parcel_fg = parcel_layer.features[i];
         if (parcel_fg.rings.empty()) continue;
-        const double area = parcelAreaSqM(parcel_fg);
+        const double area = parcelAreaSqMFromFeature(parcel_fg);
         if (!(area > 0.0) || !std::isfinite(area)) continue;
         float v = 0.0f;
         if (!tryGetFeaturePropertyFloat(property_value_layer.features[i], property_value_layer.heatmap_field, v) || !std::isfinite(v) || v <= 0.0f) continue;

@@ -614,13 +614,13 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
             auto build_memory_profile = [&]() {
                 constexpr size_t kImVec2Bytes = sizeof(ImVec2);
                 constexpr size_t kRingVectorBytes = sizeof(std::vector<ImVec2>);
-                constexpr size_t kFeatureGeomBytes = sizeof(LayerDef::FeatureGeom);
+                constexpr size_t kFeatureRecordBytes = sizeof(LayerDef::FeatureRecord);
                 constexpr size_t kPropertyPairBytes = sizeof(std::pair<std::string, std::string>);
                 constexpr size_t kTriangleIndexBytes = sizeof(uint32_t);
 
                 auto lower_bound_bytes = [&](const LayerProfileSnapshot& layer) -> size_t {
                     size_t bytes = 0;
-                    bytes += layer.features * kFeatureGeomBytes;
+                    bytes += layer.features * kFeatureRecordBytes;
                     bytes += layer.rings * kRingVectorBytes;
                     bytes += layer.ring_points * kImVec2Bytes;
                     bytes += layer.triangle_indices * kTriangleIndexBytes;
@@ -699,7 +699,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 };
 #endif
                 out["sizeof"] = {
-                    {"FeatureGeom", kFeatureGeomBytes},
+                    {"FeatureRecord", kFeatureRecordBytes},
                     {"ring_vector", kRingVectorBytes},
                     {"ImVec2", kImVec2Bytes},
                     {"property_pair_string_string", kPropertyPairBytes},

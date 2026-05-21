@@ -65,6 +65,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     hydrated_queue.push_back(HydratedLayer{
                         i,
                         {},
+                        {},
                         true,
                         true,
                         true,
@@ -81,7 +82,8 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     layer_size_bytes > 300ull * 1024ull * 1024ull &&
                     std::getenv("WORLD_SIM3_DISABLE_LARGE_LAYER_CACHE") != nullptr;
                 const bool build_hydration_cache = !disable_large_layer_cache;
-                std::vector<LayerDef::FeatureGeom> cached_features;
+                std::vector<LayerDef::FeatureRecord> cached_features;
+                std::vector<LayerDef::FeatureProperties> cached_feature_properties;
                 bool loaded_binary_cache = false;
                 bool loaded_canonical_binary = false;
                 {
@@ -93,7 +95,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         if (disable_large_layer_cache) {
                             layer_states[i].hydration_phase = source_kind == "canonical_binary"
                                 ? "loading_canonical_binary_source"
-                                : "parsing_source_cache_disabled";
+                                : "canonical_source_cache_disabled";
                         } else if (fs::exists(binary_cache_path)) {
                             layer_states[i].hydration_phase = "loading_binary_cache";
                         } else if (source_kind == "canonical_binary" && fs::exists(canonical_binary_path)) {
@@ -101,15 +103,16 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         } else {
                             layer_states[i].hydration_phase = source_kind == "canonical_binary"
                                 ? "loading_canonical_binary_source"
-                                : "parsing_source_cache_missing";
+                                : "canonical_source_cache_missing";
                         }
                     }
                 }
                 if (!disable_large_layer_cache && fs::exists(binary_cache_path)) {
-                    loaded_binary_cache = loadBinaryHydrationCache(binary_cache_path, sig, cached_features);
+                    loaded_binary_cache =
+                        loadBinaryHydrationCache(binary_cache_path, sig, cached_features, &cached_feature_properties);
                 }
-                if (!loaded_binary_cache && fs::exists(canonical_binary_path) &&
-                    loadBinaryCanonicalFeatureCollection(canonical_binary_path, sig, cached_features)) {
+                if (!loaded_binary_cache &&
+                    loadCanonicalLayerFeatureCollection(root, layers[i].file, sig, cached_features, &cached_feature_properties)) {
                     {
                         std::lock_guard<std::mutex> lk(status_mutex);
                         if (i < layer_states.size()) {
@@ -139,21 +142,30 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                             }
                         }
                         if ((loaded_canonical_binary ||
-                             (loaded_binary_cache && binaryHydrationCacheShouldBeCompacted(binary_cache_path, cached_features))) &&
+                             (loaded_binary_cache &&
+                              binaryHydrationCacheShouldBeCompacted(
+                                  binary_cache_path, cached_features, &cached_feature_properties))) &&
                             build_hydration_cache) {
-                            saveBinaryHydrationCache(binary_cache_path, sig, cached_features);
+                            saveBinaryHydrationCache(
+                                binary_cache_path, sig, cached_features, &cached_feature_properties);
                         }
                         bool first_chunk = true;
                         for (size_t off = 0; off < cached_features.size(); off += kHydrationBatchSize) {
                             if (hydration_stop.load(std::memory_order_relaxed) || (!layers[i].enabled && !required)) break;
                             size_t end = std::min(cached_features.size(), off + kHydrationBatchSize);
-                            std::vector<LayerDef::FeatureGeom> chunk;
+                            std::vector<LayerDef::FeatureRecord> chunk;
+                            std::vector<LayerDef::FeatureProperties> chunk_props;
                             chunk.reserve(end - off);
-                            for (size_t k = off; k < end; ++k) chunk.push_back(std::move(cached_features[k]));
+                            chunk_props.reserve(end - off);
+                            for (size_t k = off; k < end; ++k) {
+                                chunk.push_back(std::move(cached_features[k]));
+                                chunk_props.push_back(std::move(cached_feature_properties[k]));
+                            }
                             std::lock_guard<std::mutex> lk(hydrated_mutex);
                             hydrated_queue.push_back(HydratedLayer{
                                 i,
                                 std::move(chunk),
+                                std::move(chunk_props),
                                 false,
                                 false,
                                 first_chunk,
@@ -167,6 +179,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         hydrated_queue.push_back(HydratedLayer{
                             i,
                             {},
+                            {},
                             true,
                             false,
                             first_chunk,
@@ -175,16 +188,18 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                             sig
                         });
                         releaseContainerStorage(cached_features);
+                        releaseContainerStorage(cached_feature_properties);
                         trimProcessHeap();
                         continue;
                     } else {
                         {
                             std::lock_guard<std::mutex> lk(status_mutex);
-                            if (i < layer_states.size()) layer_states[i].hydration_phase = "parsing_source_cache_rejected";
+                            if (i < layer_states.size()) layer_states[i].hydration_phase = "canonical_source_cache_rejected";
                         }
                         std::error_code ec;
                         if (loaded_binary_cache) fs::remove(binary_cache_path, ec);
                         releaseContainerStorage(cached_features);
+                        releaseContainerStorage(cached_feature_properties);
                         trimProcessHeap();
                     }
                 } else {
@@ -194,7 +209,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                          layer_states[i].hydration_phase == "loading_canonical_binary_source")) {
                         layer_states[i].hydration_phase = source_kind == "canonical_binary"
                             ? "loading_canonical_binary_source_failed"
-                            : "parsing_source_cache_miss_or_stale";
+                            : "canonical_source_cache_miss_or_stale";
                     }
                 }
 
@@ -202,6 +217,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     std::lock_guard<std::mutex> lk(hydrated_mutex);
                     hydrated_queue.push_back(HydratedLayer{
                         i,
+                        {},
                         {},
                         true,
                         true,
@@ -213,20 +229,32 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     continue;
                 }
 
-                std::vector<LayerDef::FeatureGeom> cache_features;
+                std::vector<LayerDef::FeatureRecord> cache_features;
+                std::vector<LayerDef::FeatureProperties> cache_feature_properties;
                 bool hydrate_failed = false;
                 bool hydrate_done = false;
                 bool first_chunk = true;
                 {
                     std::lock_guard<std::mutex> lk(status_mutex);
-                    if (i < layer_states.size()) layer_states[i].hydration_source_kind = "geojson";
+                    if (i < layer_states.size()) layer_states[i].hydration_source_kind = "legacy_layer_artifact";
                 }
                 hydrateLayerBatches(
                     layer_path, kHydrationBatchSize, hydration_stop,
                     [&]() { return i < layers.size() && (layers[i].enabled || required); },
-                    [&](std::vector<LayerDef::FeatureGeom>&& chunk, bool done, bool failed, const std::string& error) {
+                    [&](std::vector<LayerDef::FeatureRecord>&& chunk,
+                        std::vector<LayerDef::FeatureProperties>&& chunk_props,
+                        bool done,
+                        bool failed,
+                        const std::string& error) {
                         if (build_hydration_cache && !chunk.empty()) {
-                            cache_features.insert(cache_features.end(), chunk.begin(), chunk.end());
+                            cache_features.insert(
+                                cache_features.end(),
+                                chunk.begin(),
+                                chunk.end());
+                            cache_feature_properties.insert(
+                                cache_feature_properties.end(),
+                                chunk_props.begin(),
+                                chunk_props.end());
                         }
                         hydrate_failed = hydrate_failed || failed;
                         hydrate_done = hydrate_done || done;
@@ -234,6 +262,7 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                         hydrated_queue.push_back(HydratedLayer{
                             i,
                             std::move(chunk),
+                            std::move(chunk_props),
                             done,
                             failed,
                             first_chunk,
@@ -245,8 +274,9 @@ std::vector<std::thread> startHydrationWorkers(LayerWorkersContext ctx, unsigned
                     });
                 if (hydrate_done && !hydrate_failed && !cache_features.empty() &&
                     !hydration_stop.load(std::memory_order_relaxed)) {
-                    saveBinaryHydrationCache(binary_cache_path, sig, cache_features);
+                    saveBinaryHydrationCache(binary_cache_path, sig, cache_features, &cache_feature_properties);
                     releaseContainerStorage(cache_features);
+                    releaseContainerStorage(cache_feature_properties);
                     trimProcessHeap();
                 }
             }

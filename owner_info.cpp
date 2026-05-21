@@ -6,6 +6,7 @@
 #include "imgui.h"
 #include "parcel_value_ui.h"
 #include "parcel_timeline.h"
+#include "real_property_ui.h"
 
 #include <algorithm>
 #include <cmath>
@@ -264,15 +265,18 @@ bool drawDuckDbParcelTimeline(DuckDbAnalytics* duckdb_analytics, const std::stri
 
 bool drawLocalParcelTimeline(
     const std::vector<LayerDef>* layers,
-    const LayerDef::FeatureGeom* parcel,
-    const LayerDef::FeatureGeom* real_property,
+    const std::string& parcel_blocklot,
+    const LayerDef::FeatureExtent* parcel_extent,
+    const LayerDef::FeatureRecord* real_property,
     int vacant_notice_layer_idx,
     int vacant_rehab_layer_idx,
     int tax_lien_layer_idx,
     int tax_sale_layer_idx) {
     const std::vector<ParcelTimelineEvent> events = buildParcelTimeline(ParcelTimelineRequest{
         layers,
-        parcel,
+        parcel_blocklot,
+        parcel_extent != nullptr,
+        parcel_extent ? *parcel_extent : LayerDef::FeatureExtent{},
         real_property,
         vacant_notice_layer_idx,
         vacant_rehab_layer_idx,
@@ -301,34 +305,6 @@ bool drawLocalParcelTimeline(
     ImGui::EndChild();
     ImGui::TextDisabled("Timeline source: loaded runtime parcel-related layers");
     return true;
-}
-
-std::string ownerNameFor(const LayerDef::FeatureGeom* rp) {
-    if (!rp) return "";
-    std::string o = firstDisplayProperty(*rp, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
-    return toLowerAscii(trimDisplayValue(o));
-}
-
-void drawRealPropertySummary(const LayerDef::FeatureGeom* rp) {
-    if (!rp) {
-        ImGui::TextDisabled("No matching real-property record.");
-        return;
-    }
-    auto text_prop = [&](const char* label, const std::string& value) {
-        if (!value.empty()) ImGui::TextWrapped("%s: %s", label, value.c_str());
-    };
-    text_prop("Address", firstDisplayProperty(*rp, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"}));
-    text_prop("Use", firstDisplayProperty(*rp, {"LU", "LANDUSE", "USE_CODE", "USE"}));
-    text_prop("Tax Base", firstDisplayProperty(*rp, {"TAXBASE", "ARTAXBAS"}));
-    text_prop("Current Land", firstDisplayProperty(*rp, {"CURRLAND"}));
-    text_prop("Current Improvements", firstDisplayProperty(*rp, {"CURRIMPR"}));
-    text_prop("Sale Price", firstDisplayProperty(*rp, {"SALEPRIC"}));
-    text_prop("Sale Date", firstDisplayProperty(*rp, {"SALEDATE"}));
-    std::string deed_book = firstDisplayProperty(*rp, {"DEEDBOOK"});
-    std::string deed_page = firstDisplayProperty(*rp, {"DEEDPAGE"});
-    text_prop("Deed", deed_book.empty() ? "" : deed_book + (deed_page.empty() ? "" : " / " + deed_page));
-    text_prop("SDAT Link", firstDisplayProperty(*rp, {"SDATLINK"}));
-    ImGui::TextDisabled("Source: Local property records when available");
 }
 
 void drawNavigation(ElementInfoUiState& state) {
@@ -362,7 +338,6 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
         return;
     }
 
-    const auto& selected = (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features[parcel_idx];
     if (ImGui::Button("Clear Parcel Selection")) {
         if (ctx.clear_parcel_selection) ctx.clear_parcel_selection();
     }
@@ -370,7 +345,7 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     const UnifiedParcelRecord* selected_unified = ctx.unified_parcels
         ? unifiedParcelAt(*ctx.unified_parcels, parcel_idx)
         : nullptr;
-    std::string blocklot_raw = getPropertyValue(selected, "BLOCKLOT");
+    std::string blocklot_raw = selected_unified ? selected_unified->blocklot : std::string();
     int vac_notice = 0;
     int vac_rehab = 0;
     int tax_lien = 0;
@@ -415,9 +390,15 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
         current_value_total = duckdb_detail.current_value;
     }
 
-    const LayerDef::FeatureGeom* selected_rp =
+    const LayerDef::FeatureRecord* selected_rp =
         (selected_unified && ctx.layers) ? unifiedRealPropertyGeometry(*selected_unified, *ctx.layers) : nullptr;
-    if (!selected_rp && ctx.real_property_for_parcel) selected_rp = ctx.real_property_for_parcel(selected);
+    if (!selected_rp && ctx.layers) {
+        selected_rp = resolveRealPropertyForBlocklot(
+            *ctx.layers,
+            ctx.real_property_layer_idx,
+            ctx.real_property_by_blocklot,
+            blocklot_raw);
+    }
 
     ImGui::Separator();
     const size_t selected_count = (ctx.show_selected_parcel_details && ctx.selected_parcel_indices)
@@ -434,15 +415,14 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
     drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
-    std::string summary_owner = selected_unified ? selected_unified->owner : ownerNameFor(selected_rp);
-    if (summary_owner.empty()) summary_owner = ownerNameFor(&selected);
+    std::string summary_owner = selected_unified ? selected_unified->owner : normalizedRealPropertyOwnerName(selected_rp);
     if (!summary_owner.empty() && ctx.state) drawOwnerInfoLink(*ctx.state, summary_owner, "open_owner_info_element_tab");
     if (duckdb_detail.ok) {
         drawDuckDbParcelDetail(ctx.state, ctx.duckdb_analytics, ctx.parcel_layer_idx, parcel_idx);
     } else if (selected_unified) {
         drawUnifiedParcelDetail(ctx.state, *selected_unified);
     } else if (!drawDuckDbParcelDetail(ctx.state, ctx.duckdb_analytics, ctx.parcel_layer_idx, parcel_idx)) {
-        drawRealPropertySummary(selected_rp);
+        drawRealPropertySummary(selected_rp, false);
     }
 
     ImGui::SeparatorText("Parcel History");
@@ -454,9 +434,20 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, size_t parcel_idx) {
     if (!drawDuckDbParcelTimeline(ctx.duckdb_analytics, timeline_blocklot)) {
         if (!duckdb_timeline_available) {
             ImGui::TextDisabled("DuckDB parcel timeline unavailable; showing runtime-derived timeline.");
+            LayerDef::FeatureExtent local_timeline_extent = {};
+            const LayerDef::FeatureExtent* local_timeline_extent_ptr = nullptr;
+            if (selected_unified && selected_unified->parcel_has_geometry) {
+                local_timeline_extent = selected_unified->parcel_extent;
+                local_timeline_extent_ptr = &local_timeline_extent;
+            } else if (ctx.layers && ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size() &&
+                       parcel_idx < (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size()) {
+                local_timeline_extent = (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features[parcel_idx].extent;
+                local_timeline_extent_ptr = &local_timeline_extent;
+            }
             if (!drawLocalParcelTimeline(
                     ctx.layers,
-                    &selected,
+                    timeline_blocklot,
+                    local_timeline_extent_ptr,
                     selected_rp,
                     ctx.vacant_notice_layer_idx,
                     ctx.vacant_rehab_layer_idx,
@@ -490,10 +481,8 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         GeoBounds owner_bounds;
         for (size_t pi : owner_parcel_indices) {
             const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-            if (!parcel_record) continue;
-            const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
-            if (!parcel_geom) continue;
-            expandBounds(owner_bounds, parcel_geom->extent);
+            if (!parcel_record || !parcel_record->parcel_has_geometry) continue;
+            expandBounds(owner_bounds, parcel_record->parcel_extent);
         }
 
         ImGui::Text("Element: Owner");
@@ -521,9 +510,6 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         for (size_t pi : owner_parcel_indices) {
             const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
             if (!parcel_record) continue;
-            const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
-            if (!parcel_geom) continue;
-            const auto& pf = *parcel_geom;
             std::string blocklot = parcel_record->blocklot;
             std::string address = parcel_record->address;
             if (address.empty()) address = "(address unavailable)";
@@ -538,11 +524,16 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
             const bool row_selected = ctx.selected_parcel_index_set &&
                 ctx.selected_parcel_index_set->find(pi) != ctx.selected_parcel_index_set->end();
             if (ImGui::Selectable(label.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                if (ctx.center_lon) *ctx.center_lon = ((double)pf.extent.min_lon + (double)pf.extent.max_lon) * 0.5;
-                if (ctx.center_lat) {
-                    *ctx.center_lat = std::clamp(((double)pf.extent.min_lat + (double)pf.extent.max_lat) * 0.5, -85.0, 85.0);
+                if (parcel_record->parcel_has_geometry && ctx.center_lon) {
+                    *ctx.center_lon = ((double)parcel_record->parcel_extent.min_lon + (double)parcel_record->parcel_extent.max_lon) * 0.5;
                 }
-                if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
+                if (parcel_record->parcel_has_geometry && ctx.center_lat) {
+                    *ctx.center_lat = std::clamp(
+                        ((double)parcel_record->parcel_extent.min_lat + (double)parcel_record->parcel_extent.max_lat) * 0.5,
+                        -85.0,
+                        85.0);
+                }
+                if (parcel_record->parcel_has_geometry && ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
                 if (ctx.select_parcel_idx) ctx.select_parcel_idx(pi, ImGui::GetIO().KeyCtrl);
                 if (ctx.state) openElementParcelPage(*ctx.state, pi);
             }
@@ -578,10 +569,8 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
     GeoBounds source_bounds;
     for (size_t pi : source_parcel_indices) {
         const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
-        if (!parcel_record) continue;
-        const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
-        if (!parcel_geom) continue;
-        expandBounds(source_bounds, parcel_geom->extent);
+        if (!parcel_record || !parcel_record->parcel_has_geometry) continue;
+        expandBounds(source_bounds, parcel_record->parcel_extent);
     }
 
     ImGui::Text("Element: %s", property_source ? "Property Source" : "Parcel Source");
@@ -609,9 +598,6 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
     for (size_t pi : source_parcel_indices) {
         const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, pi);
         if (!parcel_record) continue;
-        const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(*parcel_record, *ctx.layers);
-        if (!parcel_geom) continue;
-        const auto& pf = *parcel_geom;
         std::string blocklot = parcel_record->blocklot;
         std::string address = parcel_record->address;
         if (address.empty()) address = "(address unavailable)";
@@ -626,11 +612,16 @@ void drawSourceElement(const OwnerInfoTabContext& ctx, const std::string& source
         const bool row_selected = ctx.selected_parcel_index_set &&
             ctx.selected_parcel_index_set->find(pi) != ctx.selected_parcel_index_set->end();
         if (ImGui::Selectable(label.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-            if (ctx.center_lon) *ctx.center_lon = ((double)pf.extent.min_lon + (double)pf.extent.max_lon) * 0.5;
-            if (ctx.center_lat) {
-                *ctx.center_lat = std::clamp(((double)pf.extent.min_lat + (double)pf.extent.max_lat) * 0.5, -85.0, 85.0);
+            if (parcel_record->parcel_has_geometry && ctx.center_lon) {
+                *ctx.center_lon = ((double)parcel_record->parcel_extent.min_lon + (double)parcel_record->parcel_extent.max_lon) * 0.5;
             }
-            if (ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
+            if (parcel_record->parcel_has_geometry && ctx.center_lat) {
+                *ctx.center_lat = std::clamp(
+                    ((double)parcel_record->parcel_extent.min_lat + (double)parcel_record->parcel_extent.max_lat) * 0.5,
+                    -85.0,
+                    85.0);
+            }
+            if (parcel_record->parcel_has_geometry && ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
             if (ctx.select_parcel_idx) ctx.select_parcel_idx(pi, ImGui::GetIO().KeyCtrl);
             if (ctx.state) openElementParcelPage(*ctx.state, pi);
         }

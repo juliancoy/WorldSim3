@@ -1,13 +1,17 @@
 #include "map_render_utils.h"
 
+#include "feature_props.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 
-bool tryGetFeaturePropertyFloat(const LayerDef::FeatureGeom& fg, const std::string& key, float& out) {
+bool tryGetFeaturePropertyFloat(const LayerDef::FeatureRecord& fg, const std::string& key, float& out) {
     if (key.empty()) return false;
-    for (const auto& kv : fg.properties) {
+    const FeaturePropertyPairs* props = getPropertyPairs(fg);
+    if (!props) return false;
+    for (const auto& kv : *props) {
         if (kv.first != key) continue;
         char* end = nullptr;
         const float v = std::strtof(kv.second.c_str(), &end);

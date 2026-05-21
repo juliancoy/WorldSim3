@@ -1,6 +1,7 @@
 #include "layer_geometry.h"
 
 #include "app_utils.h"
+#include "feature_props.h"
 #include "geo.h"
 
 #include <algorithm>
@@ -23,13 +24,13 @@ std::string jsonValueToString(const json& v) {
     return v.dump();
 }
 
-std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
-    std::vector<LayerDef::FeatureGeom> out;
+std::vector<LayerDef::FeatureRecord> extractFeatureRecords(const json& geom) {
+    std::vector<LayerDef::FeatureRecord> out;
     if (!geom.contains("type") || !geom.contains("coordinates")) return out;
     const std::string t = geom["type"].get<std::string>();
 
-    auto build_from_polygon = [](const json& poly_coords) -> std::optional<LayerDef::FeatureGeom> {
-        LayerDef::FeatureGeom fg{};
+    auto build_from_polygon = [](const json& poly_coords) -> std::optional<LayerDef::FeatureRecord> {
+        LayerDef::FeatureRecord fg{};
         bool has = false;
         auto expand = [&](double lon, double lat) {
             if (!has) {
@@ -60,8 +61,8 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
         return fg;
     };
 
-    auto build_from_paths = [](const json& path_coords, bool nested) -> std::optional<LayerDef::FeatureGeom> {
-        LayerDef::FeatureGeom fg{};
+    auto build_from_paths = [](const json& path_coords, bool nested) -> std::optional<LayerDef::FeatureRecord> {
+        LayerDef::FeatureRecord fg{};
         bool has = false;
         auto expand = [&](double lon, double lat) {
             if (!has) {
@@ -108,7 +109,7 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
     } else if (t == "Point") {
         const auto& c = geom["coordinates"];
         if (c.is_array() && c.size() >= 2) {
-            LayerDef::FeatureGeom fg{};
+            LayerDef::FeatureRecord fg{};
             double lon = c[0].get<double>();
             double lat = c[1].get<double>();
             fg.extent.min_lon = fg.extent.max_lon = (float)lon;
@@ -118,7 +119,7 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
     } else if (t == "MultiPoint") {
         for (const auto& c : geom["coordinates"]) {
             if (!c.is_array() || c.size() < 2) continue;
-            LayerDef::FeatureGeom fg{};
+            LayerDef::FeatureRecord fg{};
             double lon = c[0].get<double>();
             double lat = c[1].get<double>();
             fg.extent.min_lon = fg.extent.max_lon = (float)lon;
@@ -135,8 +136,11 @@ std::vector<LayerDef::FeatureGeom> extractFeatureGeoms(const json& geom) {
     return out;
 }
 
-std::vector<LayerDef::FeatureGeom> loadLayerPointsFromFile(const fs::path& full_path) {
-    std::vector<LayerDef::FeatureGeom> features;
+std::vector<LayerDef::FeatureRecord> loadLayerPointsFromFile(
+    const fs::path& full_path,
+    std::vector<LayerDef::FeatureProperties>* out_feature_properties) {
+    std::vector<LayerDef::FeatureRecord> features;
+    if (out_feature_properties) out_feature_properties->clear();
     std::ifstream in(full_path);
     if (!in) return features;
     json j;
@@ -144,7 +148,7 @@ std::vector<LayerDef::FeatureGeom> loadLayerPointsFromFile(const fs::path& full_
     if (!j.contains("features")) return features;
     for (auto& f : j["features"]) {
         if (!f.contains("geometry")) continue;
-        auto geoms = extractFeatureGeoms(f["geometry"]);
+        auto geoms = extractFeatureRecords(f["geometry"]);
         std::vector<std::pair<std::string, std::string>> props;
         if (f.contains("properties") && f["properties"].is_object()) {
             props.reserve(f["properties"].size());
@@ -153,7 +157,12 @@ std::vector<LayerDef::FeatureGeom> loadLayerPointsFromFile(const fs::path& full_
             }
         }
         for (auto& g : geoms) {
-            g.properties = props;
+            setTransientFeatureProperties(g, props);
+            if (out_feature_properties) {
+                LayerDef::FeatureProperties fp;
+                fp.values = props;
+                out_feature_properties->push_back(std::move(fp));
+            }
             features.push_back(std::move(g));
         }
     }
@@ -174,7 +183,7 @@ bool pointInRing(const std::vector<ImVec2>& ring, float x, float y) {
     return inside;
 }
 
-bool pointInFeature(const LayerDef::FeatureGeom& fg, float lon, float lat) {
+bool pointInFeature(const LayerDef::FeatureRecord& fg, float lon, float lat) {
     if (fg.rings.empty()) return false;
     if (!pointInRing(fg.rings[0], lon, lat)) return false;
     for (size_t i = 1; i < fg.rings.size(); ++i) {
@@ -204,7 +213,12 @@ void hydrateLayerBatches(
     size_t batch_size,
     const std::atomic<bool>& stop_flag,
     const std::function<bool()>& should_continue,
-    const std::function<void(std::vector<LayerDef::FeatureGeom>&&, bool, bool, const std::string&)>& emit) {
+    const std::function<void(
+        std::vector<LayerDef::FeatureRecord>&&,
+        std::vector<LayerDef::FeatureProperties>&&,
+        bool,
+        bool,
+        const std::string&)>& emit) {
     auto stream_features = [&](std::function<bool(json&&)> on_feature, std::string& err) -> bool {
         std::ifstream in(full_path, std::ios::binary);
         if (!in) {
@@ -296,8 +310,10 @@ void hydrateLayerBatches(
         return false;
     };
 
-    std::vector<LayerDef::FeatureGeom> batch;
+    std::vector<LayerDef::FeatureRecord> batch;
+    std::vector<LayerDef::FeatureProperties> batch_props;
     batch.reserve(batch_size);
+    batch_props.reserve(batch_size);
     std::string stream_err;
     bool stream_aborted = false;
     const bool ok = stream_features([&](json&& f) -> bool {
@@ -315,33 +331,39 @@ void hydrateLayerBatches(
                 else props.push_back({it.key(), it.value().dump()});
             }
         }
-        auto geoms = extractFeatureGeoms(f["geometry"]);
+        auto geoms = extractFeatureRecords(f["geometry"]);
         for (auto& g : geoms) {
             if (stop_flag.load(std::memory_order_relaxed) || !should_continue()) {
                 stream_aborted = true;
                 return false;
             }
-            g.properties = props;
+            setTransientFeatureProperties(g, props);
             batch.push_back(std::move(g));
+            LayerDef::FeatureProperties fp;
+            fp.values = props;
+            batch_props.push_back(std::move(fp));
             if (batch.size() >= batch_size) {
-                emit(std::move(batch), false, false, "");
+                emit(std::move(batch), std::move(batch_props), false, false, "");
                 batch.clear();
                 batch.reserve(batch_size);
+                batch_props.clear();
+                batch_props.reserve(batch_size);
             }
         }
         return true;
     }, stream_err);
     if (!ok) {
-        emit({}, true, true, stream_err.empty() ? "feature streaming failed" : stream_err);
+        emit({}, {}, true, true, stream_err.empty() ? "feature streaming failed" : stream_err);
         return;
     }
     if (stream_aborted) return;
-    if (!batch.empty()) emit(std::move(batch), false, false, "");
-    emit({}, true, false, "");
+    if (!batch.empty()) emit(std::move(batch), std::move(batch_props), false, false, "");
+    emit({}, {}, true, false, "");
 }
 
 void loadLayerPoints(LayerDef& layer, const fs::path& root) {
-    layer.features = loadLayerPointsFromFile(resolveStoredLayerPath(root, layer));
+    layer.features = loadLayerPointsFromFile(resolveStoredLayerPath(root, layer), &layer.feature_properties);
+    rebuildFeaturePropertyRegistryForLayer(layer);
 }
 
 std::vector<uint32_t> triangulateRings(const std::vector<std::vector<ImVec2>>& rings) {

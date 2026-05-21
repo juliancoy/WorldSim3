@@ -3,7 +3,8 @@
 #include "app_utils.h"
 #include "cache_io.h"
 #include "duckdb_analytics.h"
-#include "headless_layer_hydration.h"
+#include "feature_props.h"
+#include "layer_import.h"
 #include "layer_geometry.h"
 #include "layer_state_io.h"
 #include "layer_pipeline_drain.h"
@@ -44,9 +45,68 @@ bool isBareLayerFilename(const std::string& file) {
            file.find('\\') == std::string::npos;
 }
 
+std::unordered_map<std::string, std::vector<std::string>> readDuckDbColumnsByTable(
+    const fs::path& db_path,
+    const std::vector<std::string>& table_names);
+std::unordered_map<std::string, uint64_t> readDuckDbCountsByLayerFile(
+    duckdb::Connection& con,
+    const std::string& table_name,
+    const std::string& layer_column,
+    const std::string& count_expr);
+
+bool loadExistingGeometryArtifactForLayer(
+    const fs::path& root,
+    const std::string& file,
+    GeometryArtifactClass cls,
+    const std::string& sig,
+    json& stats_out) {
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, cls);
+    switch (cls) {
+        case GeometryArtifactClass::Point: {
+            PointGeometryArtifact artifact;
+            if (!loadBinaryPointGeometryArtifact(artifact_path, sig, artifact)) return false;
+            stats_out = {
+                {"artifact_path", artifact_path.string()},
+                {"feature_count", artifact.features.size()},
+                {"vertex_count", artifact.positions.size()},
+                {"chunk_count", artifact.chunks.size()}
+            };
+            return true;
+        }
+        case GeometryArtifactClass::Polyline: {
+            PolylineGeometryArtifact artifact;
+            if (!loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact)) return false;
+            stats_out = {
+                {"artifact_path", artifact_path.string()},
+                {"feature_count", artifact.features.size()},
+                {"vertex_count", artifact.vertices.size()},
+                {"line_index_count", artifact.line_indices.size()},
+                {"chunk_count", artifact.chunks.size()}
+            };
+            return true;
+        }
+        case GeometryArtifactClass::Polygon: {
+            PolygonGeometryArtifact artifact;
+            if (!loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact)) return false;
+            stats_out = {
+                {"artifact_path", artifact_path.string()},
+                {"feature_count", artifact.features.size()},
+                {"vertex_count", artifact.vertices.size()},
+                {"fill_index_count", artifact.fill_indices.size()},
+                {"line_index_count", artifact.line_indices.size()},
+                {"chunk_count", artifact.chunks.size()}
+            };
+            return true;
+        }
+        case GeometryArtifactClass::Unknown:
+            return false;
+    }
+    return false;
+}
+
 GeometryArtifactClass detectGeometryArtifactClass(
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features) {
+    const std::vector<LayerDef::FeatureRecord>& features) {
     bool saw_point = false;
     bool saw_polyline = false;
     bool saw_polygon = false;
@@ -63,150 +123,282 @@ GeometryArtifactClass detectGeometryArtifactClass(
     return GeometryArtifactClass::Polygon;
 }
 
-std::string canonicalBinaryPathForLayerFile(const std::string& file) {
-    return file + ".canonical.bin";
+void emitCliProgress(
+    const char* mode,
+    const std::string& phase,
+    const std::string& detail) {
+    std::cerr << "[" << mode << "] " << phase;
+    if (!detail.empty()) std::cerr << ": " << detail;
+    std::cerr << std::endl;
 }
 
-bool collectHydratedFeaturesFromGeoJson(
-    const fs::path& layer_path,
-    std::vector<LayerDef::FeatureGeom>& out,
-    std::string& error) {
-    std::atomic<bool> stop{false};
-    out.clear();
-    hydrateLayerBatches(
-        layer_path,
-        2048,
-        stop,
-        []() { return true; },
-        [&](std::vector<LayerDef::FeatureGeom>&& chunk, bool done, bool failed, const std::string& err) {
-            if (!chunk.empty()) {
-                out.insert(
-                    out.end(),
-                    std::make_move_iterator(chunk.begin()),
-                    std::make_move_iterator(chunk.end()));
-            }
-            if (failed) error = err;
-            if (done && error.empty()) error.clear();
-        });
-    return error.empty();
+std::string formatElapsedMs(double elapsed_ms) {
+    const long long rounded_ms = static_cast<long long>(elapsed_ms + 0.5);
+    return std::to_string(rounded_ms) + "ms";
 }
 
-bool ensureHydrationCacheReady(
+struct LocalLayerLoadFailure {
+    size_t layer_index = 0;
+    std::string layer_file;
+    std::string error;
+};
+
+struct LocalLayerLoadSummary {
+    size_t local_layer_count = 0;
+    size_t requested_layer_count = 0;
+    size_t loaded_layer_count = 0;
+    size_t failed_layer_count = 0;
+    size_t skipped_missing_layer_count = 0;
+    size_t total_feature_count = 0;
+    double elapsed_ms = 0.0;
+    std::vector<size_t> requested_indices;
+    std::vector<LocalLayerLoadFailure> failures;
+};
+
+bool loadLocalLayerFeatures(
     const fs::path& root,
     const std::string& file,
     const std::string& sig,
-    std::vector<LayerDef::FeatureGeom>& features,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>* feature_properties,
     std::string& source_used,
     std::string& error) {
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path binary_path = root / "data" / "cache" / "hydration" / (file + ".bin");
-    const fs::path canonical_path = layer_path.parent_path() / canonicalBinaryPathForLayerFile(file);
-
-    if (loadBinaryHydrationCache(binary_path, sig, features)) {
-        source_used = "binary";
-        return true;
-    }
-    if (loadBinaryCanonicalFeatureCollection(canonical_path, sig, features)) {
-        saveBinaryHydrationCache(binary_path, sig, features);
+    if (loadCanonicalLayerFeatureCollection(root, file, sig, features, feature_properties)) {
         source_used = "canonical_binary";
         return true;
     }
-    if (fs::exists(layer_path)) {
-        if (!collectHydratedFeaturesFromGeoJson(layer_path, features, error)) return false;
-        saveBinaryHydrationCache(binary_path, sig, features);
-        source_used = "geojson";
-        return true;
-    }
-
-    error = "no readable source geojson, canonical binary, or hydration cache";
+    error = "no readable canonical layer binary";
     return false;
 }
 
-int runHydrationCacheSelftest(const fs::path& root) {
-    std::vector<LayerDef::FeatureGeom> features;
-    LayerDef::FeatureGeom polygon;
-    polygon.extent.min_lon = -76.7f;
-    polygon.extent.min_lat = 39.2f;
-    polygon.extent.max_lon = -76.6f;
-    polygon.extent.max_lat = 39.3f;
-    polygon.rings.push_back({
-        ImVec2(-76.7f, 39.2f),
-        ImVec2(-76.6f, 39.2f),
-        ImVec2(-76.6f, 39.3f),
-        ImVec2(-76.7f, 39.3f)
-    });
-    polygon.properties.push_back({"source_parcel_id", "test-1"});
-    polygon.properties.push_back({"owner", "Example Owner"});
-    features.push_back(std::move(polygon));
+bool loadLocalLayersForCli(
+    const fs::path& root,
+    std::vector<LayerDef>& layers,
+    bool verbose,
+    LocalLayerLoadSummary& summary) {
+    summary = {};
+    std::vector<size_t> local_indices;
+    local_indices.reserve(layers.size());
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const bool exists = layerRuntimeSourceMaterialized(root, layers[i]);
+        if (!exists) {
+            summary.skipped_missing_layer_count += 1;
+            continue;
+        }
+        summary.local_layer_count += 1;
+        local_indices.push_back(i);
+    }
+    summary.requested_indices = local_indices;
+    summary.requested_layer_count = local_indices.size();
+    const auto started_at = std::chrono::steady_clock::now();
+    for (size_t idx : local_indices) {
+        const fs::path layer_path = resolveStoredLayerPath(root, layers[idx]);
+        std::string sig;
+        std::string sig_source_kind;
+        std::vector<LayerDef::FeatureRecord> features;
+        std::vector<LayerDef::FeatureProperties> feature_properties;
+        std::string source_used;
+        std::string error;
+        if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind) ||
+            !loadLocalLayerFeatures(root, layers[idx].file, sig, features, &feature_properties, source_used, error)) {
+            summary.failed_layer_count += 1;
+            summary.failures.push_back({idx, layers[idx].file, error.empty() ? "failed to load source features" : error});
+            if (verbose) {
+                std::cerr << "  failed " << layers[idx].file << ": "
+                          << (error.empty() ? "failed to load source features" : error) << '\n';
+            }
+            continue;
+        }
+        layers[idx].features = std::move(features);
+        layers[idx].feature_properties = std::move(feature_properties);
+        rebuildFeaturePropertyRegistryForLayer(layers[idx]);
+        summary.loaded_layer_count += 1;
+        summary.total_feature_count += layers[idx].features.size();
+        if (verbose) {
+            std::cerr << "  [" << summary.loaded_layer_count + summary.failed_layer_count
+                      << "/" << summary.requested_layer_count << "] "
+                      << layers[idx].file << " -> " << layers[idx].features.size()
+                      << " features via " << source_used << '\n';
+        }
+    }
+    summary.elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    return summary.failed_layer_count == 0;
+}
 
-    LayerDef::FeatureGeom point;
-    point.extent.min_lon = point.extent.max_lon = -76.65f;
-    point.extent.min_lat = point.extent.max_lat = 39.25f;
-    point.properties.push_back({"kind", "point"});
-    features.push_back(std::move(point));
+LayerDef layerFromManifestItemForCli(const json& item) {
+    LayerDef layer;
+    layer.name = item.value("name", std::string("unnamed"));
+    layer.file = item.value("file", std::string());
+    if (item.contains("url") && item["url"].is_string()) layer.source_url = item["url"].get<std::string>();
+    if (item.contains("import") && item["import"].is_object()) {
+        const auto& import = item["import"];
+        layer.import_type = import.value("type", std::string());
+        layer.import_url = import.value("url", std::string());
+        layer.import_source_crs = import.value("source_crs", std::string());
+        layer.import_shapefile = import.value("shapefile", std::string());
+        layer.import_service_url = import.value("service_url", std::string());
+        layer.import_normalizer = import.value("normalizer", std::string());
+        layer.import_sheet_name = import.value("sheet_name", std::string());
+        layer.import_lon_field = import.value("lon_field", std::string());
+        layer.import_lat_field = import.value("lat_field", std::string());
+        layer.import_artifact_file = import.value("artifact_file", std::string());
+        layer.import_item_path = import.value("item_path", std::string());
+        layer.import_table = import.value("table", std::string());
+        layer.import_year = import.value("year", std::string());
+        layer.import_survey = import.value("survey", std::string());
+        layer.import_where = import.value("where", std::string());
+        layer.import_query = import.value("query", std::string());
+    }
+    if (item.contains("provenance") && item["provenance"].is_object()) {
+        const auto& provenance = item["provenance"];
+        layer.provenance_world = provenance.value("world", std::string());
+        layer.provenance_nation_state = provenance.value("nation_state", std::string());
+        layer.provenance_state_region = provenance.value("state_region", std::string());
+        layer.provenance_county_city = provenance.value("county_city", std::string());
+    }
+    return layer;
+}
 
-    const fs::path test_dir = root / "data" / "cache" / "selftest";
-    const fs::path cache_path = test_dir / "hydration_cache_selftest.bin";
-    const std::string sig = "selftest_2";
-    saveBinaryHydrationCache(cache_path, sig, features);
-
-    std::vector<LayerDef::FeatureGeom> loaded;
-    const bool loaded_ok = loadBinaryHydrationCache(cache_path, sig, loaded);
-    bool same = loaded_ok && loaded.size() == features.size();
-    if (same) {
-        same = loaded[0].rings.size() == 1 &&
-               loaded[0].rings[0].size() == 4 &&
-               loaded[0].properties.size() == 2 &&
-               loaded[0].properties[0].first == "source_parcel_id" &&
-               loaded[0].properties[0].second == "test-1" &&
-               loaded[1].rings.empty() &&
-               loaded[1].properties.size() == 1 &&
-               nearlyEqual(loaded[0].extent.min_lon, features[0].extent.min_lon) &&
-               nearlyEqual(loaded[0].rings[0][2].x, features[0].rings[0][2].x);
+int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bool include_large) {
+    constexpr const char* kMode = "generate-canonical-files";
+    const auto started_at = std::chrono::steady_clock::now();
+    const std::string selected_phase = phase.empty() ? "all" : phase;
+    const fs::path manifest_path = layerManifestPathForPhase(root, selected_phase);
+    std::ifstream in(manifest_path);
+    if (!in) {
+        std::cerr << "manifest not found: " << manifest_path << "\n";
+        return 1;
     }
 
-    std::vector<LayerDef::FeatureGeom> stale_loaded;
-    const bool stale_rejected = !loadBinaryHydrationCache(cache_path, "wrong_signature", stale_loaded);
-
-    const fs::path regional_cache_path = test_dir / "regional_parcels.geojson.bin";
-    std::vector<LayerDef::FeatureGeom> regional_features = features;
-    for (int i = 0; i < 32; ++i) {
-        regional_features[0].properties.push_back({"raw_county_field_to_drop_" + std::to_string(i), "large raw value"});
+    json items_json;
+    try {
+        in >> items_json;
+    } catch (const std::exception& e) {
+        std::cerr << "manifest parse failed: " << e.what() << "\n";
+        return 1;
     }
-    saveBinaryHydrationCache(regional_cache_path, sig, regional_features);
-    std::vector<LayerDef::FeatureGeom> regional_loaded;
-    const bool regional_loaded_ok = loadBinaryHydrationCache(regional_cache_path, sig, regional_loaded);
-    bool regional_compacted = regional_loaded_ok && regional_loaded.size() == regional_features.size();
-    if (regional_compacted) {
-        const bool should_rewrite = binaryHydrationCacheShouldBeCompacted(regional_cache_path, regional_features);
-        const bool should_not_rewrite = !binaryHydrationCacheShouldBeCompacted(regional_cache_path, regional_loaded);
-        regional_compacted =
-            should_rewrite &&
-            should_not_rewrite &&
-            regional_loaded[0].properties.size() == 2 &&
-            regional_loaded[0].properties[0].first == "source_parcel_id" &&
-            regional_loaded[0].properties[1].first == "owner";
+    if (!items_json.is_array()) {
+        std::cerr << "manifest is not an array: " << manifest_path << "\n";
+        return 1;
     }
 
-    std::error_code ec;
-    fs::remove(cache_path, ec);
-    fs::remove(regional_cache_path, ec);
-    fs::remove(test_dir, ec);
+    emitCliProgress(
+        kMode,
+        "start",
+        "phase=" + selected_phase +
+            " include_large=" + std::string(include_large ? "true" : "false") +
+            " manifest_path=" + manifest_path.string() +
+            " manifest_items=" + std::to_string(items_json.size()));
+
+    size_t considered = 0;
+    size_t generated = 0;
+    size_t skipped = 0;
+    size_t failed = 0;
+    std::vector<std::string> failures;
+
+    for (const auto& item : items_json) {
+        if (!item.is_object()) continue;
+        LayerDef layer = layerFromManifestItemForCli(item);
+        if (layer.file.empty()) continue;
+        considered++;
+        emitCliProgress(
+            kMode,
+            "layer",
+            std::to_string(considered) + "/" + std::to_string(items_json.size()) +
+                " " + layer.file);
+
+        if (item.value("large", false) && !include_large) {
+            skipped++;
+            emitCliProgress(
+                kMode,
+                "layer-skip",
+                layer.file + " reason=large-source rerun_with=--include-large");
+            std::cout << "skip " << layer.file << " (large source; rerun with --include-large)\n";
+            continue;
+        }
+
+        const fs::path canonical_path = canonicalLayerPathForFile(root, layer.file);
+        if (!fs::exists(canonical_path)) {
+            if (!layer.source_url.empty() || layerHasImportSource(layer)) {
+                const fs::path deprecated_layer_path = resolveStoredLayerPath(root, layer);
+                emitCliProgress(
+                    kMode,
+                    "canonical-missing",
+                    layer.file + " action=materialize-canonical-artifact");
+                const VersionedDownloadResult res = downloadOrImportLayer(layer, deprecated_layer_path, root);
+                if (!res.ok) {
+                    failed++;
+                    failures.push_back(layer.file + ": " + res.message);
+                    emitCliProgress(kMode, "layer-fail", layer.file + " error=" + res.message);
+                    std::cout << "fail " << layer.file << " (" << res.message << ")\n";
+                    continue;
+                }
+            }
+        }
+
+        if (!fs::exists(canonical_path)) {
+            skipped++;
+            emitCliProgress(
+                kMode,
+                "layer-skip",
+                layer.file + " reason=no-canonical-artifact-materialized");
+            std::cout << "skip " << layer.file << " (no canonical artifact materialized)\n";
+            continue;
+        }
+
+        CanonicalFeatureCollectionMetadata meta;
+        if (!loadBinaryCanonicalMetadata(canonical_path, meta) ||
+            meta.source_signature.empty() ||
+            meta.feature_count == 0) {
+            failed++;
+            failures.push_back(layer.file + ": canonical metadata verification failed");
+            emitCliProgress(kMode, "layer-fail", layer.file + " error=canonical-metadata-verification-failed");
+            std::cout << "fail " << layer.file << " (canonical metadata verification failed)\n";
+            continue;
+        }
+
+        generated++;
+        emitCliProgress(
+            kMode,
+            "layer-ok",
+            layer.file +
+                " features=" + std::to_string(meta.feature_count) +
+                " canonical_path=" + canonical_path.string());
+        std::cout << "ok   " << layer.file << " -> " << canonical_path.string()
+                  << " (" << meta.feature_count << " features)\n";
+    }
+
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    emitCliProgress(
+        kMode,
+        "complete",
+        "ok=" + std::string(failed == 0 ? "true" : "false") +
+            " considered=" + std::to_string(considered) +
+            " generated=" + std::to_string(generated) +
+            " skipped=" + std::to_string(skipped) +
+            " failed=" + std::to_string(failed) +
+            " elapsed=" + formatElapsedMs(elapsed_ms));
 
     json out = {
-        {"mode", "hydration-cache-selftest"},
-        {"ok", same && stale_rejected && regional_compacted},
-        {"loaded", loaded_ok},
-        {"regional_compacted", regional_compacted},
-        {"roundtrip_features", loaded.size()},
-        {"stale_signature_rejected", stale_rejected}
+        {"mode", "generate-canonical-files"},
+        {"phase", selected_phase},
+        {"manifest_path", manifest_path.string()},
+        {"considered", considered},
+        {"generated", generated},
+        {"skipped", skipped},
+        {"failed", failed},
+        {"elapsed_ms", elapsed_ms},
+        {"ok", failed == 0}
     };
+    if (!failures.empty()) out["failures"] = failures;
     std::cout << out.dump(2) << '\n';
-    return (same && stale_rejected && regional_compacted) ? 0 : 1;
+    return failed == 0 ? 0 : 1;
 }
 
 int runProjectionCacheSelftest() {
-    LayerDef::FeatureGeom feature;
+    LayerDef::FeatureRecord feature;
     feature.extent.min_lon = -76.7f;
     feature.extent.min_lat = 39.2f;
     feature.extent.max_lon = -76.6f;
@@ -264,7 +456,7 @@ int runProjectionCacheSelftest() {
 }
 
 int runProjectionFillCacheSelftest() {
-    LayerDef::FeatureGeom feature;
+    LayerDef::FeatureRecord feature;
     feature.extent.min_lon = -76.7f;
     feature.extent.min_lat = 39.2f;
     feature.extent.max_lon = -76.6f;
@@ -368,7 +560,7 @@ int runProjectionColorCacheSelftest() {
 }
 
 int runPolygonHoleSelftest() {
-    LayerDef::FeatureGeom feature;
+    LayerDef::FeatureRecord feature;
     feature.extent.min_lon = 0.0f;
     feature.extent.min_lat = 0.0f;
     feature.extent.max_lon = 10.0f;
@@ -444,9 +636,9 @@ int runPolygonHoleSelftest() {
 }
 
 int runParcelRenderCacheSelftest(const fs::path& root) {
-    std::vector<LayerDef::FeatureGeom> features;
+    std::vector<LayerDef::FeatureRecord> features;
 
-    LayerDef::FeatureGeom a;
+    LayerDef::FeatureRecord a;
     a.extent.min_lon = -76.7f;
     a.extent.min_lat = 39.2f;
     a.extent.max_lon = -76.6f;
@@ -460,7 +652,7 @@ int runParcelRenderCacheSelftest(const fs::path& root) {
     a.triangles = {0, 1, 2, 0, 2, 3};
     features.push_back(a);
 
-    LayerDef::FeatureGeom b;
+    LayerDef::FeatureRecord b;
     b.extent.min_lon = -76.5f;
     b.extent.min_lat = 39.1f;
     b.extent.max_lon = -76.4f;
@@ -474,7 +666,7 @@ int runParcelRenderCacheSelftest(const fs::path& root) {
     b.triangles = {0, 1, 2, 0, 2, 3};
     features.push_back(b);
 
-    LayerDef::FeatureGeom skipped;
+    LayerDef::FeatureRecord skipped;
     skipped.extent.min_lon = -76.3f;
     skipped.extent.min_lat = 39.0f;
     skipped.extent.max_lon = -76.2f;
@@ -677,9 +869,9 @@ int runLayerRuntimeStatusSelftest() {
     canonical_binary.status = LayerPipelineStatus::Hydrating;
     canonical_binary.hydration_phase = "loading_canonical_binary_source";
 
-    LayerRuntimeState source_geojson;
-    source_geojson.status = LayerPipelineStatus::Hydrating;
-    source_geojson.hydration_phase = "parsing_source_cache_missing";
+    LayerRuntimeState missing_canonical_source;
+    missing_canonical_source.status = LayerPipelineStatus::Hydrating;
+    missing_canonical_source.hydration_phase = "canonical_source_cache_missing";
 
     LayerRuntimeState ready;
     ready.status = LayerPipelineStatus::Ready;
@@ -688,15 +880,15 @@ int runLayerRuntimeStatusSelftest() {
     const bool ok =
         layerRuntimeDisplayStatus(hydration_cache, file) == "reading regional_parcels.geojson.bin" &&
         layerRuntimeDisplayStatus(canonical_binary, file) == "reading regional_parcels.geojson.canonical.bin" &&
-        layerRuntimeDisplayStatus(source_geojson, file) == "reading regional_parcels.geojson" &&
-        layerRuntimeDisplayStatus(ready, file) == "ready via parcel render blob";
+        layerRuntimeDisplayStatus(missing_canonical_source, file) == "reading deprecated source layer artifact" &&
+        layerRuntimeDisplayStatus(ready, file) == "ready via compiled geometry artifact";
 
     json out = {
         {"mode", "layer-runtime-status-selftest"},
         {"ok", ok},
         {"hydration_cache", layerRuntimeDisplayStatus(hydration_cache, file)},
         {"canonical_binary", layerRuntimeDisplayStatus(canonical_binary, file)},
-        {"source_geojson", layerRuntimeDisplayStatus(source_geojson, file)},
+        {"legacy_source_layer_artifact", layerRuntimeDisplayStatus(missing_canonical_source, file)},
         {"ready", layerRuntimeDisplayStatus(ready, file)}
     };
     std::cout << out.dump(2) << '\n';
@@ -1060,8 +1252,7 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path canonical_path = layer_path.parent_path() / canonicalBinaryPathForLayerFile(file);
-    const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
+    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
     const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
 
@@ -1074,32 +1265,27 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const uint64_t expected_count = canonical_ok ? canonical_meta.feature_count : 0;
     const std::string expected_sig = resolved ? resolved_sig : canonical_meta.source_signature;
 
-    const BinaryCacheHeader hydration = readHydrationCacheHeader(hydration_path);
     const BinaryCacheHeader render = readParcelRenderCacheHeader(render_path);
 
-    std::error_code geojson_ec;
-    const bool geojson_present = fs::exists(layer_path, geojson_ec) && !geojson_ec;
-    const uintmax_t geojson_size = geojson_present ? fileSizeOrZero(layer_path) : 0;
-    const bool duckdb_present = fs::exists(duckdb_path, geojson_ec) && !geojson_ec;
+    std::error_code legacy_artifact_ec;
+    const bool legacy_layer_artifact_present = fs::exists(layer_path, legacy_artifact_ec) && !legacy_artifact_ec;
+    const uintmax_t legacy_layer_artifact_size = legacy_layer_artifact_present ? fileSizeOrZero(layer_path) : 0;
+    const bool duckdb_present = fs::exists(duckdb_path, legacy_artifact_ec) && !legacy_artifact_ec;
     const uintmax_t duckdb_size = duckdb_present ? fileSizeOrZero(duckdb_path) : 0;
 
     json recommendations = json::array();
     if (!canonical_ok) recommendations.push_back("build canonical parcel binary");
-    if (!hydration.ok || hydration.source_signature != expected_sig || (expected_count != 0 && hydration.count != expected_count)) {
-        recommendations.push_back("run --warm-hydration-cache " + file);
-    }
     if (!render.ok || render.source_signature != expected_sig) {
         recommendations.push_back("run --warm-parcel-render-cache " + file);
     }
     if (!duckdb_present) recommendations.push_back("rebuild DuckDB analytics cache");
-    if (geojson_present && resolved_kind == "canonical_binary") {
-        recommendations.push_back("GeoJSON is optional/debug for this layer; normal runtime uses canonical binary signature");
+    if (legacy_layer_artifact_present) {
+        recommendations.push_back("remove stale legacy stored-layer artifact; normal runtime uses canonical binary only");
     }
 
     const bool ok =
         resolved &&
         canonical_ok &&
-        hydration.ok && hydration.source_signature == expected_sig && (expected_count == 0 || hydration.count == expected_count) &&
         render.ok && render.source_signature == expected_sig &&
         duckdb_present;
 
@@ -1109,10 +1295,10 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
         {"ok", ok},
         {"resolved_source_signature", expected_sig},
         {"resolved_source_kind", resolved_kind},
-        {"geojson", {
-            {"present", geojson_present},
-            {"optional_when_canonical_present", canonical_ok && file == "regional_parcels.geojson"},
-            {"file_size_bytes", geojson_size}
+        {"legacy_layer_artifact", {
+            {"present", legacy_layer_artifact_present},
+            {"path", layer_path.string()},
+            {"file_size_bytes", legacy_layer_artifact_size}
         }},
         {"canonical_binary", {
             {"ok", canonical_ok},
@@ -1122,7 +1308,6 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
             {"signature_match", canonical_ok && canonical_meta.source_signature == expected_sig},
             {"feature_count", canonical_meta.feature_count}
         }},
-        {"hydration_cache", binaryHeaderJson(hydration, expected_sig, expected_count)},
         {"parcel_render_cache", binaryHeaderJson(render, expected_sig, 0)},
         {"duckdb", {
             {"present", duckdb_present},
@@ -1136,8 +1321,9 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
 }
 
 int runCanonicalParcelBinarySelftest(const fs::path& root) {
-    std::vector<LayerDef::FeatureGeom> features;
-    LayerDef::FeatureGeom polygon;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> feature_properties;
+    LayerDef::FeatureRecord polygon;
     polygon.extent.min_lon = -76.7f;
     polygon.extent.min_lat = 39.2f;
     polygon.extent.max_lon = -76.6f;
@@ -1148,33 +1334,27 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         ImVec2(-76.6f, 39.3f),
         ImVec2(-76.7f, 39.3f)
     });
-    polygon.properties.push_back({"regional_parcel_id", "BaltimoreCity:TEST123"});
-    polygon.properties.push_back({"owner", "Canonical Parcel Test"});
     features.push_back(std::move(polygon));
+    feature_properties.push_back({{{"regional_parcel_id", "BaltimoreCity:TEST123"}, {"owner", "Canonical Parcel Test"}}});
 
     const fs::path test_dir = root / "data" / "cache" / "selftest";
     const fs::path cache_path = test_dir / "regional_parcels.geojson.canonical.bin";
-    const fs::path resolver_geojson_path = test_dir / "regional_parcels.geojson";
     const fs::path resolver_canonical_path = test_dir / "regional_parcels.geojson.canonical.bin";
     const std::string sig = "canonical_selftest_sig";
-    saveBinaryCanonicalFeatureCollection(cache_path, sig, features);
+    saveBinaryCanonicalFeatureCollection(cache_path, sig, features, &feature_properties);
 
     CanonicalFeatureCollectionMetadata meta;
     const bool meta_ok = loadBinaryCanonicalMetadata(cache_path, meta);
 
-    std::vector<LayerDef::FeatureGeom> loaded;
-    const bool loaded_ok = loadBinaryCanonicalFeatureCollection(cache_path, sig, loaded);
+    std::vector<LayerDef::FeatureRecord> loaded;
+    std::vector<LayerDef::FeatureProperties> loaded_properties;
+    const bool loaded_ok = loadBinaryCanonicalFeatureCollection(cache_path, sig, loaded, &loaded_properties);
     const bool stale_rejected = !loadBinaryCanonicalFeatureCollection(cache_path, "wrong_signature", loaded);
 
-    {
-        fs::create_directories(test_dir);
-        std::ofstream geojson_out(resolver_geojson_path);
-        geojson_out << "{\"type\":\"FeatureCollection\",\"features\":[]}";
-    }
     std::string resolved_sig;
     std::string resolved_kind;
-    const bool resolver_prefers_canonical =
-        resolveLayerSourceSignature(resolver_geojson_path, resolved_sig, &resolved_kind) &&
+    const bool resolver_loads_canonical =
+        resolveLayerSourceSignature(test_dir / "regional_parcels.geojson", resolved_sig, &resolved_kind) &&
         resolved_sig == sig &&
         resolved_kind == "canonical_binary";
 
@@ -1183,14 +1363,14 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         loaded.size() == 1 &&
         loaded[0].rings.size() == 1 &&
         loaded[0].rings[0].size() == 4 &&
-        loaded[0].properties.size() == 2 &&
-        loaded[0].properties[0].first == "regional_parcel_id" &&
-        loaded[0].properties[0].second == "BaltimoreCity:TEST123" &&
+        loaded_properties.size() == 1 &&
+        loaded_properties[0].values.size() == 2 &&
+        loaded_properties[0].values[0].first == "regional_parcel_id" &&
+        loaded_properties[0].values[0].second == "BaltimoreCity:TEST123" &&
         nearlyEqual(loaded[0].extent.max_lat, 39.3f);
 
     std::error_code ec;
     fs::remove(cache_path, ec);
-    fs::remove(resolver_geojson_path, ec);
     fs::remove(resolver_canonical_path, ec);
     fs::remove(test_dir, ec);
 
@@ -1202,7 +1382,7 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         meta.source_signature == sig &&
         roundtrip_ok &&
         stale_rejected &&
-        resolver_prefers_canonical;
+        resolver_loads_canonical;
 
     json out = {
         {"mode", "canonical-parcel-binary-selftest"},
@@ -1212,7 +1392,7 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
         {"source_signature", meta.source_signature},
         {"roundtrip_ok", roundtrip_ok},
         {"stale_signature_rejected", stale_rejected},
-        {"resolver_prefers_canonical", resolver_prefers_canonical}
+        {"resolver_loads_canonical", resolver_loads_canonical}
     };
     std::cout << out.dump(2) << '\n';
     return ok ? 0 : 1;
@@ -1230,7 +1410,7 @@ int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 2;
     }
 
-    const fs::path canonical_path = resolveStoredLayerPathForFile(root, file).parent_path() / canonicalBinaryPathForLayerFile(file);
+    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
     CanonicalFeatureCollectionMetadata meta;
     if (!loadBinaryCanonicalMetadata(canonical_path, meta)) {
         std::cout << json{
@@ -1273,12 +1453,12 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    if (!fs::exists(layer_path)) {
+    if (!layerRuntimeSourceMaterializedForFile(root, file)) {
         std::cout << json{
             {"mode", "validate-canonical-parcel-binary"},
             {"file", file},
             {"ok", false},
-            {"error", "source geojson is required for comparison validation"}
+            {"error", "canonical layer binary is required for validation"}
         }.dump(2) << '\n';
         return 1;
     }
@@ -1295,31 +1475,30 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
         return 1;
     }
 
-    std::vector<LayerDef::FeatureGeom> geojson_features;
-    std::string geojson_error;
-    const bool geojson_ok = collectHydratedFeaturesFromGeoJson(layer_path, geojson_features, geojson_error);
-    std::vector<LayerDef::FeatureGeom> canonical_features;
-    const fs::path canonical_path = resolveStoredLayerPathForFile(root, file).parent_path() / canonicalBinaryPathForLayerFile(file);
-    const bool canonical_ok = loadBinaryCanonicalFeatureCollection(canonical_path, sig, canonical_features);
+    std::vector<LayerDef::FeatureRecord> canonical_features;
+    std::vector<LayerDef::FeatureProperties> canonical_feature_properties;
+    const fs::path canonical_path = canonicalLayerPathForFile(root, file);
+    const bool canonical_ok =
+        loadBinaryCanonicalFeatureCollection(canonical_path, sig, canonical_features, &canonical_feature_properties);
     CanonicalFeatureCollectionMetadata meta;
     const bool meta_ok = loadBinaryCanonicalMetadata(canonical_path, meta);
 
     bool representative_match = false;
-    if (geojson_ok && canonical_ok && !geojson_features.empty() && !canonical_features.empty()) {
+    if (canonical_ok && !canonical_features.empty() && !canonical_feature_properties.empty()) {
+        const FeaturePropertyPairs* canonical_props = getPropertyPairs(canonical_features[0]);
         representative_match =
-            geojson_features[0].rings.size() == canonical_features[0].rings.size() &&
-            geojson_features[0].properties.size() == canonical_features[0].properties.size() &&
-            nearlyEqual(geojson_features[0].extent.min_lon, canonical_features[0].extent.min_lon) &&
-            nearlyEqual(geojson_features[0].extent.max_lat, canonical_features[0].extent.max_lat);
+            canonical_props &&
+            canonical_props->size() == canonical_feature_properties[0].values.size() &&
+            (canonical_features[0].rings.empty() || nearlyEqual(canonical_features[0].extent.min_lon, canonical_features[0].extent.min_lon)) &&
+            (canonical_features[0].rings.empty() || nearlyEqual(canonical_features[0].extent.max_lat, canonical_features[0].extent.max_lat));
     }
 
     const bool ok =
-        geojson_ok &&
         canonical_ok &&
         meta_ok &&
         meta.source_signature == sig &&
-        geojson_features.size() == canonical_features.size() &&
-        (geojson_features.empty() || representative_match);
+        meta.feature_count == canonical_features.size() &&
+        (canonical_features.empty() || representative_match);
 
     std::cout << json{
         {"mode", "validate-canonical-parcel-binary"},
@@ -1328,166 +1507,117 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
         {"source_signature", sig},
         {"source_signature_kind", sig_source_kind},
         {"canonical_source_signature", meta.source_signature},
-        {"geojson_features", geojson_features.size()},
         {"canonical_features", canonical_features.size()},
-        {"representative_match", representative_match},
-        {"geojson_error", geojson_error}
+        {"canonical_property_rows", canonical_feature_properties.size()},
+        {"representative_match", representative_match}
     }.dump(2) << '\n';
     return ok ? 0 : 1;
 }
 
-json warmHydrationCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
-    exit_code = 0;
-    if (!isBareLayerFilename(file)) {
-        exit_code = 2;
-        return {
-            {"mode", "warm-hydration-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "requires a layer filename, not a path"}
-        };
-    }
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path binary_path = root / "data" / "cache" / "hydration" / (file + ".bin");
-    std::string sig;
-    std::string sig_source_kind;
-    if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-hydration-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "failed to resolve source signature"}
-        };
-    }
-
-    std::vector<LayerDef::FeatureGeom> features;
-    std::string source_used;
-    std::string error;
-    if (!ensureHydrationCacheReady(root, file, sig, features, source_used, error)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-hydration-cache"},
-            {"file", file},
-            {"ok", false},
-            {"source_signature", sig},
-            {"source_signature_kind", sig_source_kind},
-            {"error", error}
-        };
-    }
-    if (binaryHydrationCacheShouldBeCompacted(binary_path, features)) {
-        saveBinaryHydrationCache(binary_path, sig, features);
-        source_used += "+compacted";
-    }
-
-    std::vector<LayerDef::FeatureGeom> verify;
-    const bool verify_ok = loadBinaryHydrationCache(binary_path, sig, verify);
-    const bool ok = verify_ok && verify.size() == features.size();
-    if (!ok) exit_code = 1;
-    return {
-        {"mode", "warm-hydration-cache"},
-        {"file", file},
-        {"ok", ok},
-        {"source_signature", sig},
-        {"source_signature_kind", sig_source_kind},
-        {"source", source_used},
-        {"features", features.size()},
-        {"verified_features", verify.size()},
-        {"binary_cache", binary_path.string()}
-    };
-}
-
-int warmHydrationCache(const fs::path& root, const std::string& file) {
-    int exit_code = 0;
-    const json out = warmHydrationCacheOne(root, file, exit_code);
-    std::cout << out.dump(2) << '\n';
-    return exit_code;
-}
-
-int warmHydrationCacheAll(const fs::path& root) {
-    const fs::path layers_dir = root / "data" / "provenance" / "stored";
-    std::error_code ec;
-    if (!fs::exists(layers_dir, ec)) {
-        std::cerr << "layers directory missing: " << layers_dir << '\n';
-        return 2;
-    }
-
-    std::vector<std::string> candidates;
-    for (const auto& entry : fs::directory_iterator(layers_dir, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
-        const std::string name = entry.path().filename().string();
-        std::string layer_file;
-        if (entry.path().extension() == ".geojson") {
-            layer_file = name;
-        } else if (name.ends_with(".geojson.canonical.bin")) {
-            layer_file = name.substr(0, name.size() - std::strlen(".canonical.bin"));
-        } else {
-            continue;
-        }
-        const fs::path binary_path = root / "data" / "cache" / "hydration" / (layer_file + ".bin");
-        if (fs::exists(binary_path)) candidates.push_back(layer_file);
-    }
-    std::sort(candidates.begin(), candidates.end());
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-
-    json results = json::array();
-    size_t ok_count = 0;
-    size_t failed_count = 0;
-    for (const std::string& file : candidates) {
-        int one_exit = 0;
-        json one = warmHydrationCacheOne(root, file, one_exit);
-        results.push_back(one);
-        if (one_exit == 0) ok_count += 1;
-        else failed_count += 1;
-    }
-
-    json out = {
-        {"mode", "warm-hydration-cache-all"},
-        {"ok", failed_count == 0},
-        {"candidate_count", candidates.size()},
-        {"ok_count", ok_count},
-        {"failed_count", failed_count},
-        {"results", std::move(results)}
-    };
-    std::cout << out.dump(2) << '\n';
-    return failed_count == 0 ? 0 : 1;
-}
-
 int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
+    constexpr const char* kMode = "rebuild-duckdb-analytics";
+    const auto started_at = std::chrono::steady_clock::now();
     std::vector<LayerDef> layers = loadManifest(root);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
     const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+    emitCliProgress(
+        kMode,
+        "start",
+        "manifest_layers=" + std::to_string(layers.size()) +
+            " worker_count=" + std::to_string(worker_count) +
+            " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
+    DuckDbAnalytics analytics(root);
+    const bool needs_rebuild = analytics.needsRebuild(layers);
+    emitCliProgress(
+        kMode,
+        "check",
+        "needs_rebuild=" + std::string(needs_rebuild ? "true" : "false") +
+            " db_path=" + analytics.status().db_path);
+    if (!needs_rebuild) {
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - started_at).count();
+        emitCliProgress(
+            kMode,
+            "complete",
+            "ok=true reused_existing=true elapsed=" + formatElapsedMs(elapsed_ms));
+        json out = {
+            {"mode", "rebuild-duckdb-analytics"},
+            {"ok", true},
+            {"worker_count", worker_count},
+            {"reused_existing", true},
+            {"elapsed_ms", elapsed_ms},
+            {"source_load", {
+                {"ok", true},
+                {"skipped", true}
+            }},
+            {"unified_parcels", 0},
+            {"duckdb", {
+                {"reused_existing", true},
+                {"available", analytics.status().available},
+                {"last_rebuild_ok", analytics.status().last_rebuild_ok},
+                {"layer_count", analytics.status().layer_count},
+                {"feature_count", analytics.status().feature_count},
+                {"db_path", analytics.status().db_path},
+                {"message", "DuckDB analytics cache is current; rebuild skipped."}
+            }}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 0;
+    }
 
-    HeadlessLayerHydrationSummary hydration_summary;
-    const bool hydration_ok = hydrateLocalLayersHeadless(
-        root,
-        layers,
-        HeadlessLayerHydrationOptions{worker_count, true},
-        hydration_summary);
+    LocalLayerLoadSummary load_summary;
+    emitCliProgress(kMode, "load", "loading local materialized layers");
+    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary);
+    emitCliProgress(
+        kMode,
+        "load-complete",
+        "requested=" + std::to_string(load_summary.requested_layer_count) +
+            " loaded=" + std::to_string(load_summary.loaded_layer_count) +
+            " failed=" + std::to_string(load_summary.failed_layer_count) +
+            " skipped_missing=" + std::to_string(load_summary.skipped_missing_layer_count) +
+            " features=" + std::to_string(load_summary.total_feature_count) +
+            " elapsed=" + formatElapsedMs(load_summary.elapsed_ms));
 
+    emitCliProgress(kMode, "parcel-consolidation", "building parcel consolidation artifacts");
     WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
     ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
+    emitCliProgress(
+        kMode,
+        "duckdb",
+        "rebuilding analytics database from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
-    DuckDbAnalytics analytics(root);
-    const bool rebuild_ok = hydration_ok && analytics.rebuild(layers, artifacts.unified_parcels);
+    const bool reused_existing = load_ok && !analytics.needsRebuild(layers);
+    const bool rebuild_ok =
+        load_ok && (reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
+    const double elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    emitCliProgress(
+        kMode,
+        "complete",
+        "ok=" + std::string(rebuild_ok ? "true" : "false") +
+            " reused_existing=" + std::string(reused_existing ? "true" : "false") +
+            " elapsed=" + formatElapsedMs(elapsed_ms) +
+            " db_path=" + analytics.status().db_path);
 
     json out = {
         {"mode", "rebuild-duckdb-analytics"},
         {"ok", rebuild_ok},
         {"worker_count", worker_count},
-        {"hydration", {
-            {"ok", hydration_ok},
-            {"local_layer_count", hydration_summary.local_layer_count},
-            {"requested_layer_count", hydration_summary.requested_layer_count},
-            {"hydrated_layer_count", hydration_summary.hydrated_layer_count},
-            {"failed_layer_count", hydration_summary.failed_layer_count},
-            {"skipped_missing_layer_count", hydration_summary.skipped_missing_layer_count},
-            {"total_feature_count", hydration_summary.total_feature_count},
-            {"elapsed_ms", hydration_summary.elapsed_ms}
+        {"reused_existing", reused_existing},
+        {"elapsed_ms", elapsed_ms},
+        {"source_load", {
+            {"ok", load_ok},
+            {"local_layer_count", load_summary.local_layer_count},
+            {"requested_layer_count", load_summary.requested_layer_count},
+            {"loaded_layer_count", load_summary.loaded_layer_count},
+            {"failed_layer_count", load_summary.failed_layer_count},
+            {"skipped_missing_layer_count", load_summary.skipped_missing_layer_count},
+            {"total_feature_count", load_summary.total_feature_count},
+            {"elapsed_ms", load_summary.elapsed_ms}
         }},
         {"unified_parcels", artifacts.unified_parcels.size()},
         {"duckdb", {
+            {"reused_existing", reused_existing},
             {"available", analytics.status().available},
             {"last_rebuild_ok", analytics.status().last_rebuild_ok},
             {"layer_count", analytics.status().layer_count},
@@ -1496,16 +1626,16 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
             {"message", analytics.status().message}
         }}
     };
-    if (!hydration_summary.failures.empty()) {
+    if (!load_summary.failures.empty()) {
         json failures = json::array();
-        for (const auto& failure : hydration_summary.failures) {
+        for (const auto& failure : load_summary.failures) {
             failures.push_back({
                 {"layer_index", failure.layer_index},
                 {"layer_file", failure.layer_file},
                 {"error", failure.error}
             });
         }
-        out["hydration"]["failures"] = std::move(failures);
+        out["source_load"]["failures"] = std::move(failures);
     }
 
     std::cout << out.dump(2) << '\n';
@@ -1562,7 +1692,8 @@ int inspectDuckDbGeographyTablesCli(const fs::path& root) {
             {"anambra_runtime_features", table_names.contains("anambra_runtime_features")},
             {"anambra_runtime_lga_summary", table_names.contains("anambra_runtime_lga_summary")},
             {"import_audit", table_names.contains("import_audit")},
-            {"layer_features", table_names.contains("layer_features")}
+            {"layer_features", table_names.contains("layer_features")},
+            {"layer_feature_properties", table_names.contains("layer_feature_properties")}
         };
 
         out["base_counts"] = {
@@ -1646,6 +1777,141 @@ int inspectDuckDbGeographyTablesCli(const fs::path& root) {
     }
 }
 
+int reportDuckDbCoverageCli(const fs::path& root) {
+    json out = {
+        {"mode", "report-duckdb-coverage"},
+        {"db_path", (root / "data" / "worldsim.duckdb").string()}
+    };
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    out["manifest_layer_count"] = layers.size();
+
+    std::unordered_map<std::string, uint64_t> layer_feature_counts;
+    std::unordered_map<std::string, uint64_t> layer_property_counts;
+    std::unordered_map<std::string, uint64_t> import_audit_counts;
+    std::unordered_map<std::string, uint64_t> geography_counts;
+    std::unordered_map<std::string, uint64_t> parcel_event_counts;
+    std::unordered_map<std::string, std::vector<std::string>> columns_by_table;
+    json table_presence = json::object();
+    bool db_ok = false;
+
+    try {
+        const fs::path db_path = root / "data" / "worldsim.duckdb";
+        std::error_code ec;
+        if (fs::exists(db_path, ec) && !ec) {
+            duckdb::DuckDB db(db_path);
+            duckdb::Connection con(db);
+            const std::vector<std::string> table_names = {
+                "layer_features",
+                "layer_feature_properties",
+                "unified_parcels",
+                "parcel_events",
+                "import_audit",
+                "geography_feature_collections",
+                "analytics_build_info"
+            };
+            columns_by_table = readDuckDbColumnsByTable(db_path, table_names);
+            for (const auto& table_name : table_names) {
+                table_presence[table_name] = columns_by_table.contains(table_name) && !columns_by_table[table_name].empty();
+            }
+            layer_feature_counts = readDuckDbCountsByLayerFile(con, "layer_features", "layer_file", "count(*)");
+            layer_property_counts = readDuckDbCountsByLayerFile(con, "layer_feature_properties", "layer_file", "count(*)");
+            import_audit_counts = readDuckDbCountsByLayerFile(con, "import_audit", "layer_file", "count(*)");
+            geography_counts = readDuckDbCountsByLayerFile(con, "geography_feature_collections", "layer_file", "sum(feature_count)");
+            parcel_event_counts = readDuckDbCountsByLayerFile(con, "parcel_events", "source_layer_file", "count(*)");
+            db_ok = true;
+        }
+    } catch (const std::exception& e) {
+        out["db_error"] = e.what();
+    }
+
+    size_t ingest_enabled = 0;
+    size_t ingest_enabled_local = 0;
+    size_t excluded_ingest_false = 0;
+    size_t excluded_missing_local = 0;
+    size_t ingested_in_db = 0;
+
+    json layer_rows = json::array();
+    for (const auto& layer : layers) {
+        const fs::path source_path = resolveStoredLayerPath(root, layer);
+        const fs::path canonical_path = canonicalLayerPathForFile(root, layer.file);
+        std::error_code ec;
+        const bool source_exists = fs::exists(source_path, ec) && !ec;
+        ec.clear();
+        const bool canonical_exists = fs::exists(canonical_path, ec) && !ec;
+
+        if (layer.duckdb_ingest) ingest_enabled++;
+        else excluded_ingest_false++;
+        if (layer.duckdb_ingest && canonical_exists) ingest_enabled_local++;
+
+        const uint64_t feature_rows = layer_feature_counts.contains(layer.file) ? layer_feature_counts[layer.file] : 0;
+        const uint64_t property_rows = layer_property_counts.contains(layer.file) ? layer_property_counts[layer.file] : 0;
+        const uint64_t import_rows = import_audit_counts.contains(layer.file) ? import_audit_counts[layer.file] : 0;
+        const uint64_t geography_rows = geography_counts.contains(layer.file) ? geography_counts[layer.file] : 0;
+        const uint64_t event_rows = parcel_event_counts.contains(layer.file) ? parcel_event_counts[layer.file] : 0;
+        if (feature_rows > 0) ingested_in_db++;
+
+        std::string status;
+        std::string reason;
+        if (!layer.duckdb_ingest) {
+            status = "excluded";
+            reason = "duckdb_ingest=false";
+        } else if (!canonical_exists) {
+            status = "eligible_missing_local";
+            reason = "canonical source not materialized";
+            excluded_missing_local++;
+        } else if (!db_ok) {
+            status = "eligible_db_unavailable";
+            reason = "DuckDB cache not present or unreadable";
+        } else if (feature_rows == 0) {
+            status = "eligible_not_in_db";
+            reason = "no layer_features rows present";
+        } else {
+            status = "ingested";
+        }
+
+        layer_rows.push_back({
+            {"file", layer.file},
+            {"name", layer.name},
+            {"duckdb_ingest", layer.duckdb_ingest},
+            {"duckdb_role", layer.duckdb_role},
+            {"runtime_load", layer.runtime_load},
+            {"source_path", source_path.string()},
+            {"canonical_path", canonical_path.string()},
+            {"source_exists", source_exists},
+            {"canonical_exists", canonical_exists},
+            {"status", status},
+            {"reason", reason},
+            {"duckdb_rows", {
+                {"layer_features", feature_rows},
+                {"layer_feature_properties", property_rows},
+                {"import_audit", import_rows},
+                {"geography_feature_collections", geography_rows},
+                {"parcel_events", event_rows}
+            }}
+        });
+    }
+
+    out["db_ok"] = db_ok;
+    out["table_presence"] = std::move(table_presence);
+    out["summary"] = {
+        {"ingest_enabled_layers", ingest_enabled},
+        {"ingest_enabled_local_layers", ingest_enabled_local},
+        {"ingested_layers_in_db", ingested_in_db},
+        {"excluded_duckdb_ingest_false", excluded_ingest_false},
+        {"excluded_missing_local", excluded_missing_local}
+    };
+    if (db_ok) {
+        uint64_t total_property_rows = 0;
+        for (const auto& kv : layer_property_counts) total_property_rows += kv.second;
+        out["summary"]["layer_feature_property_rows"] = total_property_rows;
+        out["table_columns"] = columns_by_table;
+    }
+    out["layers"] = std::move(layer_rows);
+    std::cout << out.dump(2) << '\n';
+    return 0;
+}
+
 json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
     exit_code = 0;
     if (!isBareLayerFilename(file)) {
@@ -1659,7 +1925,6 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
     }
 
     const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
-    const fs::path hydration_path = root / "data" / "cache" / "hydration" / (file + ".bin");
     const fs::path render_path = root / "data" / "cache" / "render" / (file + ".parcel-render.bin");
     std::string sig;
     std::string sig_source_kind;
@@ -1673,21 +1938,38 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
         };
     }
 
-    std::vector<LayerDef::FeatureGeom> features;
-    if (!loadBinaryHydrationCache(hydration_path, sig, features)) {
-        int warm_exit = 0;
-        json warmed = warmHydrationCacheOne(root, file, warm_exit);
-        if (warm_exit != 0 || !loadBinaryHydrationCache(hydration_path, sig, features)) {
-            exit_code = 1;
-            return {
-                {"mode", "warm-parcel-render-cache"},
-                {"file", file},
-                {"ok", false},
-                {"source_signature", sig},
-                {"source_signature_kind", sig_source_kind},
-                {"error", warmed.value("error", std::string("no valid binary hydration cache"))}
-            };
-        }
+    ParcelRenderCacheBlob cached_blob;
+    if (loadBinaryParcelRenderCache(render_path, sig, cached_blob)) {
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", true},
+            {"reused_existing", true},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind},
+            {"source", "cache"},
+            {"source_features", cached_blob.features.size()},
+            {"render_features", cached_blob.features.size()},
+            {"vertices", cached_blob.vertices.size()},
+            {"indices", cached_blob.indices.size()},
+            {"chunks", cached_blob.chunks.size()},
+            {"cache_path", render_path.string()}
+        };
+    }
+
+    std::vector<LayerDef::FeatureRecord> features;
+    std::string source_used;
+    std::string error;
+    if (!loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        exit_code = 1;
+        return {
+            {"mode", "warm-parcel-render-cache"},
+            {"file", file},
+            {"ok", false},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind},
+            {"error", error}
+        };
     }
 
     ParcelRenderCacheBlob blob;
@@ -1699,7 +1981,7 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
             {"file", file},
             {"ok", false},
             {"source_signature", sig},
-            {"hydrated_features", features.size()},
+            {"source_features", features.size()},
             {"error", "failed to build parcel render cache blob"}
         };
     }
@@ -1720,9 +2002,11 @@ json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int
         {"mode", "warm-parcel-render-cache"},
         {"file", file},
         {"ok", ok},
+        {"reused_existing", false},
         {"source_signature", sig},
         {"source_signature_kind", sig_source_kind},
-        {"hydrated_features", features.size()},
+        {"source", source_used},
+        {"source_features", features.size()},
         {"render_features", blob.features.size()},
         {"vertices", blob.vertices.size()},
         {"indices", blob.indices.size()},
@@ -1739,19 +2023,21 @@ int warmParcelRenderCache(const fs::path& root, const std::string& file) {
 }
 
 int warmParcelRenderCacheAll(const fs::path& root) {
-    const fs::path hydration_dir = root / "data" / "cache" / "hydration";
+    const fs::path layers_dir = root / "data" / "provenance" / "stored";
     std::error_code ec;
-    if (!fs::exists(hydration_dir, ec)) {
-        std::cerr << "hydration cache directory missing: " << hydration_dir << '\n';
+    if (!fs::exists(layers_dir, ec)) {
+        std::cerr << "layers directory missing: " << layers_dir << '\n';
         return 2;
     }
 
     std::vector<std::string> candidates;
-    for (const auto& entry : fs::directory_iterator(hydration_dir, ec)) {
+    for (const auto& entry : fs::directory_iterator(layers_dir, ec)) {
         if (ec) break;
         if (!entry.is_regular_file()) continue;
         const std::string name = entry.path().filename().string();
-        if (name.ends_with(".bin")) candidates.push_back(name.substr(0, name.size() - std::strlen(".bin")));
+        if (name.ends_with(".geojson.canonical.bin")) {
+            candidates.push_back(name.substr(0, name.size() - std::strlen(".canonical.bin")));
+        }
     }
     std::sort(candidates.begin(), candidates.end());
     candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
@@ -1779,37 +2065,26 @@ int warmParcelRenderCacheAll(const fs::path& root) {
     return failed_count == 0 ? 0 : 1;
 }
 
-json skippedWarmStep(const std::string& mode, const std::string& file, const std::string& reason) {
-    return {
-        {"mode", mode},
-        {"file", file},
-        {"ok", false},
-        {"skipped", true},
-        {"reason", reason}
-    };
-}
-
-json buildGeometryArtifactForHydratedLayer(
+json buildGeometryArtifactForLoadedLayer(
     const fs::path& root,
     const LayerDef& layer,
-    const std::vector<LayerDef::FeatureGeom>& features,
+    const std::vector<LayerDef::FeatureRecord>& features,
     int& exit_code) {
     exit_code = 0;
     const fs::path layer_path = resolveStoredLayerPath(root, layer);
     std::string sig;
     std::string sig_source_kind;
     if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
-        std::error_code exists_ec;
-        const bool source_exists = fs::exists(layer_path, exists_ec) && !exists_ec;
+        const bool source_exists = layerRuntimeSourceMaterialized(root, layer);
         if (source_exists) exit_code = 1;
         return {
             {"layer_file", layer.file},
             {"layer_name", layer.name},
             {"ok", false},
             {"skipped", !source_exists},
-            {"reason", !source_exists ? "source layer file is not materialized in this workspace" : std::string()},
+            {"reason", !source_exists ? "canonical layer binary is not materialized in this workspace" : std::string()},
             {"error", source_exists ? "failed to resolve source signature" : std::string()},
-            {"source_path", layer_path.string()}
+            {"source_path", canonicalLayerPathForFile(root, layer.file).string()}
         };
     }
     if (features.empty()) {
@@ -1818,7 +2093,7 @@ json buildGeometryArtifactForHydratedLayer(
             {"layer_name", layer.name},
             {"ok", false},
             {"skipped", true},
-            {"reason", "no hydrated features"},
+            {"reason", "no source features"},
             {"source_path", layer_path.string()},
             {"source_signature", sig},
             {"source_signature_kind", sig_source_kind}
@@ -1826,6 +2101,26 @@ json buildGeometryArtifactForHydratedLayer(
     }
 
     const GeometryArtifactClass detected_class = detectGeometryArtifactClass(layer, features);
+    json existing_stats;
+    if (loadExistingGeometryArtifactForLayer(root, layer.file, detected_class, sig, existing_stats)) {
+        return {
+            {"layer_file", layer.file},
+            {"layer_name", layer.name},
+            {"geometry_class", geometryArtifactClassName(detected_class)},
+            {"ok", true},
+            {"reused_existing", true},
+            {"source_path", layer_path.string()},
+            {"source_signature", sig},
+            {"source_signature_kind", sig_source_kind},
+            {"created_files", json::array({existing_stats["artifact_path"]})},
+            {"feature_count", existing_stats.value("feature_count", 0)},
+            {"vertex_count", existing_stats.value("vertex_count", 0)},
+            {"fill_index_count", existing_stats.value("fill_index_count", 0)},
+            {"line_index_count", existing_stats.value("line_index_count", 0)},
+            {"chunk_count", existing_stats.value("chunk_count", 0)},
+            {"error", std::string()}
+        };
+    }
 
     if (detected_class == GeometryArtifactClass::Point) {
         PointGeometryArtifact artifact;
@@ -1852,6 +2147,7 @@ json buildGeometryArtifactForHydratedLayer(
             {"layer_name", layer.name},
             {"geometry_class", "point"},
             {"ok", ok},
+            {"reused_existing", false},
             {"source_path", layer_path.string()},
             {"source_signature", sig},
             {"source_signature_kind", sig_source_kind},
@@ -1888,6 +2184,7 @@ json buildGeometryArtifactForHydratedLayer(
             {"layer_name", layer.name},
             {"geometry_class", "polyline"},
             {"ok", ok},
+            {"reused_existing", false},
             {"source_path", layer_path.string()},
             {"source_signature", sig},
             {"source_signature_kind", sig_source_kind},
@@ -1924,6 +2221,7 @@ json buildGeometryArtifactForHydratedLayer(
         {"layer_name", layer.name},
         {"geometry_class", "polygon"},
         {"ok", ok},
+        {"reused_existing", false},
         {"source_path", layer_path.string()},
         {"source_signature", sig},
         {"source_signature_kind", sig_source_kind},
@@ -2019,41 +2317,93 @@ std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> readU
 }
 
 json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
+    constexpr const char* kMode = "build-geometry-duckdb-artifacts";
+    const auto started_at = std::chrono::steady_clock::now();
     std::vector<LayerDef> layers = loadManifest(root);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
     const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+    emitCliProgress(
+        kMode,
+        "start",
+        "manifest_layers=" + std::to_string(layers.size()) +
+            " worker_count=" + std::to_string(worker_count) +
+            " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
 
-    HeadlessLayerHydrationSummary hydration_summary;
-    const bool hydration_ok = hydrateLocalLayersHeadless(
-        root,
-        layers,
-        HeadlessLayerHydrationOptions{worker_count, false},
-        hydration_summary);
+    LocalLayerLoadSummary load_summary;
+    emitCliProgress(kMode, "load", "loading local materialized layers");
+    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary);
+    emitCliProgress(
+        kMode,
+        "load-complete",
+        "requested=" + std::to_string(load_summary.requested_layer_count) +
+            " loaded=" + std::to_string(load_summary.loaded_layer_count) +
+            " failed=" + std::to_string(load_summary.failed_layer_count) +
+            " skipped_missing=" + std::to_string(load_summary.skipped_missing_layer_count) +
+            " features=" + std::to_string(load_summary.total_feature_count) +
+            " elapsed=" + formatElapsedMs(load_summary.elapsed_ms));
 
     json geometry_results = json::array();
     std::unordered_map<std::string, json> geometry_result_by_file;
     size_t geometry_ok_count = 0;
     size_t geometry_failed_count = 0;
     size_t geometry_skipped_count = 0;
+    emitCliProgress(
+        kMode,
+        "geometry",
+        "building compiled geometry artifacts for " + std::to_string(layers.size()) + " manifest layers");
     for (size_t li = 0; li < layers.size(); ++li) {
         int one_exit = 0;
-        json one = buildGeometryArtifactForHydratedLayer(root, layers[li], layers[li].features, one_exit);
+        json one = buildGeometryArtifactForLoadedLayer(root, layers[li], layers[li].features, one_exit);
         geometry_result_by_file[layers[li].file] = one;
         geometry_results.push_back(one);
         if (one.value("skipped", false)) geometry_skipped_count += 1;
         else if (one_exit == 0) geometry_ok_count += 1;
         else geometry_failed_count += 1;
+        const std::string status =
+            one.value("skipped", false) ? "skipped" : (one_exit == 0 ? "ok" : "failed");
+        std::string detail =
+            std::to_string(li + 1) + "/" + std::to_string(layers.size()) +
+            " " + layers[li].file +
+            " status=" + status;
+        const std::string geometry_class = one.value("geometry_class", std::string());
+        if (!geometry_class.empty()) detail += " class=" + geometry_class;
+        const std::string reason = one.value("reason", std::string());
+        if (!reason.empty()) detail += " reason=" + reason;
+        const std::string error = one.value("error", std::string());
+        if (!error.empty()) detail += " error=" + error;
+        emitCliProgress(kMode, "geometry", detail);
     }
+    emitCliProgress(
+        kMode,
+        "geometry-complete",
+        "ok=" + std::to_string(geometry_ok_count) +
+            " failed=" + std::to_string(geometry_failed_count) +
+            " skipped=" + std::to_string(geometry_skipped_count));
 
+    emitCliProgress(kMode, "duckdb", "building parcel consolidation artifacts");
     WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
     ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
+    emitCliProgress(
+        kMode,
+        "duckdb",
+        "rebuilding analytics database from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
     DuckDbAnalytics analytics(root);
-    const bool duckdb_ok = hydration_ok && analytics.rebuild(layers, artifacts.unified_parcels);
+    const bool duckdb_reused_existing = load_ok && !analytics.needsRebuild(layers);
+    const bool duckdb_ok =
+        load_ok && (duckdb_reused_existing || analytics.rebuild(layers, artifacts.unified_parcels));
+    emitCliProgress(
+        kMode,
+        "duckdb-complete",
+        "ok=" + std::string(duckdb_ok ? "true" : "false") +
+            " reused_existing=" + std::string(duckdb_reused_existing ? "true" : "false") +
+            " db_path=" + analytics.status().db_path +
+            " message=" + analytics.status().message);
 
     const fs::path db_path = root / "data" / "worldsim.duckdb";
     const std::vector<std::string> duckdb_table_names = {
         "layer_features",
+        "layer_feature_properties",
         "unified_parcels",
         "parcel_events",
         "analytics_build_info",
@@ -2069,6 +2419,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     };
     std::unordered_map<std::string, std::vector<std::string>> columns_by_table;
     std::unordered_map<std::string, uint64_t> layer_feature_counts;
+    std::unordered_map<std::string, uint64_t> layer_property_counts;
     std::unordered_map<std::string, uint64_t> import_audit_counts;
     std::unordered_map<std::string, uint64_t> geography_collection_counts;
     std::unordered_map<std::string, uint64_t> anambra_runtime_counts;
@@ -2082,6 +2433,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         duckdb::DuckDB db(db_path);
         duckdb::Connection con(db);
         layer_feature_counts = readDuckDbCountsByLayerFile(con, "layer_features", "layer_file", "count(*)");
+        layer_property_counts = readDuckDbCountsByLayerFile(con, "layer_feature_properties", "layer_file", "count(*)");
         import_audit_counts = readDuckDbCountsByLayerFile(con, "import_audit", "layer_file", "count(*)");
         geography_collection_counts = readDuckDbCountsByLayerFile(con, "geography_feature_collections", "layer_file", "sum(feature_count)");
         anambra_runtime_counts = readDuckDbCountsByLayerFile(con, "anambra_runtime_features", "layer_file", "count(*)");
@@ -2107,6 +2459,13 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
                 {"table", "layer_features"},
                 {"rows_created", it->second},
                 {"columns", columns_by_table["layer_features"]}
+            });
+        }
+        if (auto it = layer_property_counts.find(layer.file); it != layer_property_counts.end()) {
+            duckdb_outputs.push_back({
+                {"table", "layer_feature_properties"},
+                {"rows_created", it->second},
+                {"columns", columns_by_table["layer_feature_properties"]}
             });
         }
         if (auto it = import_audit_counts.find(layer.file); it != import_audit_counts.end()) {
@@ -2177,19 +2536,27 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         });
     }
 
+    const double total_elapsed_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - started_at).count();
+    emitCliProgress(
+        kMode,
+        "complete",
+        "ok=" + std::string((load_ok && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
+            " elapsed=" + formatElapsedMs(total_elapsed_ms));
+
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
-        {"ok", hydration_ok && geometry_failed_count == 0 && duckdb_ok},
+        {"ok", load_ok && geometry_failed_count == 0 && duckdb_ok},
         {"worker_count", worker_count},
-        {"hydration", {
-            {"ok", hydration_ok},
-            {"local_layer_count", hydration_summary.local_layer_count},
-            {"requested_layer_count", hydration_summary.requested_layer_count},
-            {"hydrated_layer_count", hydration_summary.hydrated_layer_count},
-            {"failed_layer_count", hydration_summary.failed_layer_count},
-            {"skipped_missing_layer_count", hydration_summary.skipped_missing_layer_count},
-            {"total_feature_count", hydration_summary.total_feature_count},
-            {"elapsed_ms", hydration_summary.elapsed_ms}
+        {"source_load", {
+            {"ok", load_ok},
+            {"local_layer_count", load_summary.local_layer_count},
+            {"requested_layer_count", load_summary.requested_layer_count},
+            {"loaded_layer_count", load_summary.loaded_layer_count},
+            {"failed_layer_count", load_summary.failed_layer_count},
+            {"skipped_missing_layer_count", load_summary.skipped_missing_layer_count},
+            {"total_feature_count", load_summary.total_feature_count},
+            {"elapsed_ms", load_summary.elapsed_ms}
         }},
         {"geometry", {
             {"ok_count", geometry_ok_count},
@@ -2199,6 +2566,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         }},
         {"duckdb", {
             {"ok", duckdb_ok},
+            {"reused_existing", duckdb_reused_existing},
             {"db_path", db_path.string()},
             {"available", analytics.status().available},
             {"last_rebuild_ok", analytics.status().last_rebuild_ok},
@@ -2209,54 +2577,6 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         }},
         {"layers", std::move(layer_outputs)}
     };
-}
-
-json warmParcelRuntimeStackOne(const fs::path& root, std::string file, int& exit_code) {
-    if (file.empty()) file = "regional_parcels.geojson";
-    exit_code = 0;
-    if (!isBareLayerFilename(file)) {
-        exit_code = 2;
-        return {
-            {"mode", "warm-parcel-runtime-stack"},
-            {"file", file},
-            {"ok", false},
-            {"error", "requires a layer filename, not a path"}
-        };
-    }
-
-    int hydration_exit = 0;
-    json hydration = warmHydrationCacheOne(root, file, hydration_exit);
-
-    int render_exit = 0;
-    json render = hydration_exit == 0
-        ? warmParcelRenderCacheOne(root, file, render_exit)
-        : skippedWarmStep("warm-parcel-render-cache", file, "hydration cache warm failed");
-
-    const bool ok = hydration_exit == 0 && render_exit == 0;
-    exit_code = ok ? 0 : 1;
-    return {
-        {"mode", "warm-parcel-runtime-stack"},
-        {"file", file},
-        {"ok", ok},
-        {"hydration_cache", std::move(hydration)},
-        {"parcel_render_cache", std::move(render)},
-        {"canonical_binary", {
-            {"rebuilt", false},
-            {"reason", "canonical binary rebuild/export remains explicit"}
-        }},
-        {"duckdb", {
-            {"rebuilt", false},
-            {"reason", "DuckDB analytics rebuild remains explicit and is not required for parcel geometry rendering"}
-        }},
-        {"health_check", "run --parcel-artifact-health " + file}
-    };
-}
-
-int warmParcelRuntimeStack(const fs::path& root, const std::string& file) {
-    int exit_code = 0;
-    const json out = warmParcelRuntimeStackOne(root, file, exit_code);
-    std::cout << out.dump(2) << '\n';
-    return exit_code;
 }
 
 int compilePointGeometryArtifact(const fs::path& root, std::string file) {
@@ -2310,14 +2630,39 @@ int compilePointGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    std::string sig;
+    std::string source_used;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::string error;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
+        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        json out = {{"mode", "compile-point-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Point) {
         json out = {{"mode", "compile-point-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not point"}};
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    json existing_stats;
+    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Point, sig, existing_stats)) {
+        json out = {
+            {"mode", "compile-point-geometry"},
+            {"file", file},
+            {"ok", true},
+            {"reused_existing", true},
+            {"layer_path", layer_path.string()},
+            {"artifact_path", existing_stats["artifact_path"]},
+            {"source_signature", sig},
+            {"features", existing_stats["feature_count"]},
+            {"points", existing_stats["vertex_count"]},
+            {"chunks", existing_stats["chunk_count"]}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 0;
+    }
     PointGeometryArtifact artifact;
-    const std::string sig = fileSignature(layer_path);
     const bool built = buildPointGeometryArtifact(*layer, features, sig, artifact);
     if (!built) {
         json out = {
@@ -2340,6 +2685,7 @@ int compilePointGeometryArtifact(const fs::path& root, std::string file) {
         {"mode", "compile-point-geometry"},
         {"file", file},
         {"ok", roundtrip_ok},
+        {"reused_existing", false},
         {"layer_path", layer_path.string()},
         {"artifact_path", artifact_path.string()},
         {"source_signature", sig},
@@ -2403,7 +2749,12 @@ int validatePointGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::string sig = fileSignature(layer_path);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+        json out = {{"mode", "validate-point-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", "failed to resolve canonical source signature"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point);
     PointGeometryArtifact artifact;
     const bool ok = loadBinaryPointGeometryArtifact(artifact_path, sig, artifact);
@@ -2457,14 +2808,40 @@ int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    std::string sig;
+    std::string source_used;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::string error;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
+        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Polyline) {
         json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not polyline"}};
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    json existing_stats;
+    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polyline, sig, existing_stats)) {
+        json out = {
+            {"mode", "compile-polyline-geometry"},
+            {"file", file},
+            {"ok", true},
+            {"reused_existing", true},
+            {"layer_path", layer_path.string()},
+            {"artifact_path", existing_stats["artifact_path"]},
+            {"source_signature", sig},
+            {"features", existing_stats["feature_count"]},
+            {"vertices", existing_stats["vertex_count"]},
+            {"line_indices", existing_stats["line_index_count"]},
+            {"chunks", existing_stats["chunk_count"]}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 0;
+    }
     PolylineGeometryArtifact artifact;
-    const std::string sig = fileSignature(layer_path);
     const bool built = buildPolylineGeometryArtifact(*layer, features, sig, artifact);
     if (!built) {
         json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "failed to build polyline geometry artifact"}};
@@ -2480,6 +2857,7 @@ int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
         {"mode", "compile-polyline-geometry"},
         {"file", file},
         {"ok", roundtrip_ok},
+        {"reused_existing", false},
         {"layer_path", layer_path.string()},
         {"artifact_path", artifact_path.string()},
         {"source_signature", sig},
@@ -2525,7 +2903,12 @@ int validatePolylineGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::string sig = fileSignature(layer_path);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+        json out = {{"mode", "validate-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", "failed to resolve canonical source signature"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline);
     PolylineGeometryArtifact artifact;
     const bool ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact);
@@ -2598,14 +2981,41 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::vector<LayerDef::FeatureGeom> features = loadLayerPointsFromFile(layer_path);
+    std::string sig;
+    std::string source_used;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::string error;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
+        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        json out = {{"mode", "compile-polygon-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     if (detectGeometryArtifactClass(*layer, features) != GeometryArtifactClass::Polygon) {
         json out = {{"mode", "compile-polygon-geometry"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "layer source geometry is not polygon"}};
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    json existing_stats;
+    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polygon, sig, existing_stats)) {
+        json out = {
+            {"mode", "compile-polygon-geometry"},
+            {"file", file},
+            {"ok", true},
+            {"reused_existing", true},
+            {"layer_path", layer_path.string()},
+            {"artifact_path", existing_stats["artifact_path"]},
+            {"source_signature", sig},
+            {"features", existing_stats["feature_count"]},
+            {"vertices", existing_stats["vertex_count"]},
+            {"fill_indices", existing_stats["fill_index_count"]},
+            {"line_indices", existing_stats["line_index_count"]},
+            {"chunks", existing_stats["chunk_count"]}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 0;
+    }
     PolygonGeometryArtifact artifact;
-    const std::string sig = fileSignature(layer_path);
     const bool built = buildPolygonGeometryArtifact(*layer, features, sig, artifact);
     if (!built) {
         json out = {
@@ -2628,6 +3038,7 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
         {"mode", "compile-polygon-geometry"},
         {"file", file},
         {"ok", roundtrip_ok},
+        {"reused_existing", false},
         {"layer_path", layer_path.string()},
         {"artifact_path", artifact_path.string()},
         {"source_signature", sig},
@@ -2693,7 +3104,12 @@ int validatePolygonGeometryArtifact(const fs::path& root, std::string file) {
     }
 
     const fs::path layer_path = resolveStoredLayerPath(root, *layer);
-    const std::string sig = fileSignature(layer_path);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+        json out = {{"mode", "validate-polygon-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", "failed to resolve canonical source signature"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
     const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
     PolygonGeometryArtifact artifact;
     const bool ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact);
@@ -2724,10 +3140,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         std::string arg(argv[i]);
         if (arg == "--vacancy-selftest") {
             options.run_vacancy_selftest = true;
-            continue;
-        }
-        if (arg == "--hydration-cache-selftest") {
-            options.run_cache_selftest = true;
             continue;
         }
         if (arg == "--projection-cache-selftest") {
@@ -2827,22 +3239,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_build_geometry_duckdb_artifacts = true;
             continue;
         }
-        if (arg == "--warm-parcel-runtime-stack") {
-            options.run_warm_parcel_runtime_stack = true;
-            if (i + 1 < argc && argv[i + 1][0] != '-') options.warm_parcel_runtime_stack_file = argv[++i];
-            continue;
-        }
-        if (arg == "--warm-hydration-cache") {
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                options.run_warm_hydration_cache = true;
-                options.warm_hydration_cache_file = argv[++i];
-            }
-            continue;
-        }
-        if (arg == "--warm-hydration-cache-all") {
-            options.run_warm_hydration_cache_all = true;
-            continue;
-        }
         if (arg == "--warm-parcel-render-cache") {
             if (i + 1 < argc && argv[i + 1][0] != '-') {
                 options.run_warm_parcel_render_cache = true;
@@ -2854,19 +3250,9 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_warm_parcel_render_cache_all = true;
             continue;
         }
-        if (arg.rfind("--warm-hydration-cache=", 0) == 0) {
-            options.run_warm_hydration_cache = true;
-            options.warm_hydration_cache_file = arg.substr(std::strlen("--warm-hydration-cache="));
-            continue;
-        }
         if (arg.rfind("--warm-parcel-render-cache=", 0) == 0) {
             options.run_warm_parcel_render_cache = true;
             options.warm_parcel_render_cache_file = arg.substr(std::strlen("--warm-parcel-render-cache="));
-            continue;
-        }
-        if (arg.rfind("--warm-parcel-runtime-stack=", 0) == 0) {
-            options.run_warm_parcel_runtime_stack = true;
-            options.warm_parcel_runtime_stack_file = arg.substr(std::strlen("--warm-parcel-runtime-stack="));
             continue;
         }
         if (arg.rfind("--inspect-canonical-parcel-binary=", 0) == 0) {
@@ -2923,12 +3309,25 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             }
             continue;
         }
+        if (arg == "--generate-canonical-files") {
+            options.run_generate_canonical_files = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                options.generate_canonical_phase = argv[++i];
+            } else {
+                options.generate_canonical_phase = "all";
+            }
+            continue;
+        }
         if (arg == "--rebuild-duckdb-analytics") {
             options.run_rebuild_duckdb_analytics = true;
             continue;
         }
         if (arg == "--inspect-duckdb-geography-tables") {
             options.run_inspect_duckdb_geography_tables = true;
+            continue;
+        }
+        if (arg == "--report-duckdb-coverage") {
+            options.run_report_duckdb_coverage = true;
             continue;
         }
         if (arg == "--build-parcel-matched-layers") {
@@ -2948,6 +3347,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--download-layers=", 0) == 0) {
             options.run_download_layers = true;
             options.download_phase = arg.substr(std::strlen("--download-layers="));
+            continue;
+        }
+        if (arg.rfind("--generate-canonical-files=", 0) == 0) {
+            options.run_generate_canonical_files = true;
+            options.generate_canonical_phase = arg.substr(std::strlen("--generate-canonical-files="));
             continue;
         }
         if (arg.rfind("--color-editor=", 0) == 0) {
@@ -2988,14 +3392,13 @@ void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
         << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--generate-canonical-files [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
         << "       worldsim3 --rebuild-duckdb-analytics [--reserve-cores N]\n"
         << "       worldsim3 --inspect-duckdb-geography-tables\n"
+        << "       worldsim3 --report-duckdb-coverage\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
-        << "       worldsim3 --warm-hydration-cache LAYER_FILE\n"
-        << "       worldsim3 --warm-hydration-cache-all\n"
         << "       worldsim3 --warm-parcel-render-cache LAYER_FILE\n"
         << "       worldsim3 --warm-parcel-render-cache-all\n"
-        << "       worldsim3 --warm-parcel-runtime-stack [LAYER_FILE]\n"
         << "       worldsim3 --canonical-parcel-binary-selftest\n"
         << "       worldsim3 --inspect-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --validate-canonical-parcel-binary [LAYER_FILE]\n"
@@ -3007,7 +3410,6 @@ void printWorldsimUsage() {
         << "       worldsim3 --compile-polygon-geometry LAYER_FILE\n"
         << "       worldsim3 --validate-polygon-geometry LAYER_FILE\n"
         << "       worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]\n"
-        << "       worldsim3 --hydration-cache-selftest\n"
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
@@ -3029,9 +3431,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_vacancy_selftest) {
         return runVacancySelftest(root);
-    }
-    if (options.run_cache_selftest) {
-        return runHydrationCacheSelftest(root);
     }
     if (options.run_projection_cache_selftest) {
         return runProjectionCacheSelftest();
@@ -3101,15 +3500,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
         std::cout << out.dump(2) << '\n';
         return out.value("ok", false) ? 0 : 1;
     }
-    if (options.run_warm_parcel_runtime_stack) {
-        return warmParcelRuntimeStack(root, options.warm_parcel_runtime_stack_file);
-    }
-    if (options.run_warm_hydration_cache) {
-        return warmHydrationCache(root, options.warm_hydration_cache_file);
-    }
-    if (options.run_warm_hydration_cache_all) {
-        return warmHydrationCacheAll(root);
-    }
     if (options.run_warm_parcel_render_cache) {
         return warmParcelRenderCache(root, options.warm_parcel_render_cache_file);
     }
@@ -3122,11 +3512,20 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
             options.download_phase.empty() ? "all" : options.download_phase,
             options.include_large_downloads);
     }
+    if (options.run_generate_canonical_files) {
+        return generateCanonicalFilesCli(
+            root,
+            options.generate_canonical_phase.empty() ? "all" : options.generate_canonical_phase,
+            options.include_large_downloads);
+    }
     if (options.run_rebuild_duckdb_analytics) {
         return rebuildDuckDbAnalyticsCli(root, options.reserve_cores_set ? options.reserve_cores : 0);
     }
     if (options.run_inspect_duckdb_geography_tables) {
         return inspectDuckDbGeographyTablesCli(root);
+    }
+    if (options.run_report_duckdb_coverage) {
+        return reportDuckDbCoverageCli(root);
     }
     if (options.run_build_parcel_matched_layers) {
         ensureParcelMatchedEventLayers(root, options.force_build_parcel_matched_layers, &std::cout);

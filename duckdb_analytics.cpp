@@ -19,6 +19,8 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+constexpr int kAnalyticsSchemaVersion = 2;
+
 std::string sqlQuote(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
@@ -36,17 +38,15 @@ std::string lowerName(std::string s) {
     return s;
 }
 
-std::string prop(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
-    return firstDisplayProperty(fg, keys);
-}
-
-std::string propsJson(const LayerDef::FeatureGeom& fg) {
+std::string propsJson(const LayerDef::FeatureRecord& fg) {
     json obj = json::object();
-    for (const auto& kv : fg.properties) obj[kv.first] = kv.second;
+    if (const FeaturePropertyPairs* props = getPropertyPairs(fg)) {
+        for (const auto& kv : *props) obj[kv.first] = kv.second;
+    }
     return obj.dump();
 }
 
-double numericProp(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
+double numericProp(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys) {
     return parseNumericField(firstDisplayProperty(fg, keys));
 }
 
@@ -92,16 +92,135 @@ std::string isoNowUtc() {
 
 std::string analyticsBuildSignature(const fs::path& root, const std::vector<LayerDef>& layers) {
     std::ostringstream sig;
+    sig << "analytics_schema_v" << kAnalyticsSchemaVersion << "|";
     for (const auto& layer : layers) {
         sig << layer.file << ":runtime=" << (layer.runtime_load ? 1 : 0)
             << ":duckdb=" << (layer.duckdb_ingest ? 1 : 0)
             << ":role=" << layer.duckdb_role << "|";
         if (!layer.duckdb_ingest) continue;
-        const fs::path layer_path = resolveStoredLayerPath(root, layer);
-        if (!fs::exists(layer_path)) continue;
-        sig << "sig=" << fileSignature(layer_path) << "|";
+        fs::path sig_path;
+        if (layer.import_type == "socrata_csv_properties") {
+            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.csv");
+        } else if (layer.import_type == "xlsx_point_table") {
+            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.xlsx");
+        } else if (layer.import_type == "json_point_feed") {
+            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".json");
+        } else if (layer.import_type == "overpass_json_point_feed") {
+            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".json");
+        } else if (layer.import_type == "zipped_shapefile") {
+            sig_path = provenanceSourceArtifactPath(root, layer, layer.file + ".source.zip");
+        } else {
+            sig_path = canonicalLayerPath(root, layer);
+        }
+        if (!fs::exists(sig_path)) continue;
+        sig << "sig=" << fileSignature(sig_path) << "|";
     }
     return sig.str();
+}
+
+void appendSocrataHowardPropertyRows(
+    duckdb::Appender& appender,
+    duckdb::Appender& property_appender,
+    size_t layer_idx,
+    const LayerDef& layer,
+    const fs::path& csv_path,
+    size_t& feature_count) {
+    const auto rows = parseCsv(readFileBytes(csv_path));
+    if (rows.empty()) return;
+    std::unordered_map<std::string, size_t> col;
+    for (size_t i = 0; i < rows.front().size(); ++i) col[rows.front()[i]] = i;
+    auto get = [&](const std::vector<std::string>& row, const char* name) -> std::string {
+        auto it = col.find(name);
+        if (it == col.end() || it->second >= row.size()) return {};
+        return row[it->second];
+    };
+    const std::string category = categoryToString(layer.category);
+    const std::string duckdb_role = layer.duckdb_role.empty() ? "layer_feature" : layer.duckdb_role;
+    size_t local_feature_idx = 0;
+    for (size_t r = 1; r < rows.size(); ++r) {
+        const auto& row = rows[r];
+        const std::string acct = get(row, "account_id_mdp_field_acctid");
+        if (acct.empty()) continue;
+        FeaturePropertyPairs props;
+        props.reserve(col.size() + 16);
+        props.push_back({"jurisdiction", "Howard County"});
+        props.push_back({"source_file", "Maryland Real Property Assessments"});
+        for (const auto& [name, idx] : col) {
+            if (idx < row.size()) props.push_back({name, row[idx]});
+        }
+        props.push_back({"source_parcel_id", acct});
+        props.push_back({"account_id", acct});
+        props.push_back({"blocklot", acct});
+        props.push_back({"address", get(row, "mdp_street_address_mdp_field_address")});
+        props.push_back({"owner", ""});
+        props.push_back({"land_value", get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164")});
+        props.push_back({"improvement_value", get(row, "current_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165")});
+        props.push_back({"current_value", get(row, "current_assessment_year_total_assessment_sdat_field_172")});
+        props.push_back({"sale_price", get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")});
+        props.push_back({"sale_date", get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89")});
+        props.push_back({"year_built", get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")});
+        props.push_back({"sdat_link", get(row, "real_property_search_link")});
+        props.push_back({"finder_online_link", get(row, "finder_online_link")});
+
+        const std::string address = get(row, "mdp_street_address_mdp_field_address");
+        const double land_value = parseNumericField(get(row, "current_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164"));
+        const double improvement_value = parseNumericField(get(row, "current_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165"));
+        const double current_value = parseNumericField(get(row, "current_assessment_year_total_assessment_sdat_field_172"));
+        const std::string feature_id = layer.file + ":" + acct;
+
+        appender.BeginRow();
+        appender.Append<uint64_t>((uint64_t)layer_idx);
+        appender.Append<const char*>(layer.name.c_str());
+        appender.Append<const char*>(layer.file.c_str());
+        appender.Append<const char*>(duckdb_role.c_str());
+        appender.Append<uint64_t>((uint64_t)local_feature_idx);
+        appender.Append<const char*>(feature_id.c_str());
+        appender.Append<const char*>(layer.scale.c_str());
+        appender.Append<const char*>(category.c_str());
+        appender.Append<const char*>(layer.provenance_world.c_str());
+        appender.Append<const char*>(layer.provenance_nation_state.c_str());
+        appender.Append<const char*>(layer.provenance_state_region.c_str());
+        appender.Append<const char*>(layer.provenance_county_city.c_str());
+        appender.Append<double>(0.0);
+        appender.Append<double>(0.0);
+        appender.Append<double>(0.0);
+        appender.Append<double>(0.0);
+        appender.Append<const char*>(acct.c_str());
+        appender.Append<const char*>("");
+        appender.Append<const char*>(address.c_str());
+        appender.Append<const char*>(get(row, "mdp_street_address_zip_code_mdp_field_zipcode").c_str());
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<double>(current_value > 0.0 ? current_value : (land_value + improvement_value));
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("Maryland Real Property Assessments");
+        appender.Append<const char*>(get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89").c_str());
+        appender.Append<const char*>("");
+        appender.Append<int32_t>((int32_t)parseNumericField(get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")));
+        appender.Append<double>(parseNumericField(get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")));
+        json prop_json = json::object();
+        for (const auto& kv : props) prop_json[kv.first] = kv.second;
+        const std::string pj = prop_json.dump();
+        appender.Append<const char*>(pj.c_str());
+        appender.EndRow();
+
+        for (const auto& kv : props) {
+            property_appender.BeginRow();
+            property_appender.Append<uint64_t>((uint64_t)layer_idx);
+            property_appender.Append<const char*>(layer.name.c_str());
+            property_appender.Append<const char*>(layer.file.c_str());
+            property_appender.Append<const char*>(duckdb_role.c_str());
+            property_appender.Append<uint64_t>((uint64_t)local_feature_idx);
+            property_appender.Append<const char*>(feature_id.c_str());
+            property_appender.Append<const char*>(kv.first.c_str());
+            property_appender.Append<const char*>(kv.second.c_str());
+            property_appender.EndRow();
+        }
+        ++local_feature_idx;
+        ++feature_count;
+    }
 }
 }
 
@@ -153,7 +272,7 @@ bool DuckDbAnalytics::validateExistingCache() {
             SELECT count(*)::BIGINT
             FROM information_schema.tables
             WHERE table_schema = 'main'
-              AND table_name IN ('layer_features', 'unified_parcels', 'parcel_events')
+              AND table_name IN ('layer_features', 'layer_feature_properties', 'unified_parcels', 'parcel_events')
         )SQL");
         if (!table_check || table_check->HasError() || table_check->RowCount() == 0) {
             status_.last_rebuild_ok = false;
@@ -161,7 +280,7 @@ bool DuckDbAnalytics::validateExistingCache() {
             return false;
         }
         const int64_t table_count = table_check->GetValue<int64_t>(0, 0);
-        if (table_count < 3) {
+        if (table_count < 4) {
             status_.last_rebuild_ok = false;
             status_.message = "DuckDB analytics cache is incomplete.";
             return false;
@@ -207,6 +326,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
 
         exec_or_throw("BEGIN TRANSACTION", "begin transaction");
         exec_or_throw("DROP TABLE IF EXISTS layer_features", "drop layer_features");
+        exec_or_throw("DROP TABLE IF EXISTS layer_feature_properties", "drop layer_feature_properties");
         exec_or_throw("DROP TABLE IF EXISTS unified_parcels", "drop unified_parcels");
         exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
         exec_or_throw("DROP TABLE IF EXISTS anambra_repository_sources", "drop anambra_repository_sources");
@@ -253,12 +373,33 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
             )
         )SQL", "create layer_features");
 
+        exec_or_throw(R"SQL(
+            CREATE TABLE layer_feature_properties (
+                layer_idx UBIGINT,
+                layer_name VARCHAR,
+                layer_file VARCHAR,
+                duckdb_role VARCHAR,
+                feature_idx UBIGINT,
+                feature_id VARCHAR,
+                property_key VARCHAR,
+                property_value VARCHAR
+            )
+        )SQL", "create layer_feature_properties");
+
         auto appender = duckdb::Appender(con, "layer_features");
+        auto property_appender = duckdb::Appender(con, "layer_feature_properties");
         size_t feature_count = 0;
         size_t layer_count = 0;
         for (size_t li = 0; li < layers.size(); ++li) {
             const auto& layer = layers[li];
             if (!layer.duckdb_ingest) continue;
+            if (layer.import_type == "socrata_csv_properties") {
+                const fs::path csv_path = provenanceSourceArtifactPath(root_, layer, layer.file + ".source.csv");
+                if (!fs::exists(csv_path)) continue;
+                layer_count++;
+                appendSocrataHowardPropertyRows(appender, property_appender, li, layer, csv_path, feature_count);
+                continue;
+            }
             if (layer.features.empty()) continue;
             layer_count++;
             const std::string category = categoryToString(layer.category);
@@ -267,14 +408,14 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 const auto& fg = layer.features[fi];
                 const std::string feature_id = featureStableIdForLayerFeature(layer, fg, fi);
                 const std::string blocklot = featureBlockLotJoinKey(fg);
-                std::string owner = toLowerAscii(trimDisplayValue(prop(fg, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"})));
-                const std::string address = prop(fg, {
+                std::string owner = toLowerAscii(trimDisplayValue(firstDisplayProperty(fg, {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"})));
+                const std::string address = firstDisplayProperty(fg, {
                     "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
                     "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
                     "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
                 });
-                const std::string zipcode = prop(fg, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
-                const std::string status = prop(fg, {"STATUS", "STATE", "CASE_STATUS"});
+                const std::string zipcode = firstDisplayProperty(fg, {"ZIP", "ZIPCODE", "POSTAL_CODE"});
+                const std::string status = firstDisplayProperty(fg, {"STATUS", "STATE", "CASE_STATUS"});
                 const std::string zoning = zoningClassKey(fg);
                 double value = numericProp(fg, {"value_usd", "property_value_usd", "TAXBASE", "ARTAXBAS", "SALEPRIC"});
                 const std::string feature_name = firstDisplayProperty(
@@ -282,13 +423,13 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 const std::string lga_name = firstDisplayProperty(fg, {"lganame"});
                 const std::string ward_name = firstDisplayProperty(fg, {"wardname"});
                 const std::string source_name = firstDisplayProperty(fg, {"source"});
-                const std::string event_date_text = prop(fg, {
+                const std::string event_date_text = firstDisplayProperty(fg, {
                     "event_date", "DateNotice", "DateIssue", "DateIssued", "Issue_Date_ISO",
                     "Issue_Date", "SALEDATE", "DATE", "CREATED_DATE", "RECORD_DATE"
                 });
-                const std::string event_status_hint = prop(fg, {"CASE_STATUS", "STATUS", "STATE"});
+                const std::string event_status_hint = firstDisplayProperty(fg, {"CASE_STATUS", "STATUS", "STATE"});
                 int event_year_hint = 0;
-                if (const std::string year_text = prop(fg, {"Issue_Year", "YEAR"}); !trimDisplayValue(year_text).empty()) {
+                if (const std::string year_text = firstDisplayProperty(fg, {"Issue_Year", "YEAR"}); !trimDisplayValue(year_text).empty()) {
                     event_year_hint = (int)parseNumericField(year_text);
                 }
                 double amount_usd_hint = numericProp(
@@ -329,10 +470,26 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 const std::string pj = propsJson(fg);
                 appender.Append<const char*>(pj.c_str());
                 appender.EndRow();
+
+                if (const FeaturePropertyPairs* props = getPropertyPairs(fg)) {
+                    for (const auto& kv : *props) {
+                        property_appender.BeginRow();
+                        property_appender.Append<uint64_t>((uint64_t)li);
+                        property_appender.Append<const char*>(layer.name.c_str());
+                        property_appender.Append<const char*>(layer.file.c_str());
+                        property_appender.Append<const char*>(duckdb_role.c_str());
+                        property_appender.Append<uint64_t>((uint64_t)fi);
+                        property_appender.Append<const char*>(feature_id.c_str());
+                        property_appender.Append<const char*>(kv.first.c_str());
+                        property_appender.Append<const char*>(kv.second.c_str());
+                        property_appender.EndRow();
+                    }
+                }
                 feature_count++;
             }
         }
         appender.Close();
+        property_appender.Close();
 
         exec_or_throw(R"SQL(
             CREATE TABLE unified_parcels (
@@ -370,8 +527,6 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         if (!unified_parcels.empty()) {
             auto parcel_appender = duckdb::Appender(con, "unified_parcels");
             for (const auto& parcel : unified_parcels) {
-                const LayerDef::FeatureGeom* parcel_geom = unifiedParcelGeometry(parcel, layers);
-                if (!parcel_geom) continue;
                 parcel_appender.BeginRow();
                 parcel_appender.Append<uint64_t>((uint64_t)parcel.parcel_layer_idx);
                 parcel_appender.Append<uint64_t>((uint64_t)parcel.parcel_feature_idx);
@@ -398,13 +553,115 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_appender.Append<int32_t>((int32_t)parcel.tax_sale_count);
                 parcel_appender.Append<double>(parcel.tax_lien_amount);
                 parcel_appender.Append<double>(parcel.tax_sale_amount);
-                parcel_appender.Append<double>(parcel_geom->extent.min_lon);
-                parcel_appender.Append<double>(parcel_geom->extent.min_lat);
-                parcel_appender.Append<double>(parcel_geom->extent.max_lon);
-                parcel_appender.Append<double>(parcel_geom->extent.max_lat);
+                parcel_appender.Append<double>(parcel.parcel_extent.min_lon);
+                parcel_appender.Append<double>(parcel.parcel_extent.min_lat);
+                parcel_appender.Append<double>(parcel.parcel_extent.max_lon);
+                parcel_appender.Append<double>(parcel.parcel_extent.max_lat);
                 parcel_appender.EndRow();
             }
             parcel_appender.Close();
+        } else {
+            exec_or_throw(R"SQL(
+                INSERT INTO unified_parcels
+                WITH parcel_rows AS (
+                    SELECT
+                        layer_idx AS parcel_layer_idx,
+                        feature_idx AS parcel_feature_idx,
+                        layer_file AS parcel_layer_file,
+                        blocklot,
+                        coalesce(nullif(json_extract_string(properties_json, '$.source_file'), ''), layer_file) AS parcel_source_file,
+                        min_lon,
+                        min_lat,
+                        max_lon,
+                        max_lat,
+                        owner AS parcel_owner,
+                        address AS parcel_address,
+                        zipcode AS parcel_zipcode,
+                        status AS parcel_status,
+                        try_cast(json_extract_string(properties_json, '$.land_value') AS DOUBLE) AS parcel_land_value,
+                        try_cast(json_extract_string(properties_json, '$.improvement_value') AS DOUBLE) AS parcel_improvement_value,
+                        try_cast(json_extract_string(properties_json, '$.current_value') AS DOUBLE) AS parcel_current_value,
+                        try_cast(json_extract_string(properties_json, '$.sale_price') AS DOUBLE) AS parcel_sale_price
+                    FROM layer_features
+                    WHERE scale = 'parcel'
+                ),
+                property_candidates AS (
+                    SELECT
+                        layer_idx AS property_layer_idx,
+                        feature_idx AS real_property_feature_idx,
+                        blocklot,
+                        layer_file,
+                        coalesce(nullif(json_extract_string(properties_json, '$.source_file'), ''), layer_file) AS property_source_file,
+                        owner,
+                        address,
+                        zipcode,
+                        status,
+                        try_cast(json_extract_string(properties_json, '$.land_value') AS DOUBLE) AS land_value,
+                        try_cast(json_extract_string(properties_json, '$.improvement_value') AS DOUBLE) AS improvement_value,
+                        try_cast(json_extract_string(properties_json, '$.current_value') AS DOUBLE) AS current_value,
+                        try_cast(json_extract_string(properties_json, '$.sale_price') AS DOUBLE) AS sale_price,
+                        row_number() OVER (
+                            PARTITION BY blocklot
+                            ORDER BY
+                                CASE
+                                    WHEN layer_file = 'regional_real_property.geojson' THEN 0
+                                    WHEN layer_file = 'real_property_information.geojson' THEN 1
+                                    WHEN layer_file = 'howard_county_real_property_assessments.geojson' THEN 2
+                                    ELSE 10
+                                END,
+                                feature_idx ASC
+                        ) AS rn
+                    FROM layer_features
+                    WHERE duckdb_role = 'parcel_record'
+                      AND blocklot IS NOT NULL
+                      AND blocklot <> ''
+                ),
+                chosen_property AS (
+                    SELECT *
+                    FROM property_candidates
+                    WHERE rn = 1
+                )
+                SELECT
+                    p.parcel_layer_idx,
+                    p.parcel_feature_idx,
+                    coalesce(cp.real_property_feature_idx, 18446744073709551615) AS real_property_feature_idx,
+                    p.blocklot,
+                    p.parcel_source_file,
+                    coalesce(cp.property_source_file, '') AS property_source_file,
+                    TRUE AS parcel_has_geometry,
+                    cp.real_property_feature_idx IS NOT NULL AS has_property_record,
+                    lower(coalesce(nullif(cp.owner, ''), nullif(p.parcel_owner, ''), '')) AS owner,
+                    coalesce(nullif(cp.owner, ''), nullif(p.parcel_owner, ''), '') AS owner_display,
+                    coalesce(nullif(cp.address, ''), nullif(p.parcel_address, ''), '') AS address,
+                    regexp_replace(lower(coalesce(nullif(cp.address, ''), nullif(p.parcel_address, ''), '')), '[^a-z0-9]', '', 'g') AS address_search,
+                    coalesce(nullif(cp.zipcode, ''), nullif(p.parcel_zipcode, ''), '') AS zipcode,
+                    coalesce(nullif(cp.status, ''), nullif(p.parcel_status, ''), '') AS status,
+                    coalesce(cp.land_value, p.parcel_land_value, 0.0) AS current_land,
+                    coalesce(cp.improvement_value, p.parcel_improvement_value, 0.0) AS current_improvements,
+                    coalesce(cp.current_value, p.parcel_current_value, 0.0) AS tax_base,
+                    coalesce(cp.sale_price, p.parcel_sale_price, 0.0) AS sale_price,
+                    CASE
+                        WHEN coalesce(cp.current_value, p.parcel_current_value, 0.0) > 0.0 THEN coalesce(cp.current_value, p.parcel_current_value, 0.0)
+                        WHEN coalesce(cp.land_value, p.parcel_land_value, 0.0) + coalesce(cp.improvement_value, p.parcel_improvement_value, 0.0) > 0.0
+                            THEN coalesce(cp.land_value, p.parcel_land_value, 0.0) + coalesce(cp.improvement_value, p.parcel_improvement_value, 0.0)
+                        ELSE coalesce(cp.sale_price, p.parcel_sale_price, 0.0)
+                    END AS current_value,
+                    0 AS vacant_notice_count,
+                    0 AS vacant_rehab_count,
+                    0 AS tax_lien_count,
+                    0 AS tax_sale_count,
+                    0.0 AS tax_lien_amount,
+                    0.0 AS tax_sale_amount,
+                    p.min_lon,
+                    p.min_lat,
+                    p.max_lon,
+                    p.max_lat
+                FROM parcel_rows p
+                LEFT JOIN chosen_property cp
+                  ON cp.blocklot = p.blocklot
+                 AND (cp.layer_file <> p.parcel_layer_file
+                      OR cp.real_property_feature_idx <> p.parcel_feature_idx)
+            )SQL", "build unified_parcels from analytics rows");
         }
 
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_blocklot ON layer_features(blocklot)", "index layer_features blocklot");
@@ -412,6 +669,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_owner ON layer_features(owner)", "index layer_features owner");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_layer_file ON layer_features(layer_file)", "index layer_features layer_file");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_features_geography ON layer_features(provenance_nation_state, provenance_state_region)", "index layer_features geography");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_properties_file ON layer_feature_properties(layer_file)", "index layer_feature_properties layer_file");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_properties_key ON layer_feature_properties(property_key)", "index layer_feature_properties property_key");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_properties_feature ON layer_feature_properties(layer_file, feature_idx)", "index layer_feature_properties feature");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_blocklot ON unified_parcels(blocklot)", "index unified_parcels blocklot");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)", "index unified_parcels owner");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_address_search ON unified_parcels(address_search)", "index unified_parcels address_search");

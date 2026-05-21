@@ -37,12 +37,12 @@ public:
     const std::vector<std::vector<ImVec2>>& getWorldRings(
         size_t layer_idx,
         uint32_t feature_idx,
-        const LayerDef::FeatureGeom& fg);
+        const LayerDef::FeatureRecord& fg);
 
     const std::pair<ImVec2, ImVec2>& getWorldExtent(
         size_t layer_idx,
         uint32_t feature_idx,
-        const LayerDef::FeatureGeom& fg);
+        const LayerDef::FeatureRecord& fg);
 
     void reserveWorldRings(size_t count);
     void setLowZoomDenseFillLayers(const std::vector<size_t>& layer_indices);
@@ -54,7 +54,7 @@ public:
     const CachedWorldFillGeometry& getWorldFillGeometry(
         size_t layer_idx,
         uint32_t feature_idx,
-        const LayerDef::FeatureGeom& fg);
+        const LayerDef::FeatureRecord& fg);
 
     const CachedFeatureColorStorage* findFeatureColorStorage(
         size_t layer_idx,
@@ -71,7 +71,7 @@ public:
         ImDrawList* draw,
         size_t layer_idx,
         uint32_t feature_idx,
-        const LayerDef::FeatureGeom& fg,
+        const LayerDef::FeatureRecord& fg,
         ImU32 fill_color);
 
     const std::vector<ImVec2>& scratchLine() const { return scratch_line_; }

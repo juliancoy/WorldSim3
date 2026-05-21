@@ -76,7 +76,7 @@ std::string derivedLayerRefreshInputsSignature(const DerivedLayerCachesContext& 
     return sig;
 }
 
-std::string ownerSearchValueFor(const LayerDef::FeatureGeom& fg) {
+std::string ownerSearchValueFor(const LayerDef::FeatureRecord& fg) {
     return toLowerAscii(trimDisplayValue(firstDisplayProperty(fg, {
         "owner", "owner_name",
         "OWNER_1", "OWNER_2", "OWNER_3",
@@ -326,6 +326,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             *ctx.unified_tax_generation_applied != *ctx.parcel_tax_generation_applied) {
             *ctx.unified_parcels = buildUnifiedParcels(UnifiedParcelBuildRequest{
                 &layers,
+                ctx.parcel_render_blob,
                 ctx.parcel_layer_idx,
                 ctx.real_property_layer_idx,
                 ctx.harmonized_real_property_features,
@@ -368,7 +369,7 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
                 ctx.parcel_owner_search_by_feature->push_back(row.owner_search);
             }
             ctx.real_property_owner_search_by_feature->reserve(ctx.harmonized_real_property_features->size());
-            for (const LayerDef::FeatureGeom& fg : *ctx.harmonized_real_property_features) {
+            for (const LayerDef::FeatureRecord& fg : *ctx.harmonized_real_property_features) {
                 ctx.real_property_owner_search_by_feature->push_back(ownerSearchValueFor(fg));
             }
             saveBinaryOwnerSearchCache(

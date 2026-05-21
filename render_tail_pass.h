@@ -42,7 +42,7 @@ struct RenderTailPassContext {
     const std::vector<int>* layer_normalize_mode = nullptr;
     const std::vector<size_t>* selected_parcel_indices = nullptr;
     MapProjectionCache* projection = nullptr;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
 };

@@ -26,6 +26,16 @@ int zoningLayerMatchScore(const LayerDef& layer) {
     if (non_point && containsCaseInsensitive(layer.name, "zoning")) return 1;
     return 0;
 }
+
+bool layerFileMaterialized(const fs::path& root, const std::string& file) {
+    return layerRuntimeSourceMaterializedForFile(root, file);
+}
+
+bool isDirectOperationalParcelLayer(const LayerDef& layer) {
+    return layer.scale == "parcel" &&
+           layer.duckdb_role == "parcel_record" &&
+           layer.file != "regional_parcels.geojson";
+}
 }
 
 LayerRegistry::LayerRegistry(const fs::path& root, const std::vector<LayerDef>& layers) {
@@ -35,14 +45,17 @@ LayerRegistry::LayerRegistry(const fs::path& root, const std::vector<LayerDef>& 
 void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& layers) {
     layers_ = &layers;
     indices_ = {};
-    const bool regional_parcels_available =
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson")) ||
-        fs::exists(resolveStoredLayerPathForFile(root, "regional_parcels.geojson").parent_path() / "regional_parcels.geojson.canonical.bin");
-    const bool regional_real_property_available = fs::exists(resolveStoredLayerPathForFile(root, "regional_real_property.geojson"));
+    const bool regional_real_property_available =
+        layerRuntimeSourceMaterializedForFile(root, "regional_real_property.geojson");
     int best_zoning_match = 0;
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].file == "regional_parcels.geojson" && regional_parcels_available) indices_.parcel_layer_idx = (int)i;
-        else if (layers[i].file == "parcel.geojson" && indices_.parcel_layer_idx < 0) indices_.parcel_layer_idx = (int)i;
+        if (indices_.parcel_layer_idx < 0 &&
+            isDirectOperationalParcelLayer(layers[i]) &&
+            layerFileMaterialized(root, layers[i].file)) {
+            indices_.parcel_layer_idx = (int)i;
+        } else if (layers[i].file == "parcel.geojson" && indices_.parcel_layer_idx < 0) {
+            indices_.parcel_layer_idx = (int)i;
+        }
         else if (layers[i].file == "regional_real_property.geojson" && regional_real_property_available) indices_.real_property_layer_idx = (int)i;
         else if (layers[i].file == "real_property_information.geojson" && indices_.real_property_layer_idx < 0) indices_.real_property_layer_idx = (int)i;
         else if (layers[i].file == "vacant_building_notices.geojson") indices_.vacant_notice_layer_idx = (int)i;

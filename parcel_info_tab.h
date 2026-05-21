@@ -18,9 +18,10 @@ struct ParcelInfoTabContext {
     size_t selected_parcel_idx = (size_t)-1;
     const std::vector<size_t>* selected_parcel_indices = nullptr;
     bool show_selected_parcel_details = false;
+    const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
+    int real_property_layer_idx = -1;
     bool* tab_requested = nullptr;
     std::function<void()> clear_parcel_selection;
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 };
 
 void drawParcelInfoTab(const ParcelInfoTabContext& ctx);
