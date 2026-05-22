@@ -37,8 +37,11 @@ curl -fsSI https://pub-d4e0151c335547aba07b8193dcb86951.r2.dev/worldsim3/apt/dis
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y cmake g++ python3 zlib1g-dev libvulkan-dev vulkan-tools libglfw3-dev xorg-dev libwayland-dev
+sudo apt-get install -y cmake g++ python3 zlib1g-dev libvulkan-dev vulkan-tools libglfw3-dev xorg-dev libwayland-dev libxkbcommon-dev
 ```
+
+`libxkbcommon-dev` is required only for GLFW's Wayland backend. Without it, the
+vendored GLFW build falls back to X11 support.
 
 ## Alternate install methods
 
