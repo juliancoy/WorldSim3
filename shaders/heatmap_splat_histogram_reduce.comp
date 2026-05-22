@@ -1,0 +1,40 @@
+#version 450
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 2) buffer Stats {
+    uint max_density;
+    uint density_cap;
+};
+
+layout(std430, binding = 4) readonly buffer Histogram {
+    uint bins[256];
+};
+
+layout(push_constant) uniform Push {
+    float percentile_clip;
+} pc;
+
+void main() {
+    uint total = 0u;
+    for (uint i = 0u; i < 256u; ++i) {
+        total += bins[i];
+    }
+
+    uint clip_bin = 255u;
+    if (total > 0u) {
+        float pct = clamp(pc.percentile_clip, 50.0, 100.0);
+        uint target_rank = uint(floor((pct / 100.0) * float(total - 1u)));
+        uint running = 0u;
+        for (uint i = 0u; i < 256u; ++i) {
+            running += bins[i];
+            if (running > target_rank) {
+                clip_bin = i;
+                break;
+            }
+        }
+    }
+
+    uint capped = uint(round(float(max(max_density, 1u)) * (float(clip_bin + 1u) / 256.0)));
+    density_cap = max(capped, 1u);
+}

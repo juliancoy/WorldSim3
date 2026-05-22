@@ -1,0 +1,35 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(std430, binding = 1) readonly buffer Accum {
+    uint data[];
+};
+
+layout(std430, binding = 2) readonly buffer Stats {
+    uint max_density;
+    uint density_cap;
+};
+
+layout(std430, binding = 4) buffer Histogram {
+    uint bins[256];
+};
+
+layout(push_constant) uniform Push {
+    uint width;
+    uint height;
+} pc;
+
+void main() {
+    uint x = gl_GlobalInvocationID.x;
+    uint y = gl_GlobalInvocationID.y;
+    if (x >= pc.width || y >= pc.height) return;
+
+    uint pix = y * pc.width + x;
+    uint base = pix * 7u;
+    uint density = data[base + 0u];
+    uint maxd = max(max_density, 1u);
+    if (density == 0u) return;
+    uint idx = min(255u, (density * 255u) / maxd);
+    atomicAdd(bins[idx], 1u);
+}

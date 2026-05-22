@@ -2,13 +2,13 @@
 """Build CoC-level homelessness trend layer by joining HUD PIT table to CoC geometry.
 
 Inputs:
-- CoC geometry GeoJSON (default: data/layers/hud_coc_boundaries_maryland.geojson)
+- CoC geometry GeoJSON (default: data/world/earth/nation_state/us/state_region/md/layers/hud_coc_boundaries_maryland.geojson)
 - HUD PIT workbook/csv
   - explicit: --pit-table /path/to/file
   - drop-zone default: data/inbox/hud_pit/
 
 Output:
-- data/layers/hud_pit_homelessness_2007_2024_by_coc.geojson
+- data/world/earth/nation_state/us/state_region/md/layers/hud_pit_homelessness_2007_2024_by_coc.geojson
 """
 
 from __future__ import annotations
@@ -135,10 +135,14 @@ def resolve_pit_path(explicit: str | None) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build HUD PIT CoC homelessness trend GeoJSON layer")
-    ap.add_argument("--coc-geojson", default="data/layers/hud_coc_boundaries_maryland.geojson")
+    ap.add_argument(
+        "--coc-geojson",
+        default="data/world/earth/nation_state/us/state_region/md/layers/hud_coc_boundaries_maryland.geojson")
     ap.add_argument("--pit-table", default=None, help="Local path to HUD PIT table (.xlsb/.xlsx/.csv)")
     ap.add_argument("--sheet", default=None, help="Optional sheet name for Excel input")
-    ap.add_argument("--out", default="data/layers/hud_pit_homelessness_2007_2024_by_coc.geojson")
+    ap.add_argument(
+        "--out",
+        default="data/world/earth/nation_state/us/state_region/md/layers/hud_pit_homelessness_2007_2024_by_coc.geojson")
     args = ap.parse_args()
 
     coc_path = Path(args.coc_geojson)

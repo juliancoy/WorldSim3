@@ -16,8 +16,10 @@ struct ParcelTimelineEvent {
 
 struct ParcelTimelineRequest {
     const std::vector<LayerDef>* layers = nullptr;
-    const LayerDef::FeatureGeom* parcel = nullptr;
-    const LayerDef::FeatureGeom* real_property = nullptr;
+    std::string parcel_blocklot;
+    bool has_parcel_extent = false;
+    LayerDef::FeatureExtent parcel_extent;
+    const LayerDef::FeatureRecord* real_property = nullptr;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;

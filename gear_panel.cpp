@@ -1,18 +1,52 @@
 #include "gear_panel.h"
 
 #include "imgui.h"
+#include "ui_theme.h"
 
 #include <atomic>
 #include <mutex>
 #include <string>
 #include <vector>
 
-void drawGearPanel(bool* show_sources_panel, const std::filesystem::path& root, BootstrapProgress& bootstrap) {
+void drawGearPanel(
+    bool* show_sources_panel,
+    const std::filesystem::path& root,
+    AppSettings* app_settings,
+    ImGuiContext* main_imgui_context,
+    ImGuiContext* queue_imgui_context,
+    BootstrapProgress& bootstrap,
+    const std::function<void()>& rescan_local_data) {
     if (!show_sources_panel || !*show_sources_panel) return;
 
     ImGui::SetNextWindowSize(ImVec2(540, 420), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Gear Panel", show_sources_panel, ImGuiWindowFlags_NoCollapse)) {
         if (ImGui::BeginTabBar("gear_tabs")) {
+            if (ImGui::BeginTabItem("Interface")) {
+                if (app_settings) {
+                    bool dark_mode = app_settings->dark_mode;
+                    if (ImGui::Checkbox("Dark mode", &dark_mode)) {
+                        app_settings->dark_mode = dark_mode;
+                        ImGuiContext* previous_context = ImGui::GetCurrentContext();
+                        if (main_imgui_context) {
+                            ImGui::SetCurrentContext(main_imgui_context);
+                            applyWorldsimUiTheme(app_settings->dark_mode);
+                        }
+                        if (queue_imgui_context) {
+                            ImGui::SetCurrentContext(queue_imgui_context);
+                            applyWorldsimUiTheme(app_settings->dark_mode);
+                        }
+                        ImGui::SetCurrentContext(previous_context);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    if (ImGui::SliderFloat("Map polygon fill opacity", &app_settings->map_polygon_fill_opacity, 0.0f, 1.0f, "%.2f")) {
+                        saveAppSettings(root, *app_settings);
+                    }
+                    ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
+                } else {
+                    ImGui::TextDisabled("App settings unavailable.");
+                }
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("Sources")) {
                 std::vector<std::string> past_work;
                 std::vector<std::string> future_work;
@@ -30,6 +64,13 @@ void drawGearPanel(bool* show_sources_panel, const std::filesystem::path& root, 
                 ImGui::Text("Future: %zu", future_work.size());
                 ImGui::SameLine();
                 ImGui::Text("Skipped: %zuL/%zuT", skipped_layers, skipped_tiles);
+                if (rescan_local_data) {
+                    if (ImGui::Button("Rescan Local Data")) {
+                        rescan_local_data();
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("Refreshes detected local layer files.");
+                }
                 ImGui::Separator();
                 if (ImGui::BeginTabBar("work_tabs")) {
                     if (ImGui::BeginTabItem("Past Work")) {

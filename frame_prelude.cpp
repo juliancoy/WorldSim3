@@ -1,13 +1,21 @@
 #include "frame_prelude.h"
 
+#include <algorithm>
+#include <cmath>
+#include <thread>
+
 FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     FramePreludeResult result;
-    if (!ctx.root || !ctx.layers || !ctx.layer_spatial || !ctx.layer_profile_dirty ||
+    if (!ctx.root || !ctx.layers || !ctx.layer_profile_accumulators || !ctx.layer_profile_dirty ||
         !ctx.layer_profile_snapshot || !ctx.layer_profile_mutex || !ctx.layer_registry ||
         !ctx.local_layer_exists_cache || !ctx.data_freshness_state || !ctx.data_freshness_msg ||
         !ctx.data_library_status_msg || !ctx.layer_download_queue || !ctx.layer_download_inflight ||
         !ctx.layer_download_active_idx || !ctx.layer_download_future || !ctx.layer_download_active_file ||
-        !ctx.layer_download_last_event || !ctx.layer_download_queue_loaded || !ctx.lan_peers ||
+        !ctx.layer_download_active_tasks || !ctx.layer_download_item_state_mutex ||
+        !ctx.layer_download_item_progress || !ctx.layer_download_item_started_at || !ctx.layer_download_item_eta_state ||
+        !ctx.layer_download_item_status ||
+        !ctx.layer_download_item_failed || !ctx.layer_download_last_event ||
+        !ctx.layer_download_queue_loaded || !ctx.lan_peers ||
         !ctx.lan_scan_status || !ctx.lan_last_scan_at || !ctx.center_lon || !ctx.center_lat ||
         !ctx.zoom || !ctx.current_zoom_state || !ctx.current_lon_state || !ctx.current_lat_state ||
         !ctx.api_layer_mutex || !ctx.api_layer_enable_cmds || !ctx.api_layer_fill_cmds ||
@@ -25,7 +33,7 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     }
 
     result.layer_profile_snapshot.layers = ctx.layers;
-    result.layer_profile_snapshot.layer_spatial = ctx.layer_spatial;
+    result.layer_profile_snapshot.layer_profile_accumulators = ctx.layer_profile_accumulators;
     result.layer_profile_snapshot.layer_profile_dirty = ctx.layer_profile_dirty;
     result.layer_profile_snapshot.layer_profile_snapshot = ctx.layer_profile_snapshot;
     result.layer_profile_snapshot.layer_profile_mutex = ctx.layer_profile_mutex;
@@ -37,11 +45,21 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
 
     result.layer_download.root = *ctx.root;
     result.layer_download.layers = ctx.layers;
+    result.layer_download.local_layer_exists_cache = ctx.local_layer_exists_cache;
     result.layer_download.queue = ctx.layer_download_queue;
     result.layer_download.inflight = ctx.layer_download_inflight;
     result.layer_download.active_idx = ctx.layer_download_active_idx;
     result.layer_download.future = ctx.layer_download_future;
     result.layer_download.active_file = ctx.layer_download_active_file;
+    result.layer_download.active_tasks = ctx.layer_download_active_tasks;
+    const unsigned hc = std::thread::hardware_concurrency();
+    result.layer_download.max_parallel_downloads = std::clamp<size_t>(hc > 0 ? (size_t)hc / 2 : 4ull, 2ull, 8ull);
+    result.layer_download.item_state_mutex = ctx.layer_download_item_state_mutex;
+    result.layer_download.item_progress = ctx.layer_download_item_progress;
+    result.layer_download.item_started_at = ctx.layer_download_item_started_at;
+    result.layer_download.item_eta_state = ctx.layer_download_item_eta_state;
+    result.layer_download.item_status = ctx.layer_download_item_status;
+    result.layer_download.item_failed = ctx.layer_download_item_failed;
     result.layer_download.last_event = ctx.layer_download_last_event;
     result.layer_download.queue_loaded = ctx.layer_download_queue_loaded;
     result.layer_download.data_library_status_msg = ctx.data_library_status_msg;
@@ -103,12 +121,20 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     api_control_ctx.api_ui_cmd_y = ctx.api_ui_cmd_y;
     api_control_ctx.api_ui_cmd_button = ctx.api_ui_cmd_button;
     api_control_ctx.api_ui_cmd_scroll_y = ctx.api_ui_cmd_scroll_y;
+    api_control_ctx.map_filter_state = ctx.map_filter_state;
+    api_control_ctx.active_filter_result_set = ctx.active_filter_result_set;
+    api_control_ctx.query_layers = ctx.query_layers;
+    api_control_ctx.active_filter_status = ctx.active_filter_status;
+    api_control_ctx.api_control_mutex = ctx.api_control_mutex;
+    api_control_ctx.api_filter_control_cmd = ctx.api_filter_control_cmd;
+    api_control_ctx.api_query_control_cmds = ctx.api_query_control_cmds;
+    api_control_ctx.filter_state_key = ctx.filter_state_key;
     api_control_ctx.api_ui_cmd_last_seq = ctx.api_ui_cmd_last_seq;
     api_control_ctx.api_ui_mouse_release_pending = ctx.api_ui_mouse_release_pending;
     api_control_ctx.api_ui_mouse_release_button = ctx.api_ui_mouse_release_button;
     applyApiControlCommands(api_control_ctx);
 
-    ctx.current_zoom_state->store(*ctx.zoom, std::memory_order_relaxed);
+    ctx.current_zoom_state->store((int)std::lround(*ctx.zoom), std::memory_order_relaxed);
     ctx.current_lon_state->store(*ctx.center_lon, std::memory_order_relaxed);
     ctx.current_lat_state->store(*ctx.center_lat, std::memory_order_relaxed);
 

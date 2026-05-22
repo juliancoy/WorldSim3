@@ -9,7 +9,8 @@
 
 struct HydratedLayer {
     size_t index = 0;
-    std::vector<LayerDef::FeatureGeom> features;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> feature_properties;
     bool done = false;
     bool failed = false;
     bool replace_existing = false;
@@ -18,29 +19,16 @@ struct HydratedLayer {
     std::string source_signature;
 };
 
-struct TriJob {
-    size_t index = 0;
-    std::string file;
-    std::string source_signature;
-    std::vector<std::vector<std::vector<ImVec2>>> rings_per_feature;
-};
-
-struct TriResult {
+struct SpatialIndexJob {
     size_t index = 0;
     std::string source_signature;
-    std::vector<std::vector<uint32_t>> triangles_per_feature;
-    bool ok = true;
-    bool loaded_from_cache = false;
-    bool loaded_from_binary_cache = false;
-    std::string error;
+    std::vector<LayerDef::FeatureExtent> feature_extents;
 };
 
 enum class LayerPipelineStatus {
     Queued,
     Hydrating,
     Hydrated,
-    TriQueued,
-    Triangulating,
     Ready,
     Failed
 };
@@ -49,12 +37,19 @@ struct LayerRuntimeState {
     LayerPipelineStatus status = LayerPipelineStatus::Queued;
     size_t feature_count = 0;
     std::string error;
+    GeometryArtifactClass geometry_artifact_class = GeometryArtifactClass::Unknown;
+    std::string geometry_artifact_path;
+    std::string geometry_source_signature;
+    std::string geometry_phase;
     std::string hydration_source_signature;
-    std::string triangulation_source_signature;
+    std::string spatial_index_source_signature;
+    std::string hydration_source_kind;
     std::string hydration_phase;
-    std::string triangulation_phase;
+    std::string spatial_index_phase;
+    bool geometry_loaded_from_artifact = false;
+    bool geometry_gpu_resident = false;
+    bool geometry_gpu_pick_ready = false;
     bool hydration_loaded_from_cache = false;
-    bool triangulation_loaded_from_cache = false;
 };
 
 struct LayerSpatialIndex {
@@ -71,8 +66,21 @@ struct LayerSpatialIndex {
     uint32_t mark_id = 1;
 };
 
+struct SpatialIndexResult {
+    size_t index = 0;
+    std::string source_signature;
+    size_t feature_count = 0;
+    LayerSpatialIndex spatial_index;
+    bool ok = true;
+    std::string error;
+};
+
 const char* statusToString(LayerPipelineStatus s);
+std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std::string& layer_file = {});
 void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si);
+void buildLayerSpatialIndexForExtents(
+    const std::vector<LayerDef::FeatureExtent>& feature_extents,
+    LayerSpatialIndex& si);
 bool queryLayerSpatialIndex(
     LayerSpatialIndex& si,
     float q_min_lon,

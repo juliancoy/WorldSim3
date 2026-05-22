@@ -13,9 +13,9 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     ImGui::Render();
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data->DisplaySize.x > 0.0f && draw_data->DisplaySize.y > 0.0f) {
-        ctx.window_data->ClearValue.color.float32[0] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[1] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[2] = 0.96f;
+        ctx.window_data->ClearValue.color.float32[0] = ctx.dark_mode ? 0.020f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[1] = ctx.dark_mode ? 0.026f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[2] = ctx.dark_mode ? 0.034f : 0.96f;
         ctx.window_data->ClearValue.color.float32[3] = 1.00f;
         const auto present_prof_begin = std::chrono::steady_clock::now();
         FrameRender(ctx.window_data, draw_data);
@@ -46,6 +46,7 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     sample.frame_ms = frame_ms;
     sample.ui_total_ms = ctx.prof_ui_ms_last->load(std::memory_order_relaxed);
     sample.owner_aggregate_ms = ctx.prof_owner_ms_last->load(std::memory_order_relaxed);
+    sample.owner_filter_ms = ctx.prof_owner_filter_ms_last->load(std::memory_order_relaxed);
     sample.tiles_ms = ctx.prof_tile_ms_last->load(std::memory_order_relaxed);
     sample.layers_ms = ctx.prof_layer_ms_last->load(std::memory_order_relaxed);
     sample.heatmap_ms = ctx.prof_heatmap_ms_last->load(std::memory_order_relaxed);
@@ -54,6 +55,8 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     sample.tiles_drawn = ctx.tiles_drawn_frame;
     sample.features_considered = ctx.features_considered_frame;
     sample.features_drawn_points = ctx.features_drawn_frame;
+    sample.owner_filter_candidates = ctx.prof_owner_filter_candidates_last->load(std::memory_order_relaxed);
+    sample.owner_filter_matches = ctx.prof_owner_filter_matches_last->load(std::memory_order_relaxed);
     sample.heat_samples = ctx.prof_heat_samples_last->load(std::memory_order_relaxed);
     sample.retired_textures = g_RetiredTextures.size();
     std::lock_guard<std::mutex> lk(*ctx.profile_mutex);
@@ -68,7 +71,9 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         *ctx.root,
         *ctx.layers,
         ctx.hover_inspector_enabled,
-        ctx.hover_inspector_mode,
+        ctx.active_hover_layer_idx,
+        ctx.active_click_layer_idx,
+        ctx.parcel_parameter_mode,
         ctx.zoning_zone_enabled,
         ctx.layer_fill_enabled,
         ctx.layer_hover_enabled,
@@ -119,7 +124,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.crime_year_min &&
         ctx.crime_year_max &&
         ctx.owner_search_query &&
-        ctx.selected_owners) {
+        ctx.selected_owners &&
+        ctx.event_sector_enabled) {
         saveFilterUiState(
             *ctx.root,
             *ctx.filter_enabled,
@@ -144,7 +150,8 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
             *ctx.crime_year_min,
             *ctx.crime_year_max,
             ctx.owner_search_query,
-            *ctx.selected_owners);
+            *ctx.selected_owners,
+            *ctx.event_sector_enabled);
     }
     if (ctx.center_lon &&
         ctx.center_lat &&
@@ -157,16 +164,24 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
             *ctx.center_lat,
             *ctx.zoom,
             *ctx.selected_parcel_idx,
-            *ctx.selected_parcel_indices);
+            *ctx.selected_parcel_indices,
+            ctx.selected_parcel_stable_id ? *ctx.selected_parcel_stable_id : std::string(),
+            ctx.selected_parcel_stable_ids ? *ctx.selected_parcel_stable_ids : std::vector<std::string>{});
+    }
+    if (ctx.query_history) {
+        saveQueryHistoryUiState(*ctx.root, *ctx.query_history);
     }
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);
     ctx.hydration_stop->store(true, std::memory_order_relaxed);
+    if (ctx.parcel_render_stop) ctx.parcel_render_stop->store(true, std::memory_order_relaxed);
     if (ctx.time_cube_ui_worker->joinable()) ctx.time_cube_ui_worker->join();
     ctx.hydrate_req_cv->notify_all();
-    ctx.tri_cv->notify_all();
+    ctx.spatial_cv->notify_all();
+    if (ctx.parcel_render_cv) ctx.parcel_render_cv->notify_all();
     for (auto& t : *ctx.hydration_workers) if (t.joinable()) t.join();
-    if (ctx.triangulation_worker->joinable()) ctx.triangulation_worker->join();
+    if (ctx.spatial_index_worker->joinable()) ctx.spatial_index_worker->join();
+    if (ctx.parcel_render_worker && ctx.parcel_render_worker->joinable()) ctx.parcel_render_worker->join();
     if (ctx.status_api_worker->joinable()) ctx.status_api_worker->join();
     if (ctx.dataset_api_worker->joinable()) ctx.dataset_api_worker->join();
     if (ctx.lan_discovery_worker->joinable()) ctx.lan_discovery_worker->join();

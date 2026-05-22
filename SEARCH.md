@@ -36,7 +36,7 @@ Make search behave like a property-finding workflow, not just a layer filter:
 
 ### Medium Term
 
-- Build a `PropertySearchIndex` at hydration time or after parcel/real-property join readiness:
+- Build a `PropertySearchIndex` after parcel geometry artifacts and parcel/real-property joins are ready:
   - `parcel_feature_idx`
   - normalized property address
   - raw display address

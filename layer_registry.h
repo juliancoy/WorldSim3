@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app_utils.h"
 #include "types.h"
 
 #include <filesystem>
@@ -15,7 +16,6 @@ struct WorldsimLayerIndices {
     int tax_sale_layer_idx = -1;
     int zoning_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
 };
 
 class LayerRegistry {

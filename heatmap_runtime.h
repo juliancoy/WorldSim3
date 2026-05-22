@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aggregate_visualization_strategies.h"
+#include "heat_normalization.h"
 #include "heatmap_render.h"
 #include "map_render_heatmap_pass.h"
 #include "worldsim_app_internal.h"
@@ -16,12 +17,18 @@ struct CachedAggregateTexture {
     std::vector<CachedHeatCell> cells;
     HeatmapRaster raster;
     TileTexture texture;
+    std::vector<HeatmapRasterLayer> raster_layers;
+    uint64_t last_used_frame = 0;
+};
+
+struct CachedHeatNormalization {
+    HeatNormalizationState state;
     uint64_t last_used_frame = 0;
 };
 
 struct HeatmapRuntimeState {
     float global_heat_cell_px = 24.0f;
-    int heatmap_algo = kAggregateGpuSplatBlur;
+    int heatmap_algo = kAggregateNone;
     int heatmap_quality_preset = 1;
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;
@@ -43,6 +50,7 @@ struct HeatmapRuntimeState {
     uint64_t pending_key = 0;
     std::unordered_map<uint64_t, CachedAggregateTexture> texture_cache;
     uint64_t texture_cache_frame = 0;
+    std::unordered_map<uint64_t, CachedHeatNormalization> normalization_cache;
 };
 
 struct HeatmapCacheLookup {
@@ -64,7 +72,7 @@ struct HeatmapFramePassContext {
     float view_max_lat = 0.0f;
     int zoom = 0;
     int math_zoom = 0;
-    int heatmap_algo = 0;
+    int heatmap_algo = kAggregateNone;
     float global_heat_cell = 24.0f;
     float heatmap_bandwidth_px = 18.0f;
     float heatmap_blur_sigma_px = 6.0f;

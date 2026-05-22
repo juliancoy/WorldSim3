@@ -17,10 +17,12 @@ namespace fs = std::filesystem;
 
 namespace {
 struct Options {
-    fs::path coc_geojson = "data/layers/hud_coc_boundaries_maryland.geojson";
+    fs::path coc_geojson =
+        "data/world/earth/nation_state/us/state_region/md/layers/hud_coc_boundaries_maryland.geojson";
     fs::path inbox_dir = "data/inbox/hud_pit";
     std::optional<fs::path> pit_csv;
-    fs::path out_geojson = "data/layers/hud_pit_homelessness_2007_2024_by_coc.geojson";
+    fs::path out_geojson =
+        "data/world/earth/nation_state/us/state_region/md/layers/hud_pit_homelessness_2007_2024_by_coc.geojson";
 };
 
 std::string trim(std::string s) {

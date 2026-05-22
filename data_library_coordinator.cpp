@@ -1,5 +1,6 @@
 #include "data_library_coordinator.h"
 
+#include "app_utils.h"
 #include "layer_import.h"
 #include "thread_utils.h"
 
@@ -57,7 +58,7 @@ void checkAllDataLibraryUpdates(DataLibraryCoordinatorContext& ctx) {
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         const auto& l = (*ctx.layers)[i];
         const bool local_exists = i < ctx.local_layer_exists_cache->size() ? (*ctx.local_layer_exists_cache)[i] : false;
-        const fs::path local_path = ctx.root / "data" / "layers" / l.file;
+        const fs::path local_path = provenanceStoredLayerPath(ctx.root, l);
         const std::string freshness_url = l.source_url.empty() ? l.import_url : l.source_url;
         if (!local_exists || freshness_url.empty()) {
             (*ctx.data_freshness_state)[i] = freshness_url.empty() ? FreshnessState::NotTrackable : FreshnessState::Unknown;

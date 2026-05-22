@@ -30,10 +30,12 @@ ImVec2 MapViewportFrame::projectWorld(const ImVec2& world_px) const {
 MapViewportFrame beginMapViewportCanvas(const MapViewportContext& ctx) {
     MapViewportFrame frame;
     if (!ctx.center_lon || !ctx.center_lat || !ctx.zoom) return frame;
+    const double clamped_zoom_step = std::clamp(ctx.zoom_step, 0.05, 4.0);
 
     frame.origin = ImGui::GetCursorScreenPos();
     frame.size = ImGui::GetContentRegionAvail();
     frame.draw = ImGui::GetWindowDrawList();
+    ImGui::SetNextItemAllowOverlap();
     ImGui::InvisibleButton("map_canvas_input", frame.size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     frame.hovered = ImGui::IsItemHovered();
     frame.active = ImGui::IsItemActive();
@@ -41,17 +43,20 @@ MapViewportFrame beginMapViewportCanvas(const MapViewportContext& ctx) {
     frame.draw->AddRectFilled(
         frame.origin,
         ImVec2(frame.origin.x + frame.size.x, frame.origin.y + frame.size.y),
-        IM_COL32(242, 246, 250, 255));
+        ctx.dark_mode ? IM_COL32(8, 13, 18, 255) : IM_COL32(242, 246, 250, 255));
 
-    frame.math_zoom = std::min(*ctx.zoom, ctx.max_internal_math_zoom);
-    frame.zoom_scale = std::ldexp(1.0, *ctx.zoom - frame.math_zoom);
+    frame.math_zoom = std::min((int)std::floor(*ctx.zoom), ctx.max_internal_math_zoom);
+    frame.zoom_scale = std::exp2(*ctx.zoom - frame.math_zoom);
     frame.center_world = lonLatToWorldPx(*ctx.center_lon, *ctx.center_lat, frame.math_zoom);
     frame.center_world.x = (float)wrapWorldX((double)frame.center_world.x, frame.math_zoom);
 
     if (frame.hovered) {
         const float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0.0f) {
-            int next_zoom = std::clamp(*ctx.zoom + (wheel > 0 ? 1 : -1), ctx.min_zoom, ctx.max_zoom);
+            const double next_zoom = std::clamp(
+                *ctx.zoom + (wheel > 0.0f ? clamped_zoom_step : -clamped_zoom_step),
+                (double)ctx.min_zoom,
+                (double)ctx.max_zoom);
             if (next_zoom != *ctx.zoom) {
                 const ImVec2 mouse = ImGui::GetIO().MousePos;
                 ImVec2 mouse_world = ImVec2(
@@ -60,8 +65,8 @@ MapViewportFrame beginMapViewportCanvas(const MapViewportContext& ctx) {
                 mouse_world.x = (float)wrapWorldX((double)mouse_world.x, frame.math_zoom);
                 ImVec2 ll = worldPxToLonLat(mouse_world, frame.math_zoom);
                 *ctx.zoom = next_zoom;
-                frame.math_zoom = std::min(*ctx.zoom, ctx.max_internal_math_zoom);
-                frame.zoom_scale = std::ldexp(1.0, *ctx.zoom - frame.math_zoom);
+                frame.math_zoom = std::min((int)std::floor(*ctx.zoom), ctx.max_internal_math_zoom);
+                frame.zoom_scale = std::exp2(*ctx.zoom - frame.math_zoom);
                 ImVec2 mouse_world_new = lonLatToWorldPx(ll.x, ll.y, frame.math_zoom);
                 frame.center_world = ImVec2(
                     mouse_world_new.x - (float)((mouse.x - (frame.origin.x + frame.size.x * 0.5f)) / frame.zoom_scale),

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "cache_io.h"
 #include "imgui.h"
 #include "layer_runtime.h"
 #include "map_render_hover.h"
@@ -20,7 +21,7 @@
 struct MapCanvasSessionContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
@@ -36,12 +37,15 @@ struct MapCanvasSessionContext {
     int max_native_tile_zoom = 18;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::vector<bool>* layer_hover_enabled = nullptr;
     const std::vector<bool>* layer_inspect_enabled = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool* hover_inspector_enabled = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
@@ -67,6 +71,8 @@ struct MapCanvasSession {
     bool map_active = false;
     int math_zoom = 0;
     double zoom_scale = 1.0;
+    ImVec2 center_world = ImVec2(0.0f, 0.0f);
+    ImVec2 mouse_ll = ImVec2(0.0f, 0.0f);
     float view_min_lon = 0.0f;
     float view_max_lon = 0.0f;
     float view_min_lat = 0.0f;
@@ -82,6 +88,7 @@ struct MapCanvasSession {
     bool tax_sale_enabled = false;
     ImVec4 vacancy_notice_color = ImVec4(1, 0, 0, 1);
     ImVec4 vacancy_rehab_color = ImVec4(0, 1, 1, 1);
+    double zoom = 0.0;
     int lod_ring_step = 1;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::function<bool(size_t)> should_fill_layer_polygon;

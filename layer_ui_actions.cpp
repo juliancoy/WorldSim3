@@ -1,6 +1,7 @@
 #include "layer_ui_actions.h"
 
 #include "aggregate_visualization_strategies.h"
+#include "app_utils.h"
 #include "dataset_library.h"
 #include "layer_import.h"
 #include "memory_utils.h"
@@ -36,7 +37,7 @@ int findLayerFile(const LayerUiSharedContext& ctx, std::string_view file) {
     if (ctx.layer_registry) return ctx.layer_registry->findLayerByFile(file);
     if (!ctx.layers) return -1;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
-        if ((*ctx.layers)[i].file == file) return (int)i;
+        if (layerMatchesIdentifier((*ctx.layers)[i], file)) return (int)i;
     }
     return -1;
 }
@@ -54,9 +55,22 @@ bool hiddenParcelParameterLayer(const LayerUiSharedContext& ctx, int parcel_laye
 void setParcelParameterMode(LayerUiSharedContext& ctx, int mode) {
     if (ctx.parcel_parameter_mode) *ctx.parcel_parameter_mode = mode;
     clearParcelHeatmapLayers(ctx);
+    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
 }
 
 void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
+    if (ctx.layers &&
+        layer_idx >= 0 &&
+        (size_t)layer_idx < ctx.layers->size() &&
+        (*ctx.layers)[(size_t)layer_idx].file == "property_value_parcels.geojson") {
+        setParcelParameterMode(ctx, 2);
+        (*ctx.layers)[(size_t)layer_idx].enabled = true;
+        if (ctx.layer_heatmap_enabled && (size_t)layer_idx < ctx.layer_heatmap_enabled->size()) {
+            (*ctx.layer_heatmap_enabled)[(size_t)layer_idx] = true;
+        }
+        if (ctx.enqueue_hydration) ctx.enqueue_hydration((size_t)layer_idx, true);
+        return;
+    }
     setParcelParameterMode(ctx, 0);
     if (!ctx.layers || layer_idx < 0 || (size_t)layer_idx >= ctx.layers->size()) return;
     (*ctx.layers)[(size_t)layer_idx].enabled = true;
@@ -70,12 +84,30 @@ void activateParameterLayer(LayerUiSharedContext& ctx, int layer_idx) {
     if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
 }
 
+void activateParcelValuePerAreaMode(LayerUiSharedContext& ctx) {
+    const int property_value_layer_idx = findLayerFile(ctx, "property_value_parcels.geojson");
+    setParcelParameterMode(ctx, 3);
+    if (!ctx.layers || property_value_layer_idx < 0 || (size_t)property_value_layer_idx >= ctx.layers->size()) return;
+    (*ctx.layers)[(size_t)property_value_layer_idx].enabled = true;
+    if (ctx.layer_heatmap_enabled && (size_t)property_value_layer_idx < ctx.layer_heatmap_enabled->size()) {
+        (*ctx.layer_heatmap_enabled)[(size_t)property_value_layer_idx] = true;
+    }
+    if (ctx.layer_heatmap_use_gradient && (size_t)property_value_layer_idx < ctx.layer_heatmap_use_gradient->size()) {
+        (*ctx.layer_heatmap_use_gradient)[(size_t)property_value_layer_idx] = true;
+    }
+    if (ctx.layer_heatmap_algo && (size_t)property_value_layer_idx < ctx.layer_heatmap_algo->size()) {
+        (*ctx.layer_heatmap_algo)[(size_t)property_value_layer_idx] = kAggregateMedianChoropleth;
+    }
+    if (ctx.enqueue_hydration) ctx.enqueue_hydration((size_t)property_value_layer_idx, true);
+    if (ctx.layer_heatmap_state_changed) *ctx.layer_heatmap_state_changed = true;
+}
+
 void setCategoryVisible(LayerUiSharedContext& ctx, int parcel_layer_idx, LayerDef::Category cat, bool enabled) {
     if (!ctx.layers) return;
     bool heatmap_changed = false;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         LayerDef& layer = (*ctx.layers)[i];
-        if (enabled && layer.scale == "parcel" && !layer.region.empty() && (int)i != parcel_layer_idx) continue;
+        if (ctx.layer_browse_state && !layerMatchesBrowseGeography(layer, *ctx.layer_browse_state)) continue;
         if (layer.category == cat && !hiddenParcelParameterLayer(ctx, parcel_layer_idx, i)) {
             layer.enabled = enabled;
             if (!enabled && layer.scale == "parcel" && ctx.layer_heatmap_enabled && i < ctx.layer_heatmap_enabled->size()) {

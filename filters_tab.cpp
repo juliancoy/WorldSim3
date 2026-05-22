@@ -3,20 +3,11 @@
 #include "app_utils.h"
 #include "feature_props.h"
 #include "imgui.h"
+#include "layer_state_io.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <sstream>
-
-namespace {
-std::string firstPropHist(const LayerDef::FeatureGeom& fg, std::initializer_list<const char*> keys) {
-    for (const char* k : keys) {
-        std::string v = getPropertyValue(fg, k);
-        if (!v.empty()) return v;
-    }
-    return std::string();
-}
-}
 
 void drawFiltersTab(const FiltersTabContext& ctx) {
     if (!ImGui::BeginTabItem("Filters")) return;
@@ -34,10 +25,24 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return false;
         const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
         if (idx >= parcel_layer.features.size()) return false;
-        const auto& parcel = parcel_layer.features[idx];
-        *ctx.center_lon = ((double)parcel.extent.min_lon + (double)parcel.extent.max_lon) * 0.5;
-        *ctx.center_lat = std::clamp(((double)parcel.extent.min_lat + (double)parcel.extent.max_lat) * 0.5, -85.0, 85.0);
-        *ctx.zoom = std::max(*ctx.zoom, 18);
+        LayerDef::FeatureExtent parcel_extent = {};
+        bool has_parcel_extent = false;
+        if (ctx.unified_parcels) {
+            if (const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, idx);
+                rec && rec->parcel_has_geometry) {
+                parcel_extent = rec->parcel_extent;
+                has_parcel_extent = true;
+            }
+        }
+        if (!has_parcel_extent) {
+            parcel_extent = parcel_layer.features[idx].extent;
+            has_parcel_extent = true;
+        }
+        if (has_parcel_extent) {
+            *ctx.center_lon = ((double)parcel_extent.min_lon + (double)parcel_extent.max_lon) * 0.5;
+            *ctx.center_lat = std::clamp(((double)parcel_extent.min_lat + (double)parcel_extent.max_lat) * 0.5, -85.0, 85.0);
+            *ctx.zoom = std::max(*ctx.zoom, 18.0);
+        }
         return ctx.select_parcel_idx ? ctx.select_parcel_idx(idx, ImGui::GetIO().KeyCtrl) : false;
     };
 
@@ -74,15 +79,19 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
                 return;
             }
         }
-        auto property_address_for = [&](const LayerDef::FeatureGeom& parcel) {
+        auto property_address_for = [&](const LayerDef::FeatureRecord& parcel) {
             std::string address = firstDisplayProperty(parcel, {
                 "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
                 "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
                 "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
             });
             if (!address.empty()) return address;
-            if (ctx.real_property_for_parcel) {
-                if (const LayerDef::FeatureGeom* rp = ctx.real_property_for_parcel(parcel)) {
+            if (ctx.layers) {
+                if (const LayerDef::FeatureRecord* rp = resolveRealPropertyForBlocklot(
+                        *ctx.layers,
+                        ctx.real_property_layer_idx,
+                        ctx.real_property_by_blocklot,
+                        featureBlockLotJoinKey(parcel))) {
                     address = firstDisplayProperty(*rp, {
                         "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
                         "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
@@ -242,7 +251,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         for (size_t li = 0; li < ctx.layers->size(); ++li) {
             if (!(*ctx.layers)[li].enabled) continue;
             for (const auto& fg : (*ctx.layers)[li].features) {
-                std::string ds = firstPropHist(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                std::string ds = firstDisplayProperty(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
                 if (ds.empty()) continue;
                 int y = extractYearMaybe(ds);
                 if (y < 1900 || y > 2100) continue;
@@ -326,14 +335,14 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         for (size_t li = 0; li < ctx.layers->size(); ++li) {
             if (!(*ctx.layers)[li].enabled) continue;
             for (const auto& fg : (*ctx.layers)[li].features) {
-                std::string ds = firstPropHist(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
+                std::string ds = firstDisplayProperty(fg, {"RECORD_DATE", "RECORDDATE", "DATE", "CREATED_DATE", "ISSUE_DATE", "DateNotice", "DateIssue", "DateIssued", "DateCancel", "DateAbate"});
                 if (ds.empty() || extractYearMaybe(ds) != *ctx.selected_record_year) continue;
                 (*ctx.selected_record_year_total)++;
                 if (ctx.selected_record_year_samples->size() >= kMaxYearSamples) continue;
-                std::string blocklot = firstPropHist(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
-                std::string address = firstPropHist(fg, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
-                std::string owner = firstPropHist(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
-                std::string status = firstPropHist(fg, {"STATUS", "STATE", "CASE_STATUS"});
+                std::string blocklot = firstDisplayProperty(fg, {"BLOCKLOT", "BLOCK_LOT", "LOT"});
+                std::string address = firstDisplayProperty(fg, {"FULLADDR", "PROPERTY_ADDRESS", "PREMISEADD", "ADDRESS", "Address", "ADDR"});
+                std::string owner = firstDisplayProperty(fg, {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"});
+                std::string status = firstDisplayProperty(fg, {"STATUS", "STATE", "CASE_STATUS"});
                 std::ostringstream row;
                 row << (*ctx.layers)[li].name << " | " << ds;
                 if (!blocklot.empty()) row << " | BL " << blocklot;

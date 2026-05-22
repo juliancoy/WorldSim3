@@ -1,5 +1,6 @@
 #include "dataset_library.h"
 #include "layer_import.h"
+#include "app_utils.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -9,11 +10,52 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <curl/curl.h>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+namespace {
+int manifestPriority(const fs::path& manifest_path) {
+    const std::string name = manifest_path.filename().string();
+    if (name == "layers_manifest.json") return 0;
+    if (name == "layers_manifest.must_have.json") return 1;
+    if (name == "layers_manifest.nice_to_have.json") return 2;
+    if (name == "layers_manifest.heavy_data.json") return 3;
+    if (name == "layers_manifest.extended_events.json") return 4;
+    if (name == "layers_manifest.historical_high_quality.json") return 5;
+    if (name == "layers_manifest.capital_flows.json") return 6;
+    if (name == "layers_manifest.runtime.json") return 7;
+    if (name == "layers_manifest.repository.json") return 8;
+    if (name == "layers_manifest.archival_research.json") return 9;
+    return 100;
+}
+
+std::vector<fs::path> discoverManifestPaths(const fs::path& root) {
+    std::vector<fs::path> out;
+    const fs::path sources_root = root / "sources" / "world";
+    std::error_code ec;
+    if (!fs::exists(sources_root, ec) || ec) return out;
+    for (fs::recursive_directory_iterator it(sources_root, ec), end; it != end && !ec; it.increment(ec)) {
+        if (!it->is_regular_file()) continue;
+        const std::string name = it->path().filename().string();
+        if (!name.starts_with("layers_manifest") || !name.ends_with(".json")) continue;
+        out.push_back(it->path());
+    }
+    std::sort(out.begin(), out.end(), [](const fs::path& a, const fs::path& b) {
+        const fs::path a_parent = a.parent_path().lexically_normal();
+        const fs::path b_parent = b.parent_path().lexically_normal();
+        if (a_parent != b_parent) return a_parent.string() < b_parent.string();
+        const int a_priority = manifestPriority(a);
+        const int b_priority = manifestPriority(b);
+        if (a_priority != b_priority) return a_priority < b_priority;
+        return a.filename().string() < b.filename().string();
+    });
+    return out;
+}
+}
 
 static size_t curlWriteToFile(void* ptr, size_t size, size_t nmemb, void* userdata) {
     FILE* fp = (FILE*)userdata;
@@ -37,7 +79,7 @@ bool downloadUrlToFile(const std::string& url, const fs::path& out_path, std::st
     }
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
@@ -192,6 +234,11 @@ struct HeaderCapture {
     std::string last_modified;
 };
 
+struct DownloadProgressBridge {
+    DownloadProgressCallback callback;
+    uint64_t resume_bytes = 0;
+};
+
 static size_t curlHeaderCapture(void* ptr, size_t size, size_t nmemb, void* userdata) {
     const size_t n = size * nmemb;
     if (!userdata || n == 0) return n;
@@ -210,10 +257,21 @@ static size_t curlHeaderCapture(void* ptr, size_t size, size_t nmemb, void* user
     return n;
 }
 
+static int curlDownloadProgressCallback(void* clientp, curl_off_t dltotal, curl_off_t dlnow, curl_off_t, curl_off_t) {
+    if (!clientp) return 0;
+    DownloadProgressBridge* bridge = static_cast<DownloadProgressBridge*>(clientp);
+    if (!bridge->callback) return 0;
+    const uint64_t total = dltotal > 0 ? bridge->resume_bytes + static_cast<uint64_t>(dltotal) : 0ull;
+    const uint64_t now = bridge->resume_bytes + (dlnow > 0 ? static_cast<uint64_t>(dlnow) : 0ull);
+    bridge->callback(now, total);
+    return 0;
+}
+
 VersionedDownloadResult downloadUrlVersioned(
     const std::string& url,
     const fs::path& out_path,
-    const fs::path& versions_root) {
+    const fs::path& versions_root,
+    const DownloadProgressCallback& on_progress) {
     VersionedDownloadResult res;
     const fs::path meta_path = versions_root / "metadata" / (out_path.filename().string() + ".json");
     fs::create_directories(meta_path.parent_path());
@@ -230,44 +288,84 @@ VersionedDownloadResult downloadUrlVersioned(
     fs::create_directories(out_path.parent_path());
     fs::path tmp = out_path;
     tmp += ".part";
-    FILE* fp = std::fopen(tmp.string().c_str(), "wb");
-    if (!fp) {
-        res.message = "failed to open output file";
-        return res;
-    }
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        std::fclose(fp);
-        res.message = "curl init failed";
-        return res;
-    }
-    struct curl_slist* hdrs = nullptr;
-    if (!prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
-    if (!prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
     HeaderCapture hc{};
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hc);
-    if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
-    CURLcode rc = curl_easy_perform(curl);
-    long code = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
     curl_off_t content_length = -1;
-    curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
-    curl_easy_cleanup(curl);
-    if (hdrs) curl_slist_free_all(hdrs);
-    std::fclose(fp);
+    long code = 0;
+    CURLcode rc = CURLE_OK;
+    bool force_unconditional_retry = false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const bool try_resume = (attempt == 0) && !force_unconditional_retry;
+        const bool use_validators = !force_unconditional_retry;
+        uint64_t resume_bytes = 0;
+        if (try_resume) {
+            std::error_code szec;
+            if (fs::exists(tmp, szec) && !szec) resume_bytes = fs::file_size(tmp, szec);
+            if (szec) resume_bytes = 0;
+        }
+        const char* open_mode = resume_bytes > 0 ? "ab" : "wb";
+        FILE* fp = std::fopen(tmp.string().c_str(), open_mode);
+        if (!fp) {
+            res.message = "failed to open output file";
+            return res;
+        }
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            std::fclose(fp);
+            res.message = "curl init failed";
+            return res;
+        }
+        struct curl_slist* hdrs = nullptr;
+        if (resume_bytes > 0) {
+            const std::string validator = !prev_etag.empty() ? prev_etag : prev_lm;
+            if (use_validators && !validator.empty()) hdrs = curl_slist_append(hdrs, ("If-Range: " + validator).c_str());
+            curl_easy_setopt(curl, CURLOPT_RANGE, (std::to_string(resume_bytes) + "-").c_str());
+        } else {
+            if (use_validators && !prev_etag.empty()) hdrs = curl_slist_append(hdrs, ("If-None-Match: " + prev_etag).c_str());
+            if (use_validators && !prev_lm.empty()) hdrs = curl_slist_append(hdrs, ("If-Modified-Since: " + prev_lm).c_str());
+        }
+        DownloadProgressBridge progress_bridge{on_progress, resume_bytes};
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToFile);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hc);
+        if (on_progress) {
+            curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, curlDownloadProgressCallback);
+            curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &progress_bridge);
+            curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        }
+        if (hdrs) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, hdrs);
+        rc = curl_easy_perform(curl);
+        code = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+        content_length = -1;
+        curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &content_length);
+        curl_easy_cleanup(curl);
+        if (hdrs) curl_slist_free_all(hdrs);
+        std::fclose(fp);
+
+        if (code == 403 && !force_unconditional_retry &&
+            (resume_bytes > 0 || !prev_etag.empty() || !prev_lm.empty())) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            hc = HeaderCapture{};
+            force_unconditional_retry = true;
+            continue;
+        }
+        if (resume_bytes > 0 && code == 200 && attempt == 0) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            continue;
+        }
+        break;
+    }
 
     if (rc != CURLE_OK) {
-        std::error_code ec;
-        fs::remove(tmp, ec);
         res.message = std::string("http failed: ") + curl_easy_strerror(rc);
         return res;
     }
@@ -412,7 +510,7 @@ FreshnessCheckResult checkUrlFreshnessVersioned(
     HeaderCapture hc{};
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, "BaltimoreVulkanMap/1.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "worldsim3/1.0");
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
     curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCapture);
@@ -459,26 +557,44 @@ FreshnessCheckResult checkUrlFreshnessVersioned(
 }
 
 std::vector<json> readLayerManifestEntries(const fs::path& root) {
-    std::ifstream in(root / "layers_manifest.json");
-    if (!in) in.open(root / "scripts" / "layers_manifest.json");
-    if (!in) return {};
-    json arr;
-    in >> arr;
     std::vector<json> out;
-    out.reserve(arr.size());
-    for (const auto& e : arr) out.push_back(e);
+    std::unordered_set<std::string> seen_files;
+    for (const auto& manifest_path : discoverManifestPaths(root)) {
+        std::ifstream in(manifest_path);
+        if (!in) continue;
+        json arr;
+        try {
+            in >> arr;
+        } catch (...) {
+            continue;
+        }
+        if (!arr.is_array()) continue;
+        for (const auto& e : arr) {
+            if (!e.is_object()) continue;
+            const std::string file = e.value("file", std::string());
+            if (!file.empty() && seen_files.contains(file)) continue;
+            if (!file.empty()) seen_files.insert(file);
+            out.push_back(e);
+        }
+    }
     return out;
 }
 
 std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std::string& phase) {
-    if (phase == "all" || phase.empty()) return root / "layers_manifest.json";
-    if (phase == "must-have") return root / "layers_manifest.must_have.json";
-    if (phase == "nice-to-have") return root / "layers_manifest.nice_to_have.json";
-    if (phase == "heavy-data") return root / "layers_manifest.heavy_data.json";
-    if (phase == "capital-flows") return root / "layers_manifest.capital_flows.json";
-    if (phase == "extended-events") return root / "layers_manifest.extended_events.json";
-    if (phase == "historical-high-quality") return root / "layers_manifest.historical_high_quality.json";
-    if (phase == "archival-research") return root / "layers_manifest.archival_research.json";
+    const fs::path us_md_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "us" / "state_region" / "md";
+    const fs::path ng_anambra_root =
+        root / "sources" / "world" / "earth" / "nation_state" / "ng" / "state_region" / "anambra";
+    if (phase == "all" || phase.empty()) return us_md_root / "layers_manifest.json";
+    if (phase == "must-have") return us_md_root / "layers_manifest.must_have.json";
+    if (phase == "nice-to-have") return us_md_root / "layers_manifest.nice_to_have.json";
+    if (phase == "heavy-data") return us_md_root / "layers_manifest.heavy_data.json";
+    if (phase == "capital-flows") return us_md_root / "layers_manifest.capital_flows.json";
+    if (phase == "anambra-runtime") return ng_anambra_root / "layers_manifest.runtime.json";
+    if (phase == "anambra-repository") return ng_anambra_root / "layers_manifest.repository.json";
+    if (phase == "extended-events") return us_md_root / "layers_manifest.extended_events.json";
+    if (phase == "historical-high-quality") return us_md_root / "layers_manifest.historical_high_quality.json";
+    if (phase == "archival-research") return us_md_root / "layers_manifest.archival_research.json";
     fs::path p(phase);
     return p.is_absolute() ? p : root / p;
 }
@@ -488,10 +604,22 @@ static fs::path layerOutputDirForManifestItem(const fs::path& root, const json& 
         fs::path p(item["directory"].get<std::string>());
         return p.is_absolute() ? p : root / p;
     }
+    if (item.contains("provenance") && item["provenance"].is_object()) {
+        const auto& provenance = item["provenance"];
+        LayerDef layer;
+        layer.logical_id = item.value("id", defaultLayerLogicalIdForFile(item.value("file", std::string())));
+        layer.file = item.value("file", std::string());
+        layer.provenance_world = provenance.value("world", std::string());
+        layer.provenance_nation_state = provenance.value("nation_state", std::string());
+        layer.provenance_state_region = provenance.value("state_region", std::string());
+        layer.provenance_county_city = provenance.value("county_city", std::string());
+        const fs::path stored_path = provenanceStoredLayerPath(root, layer);
+        return stored_path.parent_path();
+    }
     if (item.value("category", std::string()) == "capital-flows") {
         return root / "data" / "capital_flows";
     }
-    return root / "data" / "layers";
+    return root / "data" / "provenance" / "stored" / "world" / "earth" / "layers";
 }
 
 LayerDownloadSummary downloadLayerManifestPhase(
@@ -558,6 +686,7 @@ LayerDownloadSummary downloadLayerManifestPhase(
         } else {
             LayerDef layer;
             layer.name = name;
+            layer.logical_id = item.value("id", defaultLayerLogicalIdForFile(file));
             layer.file = file;
             const auto& import = item["import"];
             layer.import_type = import.value("type", std::string());
@@ -565,6 +694,23 @@ LayerDownloadSummary downloadLayerManifestPhase(
             layer.import_source_crs = import.value("source_crs", std::string());
             layer.import_shapefile = import.value("shapefile", std::string());
             layer.import_service_url = import.value("service_url", std::string());
+            layer.import_where = import.value("where", std::string());
+            layer.import_normalizer = import.value("normalizer", std::string());
+            layer.import_query = import.value("query", std::string());
+            layer.import_table = import.value("table", std::string());
+            layer.import_year = import.value("year", std::string());
+            layer.import_survey = import.value("survey", std::string());
+            layer.import_sheet_name = import.value("sheet_name", std::string());
+            layer.import_lon_field = import.value("lon_field", std::string());
+            layer.import_lat_field = import.value("lat_field", std::string());
+            layer.import_artifact_file = import.value("artifact_file", std::string());
+            if (item.contains("provenance") && item["provenance"].is_object()) {
+                const auto& provenance = item["provenance"];
+                layer.provenance_world = provenance.value("world", std::string());
+                layer.provenance_nation_state = provenance.value("nation_state", std::string());
+                layer.provenance_state_region = provenance.value("state_region", std::string());
+                layer.provenance_county_city = provenance.value("county_city", std::string());
+            }
             res = downloadOrImportLayer(layer, out_path, root);
         }
         if (res.ok) {

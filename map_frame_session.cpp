@@ -6,48 +6,69 @@
 
 namespace {
 void refreshParcelJurisdictionFilter(const MapFrameSessionContext& ctx) {
-    if (!ctx.parcel_jurisdiction_filter_dirty || !ctx.parcel_jurisdiction_result_set || !ctx.parcel_jurisdiction_filter_status) return;
-    if (!*ctx.parcel_jurisdiction_filter_dirty) return;
+    if (!ctx.parcel_jurisdiction_filter_state) return;
+    ParcelJurisdictionFilterState& state = *ctx.parcel_jurisdiction_filter_state;
+    if (!state.dirty) return;
 
-    if (ctx.parcel_jurisdiction_filter->size() == ctx.parcel_jurisdiction_option_count) {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
-        *ctx.parcel_jurisdiction_result_set = FilterResultSet{};
-        *ctx.parcel_jurisdiction_filter_status = "All Maryland parcels";
+    if (state.selected_jurisdictions.size() == ctx.parcel_jurisdiction_option_count) {
+        state.dirty = false;
+        state.result_set = FilterResultSet{};
+        state.status = "All Maryland parcels";
     } else if (ctx.parcel_layer_idx < 0) {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
-        *ctx.parcel_jurisdiction_result_set = FilterResultSet{};
-        *ctx.parcel_jurisdiction_filter_status = "No active parcel layer";
+        state.dirty = false;
+        state.result_set = FilterResultSet{};
+        state.status = "No active parcel layer";
     } else if (!ctx.duckdb_analytics->status().last_rebuild_ok) {
-        *ctx.parcel_jurisdiction_filter_status = "DuckDB parcel cache is not ready";
+        state.status = "DuckDB parcel cache is not ready";
     } else {
-        *ctx.parcel_jurisdiction_filter_dirty = false;
+        state.dirty = false;
         DuckDbQueryResult jurisdiction_query =
-            ctx.duckdb_analytics->queryParcelJurisdictions((size_t)ctx.parcel_layer_idx, *ctx.parcel_jurisdiction_filter, 32);
+            ctx.duckdb_analytics->queryParcelJurisdictions((size_t)ctx.parcel_layer_idx, state.selected_jurisdictions, 32);
         if (jurisdiction_query.ok) {
-            *ctx.parcel_jurisdiction_result_set = std::move(jurisdiction_query.result_set);
-            *ctx.parcel_jurisdiction_filter_status = jurisdiction_query.message;
+            state.result_set = std::move(jurisdiction_query.result_set);
+            state.status = jurisdiction_query.message;
         } else {
-            *ctx.parcel_jurisdiction_filter_status = jurisdiction_query.message;
+            state.status = jurisdiction_query.message;
         }
     }
 }
 
-FeatureFilterContext buildFrameFilterContext(const MapFrameSessionContext& ctx) {
+FeatureFilterContext buildFrameFilterContext(
+    const MapFrameSessionContext& ctx,
+    double& owner_filter_ms_frame,
+    size_t& owner_filter_candidates_frame,
+    size_t& owner_filter_matches_frame) {
     FeatureFilterContextFactoryInput filter_input;
     filter_input.layers = ctx.layers;
     filter_input.map_filters = ctx.map_filter_state;
     filter_input.result_set =
-        ctx.parcel_jurisdiction_result_set && ctx.parcel_jurisdiction_result_set->active
-            ? ctx.parcel_jurisdiction_result_set
+        ctx.parcel_jurisdiction_filter_state && ctx.parcel_jurisdiction_filter_state->result_set.active
+            ? &ctx.parcel_jurisdiction_filter_state->result_set
+            : nullptr;
+    filter_input.secondary_result_set =
+        ctx.owner_text_filter_result_set && ctx.owner_text_filter_result_set->active
+            ? ctx.owner_text_filter_result_set
+            : nullptr;
+    filter_input.tertiary_result_set =
+        ctx.address_text_filter_result_set && ctx.address_text_filter_result_set->active
+            ? ctx.address_text_filter_result_set
             : nullptr;
     filter_input.real_property_by_blocklot = ctx.real_property_by_blocklot;
+    filter_input.unified_parcels = ctx.unified_parcels;
+    filter_input.parcel_owner_search_by_feature = ctx.parcel_owner_search_by_feature;
+    filter_input.real_property_owner_search_by_feature = ctx.real_property_owner_search_by_feature;
+    filter_input.parcel_address_search_by_feature = ctx.parcel_address_search_by_feature;
     filter_input.parcel_vac_notice_by_feature = ctx.parcel_vac_notice_by_feature;
     filter_input.parcel_vac_rehab_by_feature = ctx.parcel_vac_rehab_by_feature;
     filter_input.real_property_layer_idx = ctx.real_property_layer_idx;
     filter_input.parcel_layer_idx = ctx.parcel_layer_idx;
     filter_input.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
-    filter_input.crime_legacy_layer_idx = ctx.crime_legacy_layer_idx;
     filter_input.query_layers = ctx.query_layers;
+    filter_input.owner_filter_ms_accum = &owner_filter_ms_frame;
+    filter_input.owner_filter_candidates_accum = &owner_filter_candidates_frame;
+    filter_input.owner_filter_matches_accum = &owner_filter_matches_frame;
+    filter_input.compiled_owner_filter_active = filter_input.secondary_result_set != nullptr;
+    filter_input.compiled_address_filter_active = filter_input.tertiary_result_set != nullptr;
     return makeFeatureFilterContext(filter_input);
 }
 
@@ -55,11 +76,35 @@ bool queryMapColorU32(
     const FeatureFilterContext& filter_ctx,
     size_t layer_idx,
     size_t feature_idx,
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     ImU32& out_color) {
     float query_color[4] = {0, 0, 0, 0};
     if (!queryMapColorForFeature(filter_ctx, layer_idx, feature_idx, fg, query_color)) return false;
     out_color = ImGui::ColorConvertFloat4ToU32(ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+    return true;
+}
+
+bool cachedFeatureVisible(
+    const LayerFeatureRenderCache* cache,
+    size_t layer_idx,
+    size_t feature_idx,
+    bool& out_visible) {
+    if (!cache) return false;
+    const FeatureRenderState* state = findFeatureRenderState(*cache, layer_idx, feature_idx);
+    if (!state) return false;
+    out_visible = state->visible;
+    return true;
+}
+
+bool cachedFeatureQueryColor(
+    const LayerFeatureRenderCache* cache,
+    size_t layer_idx,
+    size_t feature_idx,
+    ImU32& out_color) {
+    if (!cache) return false;
+    const FeatureRenderState* state = findFeatureRenderState(*cache, layer_idx, feature_idx);
+    if (!state || !state->has_query_color) return false;
+    out_color = state->query_color;
     return true;
 }
 
@@ -71,12 +116,17 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.draw = ctx.draw;
     render_frame_ctx.origin = ctx.origin;
     render_frame_ctx.size = ctx.size;
+    render_frame_ctx.center_lon = ctx.center_lon;
+    render_frame_ctx.center_lat = ctx.center_lat;
+    render_frame_ctx.zoom_ptr = ctx.zoom_ptr;
+    render_frame_ctx.max_zoom = ctx.max_zoom;
     render_frame_ctx.zoom = ctx.zoom;
     render_frame_ctx.math_zoom = ctx.math_zoom;
     render_frame_ctx.zoom_scale = ctx.zoom_scale;
     render_frame_ctx.lod_ring_step = ctx.lod_ring_step;
     render_frame_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     render_frame_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
+    render_frame_ctx.crime_nibrs_layer_idx = ctx.crime_nibrs_layer_idx;
     render_frame_ctx.vacant_notice_layer_idx = ctx.vacant_notice_layer_idx;
     render_frame_ctx.vacant_rehab_layer_idx = ctx.vacant_rehab_layer_idx;
     render_frame_ctx.tax_lien_layer_idx = ctx.tax_lien_layer_idx;
@@ -101,9 +151,14 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
     render_frame_ctx.heatmap_controls_active = ctx.heatmap_controls_active;
     render_frame_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
+    render_frame_ctx.map_polygon_fill_opacity = ctx.map_polygon_fill_opacity;
     render_frame_ctx.vacancy_notice_color = ctx.vacancy_notice_color;
     render_frame_ctx.vacancy_rehab_color = ctx.vacancy_rehab_color;
     render_frame_ctx.layers = ctx.layers;
+    render_frame_ctx.point_geometry_artifacts = ctx.point_geometry_artifacts;
+    render_frame_ctx.polyline_geometry_artifacts = ctx.polyline_geometry_artifacts;
+    render_frame_ctx.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+    render_frame_ctx.parcel_render_blob = ctx.parcel_render_blob;
     render_frame_ctx.layer_spatial = ctx.layer_spatial;
     render_frame_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
     render_frame_ctx.layer_heatmap_enabled = ctx.layer_heatmap_enabled;
@@ -132,13 +187,22 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.selected_owners = &ctx.map_filter_state->selected_owners;
     render_frame_ctx.heatmap_runtime = ctx.heatmap_runtime;
     render_frame_ctx.projection = ctx.projection;
+    render_frame_ctx.hover_state = ctx.hover_state;
     render_frame_ctx.is_parcel_related_layer = [&](size_t layer_idx) { return isParcelRelatedLayer(filter_ctx, layer_idx); };
+    render_frame_ctx.layer_passes_filters = [&](size_t layer_idx) {
+        return !filter_ctx.layers || layer_idx < filter_ctx.layers->size();
+    };
     render_frame_ctx.feature_passes_filters =
-        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg) {
+        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg) {
+            bool visible = true;
+            if (cachedFeatureVisible(ctx.feature_render_cache, layer_idx, feature_idx, visible)) return visible;
             return featurePassesFilters(filter_ctx, layer_idx, feature_idx, fg);
         };
     render_frame_ctx.query_map_color =
-        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureGeom& fg, ImU32& out_color) {
+        [&](size_t layer_idx, size_t feature_idx, const LayerDef::FeatureRecord& fg, ImU32& out_color) {
+            if (ctx.feature_render_cache && cachedFeatureQueryColor(ctx.feature_render_cache, layer_idx, feature_idx, out_color)) {
+                return true;
+            }
             return queryMapColorU32(filter_ctx, layer_idx, feature_idx, fg, out_color);
         };
     render_frame_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
@@ -183,6 +247,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.crime_filter_auto_theft = ctx.map_filter_state->crime.auto_theft;
     render_frame_ctx.crime_filter_drug = ctx.map_filter_state->crime.drug;
     render_frame_ctx.crime_filter_shooting = ctx.map_filter_state->crime.shooting;
+    render_frame_ctx.zoom = ctx.zoom;
     return render_frame_ctx;
 }
 }
@@ -194,8 +259,24 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
     }
 
     refreshParcelJurisdictionFilter(ctx);
-    const FeatureFilterContext filter_ctx = buildFrameFilterContext(ctx);
+    double owner_filter_ms_frame = 0.0;
+    size_t owner_filter_candidates_frame = 0;
+    size_t owner_filter_matches_frame = 0;
+    const FeatureFilterContext filter_ctx = buildFrameFilterContext(
+        ctx,
+        owner_filter_ms_frame,
+        owner_filter_candidates_frame,
+        owner_filter_matches_frame);
     orchestrateMapFrameRender(buildRenderFrameContext(ctx, filter_ctx));
+    if (ctx.prof_owner_filter_ms_last) {
+        ctx.prof_owner_filter_ms_last->store(owner_filter_ms_frame, std::memory_order_relaxed);
+    }
+    if (ctx.prof_owner_filter_candidates_last) {
+        ctx.prof_owner_filter_candidates_last->store(owner_filter_candidates_frame, std::memory_order_relaxed);
+    }
+    if (ctx.prof_owner_filter_matches_last) {
+        ctx.prof_owner_filter_matches_last->store(owner_filter_matches_frame, std::memory_order_relaxed);
+    }
     if (ctx.projection) {
         if (ctx.prof_projection_world_ring_cache_entries) {
             ctx.prof_projection_world_ring_cache_entries->store(ctx.projection->cachedWorldRingEntries(), std::memory_order_relaxed);
@@ -214,6 +295,9 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_layer_idx,
         ctx.zoning_layer_idx,
         ctx.layers,
+        ctx.unified_parcels,
+        ctx.parcel_render_blob,
+        ctx.polygon_geometry_artifacts,
         ctx.layer_spatial,
         ctx.zoning_metadata,
         ctx.parcel_selection,
@@ -227,6 +311,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_tax_sale_by_feature,
         ctx.parcel_tax_lien_amount_by_feature,
         ctx.parcel_tax_sale_amount_by_feature,
-        ctx.real_property_for_parcel
+        ctx.real_property_by_blocklot,
+        ctx.real_property_layer_idx
     });
 }

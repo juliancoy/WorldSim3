@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-OUT_DIR = Path("data/layers")
+OUT_DIR = Path("data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers")
 PAGE_SIZE = 2000
 
 LAYERS = [

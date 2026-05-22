@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 SOURCE_URL = "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-OUT_DIR = Path("data/layers")
+OUT_DIR = Path("data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers")
 PAGE_SIZE = 2000
 
 NOTICE_LAYERS = {

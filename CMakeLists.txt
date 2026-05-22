@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(FetchContent)
+include(CTest)
 
 find_package(Vulkan REQUIRED)
 find_package(CURL REQUIRED)
@@ -73,6 +74,7 @@ set(BUILD_SHELL OFF CACHE BOOL "" FORCE)
 set(BUILD_UNITTESTS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXTENSIONS "" CACHE STRING "" FORCE)
 set(DISABLE_BUILTIN_EXTENSIONS TRUE CACHE BOOL "" FORCE)
+set(DISABLE_UNITY ON CACHE BOOL "" FORCE)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/duckdb/CMakeLists.txt")
   add_subdirectory(third_party/duckdb EXCLUDE_FROM_ALL)
 else()
@@ -104,16 +106,20 @@ add_executable(worldsim3
   aggregate_visualization_strategies.cpp
   app_lifecycle.cpp
   app_settings.cpp
+  color_editor_ipc.cpp
+  color_editor_window.cpp
   app_utils.cpp
   app_frame_support.cpp
   frame_prelude.cpp
   memory_utils.cpp
   zoning.cpp
   parcel_matched_layers.cpp
+  parcel_metrics.cpp
   vacancy_overlay.cpp
   dataset_library.cpp
   duckdb_analytics.cpp
   sql_tab.cpp
+  repeatable_filters.cpp
   net_http_utils.cpp
   status_api.cpp
   dataset_lan_api.cpp
@@ -122,6 +128,7 @@ add_executable(worldsim3
   derived_layer_caches.cpp
   layer_workers.cpp
   layer_geometry.cpp
+  basemap_sources.cpp
   map_render_heatmap_pass.cpp
   map_render_hover.cpp
   map_render_basemap.cpp
@@ -133,12 +140,14 @@ add_executable(worldsim3
   map_render_projection.cpp
   map_render_selection.cpp
   map_render_utils.cpp
+  gpu_picking.cpp
   map_canvas_session.cpp
   map_frame_render.cpp
   map_frame_session.cpp
   map_tab.cpp
   left_panel.cpp
   map_viewport.cpp
+  real_property_ui.cpp
   parcel_timeline.cpp
   parcel_unified.cpp
   parcel_consolidation.cpp
@@ -156,6 +165,8 @@ add_executable(worldsim3
   model_tabs_panel.cpp
   layers_panel_ui.cpp
   ui_primitives.cpp
+  ui_fonts.cpp
+  ui_theme.cpp
   layer_registry.cpp
   layer_ui_actions.cpp
   layer_ui_context_builders.cpp
@@ -169,6 +180,7 @@ add_executable(worldsim3
   heat_normalization.cpp
   heatmap_key_builder.cpp
   heatmap_runtime.cpp
+  cpu_zoning_fallback.cpp
   render_layer_pass.cpp
   render_tail_pass.cpp
   render_policy.cpp
@@ -186,12 +198,18 @@ add_executable(worldsim3
   tiles.cpp
   owner_info.cpp
   owner_aggregates.cpp
+  owner_text_filter.cpp
+  address_text_filter.cpp
+  active_queries_tab.cpp
+  gpu_profiler_tab.cpp
   owners_tab.cpp
   gradient_tab.cpp
   vacancy_parcel_tab.cpp
   parcel_info_tab.cpp
   filters_tab.cpp
   right_panel.cpp
+  event_sectors.cpp
+  event_sector_filters_panel.cpp
   zoning_filters_panel.cpp
   graph_model_tab.cpp
   star_schema_tab.cpp
@@ -221,6 +239,22 @@ add_executable(worldsim3
   ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
 )
 
+target_compile_definitions(worldsim3 PRIVATE
+  WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp"
+  WS3_GPU_SPLAT_HISTOGRAM_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram.comp"
+  WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram_reduce.comp"
+  WS3_GPU_SPLAT_RESOLVE_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_resolve.comp"
+  WS3_PARCEL_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert"
+  WS3_PARCEL_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
+  WS3_CRIME_POINT_GPU_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert"
+  WS3_CRIME_POINT_GPU_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag"
+  WS3_GPU_PICK_POLYGON_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert"
+  WS3_GPU_PICK_POLYGON_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag"
+  WS3_GPU_PICK_POINT_VERT_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert"
+  WS3_GPU_PICK_POINT_FRAG_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag"
+  WS3_ZONING_OUTLINE_INDIRECT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/zoning_outline_indirect.comp"
+)
+
 target_include_directories(worldsim3 PRIVATE
   ${imgui_SOURCE_DIR}
   ${imgui_SOURCE_DIR}/backends
@@ -232,6 +266,18 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
   set(WS3_SHADER_OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated_shaders")
   file(MAKE_DIRECTORY "${WS3_SHADER_OUT_DIR}")
   set(WS3_GPU_SPLAT_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat.comp.spv")
+  set(WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat_histogram.comp.spv")
+  set(WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat_histogram_reduce.comp.spv")
+  set(WS3_GPU_SPLAT_RESOLVE_SHADER_SPV "${WS3_SHADER_OUT_DIR}/heatmap_splat_resolve.comp.spv")
+  set(WS3_PARCEL_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.vert.spv")
+  set(WS3_PARCEL_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/parcel_fill.frag.spv")
+  set(WS3_CRIME_POINT_GPU_VERT_SPV "${WS3_SHADER_OUT_DIR}/point_marker.vert.spv")
+  set(WS3_CRIME_POINT_GPU_FRAG_SPV "${WS3_SHADER_OUT_DIR}/point_marker.frag.spv")
+  set(WS3_GPU_PICK_POLYGON_VERT_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_polygon.vert.spv")
+  set(WS3_GPU_PICK_POLYGON_FRAG_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_polygon.frag.spv")
+  set(WS3_GPU_PICK_POINT_VERT_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_point.vert.spv")
+  set(WS3_GPU_PICK_POINT_FRAG_SPV "${WS3_SHADER_OUT_DIR}/gpu_pick_point.frag.spv")
+  set(WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV "${WS3_SHADER_OUT_DIR}/zoning_outline_indirect.comp.spv")
   add_custom_command(
     OUTPUT "${WS3_GPU_SPLAT_SHADER_SPV}"
     COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp" -o "${WS3_GPU_SPLAT_SHADER_SPV}"
@@ -239,18 +285,137 @@ if(GLSLANG_VALIDATOR_EXECUTABLE)
     COMMENT "Compiling heatmap_splat.comp -> SPIR-V"
     VERBATIM
   )
-  add_custom_target(worldsim3_shaders DEPENDS "${WS3_GPU_SPLAT_SHADER_SPV}")
+  add_custom_command(
+    OUTPUT "${WS3_GPU_SPLAT_RESOLVE_SHADER_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_resolve.comp" -o "${WS3_GPU_SPLAT_RESOLVE_SHADER_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_resolve.comp"
+    COMMENT "Compiling heatmap_splat_resolve.comp -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram.comp" -o "${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram.comp"
+    COMMENT "Compiling heatmap_splat_histogram.comp -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram_reduce.comp" -o "${WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram_reduce.comp"
+    COMMENT "Compiling heatmap_splat_histogram_reduce.comp -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_PARCEL_GPU_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert" -o "${WS3_PARCEL_GPU_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.vert"
+    COMMENT "Compiling parcel_fill.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_PARCEL_GPU_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag" -o "${WS3_PARCEL_GPU_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/parcel_fill.frag"
+    COMMENT "Compiling parcel_fill.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert" -o "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.vert"
+    COMMENT "Compiling point_marker.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag" -o "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/point_marker.frag"
+    COMMENT "Compiling point_marker.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert" -o "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.vert"
+    COMMENT "Compiling gpu_pick_polygon.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag" -o "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_polygon.frag"
+    COMMENT "Compiling gpu_pick_polygon.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert" -o "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.vert"
+    COMMENT "Compiling gpu_pick_point.vert -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag" -o "${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gpu_pick_point.frag"
+    COMMENT "Compiling gpu_pick_point.frag -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV}"
+    COMMAND "${GLSLANG_VALIDATOR_EXECUTABLE}" -V "${CMAKE_CURRENT_SOURCE_DIR}/shaders/zoning_outline_indirect.comp" -o "${WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/zoning_outline_indirect.comp"
+    COMMENT "Compiling zoning_outline_indirect.comp -> SPIR-V"
+    VERBATIM
+  )
+  add_custom_target(worldsim3_shaders DEPENDS
+    "${WS3_GPU_SPLAT_SHADER_SPV}"
+    "${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
+    "${WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV}"
+    "${WS3_GPU_SPLAT_RESOLVE_SHADER_SPV}"
+    "${WS3_PARCEL_GPU_VERT_SPV}"
+    "${WS3_PARCEL_GPU_FRAG_SPV}"
+    "${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    "${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    "${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    "${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    "${WS3_GPU_PICK_POINT_VERT_SPV}"
+    "${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    "${WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV}"
+  )
   add_dependencies(worldsim3 worldsim3_shaders)
-  target_compile_definitions(worldsim3 PRIVATE WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}")
+  target_compile_definitions(worldsim3 PRIVATE
+    WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}"
+    WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV="${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
+    WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV="${WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV}"
+    WS3_GPU_SPLAT_RESOLVE_SHADER_SPV="${WS3_GPU_SPLAT_RESOLVE_SHADER_SPV}"
+    WS3_PARCEL_GPU_VERT_SPV="${WS3_PARCEL_GPU_VERT_SPV}"
+    WS3_PARCEL_GPU_FRAG_SPV="${WS3_PARCEL_GPU_FRAG_SPV}"
+    WS3_CRIME_POINT_GPU_VERT_SPV="${WS3_CRIME_POINT_GPU_VERT_SPV}"
+    WS3_CRIME_POINT_GPU_FRAG_SPV="${WS3_CRIME_POINT_GPU_FRAG_SPV}"
+    WS3_GPU_PICK_POLYGON_VERT_SPV="${WS3_GPU_PICK_POLYGON_VERT_SPV}"
+    WS3_GPU_PICK_POLYGON_FRAG_SPV="${WS3_GPU_PICK_POLYGON_FRAG_SPV}"
+    WS3_GPU_PICK_POINT_VERT_SPV="${WS3_GPU_PICK_POINT_VERT_SPV}"
+    WS3_GPU_PICK_POINT_FRAG_SPV="${WS3_GPU_PICK_POINT_FRAG_SPV}"
+    WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV="${WS3_ZONING_OUTLINE_INDIRECT_SHADER_SPV}"
+  )
 endif()
 
 target_link_libraries(worldsim3 PRIVATE Vulkan::Vulkan nlohmann_json::nlohmann_json glfw CURL::libcurl ZLIB::ZLIB datachannel)
 
-if(TARGET duckdb_static)
-  target_link_libraries(worldsim3 PRIVATE duckdb_static)
-elseif(TARGET duckdb)
-  target_link_libraries(worldsim3 PRIVATE duckdb)
-endif()
+function(link_worldsim_duckdb target_name)
+  if(TARGET duckdb)
+    target_link_libraries(${target_name} PRIVATE duckdb)
+  elseif(TARGET duckdb_static)
+    target_link_libraries(${target_name} PRIVATE duckdb_static)
+    if(TARGET duckdb_mbedtls)
+      target_link_libraries(${target_name} PRIVATE duckdb_mbedtls duckdb_static)
+    endif()
+  endif()
+endfunction()
+
+link_worldsim_duckdb(worldsim3)
 
 if(UNIX AND NOT APPLE)
   target_link_libraries(worldsim3 PRIVATE dl pthread)
@@ -259,6 +424,57 @@ endif()
 if(WIN32)
   target_compile_definitions(worldsim3 PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
   target_link_libraries(worldsim3 PRIVATE ws2_32)
+endif()
+
+if(BUILD_TESTING)
+  function(add_worldsim_cli_test test_name)
+    add_test(NAME ${test_name} COMMAND $<TARGET_FILE:worldsim3> ${ARGN})
+    set_tests_properties(${test_name} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      TIMEOUT 60
+      LABELS "smoke;selftest")
+  endfunction()
+
+  function(add_worldsim_integration_test test_name)
+    add_test(NAME ${test_name} COMMAND $<TARGET_FILE:worldsim3> ${ARGN})
+    set_tests_properties(${test_name} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      TIMEOUT 1800
+      LABELS "integration;duckdb;selftest")
+  endfunction()
+
+  add_test(NAME worldsim3_help COMMAND $<TARGET_FILE:worldsim3> --help)
+  set_tests_properties(worldsim3_help PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 10
+    LABELS "smoke;cli")
+
+  add_worldsim_cli_test(worldsim3_projection_cache_selftest --projection-cache-selftest)
+  add_worldsim_cli_test(worldsim3_projection_fill_cache_selftest --projection-fill-cache-selftest)
+  add_worldsim_cli_test(worldsim3_projection_color_cache_selftest --projection-color-cache-selftest)
+  add_worldsim_cli_test(worldsim3_polygon_hole_selftest --polygon-hole-selftest)
+  add_worldsim_cli_test(worldsim3_parcel_render_cache_selftest --parcel-render-cache-selftest)
+  add_worldsim_cli_test(worldsim3_spatial_index_selftest --spatial-index-selftest)
+  add_worldsim_cli_test(worldsim3_layer_profile_selftest --layer-profile-selftest)
+  add_worldsim_cli_test(worldsim3_layer_runtime_status_selftest --layer-runtime-status-selftest)
+  add_worldsim_cli_test(worldsim3_parcel_gpu_cpu_bypass_selftest --parcel-gpu-cpu-bypass-selftest)
+  add_worldsim_cli_test(worldsim3_render_policy_selftest --render-policy-selftest)
+  add_worldsim_cli_test(worldsim3_render_plan_selftest --render-plan-selftest)
+  add_worldsim_cli_test(worldsim3_canonical_parcel_binary_selftest --canonical-parcel-binary-selftest)
+  add_worldsim_cli_test(worldsim3_vacancy_selftest --vacancy-selftest)
+  add_worldsim_integration_test(worldsim3_duckdb_parcel_ingest_selftest --duckdb-parcel-ingest-selftest)
+
+  add_test(NAME arkavo_connectivity_help COMMAND $<TARGET_FILE:arkavo_connectivity_test> --help)
+  set_tests_properties(arkavo_connectivity_help PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 10
+    LABELS "smoke;cli")
+
+  add_test(NAME worldsim3_duckdb_owner_dump_help COMMAND $<TARGET_FILE:worldsim3_duckdb_owner_dump> --help)
+  set_tests_properties(worldsim3_duckdb_owner_dump_help PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 10
+    LABELS "smoke;cli")
 endif()
 
 add_executable(arkavo_connectivity_test
@@ -291,6 +507,11 @@ add_executable(worldsim3_gpu_aggregate_harness
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
   ${imgui_SOURCE_DIR}/imgui_widgets.cpp
 )
+target_compile_definitions(worldsim3_gpu_aggregate_harness PRIVATE
+  WS3_GPU_SPLAT_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat.comp"
+  WS3_GPU_SPLAT_HISTOGRAM_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram.comp"
+  WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_histogram_reduce.comp"
+  WS3_GPU_SPLAT_RESOLVE_SHADER_SRC="${CMAKE_CURRENT_SOURCE_DIR}/shaders/heatmap_splat_resolve.comp")
 
 target_include_directories(worldsim3_gpu_aggregate_harness PRIVATE
   ${imgui_SOURCE_DIR}
@@ -311,7 +532,11 @@ endif()
 
 if(GLSLANG_VALIDATOR_EXECUTABLE)
   add_dependencies(worldsim3_gpu_aggregate_harness worldsim3_shaders)
-  target_compile_definitions(worldsim3_gpu_aggregate_harness PRIVATE WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}")
+  target_compile_definitions(worldsim3_gpu_aggregate_harness PRIVATE
+    WS3_GPU_SPLAT_SHADER_SPV="${WS3_GPU_SPLAT_SHADER_SPV}"
+    WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV="${WS3_GPU_SPLAT_HISTOGRAM_SHADER_SPV}"
+    WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV="${WS3_GPU_SPLAT_HISTOGRAM_REDUCE_SHADER_SPV}"
+    WS3_GPU_SPLAT_RESOLVE_SHADER_SPV="${WS3_GPU_SPLAT_RESOLVE_SHADER_SPV}")
 endif()
 
 add_executable(worldsim_hud_pit_builder
@@ -322,14 +547,6 @@ target_include_directories(worldsim_hud_pit_builder PRIVATE
 )
 target_link_libraries(worldsim_hud_pit_builder PRIVATE nlohmann_json::nlohmann_json)
 
-add_executable(worldsim_regional_parcel_builder
-  tools/regional_parcel_builder.cpp
-)
-target_include_directories(worldsim_regional_parcel_builder PRIVATE
-  ${CMAKE_CURRENT_SOURCE_DIR}
-)
-target_link_libraries(worldsim_regional_parcel_builder PRIVATE nlohmann_json::nlohmann_json)
-
 add_executable(worldsim3_duckdb_owner_dump
   tools/duckdb_owner_dump.cpp
   aggregate_visualization_strategies.cpp
@@ -337,14 +554,16 @@ add_executable(worldsim3_duckdb_owner_dump
   cache_io.cpp
   cpu_affinity.cpp
   duckdb_analytics.cpp
+  event_sectors.cpp
   feature_props.cpp
   geo.cpp
-  headless_layer_hydration.cpp
   layer_geometry.cpp
+  layer_runtime.cpp
   layer_state_io.cpp
   layer_workers.cpp
   memory_utils.cpp
   parcel_consolidation.cpp
+  parcel_metrics.cpp
   parcel_unified.cpp
 )
 target_include_directories(worldsim3_duckdb_owner_dump PRIVATE
@@ -352,11 +571,7 @@ target_include_directories(worldsim3_duckdb_owner_dump PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
 target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE nlohmann_json::nlohmann_json)
-if(TARGET duckdb_static)
-  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE duckdb_static)
-elseif(TARGET duckdb)
-  target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE duckdb)
-endif()
+link_worldsim_duckdb(worldsim3_duckdb_owner_dump)
 if(UNIX AND NOT APPLE)
   target_link_libraries(worldsim3_duckdb_owner_dump PRIVATE dl pthread)
 endif()

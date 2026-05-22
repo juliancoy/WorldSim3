@@ -10,8 +10,10 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.data_freshness_msg = input.data_freshness_msg;
     ctx.data_library_status_msg = input.data_library_status_msg;
     ctx.enqueue_layer_download_request = input.enqueue_layer_download_request;
+    ctx.layer_download_pending = input.layer_download_pending;
     ctx.mark_local_layer_exists = input.mark_local_layer_exists;
     ctx.enqueue_hydration = input.enqueue_hydration;
+    ctx.open_layer_color_editor = input.open_layer_color_editor;
     ctx.heatmap_input_float_enter = input.heatmap_input_float_enter;
     ctx.layer_spatial = input.layer_spatial;
     ctx.layer_states = input.layer_states;
@@ -28,6 +30,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.layer_heatmap_bandwidth_px = input.layer_heatmap_bandwidth_px;
     ctx.layer_heatmap_blur_sigma_px = input.layer_heatmap_blur_sigma_px;
     ctx.layer_heatmap_percentile_clip = input.layer_heatmap_percentile_clip;
+    ctx.layer_choropleth_gamma = input.layer_choropleth_gamma;
     ctx.layer_heatmap_multires_blend = input.layer_heatmap_multires_blend;
     ctx.layer_heatmap_zoom_adaptive_bandwidth = input.layer_heatmap_zoom_adaptive_bandwidth;
     ctx.layer_heatmap_multires_enabled = input.layer_heatmap_multires_enabled;
@@ -41,6 +44,8 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.layer_heatmap_state_changed = input.layer_heatmap_state_changed;
     ctx.heatmap_controls_active = input.heatmap_controls_active;
     ctx.parcel_parameter_mode = input.parcel_parameter_mode;
+    ctx.map_filter_state = input.map_filter_state;
+    ctx.layer_browse_state = input.layer_browse_state;
     return ctx;
 }
 
@@ -48,7 +53,11 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     LayersPanelUiContext ctx;
     ctx.shared = input.shared;
     ctx.parcel_layer_idx = input.parcel_layer_idx;
+    ctx.zoning_layer_idx = input.zoning_layer_idx;
     ctx.zoom = input.zoom;
+    ctx.layer_search_query = input.layer_search_query;
+    ctx.active_hover_layer_idx = input.active_hover_layer_idx;
+    ctx.active_click_layer_idx = input.active_click_layer_idx;
     ctx.crime_filter_enabled = input.crime_filter_enabled;
     ctx.crime_filter_use_year = input.crime_filter_use_year;
     ctx.crime_year_min = input.crime_year_min;
@@ -62,10 +71,9 @@ LayersPanelUiContext makeLayersPanelUiContext(const LayersPanelContextFactoryInp
     ctx.crime_filter_drug = input.crime_filter_drug;
     ctx.crime_filter_shooting = input.crime_filter_shooting;
     ctx.crime_nibrs_layer_idx = input.crime_nibrs_layer_idx;
-    ctx.crime_legacy_layer_idx = input.crime_legacy_layer_idx;
     ctx.crime_breakdown = input.crime_breakdown;
-    ctx.parcel_jurisdiction_filter = input.parcel_jurisdiction_filter;
-    ctx.parcel_jurisdiction_filter_dirty = input.parcel_jurisdiction_filter_dirty;
-    ctx.parcel_jurisdiction_filter_status = input.parcel_jurisdiction_filter_status;
+    ctx.parcel_jurisdiction_filter_state = input.parcel_jurisdiction_filter_state;
+    ctx.map_filter_state = input.map_filter_state;
+    ctx.layer_browse_state = input.layer_browse_state;
     return ctx;
 }

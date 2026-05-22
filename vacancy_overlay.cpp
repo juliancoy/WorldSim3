@@ -1,6 +1,7 @@
 #include "vacancy_overlay.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
 #include "feature_props.h"
 #include "layer_geometry.h"
 
@@ -16,15 +17,37 @@
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+namespace {
+bool loadCanonicalLayerFeaturesForSelftest(
+    const fs::path& root,
+    const std::string& file,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>* feature_properties,
+    std::string& error) {
+    const fs::path layer_path = resolveStoredLayerPathForFile(root, file);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+        error = "failed to resolve canonical source signature";
+        return false;
+    }
+    if (!loadCanonicalLayerFeatureCollection(root, file, sig, features, feature_properties)) {
+        error = "failed to load canonical layer binary";
+        return false;
+    }
+    return true;
+}
+}
+
 void saveDerivedVacancyStatus(
     const fs::path& out_path,
-    const std::vector<LayerDef::FeatureGeom>& parcel_features,
+    const std::vector<LayerDef::FeatureRecord>& parcel_features,
     const std::vector<int>& notice_counts,
     const std::vector<int>& rehab_counts,
     size_t vacant_notice_rows_total,
     size_t vacant_rehab_rows_total,
     size_t vacant_notice_rows_matched,
-    size_t vacant_rehab_rows_matched) {
+    size_t vacant_rehab_rows_matched,
+    const std::vector<std::string>* parcel_blocklot_by_feature) {
     if (parcel_features.size() != notice_counts.size() || parcel_features.size() != rehab_counts.size()) return;
     json j;
     j["schema_version"] = 1;
@@ -45,8 +68,10 @@ void saveDerivedVacancyStatus(
         }
         return out;
     };
-    auto local_prop = [](const LayerDef::FeatureGeom& fg, const char* key) {
-        for (const auto& kv : fg.properties) {
+    auto local_prop = [](const LayerDef::FeatureRecord& fg, const char* key) {
+        const FeaturePropertyPairs* props = getPropertyPairs(fg);
+        if (!props) return std::string{};
+        for (const auto& kv : *props) {
             if (kv.first == key) return kv.second;
         }
         return std::string{};
@@ -57,7 +82,10 @@ void saveDerivedVacancyStatus(
         int r = rehab_counts[i];
         int w = n + r;
         if (w <= 0) continue;
-        std::string bl = local_norm(local_prop(parcel_features[i], "BLOCKLOT"));
+        std::string bl =
+            (parcel_blocklot_by_feature && i < parcel_blocklot_by_feature->size())
+                ? (*parcel_blocklot_by_feature)[i]
+                : local_norm(local_prop(parcel_features[i], "BLOCKLOT"));
         j["entries"].push_back({
             {"feature_index", i},
             {"blocklot_norm", bl},
@@ -72,9 +100,9 @@ void saveDerivedVacancyStatus(
 }
 
 int runVacancySelftest(const fs::path& root) {
-    const fs::path parcel_path = root / "data" / "layers" / "parcel.geojson";
-    const fs::path notice_path = root / "data" / "layers" / "vacant_building_notices.geojson";
-    const fs::path rehab_path = root / "data" / "layers" / "vacant_building_rehabs.geojson";
+    const fs::path parcel_path = resolveStoredLayerPathForFile(root, "parcel.geojson");
+    const fs::path notice_path = resolveStoredLayerPathForFile(root, "vacant_building_notices.geojson");
+    const fs::path rehab_path = resolveStoredLayerPathForFile(root, "vacant_building_rehabs.geojson");
 
     json out;
     out["mode"] = "vacancy-selftest";
@@ -85,21 +113,33 @@ int runVacancySelftest(const fs::path& root) {
         {"vacant_rehabs", rehab_path.string()}
     };
 
-    if (!fs::exists(parcel_path) || !fs::exists(notice_path) || !fs::exists(rehab_path)) {
+    const bool parcel_exists = layerRuntimeSourceMaterializedForFile(root, "parcel.geojson");
+    const bool notice_exists = layerRuntimeSourceMaterializedForFile(root, "vacant_building_notices.geojson");
+    const bool rehab_exists = layerRuntimeSourceMaterializedForFile(root, "vacant_building_rehabs.geojson");
+    if (!parcel_exists || !notice_exists || !rehab_exists) {
         out["ok"] = false;
-        out["error"] = "required layer file missing";
+        out["error"] = "required canonical layer binary missing";
         out["exists"] = {
-            {"parcel", fs::exists(parcel_path)},
-            {"vacant_notices", fs::exists(notice_path)},
-            {"vacant_rehabs", fs::exists(rehab_path)}
+            {"parcel", parcel_exists},
+            {"vacant_notices", notice_exists},
+            {"vacant_rehabs", rehab_exists}
         };
         std::printf("%s\n", out.dump(2).c_str());
         return 2;
     }
 
-    auto parcels = loadLayerPointsFromFile(parcel_path);
-    auto notices = loadLayerPointsFromFile(notice_path);
-    auto rehabs = loadLayerPointsFromFile(rehab_path);
+    std::vector<LayerDef::FeatureRecord> parcels;
+    std::vector<LayerDef::FeatureRecord> notices;
+    std::vector<LayerDef::FeatureRecord> rehabs;
+    std::string error;
+    if (!loadCanonicalLayerFeaturesForSelftest(root, "parcel.geojson", parcels, nullptr, error) ||
+        !loadCanonicalLayerFeaturesForSelftest(root, "vacant_building_notices.geojson", notices, nullptr, error) ||
+        !loadCanonicalLayerFeaturesForSelftest(root, "vacant_building_rehabs.geojson", rehabs, nullptr, error)) {
+        out["ok"] = false;
+        out["error"] = error.empty() ? "failed to load canonical layer binary" : error;
+        std::printf("%s\n", out.dump(2).c_str());
+        return 2;
+    }
 
     std::unordered_map<std::string, std::vector<size_t>> parcel_by_blocklot;
     parcel_by_blocklot.reserve(parcels.size());
@@ -196,4 +236,3 @@ int runVacancySelftest(const fs::path& root) {
     std::printf("%s\n", out.dump(2).c_str());
     return out["ok"].get<bool>() ? 0 : 3;
 }
-

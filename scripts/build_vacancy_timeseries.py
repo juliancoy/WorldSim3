@@ -321,9 +321,15 @@ def write_csv(path: Path, rows: List[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build yearly vacancy time series CSV.")
-    parser.add_argument("--notices", default="data/layers/vacant_building_notices.geojson")
-    parser.add_argument("--rehabs", default="data/layers/vacant_building_rehabs.geojson")
-    parser.add_argument("--real-property", default="data/layers/real_property_information.geojson")
+    parser.add_argument(
+        "--notices",
+        default="data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/vacant_building_notices.geojson")
+    parser.add_argument(
+        "--rehabs",
+        default="data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/vacant_building_rehabs.geojson")
+    parser.add_argument(
+        "--real-property",
+        default="data/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/real_property_information.geojson")
     parser.add_argument("--out-csv", default="data/analytics/vacancy_timeseries_yearly.csv")
     parser.add_argument("--out-qa", default="data/analytics/vacancy_timeseries_qa.json")
     args = parser.parse_args()

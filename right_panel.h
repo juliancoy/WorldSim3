@@ -1,9 +1,13 @@
 #pragma once
 
+#include "app_settings.h"
 #include "app_utils.h"
+#include "active_queries_tab.h"
+#include "cache_io.h"
 #include "duckdb_analytics.h"
 #include "filters.h"
 #include "filters_tab.h"
+#include "gpu_profiler_tab.h"
 #include "layer_runtime.h"
 #include "owner_aggregates.h"
 #include "owner_info.h"
@@ -27,18 +31,23 @@
 
 struct RightPanelContext {
     const std::filesystem::path* root = nullptr;
+    AppSettings* app_settings = nullptr;
     DuckDbAnalytics* duckdb_analytics = nullptr;
 
     float layout_w = 0.0f;
     float right_panel_w = 0.0f;
     float layout_margin = 0.0f;
     float main_panel_h = 0.0f;
+    float map_w = 0.0f;
 
     std::vector<LayerDef>* layers = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::vector<QueryHistoryEntry>* query_history = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
+    std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
 
     std::unordered_set<std::string>* selected_owners = nullptr;
@@ -52,13 +61,14 @@ struct RightPanelContext {
     size_t* selected_zone_idx = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
+    int min_zoom = 0;
+    int max_zoom = 0;
 
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     int real_property_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
@@ -72,12 +82,15 @@ struct RightPanelContext {
     std::vector<int>* layer_heatmap_algo = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     std::vector<float>* layer_choropleth_gamma = nullptr;
+    std::vector<bool>* layer_fill_enabled = nullptr;
     bool* layer_heatmap_state_changed = nullptr;
     float heatmap_percentile_clip = 0.0f;
 
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
+    const FilterResultSet* owner_text_filter_result_set = nullptr;
+    const FilterResultSet* address_text_filter_result_set = nullptr;
 
     std::unordered_map<std::string, std::string>* owner_class_overrides = nullptr;
     bool* owner_class_overrides_loaded = nullptr;
@@ -121,14 +134,17 @@ struct RightPanelContext {
     std::atomic<size_t>* vacant_parcels_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_with_geometry_total = nullptr;
 
-    bool* duckdb_auto_rebuild_checked = nullptr;
-    std::mutex* hydrate_req_mutex = nullptr;
-    std::deque<size_t>* hydrate_requests = nullptr;
-    std::vector<bool>* hydration_requested = nullptr;
-    std::mutex* hydrated_mutex = nullptr;
-    std::deque<HydratedLayer>* hydrated_queue = nullptr;
-
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
+    std::mutex* profile_mutex = nullptr;
+    std::vector<ProfileFrameSample>* profile_samples = nullptr;
+    size_t* profile_sample_pos = nullptr;
+    size_t* profile_sample_count = nullptr;
+    std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
+    std::atomic<bool>* prof_heatmap_high_quality = nullptr;
+    std::atomic<bool>* prof_heatmap_texture_resident = nullptr;
+    std::atomic<bool>* prof_heatmap_async_inflight = nullptr;
+    std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
+    bool* gpu_profiler_tab_requested = nullptr;
+    bool* gpu_profiler_reload_requested = nullptr;
 };
 
 void drawRightPanelWindow(const RightPanelContext& ctx);

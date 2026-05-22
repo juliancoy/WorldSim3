@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "cache_io.h"
 #include "duckdb_analytics.h"
 #include "filters.h"
 #include "heatmap_runtime.h"
@@ -33,17 +34,21 @@ struct MapTabContext {
     float main_panel_h = 0.0f;
 
     const std::filesystem::path* root = nullptr;
-    const AppSettings* app_settings = nullptr;
+    AppSettings* app_settings = nullptr;
     DuckDbAnalytics* duckdb_analytics = nullptr;
 
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
@@ -57,12 +62,12 @@ struct MapTabContext {
     bool* show_selected_zone_details = nullptr;
     size_t* selected_zone_idx = nullptr;
     ElementInfoUiState* element_info_state = nullptr;
+    HoverDebugState* hover_debug_state = nullptr;
 
     int real_property_layer_idx = -1;
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
@@ -87,11 +92,8 @@ struct MapTabContext {
     const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
@@ -100,6 +102,12 @@ struct MapTabContext {
     std::vector<double>* parcel_tax_lien_amount_by_feature = nullptr;
     std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    std::vector<std::string>* parcel_owner_search_by_feature = nullptr;
+    std::vector<std::string>* real_property_owner_search_by_feature = nullptr;
+    std::vector<std::string>* parcel_address_search_by_feature = nullptr;
+    const FilterResultSet* owner_text_filter_result_set = nullptr;
+    const FilterResultSet* address_text_filter_result_set = nullptr;
+    const LayerFeatureRenderCache* feature_render_cache = nullptr;
 
     float global_heat_cell_px = 24.0f;
     int heatmap_algo = 0;
@@ -114,8 +122,8 @@ struct MapTabContext {
     bool heatmap_controls_active = false;
     HeatmapRuntimeState* heatmap_runtime = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool* hover_inspector_enabled = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
 
     LazyTileDownloadState* lazy_tile_download = nullptr;
     bool* topo_tiles_available_cached = nullptr;
@@ -130,7 +138,10 @@ struct MapTabContext {
     size_t* prof_features_drawn_frame = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
     std::atomic<bool>* prof_heatmap_high_quality = nullptr;
@@ -186,8 +197,9 @@ struct MapTabContext {
     int* policy_viz_metric = nullptr;
     size_t* policy_viz_cache_rebuilds = nullptr;
     size_t* policy_viz_node_count = nullptr;
-
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
+    std::function<void()> toggle_map_fullscreen;
+    std::function<void()> request_snapshot;
+    bool map_fullscreen = false;
 };
 
 void drawMapTabWindow(const MapTabContext& ctx);

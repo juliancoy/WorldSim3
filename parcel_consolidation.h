@@ -11,7 +11,7 @@
 
 struct ParcelConsolidationArtifacts {
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
-    std::vector<LayerDef::FeatureGeom> harmonized_real_property_features;
+    std::vector<LayerDef::FeatureRecord> harmonized_real_property_features;
     std::vector<std::string> harmonized_real_property_source_files;
     std::vector<int> parcel_vac_notice_by_feature;
     std::vector<int> parcel_vac_rehab_by_feature;
@@ -40,6 +40,6 @@ void rebuildHarmonizedRealPropertyFeatures(
     const std::filesystem::path& root,
     const std::vector<LayerDef>& layers,
     int real_property_layer_idx,
-    std::vector<LayerDef::FeatureGeom>& harmonized_features,
+    std::vector<LayerDef::FeatureRecord>& harmonized_features,
     std::vector<std::string>& harmonized_source_files,
     std::unordered_map<std::string, size_t>& real_property_by_blocklot);

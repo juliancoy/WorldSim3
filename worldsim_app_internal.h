@@ -40,10 +40,11 @@ struct TileSample {
 
 inline constexpr const char* kAppVersion = "0.1.0";
 inline constexpr int kProtocolVersion = 1;
-inline constexpr int kMinZoom = 8;
+inline constexpr int kMinZoom = 2;
 inline constexpr int kMaxZoom = 24;
 inline constexpr int kMaxNativeTileZoom = 18;
 inline constexpr int kMaxSatelliteNativeTileZoom = 20;
+inline constexpr int kMaxNightSatelliteNativeTileZoom = 7;
 inline constexpr int kMaxInternalMathZoom = 24;
 inline constexpr size_t kMaxTileCache = 320;
 inline constexpr size_t kMaxSmoothHeatSamplesPerLayer = 50000;
@@ -80,6 +81,7 @@ void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild
 void drainRetiredTextures(bool force = false);
 void destroyTileTexture(TileTexture& tex);
 void destroyTileTextureNow(TileTexture& tex);
+bool finalizeTileTextureDescriptor(TileTexture& tex);
 bool uploadRgbaTexture(const unsigned char* pixels, uint32_t w, uint32_t h, TileTexture& tex);
 TileSample getTileSample(
     const std::filesystem::path& root,

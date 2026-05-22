@@ -3,6 +3,9 @@
 #include "app_utils.h"
 #include "ui_primitives.h"
 
+#include <algorithm>
+#include <cstdio>
+
 void updateDataLibraryVisibleRows(DataLibrarySearchCacheContext& ctx) {
     if (!ctx.layers || !ctx.query_buffer || !ctx.cached_query || !ctx.cached_layer_count ||
         !ctx.visible_rows || !ctx.cache_rebuilds) {
@@ -21,6 +24,7 @@ void updateDataLibraryVisibleRows(DataLibrarySearchCacheContext& ctx) {
         const bool hit =
             query.empty() ||
             containsCaseInsensitive(layer.name, query) ||
+            containsCaseInsensitive(layerLogicalId(layer), query) ||
             containsCaseInsensitive(layer.file, query) ||
             containsCaseInsensitive(categoryToString(layer.category), query) ||
             containsCaseInsensitive(layer.subcategory, query) ||
@@ -93,9 +97,17 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
         return;
     }
 
-    const char* download_phases[] = {"must-have", "nice-to-have", "heavy-data", "all", "capital-flows"};
+    const char* download_phases[] = {
+        "must-have",
+        "nice-to-have",
+        "heavy-data",
+        "all",
+        "capital-flows",
+        "anambra-runtime",
+        "anambra-repository"
+    };
     finalizeDataLibraryBulkDownloadIfReady(*ctx.coordinator);
-    ImGui::InputTextWithHint("##data_library_query", "Search by name, file, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
+    ImGui::InputTextWithHint("##data_library_query", "Search by name, layer id, category, subcategory...", ctx.query_buffer, ctx.query_buffer_size);
     ImGui::SameLine();
     if (ImGui::Button("Clear")) ctx.query_buffer[0] = '\0';
     ImGui::SameLine();
@@ -161,8 +173,9 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
     updateDataLibraryVisibleRows(data_library_search_ctx);
 
     *ctx.rendered_rows_last = 0;
-    if (ImGui::BeginTable("data_library_table", 7, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2(0, 0))) {
+    if (ImGui::BeginTable("data_library_table", 8, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_Resizable | ImGuiTableFlags_ScrollY, ImVec2(0, 0))) {
         ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 94.0f);
+        ImGui::TableSetupColumn("Download", ImGuiTableColumnFlags_WidthFixed, 190.0f);
         ImGui::TableSetupColumn("Freshness", ImGuiTableColumnFlags_WidthFixed, 142.0f);
         ImGui::TableSetupColumn("Enabled", ImGuiTableColumnFlags_WidthFixed, 70.0f);
         ImGui::TableSetupColumn("Name");
@@ -176,7 +189,7 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
             for (int display_index = clipper.DisplayStart; display_index < clipper.DisplayEnd; ++display_index) {
                 const size_t i = (*ctx.visible_rows)[static_cast<size_t>(display_index)];
                 auto& layer = (*ctx.layers)[i];
-                const std::filesystem::path local_path = *ctx.root / "data" / "layers" / layer.file;
+                const std::filesystem::path local_path = resolveStoredLayerPath(*ctx.root, layer);
                 const bool local_exists =
                     i < ctx.coordinator->local_layer_exists_cache->size() ? (*ctx.coordinator->local_layer_exists_cache)[i] : false;
                 (*ctx.rendered_rows_last)++;
@@ -214,6 +227,45 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
                     ImGui::TextDisabled("-");
                 }
                 ImGui::TableSetColumnIndex(1);
+                if (ctx.get_layer_download_snapshot) {
+                    const LayerDownloadItemSnapshot snap = ctx.get_layer_download_snapshot(i);
+                    if (snap.state == LayerDownloadItemState::Failed) {
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.78f, 0.22f, 0.18f, 1.0f));
+                    } else if (snap.state == LayerDownloadItemState::Succeeded) {
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.20f, 0.62f, 0.25f, 1.0f));
+                    } else if (snap.state == LayerDownloadItemState::Active) {
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.10f, 0.45f, 0.78f, 1.0f));
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.45f, 0.45f, 0.45f, 1.0f));
+                    }
+                    ImGui::ProgressBar(std::clamp(snap.progress, 0.0f, 1.0f), ImVec2(-1.0f, 0.0f));
+                    ImGui::PopStyleColor();
+                    if (snap.eta_seconds >= 0.0 && snap.state == LayerDownloadItemState::Active) {
+                        const int total_sec = static_cast<int>(snap.eta_seconds + 0.5);
+                        const int mm = total_sec / 60;
+                        const int ss = total_sec % 60;
+                        char eta_buf[32];
+                        std::snprintf(eta_buf, sizeof(eta_buf), "ETA %02d:%02d", mm, ss);
+                        ImGui::TextDisabled("%s", eta_buf);
+                    }
+                    if (!snap.status.empty()) {
+                        ImGui::TextDisabled("%s", snap.status.c_str());
+                    } else if (snap.state == LayerDownloadItemState::Queued) {
+                        ImGui::TextDisabled("Queued");
+                    } else if (snap.state == LayerDownloadItemState::Active) {
+                        ImGui::TextDisabled("Downloading...");
+                    } else if (snap.state == LayerDownloadItemState::Succeeded) {
+                        ImGui::TextDisabled("Ready");
+                    } else if (snap.state == LayerDownloadItemState::Failed) {
+                        ImGui::TextDisabled("Failed");
+                    } else {
+                        ImGui::TextDisabled("Not queued");
+                    }
+                } else {
+                    ImGui::ProgressBar(0.0f, ImVec2(-1.0f, 0.0f));
+                    ImGui::TextDisabled("-");
+                }
+                ImGui::TableSetColumnIndex(2);
                 ImGui::ColorButton("##freshness_dot", dataFreshnessColor((*ctx.coordinator->data_freshness_state)[i]), ImGuiColorEditFlags_NoTooltip, ImVec2(10, 10));
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", dataFreshnessLabel((*ctx.coordinator->data_freshness_state)[i]));
@@ -222,16 +274,16 @@ void drawDataLibraryWindow(DataLibraryUiContext& ctx) {
                     ImGui::TextUnformatted((*ctx.coordinator->data_freshness_msg)[i].c_str());
                     ImGui::EndTooltip();
                 }
-                ImGui::TableSetColumnIndex(2);
-                ImGui::Checkbox("##enable", &layer.enabled);
                 ImGui::TableSetColumnIndex(3);
+                ImGui::Checkbox("##enable", &layer.enabled);
+                ImGui::TableSetColumnIndex(4);
                 drawLayerNameBadge(layer.name, layer.color, 72);
                 drawDataLibraryTooltip(layer);
-                ImGui::TableSetColumnIndex(4);
-                drawDataLibraryCell(layer.file, 72);
                 ImGui::TableSetColumnIndex(5);
-                drawDataLibraryCell(categoryToString(layer.category), 32);
+                drawDataLibraryCell(layer.file, 72);
                 ImGui::TableSetColumnIndex(6);
+                drawDataLibraryCell(categoryToString(layer.category), 32);
+                ImGui::TableSetColumnIndex(7);
                 drawDataLibraryCell(layer.subcategory, 56);
                 ImGui::PopID();
             }

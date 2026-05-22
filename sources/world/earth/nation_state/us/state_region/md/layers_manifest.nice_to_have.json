@@ -1,0 +1,638 @@
+[
+  {
+    "name": "Vacant Building Rehabs",
+    "file": "vacant_building_rehabs.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/4db6d1e54e714a3e8125990a09d4623d/geojson?layers=2",
+    "color": "#984ea3",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Tax Lien Certificate Sale Properties",
+    "file": "tax_lien_certificate_sale_properties.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
+    "color": "#ff7f00",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Open Bid List - Vacants to Value",
+    "file": "open_bid_list_vacants_to_value.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/1b844b06c28a45ca86cdfb586fdce3a7/geojson?layers=7",
+    "color": "#f781bf",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Completed City Demo",
+    "file": "completed_city_demo.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/37f242ca93b244a998c31b6c0a3696a7/geojson?layers=0",
+    "color": "#999999",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Major Drainage",
+    "file": "major_drainage.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/00156edf8258493fa28384e0aa8286a8/geojson?layers=0",
+    "color": "#8da0cb",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Water (Infrastructure Layer 19)",
+    "file": "water_infrastructure_layer_19.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/8ed6565f93a04455ae6bd5bcb7d272db/geojson?layers=19",
+    "color": "#1f78b4",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Rate of Clogged Storm Drain Reports (CSA)",
+    "file": "rate_clogged_storm_drain_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/cc307b1f087244e2bf064d211427d80e/geojson?layers=0",
+    "color": "#6a3d9a",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Median Price of Homes Sold (CSA)",
+    "file": "median_price_homes_sold_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/eb55867e580740228b0d4317464ea040/geojson?layers=0",
+    "color": "#b2df8a",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Total Number of Businesses (CSA)",
+    "file": "total_businesses_csa.geojson",
+    "url": "https://data.baltimorecity.gov/api/download/v1/items/132ea1fbc8c84645b828a1a55406824d/geojson?layers=0",
+    "color": "#fb9a99",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Environmental Citations",
+    "file": "environmental_citations.geojson",
+    "color": "#e31a1c",
+    "description": "Baltimore environmental citations for sanitation, health, safety, and other quality-of-life code issues.",
+    "category": "housing",
+    "subcategory": "Building Conditions",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/ECB_OB/FeatureServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Rental Registration and Licensing",
+    "file": "rental_registration_licensing.geojson",
+    "color": "#1b9e77",
+    "description": "Rental registration and licensing records updated from OpenGov daily.",
+    "category": "housing",
+    "subcategory": "Licensing",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/OpenGov_RegAndLicense/MapServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Fire Calls - Last 3 Months",
+    "file": "fire_calls_last_3_months.geojson",
+    "color": "#d95f02",
+    "description": "Baltimore Fire Department calls from the last three months.",
+    "category": "public-safety",
+    "subcategory": "Fire",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/FIRE/Fire_Calls/MapServer/0"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Demolition Permits Since 2015",
+    "file": "demolition_permits_since_2015.geojson",
+    "color": "#b15928",
+    "description": "Demolition permit records published in the CoDeMap land-planning service.",
+    "category": "housing",
+    "subcategory": "Permits",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/21"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Tree Canopy",
+    "file": "tree_canopy.geojson",
+    "color": "#33a02c",
+    "description": "Baltimore City tree canopy polygons.",
+    "category": "environment",
+    "subcategory": "Green Infrastructure",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/27"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "School Zones",
+    "file": "school_zones.geojson",
+    "color": "#6a3d9a",
+    "description": "Baltimore City school zone polygons.",
+    "category": "education",
+    "subcategory": "Boundaries",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/14"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Bus Stops",
+    "file": "bus_stops.geojson",
+    "color": "#1f78b4",
+    "description": "Bus stop points from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Transit",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Bus Routes",
+    "file": "bus_routes.geojson",
+    "color": "#a6cee3",
+    "description": "Bus route lines from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Transit",
+    "scale": "corridor",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/2"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "On Street Bike Facilities",
+    "file": "on_street_bike_facilities.geojson",
+    "color": "#66c2a5",
+    "description": "On-street bike facilities from Baltimore CitiMap DOT layers.",
+    "category": "transportation",
+    "subcategory": "Bike",
+    "scale": "corridor",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/CitiMap/DOT_Layers/MapServer/5"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "CHAP District",
+    "file": "chap_district.geojson",
+    "color": "#ffed6f",
+    "description": "Commission for Historical and Architectural Preservation district boundaries.",
+    "category": "planning",
+    "subcategory": "Historic",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/10"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "National Register Historic District",
+    "file": "national_register_historic_district.geojson",
+    "color": "#ffff99",
+    "description": "National Register historic district boundaries within Baltimore.",
+    "category": "planning",
+    "subcategory": "Historic",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Planning/Boundaries/MapServer/11"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Enterprise Zone",
+    "file": "enterprise_zone.geojson",
+    "color": "#80b1d3",
+    "description": "State Enterprise Zone boundaries for tax-credit and business-investment context.",
+    "category": "economy",
+    "subcategory": "Incentive Area",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxCityPrograms/MapServer/20"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "TOD Opportunity Zones",
+    "file": "tod_opportunity_zones.geojson",
+    "color": "#8dd3c7",
+    "description": "Transit-oriented development opportunity zones from the 2024 comprehensive planning process.",
+    "category": "planning",
+    "subcategory": "Transit-Oriented Development",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/53"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "TOD Supportive Zones",
+    "file": "tod_supportive_zones.geojson",
+    "color": "#bebada",
+    "description": "Transit-oriented development supportive zones from the 2024 comprehensive planning process.",
+    "category": "planning",
+    "subcategory": "Transit-Oriented Development",
+    "scale": "neighborhood",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://geodata.baltimorecity.gov/egis/rest/services/Housing/dmxBoundaries/MapServer/54"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "ACS Race Distribution (Maryland Tracts)",
+    "file": "acs_race_distribution_maryland_tracts.geojson",
+    "color": "#5a7bd0",
+    "description": "Maryland tract-level race distribution derived from the canonical USA ACS race source definition under sources/world/earth/nation_state/us/. Joins ACS 2023 5-year table B02001 onto TIGERweb census tracts.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B02001",
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "heatmap_field": "pct_black_alone",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5?get=NAME,B02001_001E,B02001_001M,B02001_002E,B02001_002M,B02001_003E,B02001_003M,B02001_004E,B02001_004M,B02001_005E,B02001_005M,B02001_006E,B02001_006M,B02001_007E,B02001_007M,B02001_008E,B02001_008M&for=tract:*&in=state:24",
+      "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0"
+    ],
+    "import": {
+      "type": "census_acs_tract_demographics",
+      "url": "https://api.census.gov/data/2023/acs/acs5?get=NAME,B02001_001E,B02001_001M,B02001_002E,B02001_002M,B02001_003E,B02001_003M,B02001_004E,B02001_004M,B02001_005E,B02001_005M,B02001_006E,B02001_006M,B02001_007E,B02001_007M,B02001_008E,B02001_008M&for=tract:*&in=state:24",
+      "service_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0",
+      "where": "STATE='24'",
+      "table": "B02001",
+      "year": "2023",
+      "survey": "acs5",
+      "artifact_file": "acs_race_distribution_maryland_tracts.acs.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "ACS Race Distribution (Baltimore Tracts)",
+    "file": "acs_race_distribution_baltimore_tracts.geojson",
+    "color": "#4b5fd2",
+    "description": "Baltimore City tract-level race distribution derived from the canonical USA ACS race source definition under sources/world/earth/nation_state/us/. Joins ACS 2023 5-year table B02001 onto TIGERweb census tracts for Baltimore City.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B02001",
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "heatmap_field": "pct_black_alone",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5?get=NAME,B02001_001E,B02001_001M,B02001_002E,B02001_002M,B02001_003E,B02001_003M,B02001_004E,B02001_004M,B02001_005E,B02001_005M,B02001_006E,B02001_006M,B02001_007E,B02001_007M,B02001_008E,B02001_008M&for=tract:*&in=state:24%20county:510",
+      "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0"
+    ],
+    "import": {
+      "type": "census_acs_tract_demographics",
+      "url": "https://api.census.gov/data/2023/acs/acs5?get=NAME,B02001_001E,B02001_001M,B02001_002E,B02001_002M,B02001_003E,B02001_003M,B02001_004E,B02001_004M,B02001_005E,B02001_005M,B02001_006E,B02001_006M,B02001_007E,B02001_007M,B02001_008E,B02001_008M&for=tract:*&in=state:24%20county:510",
+      "service_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0",
+      "where": "STATE='24' AND COUNTY='510'",
+      "table": "B02001",
+      "year": "2023",
+      "survey": "acs5",
+      "artifact_file": "acs_race_distribution_baltimore_tracts.acs.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "ACS Hispanic or Latino Origin (Maryland Tracts)",
+    "file": "acs_hispanic_origin_maryland_tracts.geojson",
+    "color": "#cc6f4e",
+    "description": "Maryland tract-level Hispanic or Latino origin distribution derived from the canonical USA ACS origin source definition under sources/world/earth/nation_state/us/. Joins ACS 2023 5-year table B03003 onto TIGERweb census tracts.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B03003",
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "heatmap_field": "pct_hispanic_or_latino",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5?get=NAME,B03003_001E,B03003_001M,B03003_002E,B03003_002M,B03003_003E,B03003_003M&for=tract:*&in=state:24",
+      "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0"
+    ],
+    "import": {
+      "type": "census_acs_tract_demographics",
+      "url": "https://api.census.gov/data/2023/acs/acs5?get=NAME,B03003_001E,B03003_001M,B03003_002E,B03003_002M,B03003_003E,B03003_003M&for=tract:*&in=state:24",
+      "service_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0",
+      "where": "STATE='24'",
+      "table": "B03003",
+      "year": "2023",
+      "survey": "acs5",
+      "artifact_file": "acs_hispanic_origin_maryland_tracts.acs.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "ACS Hispanic or Latino Origin (Baltimore Tracts)",
+    "file": "acs_hispanic_origin_baltimore_tracts.geojson",
+    "color": "#d17c56",
+    "description": "Baltimore City tract-level Hispanic or Latino origin distribution derived from the canonical USA ACS origin source definition under sources/world/earth/nation_state/us/. Joins ACS 2023 5-year table B03003 onto TIGERweb census tracts for Baltimore City.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B03003",
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "heatmap_field": "pct_hispanic_or_latino",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5?get=NAME,B03003_001E,B03003_001M,B03003_002E,B03003_002M,B03003_003E,B03003_003M&for=tract:*&in=state:24%20county:510",
+      "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0"
+    ],
+    "import": {
+      "type": "census_acs_tract_demographics",
+      "url": "https://api.census.gov/data/2023/acs/acs5?get=NAME,B03003_001E,B03003_001M,B03003_002E,B03003_002M,B03003_003E,B03003_003M&for=tract:*&in=state:24%20county:510",
+      "service_url": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tracts_Blocks/MapServer/0",
+      "where": "STATE='24' AND COUNTY='510'",
+      "table": "B03003",
+      "year": "2023",
+      "survey": "acs5",
+      "artifact_file": "acs_hispanic_origin_baltimore_tracts.acs.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Places of Worship (Maryland)",
+    "file": "places_of_worship_maryland.geojson",
+    "color": "#8e5ad0",
+    "description": "OpenStreetMap places of worship points for Maryland, including churches, mosques, synagogues, temples, and other tagged worship sites. This is the operational Maryland slice derived from the canonical USA worship source pattern.",
+    "reference_url": "https://wiki.openstreetmap.org/Overpass_API",
+    "category": "infrastructure",
+    "subcategory": "Faith & Worship",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "source_urls": [
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://wiki.openstreetmap.org/Overpass_API/Language_Guide"
+    ],
+    "import": {
+      "type": "overpass_json_point_feed",
+      "url": "https://overpass.kumi.systems/api/interpreter",
+      "query": "[out:json][timeout:180];area[\"ISO3166-2\"=\"US-MD\"][admin_level=4]->.searchArea;(nwr[\"amenity\"=\"place_of_worship\"](area.searchArea););out center;",
+      "artifact_file": "places_of_worship_maryland.overpass.json",
+      "item_path": "elements",
+      "lon_field": "lon",
+      "lat_field": "lat"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "Places of Worship (Baltimore)",
+    "file": "places_of_worship_baltimore.geojson",
+    "color": "#7a44c2",
+    "description": "OpenStreetMap places of worship points for Baltimore City. Includes churches, mosques, synagogues, temples, and other tagged worship sites within the Baltimore administrative area.",
+    "reference_url": "https://wiki.openstreetmap.org/Overpass_API",
+    "category": "infrastructure",
+    "subcategory": "Faith & Worship",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "source_urls": [
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://wiki.openstreetmap.org/Overpass_API/Language_Guide"
+    ],
+    "import": {
+      "type": "overpass_json_point_feed",
+      "url": "https://overpass.kumi.systems/api/interpreter",
+      "query": "[out:json][timeout:180];area[\"wikidata\"=\"Q5092\"][\"boundary\"=\"administrative\"]->.searchArea;(nwr[\"amenity\"=\"place_of_worship\"](area.searchArea););out center;",
+      "artifact_file": "places_of_worship_baltimore.overpass.json",
+      "item_path": "elements",
+      "lon_field": "lon",
+      "lat_field": "lat"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  }
+]

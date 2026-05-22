@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "data_library_panel.h"
 #include "download_queue.h"
+#include "filters.h"
 #include "layer_registry.h"
 #include "layer_runtime.h"
 #include "tiles.h"
@@ -21,8 +22,10 @@
 
 struct LeftPanelResult {
     bool zoning_filters_changed = false;
+    bool event_sector_filters_changed = false;
     size_t downloadable_missing_layer_count = 0;
     size_t queueable_missing_layer_count = 0;
+    bool geography_changed = false;
 };
 
 struct LeftPanelContext {
@@ -40,14 +43,16 @@ struct LeftPanelContext {
     std::vector<std::string>* data_freshness_msg = nullptr;
     std::string* data_library_status_msg = nullptr;
 
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
+    LayerBrowseState* layer_browse_state = nullptr;
+    MapFilterState* map_filter_state = nullptr;
 
-    int* hover_inspector_mode = nullptr;
-    bool* hover_inspector_enabled = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
     bool* show_sources_panel = nullptr;
     bool* show_data_library = nullptr;
 
@@ -68,6 +73,7 @@ struct LeftPanelContext {
     std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
     std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    std::vector<float>* layer_choropleth_gamma = nullptr;
     std::vector<float>* layer_heatmap_multires_blend = nullptr;
     std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth = nullptr;
     std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
@@ -83,7 +89,6 @@ struct LeftPanelContext {
 
     int parcel_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int zoning_layer_idx = -1;
 
     bool* crime_filter_enabled = nullptr;
@@ -100,9 +105,7 @@ struct LeftPanelContext {
     bool* crime_filter_shooting = nullptr;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
     const char* const* parcel_jurisdiction_options = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
 
@@ -117,6 +120,7 @@ struct LeftPanelContext {
     bool topo_vector_available_cached = false;
     int max_native_tile_zoom = 0;
     int max_satellite_native_tile_zoom = 0;
+    int max_night_satellite_native_tile_zoom = 0;
 
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
@@ -132,6 +136,7 @@ struct LeftPanelContext {
     std::function<size_t()> queue_all_missing_layer_downloads;
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
+    std::function<void(size_t, bool)> open_layer_color_editor;
 };
 
 LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "cache_io.h"
 #include "imgui.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
@@ -13,7 +14,7 @@ struct RenderTailPassContext {
     ImDrawList* draw = nullptr;
     ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size = ImVec2(0.0f, 0.0f);
-    int zoom = 0;
+    double zoom = 0.0;
     int math_zoom = 0;
     int parcel_layer_idx = -1;
     int parcel_parameter_mode = 0;
@@ -29,15 +30,19 @@ struct RenderTailPassContext {
     const ImVec4* vacancy_notice_color = nullptr;
     const ImVec4* vacancy_rehab_color = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     const std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
     const std::vector<int>* parcel_tax_lien_by_feature = nullptr;
     const std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    const std::vector<int>* layer_normalize_mode = nullptr;
     const std::vector<size_t>* selected_parcel_indices = nullptr;
     MapProjectionCache* projection = nullptr;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
 };

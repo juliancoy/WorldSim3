@@ -4,6 +4,7 @@
 #include "download_queue.h"
 #include "imgui.h"
 #include "layer_runtime.h"
+#include "layer_ui_contexts.h"
 #include "tiles.h"
 
 #include <atomic>
@@ -38,28 +39,21 @@ FrameLayout updateFrameLayoutAndTextScale(
 struct PipelineProgressContext {
     size_t layer_count = 0;
     std::atomic<size_t>* hydrated_count = nullptr;
-    std::atomic<size_t>* triangulated_count = nullptr;
     size_t* last_hydrated_seen = nullptr;
-    size_t* last_triangulated_seen = nullptr;
     std::chrono::steady_clock::time_point* last_hydration_progress_at = nullptr;
-    std::chrono::steady_clock::time_point* last_tri_progress_at = nullptr;
     std::chrono::steady_clock::time_point hydration_started_at{};
     std::mutex* hydrated_mutex = nullptr;
     std::deque<HydratedLayer>* hydrated_queue = nullptr;
-    std::mutex* tri_mutex = nullptr;
-    std::deque<TriJob>* tri_jobs = nullptr;
 };
 
 struct PipelineProgressSnapshot {
     size_t hydrated_now = 0;
-    size_t triangulated_now = 0;
+    size_t ready_now = 0;
     size_t hydrated_pending = 0;
-    size_t tri_pending = 0;
     float hydrated_frac = 1.0f;
-    float tri_frac = 1.0f;
+    float ready_frac = 1.0f;
     double elapsed_s = 0.0;
     double hydrate_idle_s = 0.0;
-    double tri_idle_s = 0.0;
 };
 
 PipelineProgressSnapshot updatePipelineProgress(PipelineProgressContext& ctx);
@@ -80,12 +74,15 @@ struct FrameSupportFinalizationContext {
     std::atomic<double>* prof_owner_ms_last = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
     std::atomic<double>* prof_overlay_ms_last = nullptr;
     std::atomic<double>* prof_present_ms_last = nullptr;
     std::atomic<size_t>* prof_tiles_drawn_last = nullptr;
     std::atomic<size_t>* prof_features_considered_last = nullptr;
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
     std::atomic<size_t>* prof_tile_cache_size = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
@@ -93,6 +90,7 @@ struct FrameSupportFinalizationContext {
     std::vector<ProfileFrameSample>* profile_samples = nullptr;
     size_t* profile_sample_pos = nullptr;
     size_t* profile_sample_count = nullptr;
+    bool dark_mode = false;
 };
 
 void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx);
@@ -116,6 +114,7 @@ struct SecondaryDownloadQueueWindowContext {
     const std::vector<LayerDef>* layers = nullptr;
     const std::deque<size_t>* layer_download_queue = nullptr;
     const std::string* layer_download_last_event = nullptr;
+    bool dark_mode = false;
 };
 
 void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContext& ctx);

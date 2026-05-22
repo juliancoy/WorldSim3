@@ -14,6 +14,8 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct FramePreludeResult {
@@ -26,7 +28,7 @@ struct FramePreludeResult {
 struct FramePreludeContext {
     const std::filesystem::path* root = nullptr;
     std::vector<LayerDef>* layers = nullptr;
-    std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
+    std::vector<LayerProfileAccumulator>* layer_profile_accumulators = nullptr;
     std::vector<bool>* layer_profile_dirty = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;
     std::mutex* layer_profile_mutex = nullptr;
@@ -40,6 +42,13 @@ struct FramePreludeContext {
     size_t* layer_download_active_idx = nullptr;
     std::future<VersionedDownloadResult>* layer_download_future = nullptr;
     std::string* layer_download_active_file = nullptr;
+    std::vector<LayerDownloadTask>* layer_download_active_tasks = nullptr;
+    std::mutex* layer_download_item_state_mutex = nullptr;
+    std::unordered_map<size_t, float>* layer_download_item_progress = nullptr;
+    std::unordered_map<size_t, std::chrono::steady_clock::time_point>* layer_download_item_started_at = nullptr;
+    std::unordered_map<size_t, LayerDownloadEtaState>* layer_download_item_eta_state = nullptr;
+    std::unordered_map<size_t, std::string>* layer_download_item_status = nullptr;
+    std::unordered_set<size_t>* layer_download_item_failed = nullptr;
     std::string* layer_download_last_event = nullptr;
     bool* layer_download_queue_loaded = nullptr;
     std::vector<LanPeerInfo>* lan_peers = nullptr;
@@ -48,7 +57,7 @@ struct FramePreludeContext {
     int protocol_version = 0;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     std::atomic<int>* current_zoom_state = nullptr;
@@ -67,6 +76,14 @@ struct FramePreludeContext {
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
+    MapFilterState* map_filter_state = nullptr;
+    FilterResultSet* active_filter_result_set = nullptr;
+    std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::string* active_filter_status = nullptr;
+    std::mutex* api_control_mutex = nullptr;
+    ApiFilterControlCommand* api_filter_control_cmd = nullptr;
+    std::vector<ApiQueryControlCommand>* api_query_control_cmds = nullptr;
+    uint64_t* filter_state_key = nullptr;
     uint64_t* api_ui_cmd_last_seq = nullptr;
     bool* api_ui_mouse_release_pending = nullptr;
     int* api_ui_mouse_release_button = nullptr;

@@ -2,6 +2,8 @@
 
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
+#include "layers_panel_ui.h"
+#include "worldsim_app_internal.h"
 
 #include <algorithm>
 #include <cmath>
@@ -49,39 +51,28 @@ FrameLayout updateFrameLayoutAndTextScale(
 
 PipelineProgressSnapshot updatePipelineProgress(PipelineProgressContext& ctx) {
     PipelineProgressSnapshot out;
-    if (!ctx.hydrated_count || !ctx.triangulated_count || !ctx.last_hydrated_seen ||
-        !ctx.last_triangulated_seen || !ctx.last_hydration_progress_at ||
-        !ctx.last_tri_progress_at || !ctx.hydrated_mutex || !ctx.hydrated_queue ||
-        !ctx.tri_mutex || !ctx.tri_jobs) {
+    if (!ctx.hydrated_count || !ctx.last_hydrated_seen ||
+        !ctx.last_hydration_progress_at || !ctx.hydrated_mutex || !ctx.hydrated_queue) {
         return out;
     }
 
     out.hydrated_now = ctx.hydrated_count->load(std::memory_order_relaxed);
-    out.triangulated_now = ctx.triangulated_count->load(std::memory_order_relaxed);
+    out.ready_now = out.hydrated_now;
     if (out.hydrated_now > *ctx.last_hydrated_seen) {
         *ctx.last_hydrated_seen = out.hydrated_now;
         *ctx.last_hydration_progress_at = std::chrono::steady_clock::now();
-    }
-    if (out.triangulated_now > *ctx.last_triangulated_seen) {
-        *ctx.last_triangulated_seen = out.triangulated_now;
-        *ctx.last_tri_progress_at = std::chrono::steady_clock::now();
     }
 
     {
         std::lock_guard<std::mutex> lk(*ctx.hydrated_mutex);
         out.hydrated_pending = ctx.hydrated_queue->size();
     }
-    {
-        std::lock_guard<std::mutex> lk(*ctx.tri_mutex);
-        out.tri_pending = ctx.tri_jobs->size();
-    }
 
     out.hydrated_frac = ctx.layer_count == 0 ? 1.0f : (float)out.hydrated_now / (float)ctx.layer_count;
-    out.tri_frac = ctx.layer_count == 0 ? 1.0f : (float)out.triangulated_now / (float)ctx.layer_count;
+    out.ready_frac = ctx.layer_count == 0 ? 1.0f : (float)out.ready_now / (float)ctx.layer_count;
     const auto now = std::chrono::steady_clock::now();
     out.elapsed_s = std::chrono::duration<double>(now - ctx.hydration_started_at).count();
     out.hydrate_idle_s = std::chrono::duration<double>(now - *ctx.last_hydration_progress_at).count();
-    out.tri_idle_s = std::chrono::duration<double>(now - *ctx.last_tri_progress_at).count();
     return out;
 }
 
@@ -102,12 +93,15 @@ void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx) {
     frame_ctx.prof_owner_ms_last = ctx.prof_owner_ms_last;
     frame_ctx.prof_tile_ms_last = ctx.prof_tile_ms_last;
     frame_ctx.prof_layer_ms_last = ctx.prof_layer_ms_last;
+    frame_ctx.prof_owner_filter_ms_last = ctx.prof_owner_filter_ms_last;
     frame_ctx.prof_heatmap_ms_last = ctx.prof_heatmap_ms_last;
     frame_ctx.prof_overlay_ms_last = ctx.prof_overlay_ms_last;
     frame_ctx.prof_present_ms_last = ctx.prof_present_ms_last;
     frame_ctx.prof_tiles_drawn_last = ctx.prof_tiles_drawn_last;
     frame_ctx.prof_features_considered_last = ctx.prof_features_considered_last;
     frame_ctx.prof_features_drawn_last = ctx.prof_features_drawn_last;
+    frame_ctx.prof_owner_filter_candidates_last = ctx.prof_owner_filter_candidates_last;
+    frame_ctx.prof_owner_filter_matches_last = ctx.prof_owner_filter_matches_last;
     frame_ctx.prof_retired_textures = ctx.prof_retired_textures;
     frame_ctx.prof_tile_cache_size = ctx.prof_tile_cache_size;
     frame_ctx.prof_heat_samples_last = ctx.prof_heat_samples_last;
@@ -115,6 +109,7 @@ void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx) {
     frame_ctx.profile_samples = ctx.profile_samples;
     frame_ctx.profile_sample_pos = ctx.profile_sample_pos;
     frame_ctx.profile_sample_count = ctx.profile_sample_count;
+    frame_ctx.dark_mode = ctx.dark_mode;
     finalizeWorldSimFrame(frame_ctx);
 }
 
@@ -131,6 +126,8 @@ void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContex
         glfwGetFramebufferSize(ctx.window, ctx.framebuffer_w, ctx.framebuffer_h);
         if (*ctx.framebuffer_w > 0 && *ctx.framebuffer_h > 0) {
             ImGui::SetCurrentContext(ctx.queue_imgui_context);
+            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
+            check_vk_result(vkDeviceWaitIdle(g_Device));
             ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
             ImGui_ImplVulkanH_CreateOrResizeWindow(
                 g_Instance,
@@ -188,9 +185,9 @@ void renderSecondaryDownloadQueueWindow(const SecondaryDownloadQueueWindowContex
     ImGui::Render();
     ImDrawData* queue_draw_data = ImGui::GetDrawData();
     if (queue_draw_data->DisplaySize.x > 0.0f && queue_draw_data->DisplaySize.y > 0.0f) {
-        ctx.window_data->ClearValue.color.float32[0] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[1] = 0.95f;
-        ctx.window_data->ClearValue.color.float32[2] = 0.96f;
+        ctx.window_data->ClearValue.color.float32[0] = ctx.dark_mode ? 0.020f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[1] = ctx.dark_mode ? 0.026f : 0.95f;
+        ctx.window_data->ClearValue.color.float32[2] = ctx.dark_mode ? 0.034f : 0.96f;
         ctx.window_data->ClearValue.color.float32[3] = 1.00f;
         FrameRenderSecondary(ctx.window_data, queue_draw_data, *ctx.swapchain_rebuild);
         FramePresentSecondary(ctx.window_data, *ctx.swapchain_rebuild);

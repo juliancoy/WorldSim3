@@ -21,8 +21,8 @@ HeatNormalizationState buildHeatNormalizationState(
     const std::vector<int>& layer_normalize_mode,
     const std::vector<float>& layer_heatmap_percentile_clip,
     float heatmap_percentile_clip,
-    const std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)>& feature_passes_filters,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key) {
+    const std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)>& feature_passes_filters,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key) {
     HeatNormalizationState state;
     state.heat_min = std::numeric_limits<float>::infinity();
     state.heat_max = -std::numeric_limits<float>::infinity();
@@ -71,9 +71,9 @@ HeatNormalizationState buildHeatNormalizationState(
 }
 
 bool HeatNormalizationState::normalizedValue(
-    const LayerDef::FeatureGeom& fg,
+    const LayerDef::FeatureRecord& fg,
     float value,
-    const std::function<std::string(const LayerDef::FeatureGeom&)>& normalization_group_key,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key,
     float& out_t) const {
     if (heat_values.empty()) return false;
     if (normalize_mode == 1) {
@@ -88,6 +88,13 @@ bool HeatNormalizationState::normalizedValue(
         } else {
             out_t = percentileRank(heat_values, value);
         }
+        return true;
+    }
+    if (normalize_mode == 3) {
+        out_t = percentileRank(heat_values, value);
+        constexpr int kEqualCountZones = 8;
+        const int zone_idx = std::clamp((int)std::floor(out_t * (float)kEqualCountZones), 0, kEqualCountZones - 1);
+        out_t = (float)zone_idx / (float)(kEqualCountZones - 1);
         return true;
     }
     if (!heat_range_valid) return false;

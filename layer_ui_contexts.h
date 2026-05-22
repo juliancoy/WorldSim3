@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dataset_library.h"
+#include "filters.h"
 #include "layer_registry.h"
 #include "layer_runtime.h"
 #include "types.h"
@@ -23,8 +24,10 @@ struct LayerUiSharedContext {
     std::string* data_library_status_msg = nullptr;
 
     std::function<bool(size_t)> enqueue_layer_download_request;
+    std::function<bool(size_t)> layer_download_pending;
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
+    std::function<void(size_t, bool)> open_layer_color_editor;
     std::function<bool(const char*, float&, float, float, const char*)> heatmap_input_float_enter;
 
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
@@ -43,6 +46,7 @@ struct LayerUiSharedContext {
     std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
     std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    std::vector<float>* layer_choropleth_gamma = nullptr;
     std::vector<float>* layer_heatmap_multires_blend = nullptr;
     std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth = nullptr;
     std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
@@ -57,12 +61,23 @@ struct LayerUiSharedContext {
     bool* heatmap_controls_active = nullptr;
 
     int* parcel_parameter_mode = nullptr;
+    const MapFilterState* map_filter_state = nullptr;
+    const LayerBrowseState* layer_browse_state = nullptr;
+};
+
+enum class LayerColorEditorTarget {
+    Fill = 0,
+    Outline = 1,
 };
 
 struct LayersPanelUiContext {
     LayerUiSharedContext* shared = nullptr;
     int parcel_layer_idx = -1;
+    int zoning_layer_idx = -1;
     int zoom = 0;
+    const char* layer_search_query = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
 
     bool* crime_filter_enabled = nullptr;
     bool* crime_filter_use_year = nullptr;
@@ -77,10 +92,9 @@ struct LayersPanelUiContext {
     bool* crime_filter_drug = nullptr;
     bool* crime_filter_shooting = nullptr;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     std::vector<std::pair<std::string, int>>* crime_breakdown = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
+    const MapFilterState* map_filter_state = nullptr;
+    const LayerBrowseState* layer_browse_state = nullptr;
 };

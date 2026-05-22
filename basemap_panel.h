@@ -24,6 +24,7 @@ struct BasemapPanelContext {
     int min_zoom = 0;
     int max_native_tile_zoom = 0;
     int max_satellite_native_tile_zoom = 0;
+    int max_night_satellite_native_tile_zoom = 0;
 };
 
 void drawBasemapPanel(BasemapPanelContext& ctx);

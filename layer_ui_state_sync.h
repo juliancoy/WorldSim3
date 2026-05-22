@@ -21,12 +21,14 @@ struct LayerUiStateSyncContext {
     const std::filesystem::path* root = nullptr;
     std::vector<LayerDef>* layers = nullptr;
 
-    int hover_inspector_mode = 0;
-    bool hover_inspector_enabled = false;
-    int* last_hover_inspector_mode = nullptr;
+    int active_hover_layer_idx = -1;
+    int active_click_layer_idx = -1;
+    int* last_active_hover_layer_idx = nullptr;
+    int* last_active_click_layer_idx = nullptr;
     std::vector<bool>* last_enabled_state = nullptr;
 
     bool zoning_filters_changed = false;
+    bool event_sector_filters_changed = false;
     bool layer_fill_state_changed = false;
     bool layer_hover_state_changed = false;
     bool layer_inspect_state_changed = false;
@@ -101,6 +103,7 @@ struct LayerUiStateSyncContext {
     int crime_year_max = 0;
     const char* owner_search_query = nullptr;
     const std::unordered_set<std::string>* selected_owners = nullptr;
+    const std::unordered_map<std::string, bool>* event_sector_enabled = nullptr;
 };
 
 LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx);

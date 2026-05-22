@@ -1,5 +1,6 @@
 #include "layer_runtime_coordinator.h"
 
+#include "app_utils.h"
 #include "layer_import.h"
 
 #include <mutex>
@@ -11,8 +12,6 @@ bool layerRuntimeReady(const std::vector<LayerRuntimeState>& layer_states, std::
     if ((size_t)idx >= layer_states.size()) return false;
     const LayerPipelineStatus st = layer_states[(size_t)idx].status;
     return st == LayerPipelineStatus::Hydrated ||
-           st == LayerPipelineStatus::TriQueued ||
-           st == LayerPipelineStatus::Triangulating ||
            st == LayerPipelineStatus::Ready;
 }
 
@@ -20,7 +19,7 @@ int findLayerIndex(const LayerApiCommandCoordinatorContext& ctx, const std::stri
     if (ctx.layer_registry) return ctx.layer_registry->findLayerByFile(file);
     if (!ctx.layers) return -1;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
-        if ((*ctx.layers)[i].file == file) return (int)i;
+        if (layerMatchesIdentifier((*ctx.layers)[i], file)) return (int)i;
     }
     return -1;
 }
@@ -89,19 +88,9 @@ void coordinateLayerHydrationDependencies(const LayerDependencyCoordinatorContex
         ctx.enqueue_hydration((size_t)ctx.parcel_layer_idx, true);
     }
 
-    if (ctx.real_property_layer_idx >= 0 && (size_t)ctx.real_property_layer_idx < ctx.layers->size()) {
-        const bool filter_join_needed =
-            ctx.filter_enabled ||
-            (ctx.parcel_layer_idx >= 0 && (*ctx.layers)[(size_t)ctx.parcel_layer_idx].enabled) ||
-            vacant_layer_active ||
-            (ctx.filter_owner && ctx.filter_owner[0] != '\0') ||
-            (ctx.filter_address && ctx.filter_address[0] != '\0') ||
-            (ctx.filter_zip && ctx.filter_zip[0] != '\0');
-        if (filter_join_needed &&
-            !layerRuntimeReady(*ctx.layer_states, *ctx.status_mutex, ctx.real_property_layer_idx)) {
-            ctx.enqueue_hydration((size_t)ctx.real_property_layer_idx, true);
-        }
-    }
+    // Attribute joins such as owner/address/zip must be served from DuckDB or
+    // DuckDB-derived sidecars. Do not auto-hydrate real-property canonical
+    // feature/property bags just because parcel rendering or filters are active.
 
     const bool tax_layer_active =
         (ctx.tax_lien_layer_idx >= 0 && (*ctx.layers)[(size_t)ctx.tax_lien_layer_idx].enabled) ||
@@ -111,10 +100,4 @@ void coordinateLayerHydrationDependencies(const LayerDependencyCoordinatorContex
         ctx.enqueue_hydration((size_t)ctx.parcel_layer_idx, true);
     }
 
-    if (ctx.zoning_layer_idx >= 0 &&
-        (size_t)ctx.zoning_layer_idx < ctx.layers->size() &&
-        (*ctx.layers)[(size_t)ctx.zoning_layer_idx].enabled &&
-        !layerRuntimeReady(*ctx.layer_states, *ctx.status_mutex, ctx.zoning_layer_idx)) {
-        ctx.enqueue_hydration((size_t)ctx.zoning_layer_idx, false);
-    }
 }

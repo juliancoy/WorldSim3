@@ -19,6 +19,14 @@ struct DuckDbAnalyticsStatus {
     std::string message;
 };
 
+struct DuckDbArtifactEnsureResult {
+    bool ok = false;
+    bool rebuilt = false;
+    bool reused_existing = false;
+    bool invalidated = false;
+    std::string message;
+};
+
 struct DuckDbQueryResult {
     bool ok = false;
     std::string message;
@@ -30,12 +38,14 @@ struct DuckDbQueryResult {
 struct DuckDbSelectedParcel {
     size_t layer_idx = 0;
     size_t feature_idx = 0;
+    std::string feature_id;
     std::string blocklot;
 };
 
 struct DuckDbSearchHit {
     size_t layer_idx = 0;
     size_t feature_idx = 0;
+    std::string feature_id;
     std::string blocklot;
     std::string owner;
     std::string address;
@@ -50,6 +60,9 @@ public:
     const DuckDbAnalyticsStatus& status() const { return status_; }
     bool needsRebuild(const std::vector<LayerDef>& layers) const;
     bool validateExistingCache();
+    DuckDbArtifactEnsureResult ensureCurrentArtifact(
+        const std::vector<LayerDef>& layers,
+        const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     bool rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels = {});
     DuckDbQueryResult executeMapQuery(
         const std::string& sql,
@@ -60,6 +73,12 @@ public:
         size_t parcel_layer_idx,
         const std::unordered_set<std::string>& jurisdictions,
         size_t max_rows = 1000) const;
+    DuckDbQueryResult queryUnifiedParcelDetail(
+        size_t parcel_layer_idx,
+        size_t parcel_feature_idx) const;
+    DuckDbQueryResult queryParcelEvents(
+        const std::string& blocklot,
+        size_t max_rows = 200) const;
     std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
 
 private:

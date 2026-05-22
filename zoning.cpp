@@ -77,7 +77,7 @@ const ZoneMetadata* findZoneMetadata(
     return nullptr;
 }
 
-std::string firstDescriptionProperty(const LayerDef::FeatureGeom& zone) {
+std::string firstDescriptionProperty(const LayerDef::FeatureRecord& zone) {
     const char* keys[] = {
         "Description", "description", "DESCRIPTION", "ZoningDescription", "ZONE_DESCRIPTION",
         "ZoneDescription", "ZONE_DESC", "ZONING_DESC", "Desc", "DESC"
@@ -112,7 +112,7 @@ std::string fallbackDescriptionForZoneCode(const std::string& raw_code) {
 }
 
 std::string zoningDescription(
-    const LayerDef::FeatureGeom& zone,
+    const LayerDef::FeatureRecord& zone,
     const std::unordered_map<std::string, ZoneMetadata>& zoning_metadata) {
     const std::string zone_key = zoningClassKey(zone);
     if (const ZoneMetadata* meta = findZoneMetadata(zone_key, zoning_metadata)) {

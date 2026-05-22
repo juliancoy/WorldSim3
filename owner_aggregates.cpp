@@ -1,6 +1,7 @@
 #include "owner_aggregates.h"
 
 #include "app_utils.h"
+#include "parcel_metrics.h"
 
 #include <nlohmann/json.hpp>
 
@@ -50,33 +51,6 @@ std::string classifyOwner(const std::string& owner) {
     if (!token.empty()) alpha_tokens++;
     if (!has_non_alpha_token && alpha_tokens >= 2 && alpha_tokens <= 4) return "individual";
     return "unknown";
-}
-
-double parcelAreaSqM(const LayerDef::FeatureGeom& fg) {
-    if (fg.rings.empty()) return 0.0;
-    const double deg_to_m_lat = 111320.0;
-    double total = 0.0;
-    for (const auto& ring : fg.rings) {
-        if (ring.size() < 3) continue;
-        double lat_sum = 0.0;
-        for (const auto& p : ring) lat_sum += (double)p.y;
-        const double lat0 = lat_sum / (double)ring.size();
-        const double cos_lat = std::cos(lat0 * std::numbers::pi / 180.0);
-        const double sx = deg_to_m_lat * cos_lat;
-        const double sy = deg_to_m_lat;
-        double a = 0.0;
-        for (size_t i = 0, n = ring.size(); i < n; ++i) {
-            const auto& p = ring[i];
-            const auto& q = ring[(i + 1) % n];
-            const double px = (double)p.x * sx;
-            const double py = (double)p.y * sy;
-            const double qx = (double)q.x * sx;
-            const double qy = (double)q.y * sy;
-            a += (px * qy - qx * py);
-        }
-        total += std::abs(a) * 0.5;
-    }
-    return total;
 }
 
 void loadOwnerClassOverrides(const OwnerAggregatesContext& ctx) {
@@ -150,8 +124,11 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
         *ctx.owner_sorted_mode = -1;
     } else {
         for (const auto& parcel_record : *ctx.unified_parcels) {
-            const LayerDef::FeatureGeom* pf = parcel_record.parcel_geom;
-            if (!pf) continue;
+            const LayerDef::FeatureRecord* pf =
+                parcel_record.parcel_layer_idx < ctx.layers->size() &&
+                    parcel_record.parcel_feature_idx < (*ctx.layers)[parcel_record.parcel_layer_idx].features.size()
+                ? &(*ctx.layers)[parcel_record.parcel_layer_idx].features[parcel_record.parcel_feature_idx]
+                : nullptr;
             std::string owner = parcel_record.owner;
             if (owner.empty()) continue;
             auto& row = acc[owner];
@@ -161,7 +138,7 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
                 row.owner_class = oit != ctx.owner_class_overrides->end() ? oit->second : classifyOwner(owner);
             }
             row.property_count += 1;
-            row.area_m2 += parcelAreaSqM(*pf);
+            row.area_m2 += parcelAreaSqM(ctx.parcel_render_blob, parcel_record.parcel_feature_idx, pf ? *pf : LayerDef::FeatureRecord{});
             row.value_usd += parcel_record.current_value;
         }
         ctx.owner_aggregates->clear();
@@ -227,7 +204,7 @@ void refreshFilteredAggregateSnapshot(const OwnerAggregatesContext& ctx) {
                     const int vac_rehab = parcel_record.vacant_rehab_count;
                     if ((vac_notice + vac_rehab) <= 0) continue;
                     ctx.filtered_aggregate_snapshot->vacancy_parcels_matched++;
-                    if (parcel_record.parcel_geom && !parcel_record.parcel_geom->rings.empty()) {
+                    if (parcel_record.parcel_has_geometry) {
                         ctx.filtered_aggregate_snapshot->vacancy_parcels_with_geometry++;
                     }
                 }

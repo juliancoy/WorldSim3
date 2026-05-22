@@ -8,13 +8,17 @@
 #include <unordered_set>
 #include <vector>
 
-std::vector<LayerDef> loadManifest(const std::filesystem::path& root);
+struct QueryHistoryEntry;
+
+std::vector<LayerDef> loadManifest(const std::filesystem::path& root, bool include_non_runtime = false);
 
 void loadLayerUiState(
     const std::filesystem::path& root,
     std::vector<LayerDef>& layers,
     bool& hover_inspector_enabled,
-    int* hover_inspector_mode = nullptr,
+    int* active_hover_layer_idx = nullptr,
+    int* active_click_layer_idx = nullptr,
+    int* parcel_parameter_mode = nullptr,
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     std::vector<bool>* layer_fill_enabled = nullptr,
     std::vector<bool>* layer_hover_enabled = nullptr,
@@ -48,7 +52,9 @@ void saveLayerUiState(
     const std::filesystem::path& root,
     const std::vector<LayerDef>& layers,
     bool hover_inspector_enabled,
-    const int* hover_inspector_mode = nullptr,
+    const int* active_hover_layer_idx = nullptr,
+    const int* active_click_layer_idx = nullptr,
+    const int* parcel_parameter_mode = nullptr,
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr,
     const std::vector<bool>* layer_fill_enabled = nullptr,
     const std::vector<bool>* layer_hover_enabled = nullptr,
@@ -108,7 +114,8 @@ void loadFilterUiState(
     int* crime_year_max = nullptr,
     char* owner_search_query = nullptr,
     size_t owner_search_query_size = 0,
-    std::unordered_set<std::string>* selected_owners = nullptr);
+    std::unordered_set<std::string>* selected_owners = nullptr,
+    std::unordered_map<std::string, bool>* event_sector_enabled = nullptr);
 
 void saveFilterUiState(
     const std::filesystem::path& root,
@@ -134,20 +141,43 @@ void saveFilterUiState(
     int crime_year_min,
     int crime_year_max,
     const char* owner_search_query,
-    const std::unordered_set<std::string>& selected_owners);
+    const std::unordered_set<std::string>& selected_owners,
+    const std::unordered_map<std::string, bool>& event_sector_enabled);
 
 void loadMapUiState(
     const std::filesystem::path& root,
     double* center_lon = nullptr,
     double* center_lat = nullptr,
-    int* zoom = nullptr,
+    double* zoom = nullptr,
     size_t* selected_parcel_idx = nullptr,
-    std::vector<size_t>* selected_parcel_indices = nullptr);
+    std::vector<size_t>* selected_parcel_indices = nullptr,
+    std::string* selected_parcel_stable_id = nullptr,
+    std::vector<std::string>* selected_parcel_stable_ids = nullptr);
 
 void saveMapUiState(
     const std::filesystem::path& root,
     double center_lon,
     double center_lat,
-    int zoom,
+    double zoom,
     size_t selected_parcel_idx,
-    const std::vector<size_t>& selected_parcel_indices);
+    const std::vector<size_t>& selected_parcel_indices,
+    const std::string& selected_parcel_stable_id = {},
+    const std::vector<std::string>& selected_parcel_stable_ids = {});
+
+void loadQueryHistoryUiState(
+    const std::filesystem::path& root,
+    std::vector<QueryHistoryEntry>* query_history);
+
+void saveQueryHistoryUiState(
+    const std::filesystem::path& root,
+    const std::vector<QueryHistoryEntry>& query_history);
+
+void loadLayerBrowseUiState(
+    const std::filesystem::path& root,
+    std::string* selected_nation_state = nullptr,
+    std::string* selected_state_region = nullptr);
+
+void saveLayerBrowseUiState(
+    const std::filesystem::path& root,
+    const std::string* selected_nation_state,
+    const std::string* selected_state_region);

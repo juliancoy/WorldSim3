@@ -32,17 +32,18 @@
 - `dataset_library.cpp`: Layer manifest loading and geographic hierarchy assembly for datasets.
 - `dataset_library.h`: Dataset library and hierarchy declarations.
 - `layer_import.cpp`: C++ source importer for non-GeoJSON layer sources, including zipped shapefile extraction, CRS conversion for county parcel imports, and Socrata CSV property-record conversion.
+- Manifest layer identifiers still often end in `.geojson`, but those names are logical IDs, not a maintained stored-layer artifact requirement.
 - `layer_import.h`: Layer import source detection and download/import entry points.
 - `layer_runtime.cpp`: Layer pipeline status formatting and runtime state helpers.
 - `layer_runtime.h`: Layer pipeline status/state declarations.
-- `layer_workers.cpp`: Background hydration and triangulation worker implementations.
+- `layer_workers.cpp`: Background layer acquisition and processing workers.
 - `layer_workers.h`: Worker context and worker startup declarations.
 - `layer_geometry.cpp`: Spatial index building/querying and world-geometry cache helpers.
 - `layer_geometry.h`: Layer spatial index and cached geometry declarations.
 - `layer_state_io.cpp`: Persistent per-layer UI state load/save implementation.
 - `layer_state_io.h`: Per-layer UI state I/O declarations.
-- `cache_io.cpp`: Hydration cache serialization helpers.
-- `cache_io.h`: Hydration cache declarations.
+- `cache_io.cpp`: Compiled geometry artifact and cache I/O helpers.
+- `cache_io.h`: Compiled geometry artifact and cache I/O declarations.
 
 ## Map Data Semantics
 
@@ -152,5 +153,3 @@ Most record/analysis tabs now have their own `.cpp`.
 
 - `tools/check_main_size.sh`: Guard that verifies `main.cpp` stays below the configured line limit.
 - `tools/check_file_sizes.sh`: Guard that verifies authored source/header files stay below 2000 lines, excluding build/data/vendor files.
-- `worldsim_regional_parcel_builder`: Normalizes Baltimore City, Baltimore County, Howard County, and future county parcel/property GeoJSON inputs into `data/layers/regional_parcels.geojson`.
-- `data/layers/regional_parcels.geojson`: Generated canonical regional parcel layer used by the app when present; rebuild from official source downloads rather than editing manually.

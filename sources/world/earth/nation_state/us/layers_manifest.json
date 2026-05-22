@@ -1,0 +1,77 @@
+[
+  {
+    "name": "USA ACS 2023 5-Year Race by Census Tract",
+    "file": "usa_acs5_2023_tract_race_b02001.geojson",
+    "color": "#5a7bd0",
+    "description": "National tract-level race distribution derived from ACS 2023 5-year table B02001 and joined to Census tract geometry. This is the canonical national source layer; state and city views should filter or derive from this hierarchy rather than redefining the source at lower geography levels.",
+    "download": false,
+    "reason": "Planned derived layer sourced from Census ACS table B02001 and TIGER/Line tract geometry.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B02001",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5/groups/B02001.html",
+      "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html"
+    ],
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "USA ACS 2023 5-Year Hispanic or Latino Origin by Census Tract",
+    "file": "usa_acs5_2023_tract_hispanic_origin_b03003.geojson",
+    "color": "#cc6f4e",
+    "description": "National tract-level Hispanic or Latino origin distribution derived from ACS 2023 5-year table B03003 and joined to Census tract geometry. Keep this under the national USA hierarchy so state and city views inherit from one canonical demographic source.",
+    "download": false,
+    "reason": "Planned derived layer sourced from Census ACS table B03003 and TIGER/Line tract geometry.",
+    "reference_url": "https://data.census.gov/table/ACSDT5Y2023.B03003",
+    "source_urls": [
+      "https://api.census.gov/data/2023/acs/acs5/groups/B03003.html",
+      "https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html"
+    ],
+    "category": "public_health",
+    "subcategory": "Census Demographics",
+    "scale": "tract",
+    "default_enabled": false,
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "USA OSM Places of Worship Source",
+    "file": "usa_osm_places_of_worship.overpass.json",
+    "color": "#8e5ad0",
+    "description": "Canonical national source definition for OpenStreetMap places of worship. State and city operational layers should derive scoped views from this source pattern rather than redefining the upstream source ad hoc.",
+    "download": false,
+    "reason": "National Overpass query would be too large for routine runtime hydration; use scoped state/city layers derived from this source definition.",
+    "reference_url": "https://wiki.openstreetmap.org/Overpass_API",
+    "source_urls": [
+      "https://overpass.kumi.systems/api/interpreter",
+      "https://wiki.openstreetmap.org/Overpass_API/Language_Guide"
+    ],
+    "category": "infrastructure",
+    "subcategory": "Faith & Worship",
+    "scale": "point",
+    "default_enabled": false,
+    "runtime_load": false,
+    "duckdb_ingest": false,
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "",
+      "county_city": ""
+    }
+  }
+]

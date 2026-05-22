@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb_analytics.h"
+#include "cache_io.h"
 #include "filters.h"
 #include "heatmap_runtime.h"
 #include "layer_runtime.h"
@@ -28,7 +29,11 @@ struct MapFrameSessionContext {
     ImDrawList* draw = nullptr;
     ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size = ImVec2(0.0f, 0.0f);
-    int zoom = 0;
+    double* center_lon = nullptr;
+    double* center_lat = nullptr;
+    double* zoom_ptr = nullptr;
+    int max_zoom = 0;
+    double zoom = 0.0;
     int math_zoom = 0;
     float zoom_scale = 1.0f;
     int lod_ring_step = 1;
@@ -37,7 +42,6 @@ struct MapFrameSessionContext {
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     int crime_nibrs_layer_idx = -1;
-    int crime_legacy_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
@@ -65,6 +69,7 @@ struct MapFrameSessionContext {
     bool heatmap_allow_cpu_fallback = false;
     bool heatmap_controls_active = false;
     int parcel_parameter_mode = 0;
+    float map_polygon_fill_opacity = 170.0f / 255.0f;
 
     bool map_hovered = false;
     bool parcel_hover_active = false;
@@ -76,6 +81,10 @@ struct MapFrameSessionContext {
     const ImVec4* vacancy_rehab_color = nullptr;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     MapFilterState* map_filter_state = nullptr;
     std::vector<QueryMapLayer>* query_layers = nullptr;
@@ -87,6 +96,12 @@ struct MapFrameSessionContext {
     std::vector<double>* parcel_tax_lien_amount_by_feature = nullptr;
     std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    std::vector<std::string>* parcel_owner_search_by_feature = nullptr;
+    std::vector<std::string>* real_property_owner_search_by_feature = nullptr;
+    std::vector<std::string>* parcel_address_search_by_feature = nullptr;
+    const FilterResultSet* owner_text_filter_result_set = nullptr;
+    const FilterResultSet* address_text_filter_result_set = nullptr;
+    const LayerFeatureRenderCache* feature_render_cache = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
@@ -112,11 +127,8 @@ struct MapFrameSessionContext {
     const std::vector<float>* layer_choropleth_gamma = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
 
-    std::unordered_set<std::string>* parcel_jurisdiction_filter = nullptr;
     size_t parcel_jurisdiction_option_count = 0;
-    bool* parcel_jurisdiction_filter_dirty = nullptr;
-    FilterResultSet* parcel_jurisdiction_result_set = nullptr;
-    std::string* parcel_jurisdiction_filter_status = nullptr;
+    ParcelJurisdictionFilterState* parcel_jurisdiction_filter_state = nullptr;
 
     HeatmapRuntimeState* heatmap_runtime = nullptr;
     MapProjectionCache* projection = nullptr;
@@ -124,10 +136,12 @@ struct MapFrameSessionContext {
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::function<void(size_t)> open_parcel_element;
-    std::function<const LayerDef::FeatureGeom*(const LayerDef::FeatureGeom&)> real_property_for_parcel;
 
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
     std::atomic<bool>* prof_heatmap_high_quality = nullptr;

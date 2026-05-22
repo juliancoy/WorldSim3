@@ -16,6 +16,11 @@ layout(std430, binding = 1) buffer Accum {
     uint data[];
 };
 
+layout(std430, binding = 2) buffer Stats {
+    uint max_density;
+    uint density_cap;
+};
+
 layout(push_constant) uniform Push {
     uint sample_count;
     uint width;
@@ -67,7 +72,8 @@ void main() {
             uint pix = uint(y) * pc.width + uint(x);
             uint base = pix * 7u;
 
-            atomicAdd(data[base + 0u], wu);
+            uint previous_density = atomicAdd(data[base + 0u], wu);
+            atomicMax(max_density, previous_density + wu);
             atomicAdd(data[base + 1u], uint(cr * float(wu) * 255.0));
             atomicAdd(data[base + 2u], uint(cg * float(wu) * 255.0));
             atomicAdd(data[base + 3u], uint(cb * float(wu) * 255.0));

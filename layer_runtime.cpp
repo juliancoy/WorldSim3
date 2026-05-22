@@ -3,32 +3,93 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+std::string artifactReadStatus(const char* prefix, const std::string& layer_file, const char* suffix = "") {
+    (void)layer_file;
+    (void)suffix;
+    return prefix;
+}
+}
+
 const char* statusToString(LayerPipelineStatus s) {
     switch (s) {
         case LayerPipelineStatus::Queued: return "queued";
         case LayerPipelineStatus::Hydrating: return "hydrating";
         case LayerPipelineStatus::Hydrated: return "hydrated";
-        case LayerPipelineStatus::TriQueued: return "tri_queued";
-        case LayerPipelineStatus::Triangulating: return "triangulating";
         case LayerPipelineStatus::Ready: return "ready";
         case LayerPipelineStatus::Failed: return "failed";
     }
     return "unknown";
 }
 
+std::string layerRuntimeDisplayStatus(const LayerRuntimeState& state, const std::string& layer_file) {
+    if (!state.geometry_phase.empty()) {
+        if (state.geometry_phase == "artifact_loading") {
+            return std::string("reading ") +
+                (state.geometry_artifact_path.empty() ? layer_file : state.geometry_artifact_path);
+        }
+        if (state.geometry_phase == "artifact_missing") return "compiled geometry artifact missing";
+        if (state.geometry_phase == "artifact_validated") return "compiled geometry artifact ready";
+        if (state.geometry_phase == "gpu_upload_pending") return "compiled geometry queued for GPU upload";
+        if (state.geometry_phase == "gpu_ready") return "ready via compiled geometry artifact";
+    }
+    if (state.status == LayerPipelineStatus::Hydrating) {
+        if (state.hydration_phase == "loading_binary_cache" ||
+            state.hydration_phase == "binary_cache_hit_queueing" ||
+            state.hydration_phase == "cache_hit") {
+            return artifactReadStatus("reading hydration cache", layer_file, ".bin");
+        }
+        if (state.hydration_phase == "loading_canonical_binary_source" ||
+            state.hydration_phase == "canonical_binary_queueing") {
+            return artifactReadStatus("reading canonical layer binary", layer_file, ".canonical.bin");
+        }
+        if (state.hydration_phase == "parsing_source_cache_disabled" ||
+            state.hydration_phase == "canonical_source_cache_missing" ||
+            state.hydration_phase == "parsing_source_cache_missing" ||
+            state.hydration_phase == "parsing_source_cache_miss_or_stale" ||
+            state.hydration_phase == "source_parse") {
+            return "canonical layer binary missing";
+        }
+        if (state.hydration_phase == "parsing_source_cache_rejected") {
+            return "canonical layer binary required";
+        }
+        if (state.hydration_phase == "loading_canonical_binary_source_failed") {
+            return "canonical binary read failed";
+        }
+    }
+    if (state.status == LayerPipelineStatus::Ready) {
+        if (state.geometry_artifact_class == GeometryArtifactClass::Polygon &&
+            (layer_file.find("parcel") != std::string::npos ||
+             layer_file.find("Parcel") != std::string::npos)) {
+            return "ready via parcel render blob";
+        }
+        return "ready via compiled geometry artifact";
+    }
+    return statusToString(state.status);
+}
+
 void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si) {
+    std::vector<LayerDef::FeatureExtent> feature_extents;
+    feature_extents.reserve(layer.features.size());
+    for (const auto& fg : layer.features) feature_extents.push_back(fg.extent);
+    buildLayerSpatialIndexForExtents(feature_extents, si);
+}
+
+void buildLayerSpatialIndexForExtents(
+    const std::vector<LayerDef::FeatureExtent>& feature_extents,
+    LayerSpatialIndex& si) {
     si = LayerSpatialIndex{};
-    const size_t n = layer.features.size();
+    const size_t n = feature_extents.size();
     if (n == 0) return;
-    float min_lon = layer.features[0].extent.min_lon;
-    float min_lat = layer.features[0].extent.min_lat;
-    float max_lon = layer.features[0].extent.max_lon;
-    float max_lat = layer.features[0].extent.max_lat;
-    for (const auto& fg : layer.features) {
-        min_lon = std::min(min_lon, fg.extent.min_lon);
-        min_lat = std::min(min_lat, fg.extent.min_lat);
-        max_lon = std::max(max_lon, fg.extent.max_lon);
-        max_lat = std::max(max_lat, fg.extent.max_lat);
+    float min_lon = feature_extents[0].min_lon;
+    float min_lat = feature_extents[0].min_lat;
+    float max_lon = feature_extents[0].max_lon;
+    float max_lat = feature_extents[0].max_lat;
+    for (const auto& ex : feature_extents) {
+        min_lon = std::min(min_lon, ex.min_lon);
+        min_lat = std::min(min_lat, ex.min_lat);
+        max_lon = std::max(max_lon, ex.max_lon);
+        max_lat = std::max(max_lat, ex.max_lat);
     }
     si.min_lon = min_lon;
     si.min_lat = min_lat;
@@ -52,7 +113,7 @@ void buildLayerSpatialIndex(const LayerDef& layer, LayerSpatialIndex& si) {
     };
 
     for (size_t i = 0; i < n; ++i) {
-        const auto& ex = layer.features[i].extent;
+        const auto& ex = feature_extents[i];
         const int x0 = cell_x(ex.min_lon);
         const int x1 = cell_x(ex.max_lon);
         const int y0 = cell_y(ex.min_lat);

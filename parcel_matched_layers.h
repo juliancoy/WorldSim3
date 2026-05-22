@@ -19,4 +19,5 @@ struct ParcelMatchedLayerBuildStat {
 std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
     const std::filesystem::path& root,
     bool force,
-    std::ostream* log);
+    std::ostream* log,
+    bool log_missing_sources = true);

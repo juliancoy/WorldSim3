@@ -50,277 +50,89 @@ Coverage:
 Limitations:
 
 - It reads source files directly.
-- It does not exercise the hydration binary cache, legacy hydration MsgPack fallback, triangulation cache, derived cache invalidation, or DuckDB rebuild freshness.
-- It does not exercise persistent frame-to-frame projection-cache reuse.
+- It does not exercise compiled geometry artifacts, derived cache invalidation, or DuckDB rebuild freshness.
 
-## Hydration Cache Self-Test
+## Polygon Hole Selftest
 
 ```bash
-./build/worldsim3 --hydration-cache-selftest
+./build/worldsim3 --polygon-hole-selftest
 ```
 
 Purpose:
 
-- Writes a small binary hydration cache fixture.
-- Loads the fixture through `loadBinaryHydrationCache()`.
-- Verifies feature extents, rings, properties, and stale signature rejection.
+- Verifies polygon-with-hole behavior across hit testing and parcel render blob flattening.
+- Exercises polygon fill generation through the current in-process geometry build path.
 
 Expected pass signal:
 
 - Command exits `0`.
 - JSON contains `"ok": true`.
 
-Coverage:
-
-- Binary hydration cache round trip.
-- Binary cache source-signature validation.
-- Basic point and polygon feature shapes.
-
-Limitations:
-
-- It does not benchmark large-layer cache load speed.
-- It does not exercise the legacy MsgPack fallback conversion path.
-
-## Hydration Cache Warmer
+## Projection Cache Self-Test
 
 ```bash
-./build/worldsim3 --warm-hydration-cache regional_parcels.geojson
-./build/worldsim3 --warm-hydration-cache-all
+./build/worldsim3 --projection-cache-selftest
+./build/worldsim3 --projection-fill-cache-selftest
+./build/worldsim3 --projection-color-cache-selftest
 ```
 
 Purpose:
 
-- Validates an existing binary hydration cache for one layer.
-- If only a matching legacy MsgPack hydration cache exists, converts it into the binary cache.
-- Verifies the written binary cache can be read back with the same source signature.
+- Verifies `MapProjectionCache` fills on first use.
+- Verifies world-ring/world-extent reuse when `math_zoom` is unchanged.
+- Verifies cache invalidation and rebuild when `math_zoom` changes.
 
 Expected pass signal:
 
 - Command exits `0`.
 - JSON contains `"ok": true`.
 
-Notes:
+Additional fill-cache coverage:
 
-- Large layers can require substantial RAM while converting from legacy MsgPack because the converter must load the legacy cache before writing binary.
-- Prefer running this with the interactive app closed when converting `regional_parcels.geojson`.
-- `--warm-hydration-cache-all` only processes local layers that already have a binary or legacy hydration cache artifact.
+- `--projection-fill-cache-selftest` verifies retained world-space fill geometry is built on first use.
+- Verifies invalid triangle indices are discarded once during cache build.
+- Verifies the cached fill geometry is reused across frame-projection changes at stable `math_zoom`.
+- Verifies the fill cache is invalidated and rebuilt when `math_zoom` changes.
 
-## Triangulation Cache Self-Test
+Additional color-cache coverage:
+
+- `--projection-color-cache-selftest` verifies per-feature retained color storage is absent before first write.
+- Verifies style-key mismatch produces a cache miss.
+- Verifies overwriting the same parcel feature with a new style key replaces the retained feature color and subpolygon color vector.
+- Verifies color storage survives zoom/projection cache invalidation because it is independent from world-geometry caches.
+
+## Parcel Render Cache Self-Test
 
 ```bash
-./build/worldsim3 --triangulation-cache-selftest
+./build/worldsim3 --parcel-render-cache-selftest
+./build/worldsim3 --warm-parcel-render-cache parcel.geojson
+./build/worldsim3 --warm-parcel-render-cache-all
+./build/worldsim3 --parcel-artifact-health parcel.geojson
 ```
 
 Purpose:
 
-- Writes a small binary triangulation cache fixture.
-- Loads the fixture through `loadBinaryTriCache()`.
-- Verifies vector round-trip, stale signature rejection, and feature-count rejection.
+- Verifies a parcel render sidecar blob can be built from the current parcel-prep pipeline.
+- Verifies the binary sidecar round-trips contiguous vertex/index data, line-index topology, plus feature/chunk tables.
+- Verifies a stale source signature is rejected.
 
 Expected pass signal:
 
 - Command exits `0`.
 - JSON contains `"ok": true`.
 
-## Triangulation Cache Warmer
-
-```bash
-./build/worldsim3 --warm-triangulation-cache regional_parcels.geojson
-./build/worldsim3 --warm-triangulation-cache-all
-```
-
-Purpose:
-
-- Validates an existing binary triangulation cache for one layer.
-- If only a matching legacy JSON triangulation cache exists, converts it into the binary cache.
-- Bulk mode converts all discovered triangulation cache artifacts and skips stale legacy caches whose signature or feature count no longer matches the source layer.
-
-Expected pass signal:
-
-- Command exits `0`.
-- JSON contains `"ok": true`.
-
-## DuckDB Owner Dump Integration Check
-
-```bash
-./build/worldsim3_duckdb_owner_dump --quiet --summary-only --workers 2
-```
-
-Purpose:
-
-- Hydrates locally available layers through the headless hydration worker/cache pipeline.
-- Builds parcel consolidation artifacts.
-- Rebuilds `data/worldsim.duckdb`.
-- Queries the owner with the most properties.
-- Validates that DuckDB `unified_parcels` row count matches in-memory consolidation.
-
-Expected pass signal:
-
-- Command exits `0`.
-- Output includes hydration counts, DuckDB rebuild status, top owner summary, and unified parcel row count.
-
-Coverage:
-
-- Manifest loading.
-- Local layer discovery.
-- Hydration worker pipeline.
-- Hydration cache read/write path.
-- Parcel consolidation.
-- DuckDB rebuild and SQL query execution.
-- Basic consistency between in-memory unified parcels and DuckDB tables.
-
-Limitations:
-
-- Heavyweight: it can take a while and rewrites `data/worldsim.duckdb`.
-- It does not exercise the interactive frame drain path exactly; the headless runner consumes hydration batches directly.
-- It does not assert same-row-count source changes or mid-run rehydration replacement semantics.
-
-Useful variants:
-
-```bash
-./build/worldsim3_duckdb_owner_dump --workers 4 --summary-only
-./build/worldsim3_duckdb_owner_dump --quiet --output /tmp/top_owner.tsv
-```
-
-## GPU Aggregate Harness
-
-```bash
-./build/worldsim3_gpu_aggregate_harness
-```
-
-Common variants:
-
-```bash
-./build/worldsim3_gpu_aggregate_harness --howard
-./build/worldsim3_gpu_aggregate_harness --input data/layers/parcel.geojson --jurisdiction "Baltimore City"
-./build/worldsim3_gpu_aggregate_harness --raster 512 --repeats 3 --sigma 1.5
-./build/worldsim3_gpu_aggregate_harness --no-cpu-blur
-```
-
-Purpose:
-
-- Exercises the Vulkan heatmap aggregate path.
-- Compares GPU aggregate output against CPU expectations where applicable.
-- Reports output pixel count and density summary.
-
-Expected pass signal:
-
-- Command exits `0`.
-- Output includes `GPU aggregate OK`.
-
-Coverage:
-
-- Vulkan device setup.
-- Heatmap compute shader dispatch.
-- GPU aggregate readback.
-- CPU/GPU aggregate consistency checks.
-
-Limitations:
-
-- Requires a working Vulkan runtime and physical device.
-- May fail on headless systems without GPU access even if app logic is correct.
-
-## Arkavo Connectivity Test
-
-```bash
-./build/arkavo_connectivity_test --timeout 20
-```
-
-Two-peer data-channel check:
-
-```bash
-./build/arkavo_connectivity_test --room worldsim-connectivity-test
-./build/arkavo_connectivity_test --room worldsim-connectivity-test --send-peer PEER_ID --send-file PATH
-```
-
-Purpose:
-
-- Verifies signaling, ICE, WebRTC peer setup, and optional data-channel file send.
-
-Expected pass signal:
-
-- For a network smoke test, command reaches connected/signaling-ready state and exits successfully.
-- For a two-peer send test, the receiving peer reports the file.
-
-Coverage:
-
-- Arkavo signaling transport.
-- WebRTC session manager setup.
-- Data-channel file transfer path.
-
-Limitations:
-
-- Requires network access to the configured signaling URL.
-- Two-peer transfer requires coordinating two running instances and a valid peer id.
-
-## Local CI Packaging Script
-
-```bash
-scripts/ci-local.sh local
-```
-
-Purpose:
-
-- Builds Linux packaging artifacts.
-- Configures and builds Windows MinGW targets.
-- Packages Windows artifacts.
-
-Expected pass signal:
-
-- Command exits `0`.
-- `dist/` contains produced artifacts listed by the script.
-
-Coverage:
-
-- Broader packaging and cross-build validation.
-- Confirms release-adjacent build wiring.
-
-Limitations:
-
-- Heavyweight.
-- May install packages when `AUTO_INSTALL_DEPS=1`.
-- Requires MinGW and Vulkan cross-build dependencies for the Windows path.
-
-Safer dependency-check variant:
-
-```bash
-AUTO_INSTALL_DEPS=0 scripts/ci-local.sh local
-```
-
-## Size/Structure Checks
-
-```bash
-tools/check_file_sizes.sh
-tools/check_main_size.sh
-```
-
-Purpose:
-
-- Checks repository source/file size constraints.
-- Helps catch accidental large-file or main-loop growth regressions.
-
-Expected pass signal:
-
-- Command exits `0`.
-
-Coverage:
-
-- Repository hygiene.
-- File size guardrails.
-
-Limitations:
-
-- These are static checks, not behavioral tests.
-
-## Current Cache Propagation Gap
-
-The existing tests provide useful integration coverage, especially `worldsim3_duckdb_owner_dump`, but there is not yet a small deterministic regression test for cache propagation itself.
-
-A focused cache regression should use tiny synthetic layers and assert:
-
-- first hydration writes a cache file
-- second hydration loads from cache
-- rehydration replaces existing runtime features rather than appending
-- same-row-count source changes invalidate derived caches by signature
-- triangulation jobs preserve the hydration source signature
-- DuckDB `needsRebuild()` changes when `analytics_build_info.source_signature` differs
+Additional warmer coverage:
+
+- `--warm-parcel-render-cache <layer>` verifies a real layer can be converted into a binary parcel render sidecar.
+- `--warm-parcel-render-cache-all` attempts the same conversion for every layer with the required inputs.
+- `--parcel-artifact-health <layer>` performs a lightweight header/size/signature audit of the canonical binary, parcel render sidecar, and DuckDB artifact without loading full feature bodies.
+- The parcel render self-test also verifies vertex-to-parcel-slot references and line-index topology round-trip, which are the lookups used by the GPU-side parcel fill and outline paths.
+
+Current additional verification:
+
+- `cmake --build build --target worldsim3 -j1` now also verifies the parcel fill vertex and fragment shaders compile to SPIR-V and the dedicated parcel Vulkan pipeline code links cleanly.
+- The same build now verifies the retained parcel overlay GPU color-buffer path, retained parcel outline GPU color-buffer path, and the parcel fill/overlay/outline draw callbacks compile and link.
+- The same build now verifies the asynchronous parcel render worker wiring compiles and links, including shutdown/join handling and sidecar request/result plumbing.
+- The same build now verifies the asynchronous parcel GPU upload worker wiring compiles and links, including worker-owned Vulkan upload context creation, stale-result discard, payload adoption, and shutdown/join handling.
+- The same build now verifies generation-tracked parcel GPU retirement wiring compiles and links, including retire-after-frame tracking, per-frame drain hooks, and forced shutdown drain.
+- The same build now verifies the session-static parcel geometry residency policy compiles and links: startup upload remains supported, while later in-process parcel source signature changes are handled as restart-required instead of live geometry replacement.

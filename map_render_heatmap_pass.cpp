@@ -36,8 +36,21 @@ void drawHeatmapPass(const MapHeatmapDrawContext& ctx) {
     const bool draw_current_raster =
         ctx.heatmap_raster_texture_valid &&
         ctx.heatmap_raster_cache_key == ctx.heatmap_key;
+    bool drew_raster = false;
+    if (draw_current_raster && ctx.heatmap_raster_layers && !ctx.heatmap_raster_layers->empty()) {
+        for (const auto& layer : *ctx.heatmap_raster_layers) {
+            if (!layer.has_gpu_texture || !layer.gpu_texture.descriptor) continue;
+            ImVec2 raster_nw = lonLatToWorldPx(layer.raster.min_lon, layer.raster.max_lat, ctx.math_zoom);
+            ImVec2 raster_se = lonLatToWorldPx(layer.raster.max_lon, layer.raster.min_lat, ctx.math_zoom);
+            ImVec2 rp0 = ctx.project_world(raster_nw);
+            ImVec2 rp1 = ctx.project_world(raster_se);
+            ctx.draw->AddImage((ImTextureID)layer.gpu_texture.descriptor, rp0, rp1);
+            drew_raster = true;
+        }
+    }
     const bool drawing_heatmap_raster =
         draw_current_raster &&
+        !drew_raster &&
         ctx.heatmap_raster_texture &&
         ctx.heatmap_raster_texture->descriptor &&
         ctx.heatmap_raster;
@@ -48,7 +61,7 @@ void drawHeatmapPass(const MapHeatmapDrawContext& ctx) {
         ImVec2 rp1 = ctx.project_world(raster_se);
         ctx.draw->AddImage((ImTextureID)ctx.heatmap_raster_texture->descriptor, rp0, rp1);
     }
-    const bool suppress_vector_heat_cells = ctx.smooth_only_heatmap && drawing_heatmap_raster;
+    const bool suppress_vector_heat_cells = ctx.smooth_only_heatmap && (drawing_heatmap_raster || drew_raster);
     if (suppress_vector_heat_cells) return;
     for (const auto& c : *ctx.draw_cells) drawHeatCell(ctx.draw, c, ctx.project_world);
 }

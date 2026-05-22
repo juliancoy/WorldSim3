@@ -1,7 +1,9 @@
 #include "heatmap_runtime.h"
 
+#include "heatmap_gpu_aggregate.h"
 #include "heatmap_render.h"
 #include "map_render_hud.h"
+#include "worldsim_app.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +13,6 @@
 namespace {
 
 constexpr size_t kMaxHeatmapTextureCacheEntries = 8;
-
 std::filesystem::path aggregateCachePath(const std::filesystem::path& root, uint64_t key) {
     std::ostringstream name;
     name << std::hex << key << ".raster.bin";
@@ -25,6 +26,11 @@ void pruneHeatmapTextureCache(HeatmapRuntimeState& state) {
             if (it->second.last_used_frame < evict_it->second.last_used_frame) evict_it = it;
         }
         destroyTileTexture(evict_it->second.texture);
+        for (auto& layer : evict_it->second.raster_layers) {
+            if (!recycleGpuAggregateTexture(layer.gpu_texture, (uint32_t)layer.raster.w, (uint32_t)layer.raster.h)) {
+                destroyTileTexture(layer.gpu_texture);
+            }
+        }
         state.texture_cache.erase(evict_it);
     }
 }
@@ -32,7 +38,14 @@ void pruneHeatmapTextureCache(HeatmapRuntimeState& state) {
 } // namespace
 
 void clearHeatmapRuntimeCache(HeatmapRuntimeState& state) {
-    for (auto& kv : state.texture_cache) destroyTileTexture(kv.second.texture);
+    for (auto& kv : state.texture_cache) {
+        destroyTileTexture(kv.second.texture);
+        for (auto& layer : kv.second.raster_layers) {
+            if (!recycleGpuAggregateTexture(layer.gpu_texture, (uint32_t)layer.raster.w, (uint32_t)layer.raster.h)) {
+                destroyTileTexture(layer.gpu_texture);
+            }
+        }
+    }
     state.texture_cache.clear();
     state.cached_cells.clear();
     state.cached_raster_meta = {};
@@ -42,6 +55,7 @@ void clearHeatmapRuntimeCache(HeatmapRuntimeState& state) {
     if (state.raster_texture.descriptor) destroyTileTexture(state.raster_texture);
     state.raster_texture_valid = false;
     state.texture_cache_frame = 0;
+    state.normalization_cache.clear();
     if (state.async_inflight) {
         state.async_inflight = false;
         state.pending_key = 0;
@@ -50,7 +64,10 @@ void clearHeatmapRuntimeCache(HeatmapRuntimeState& state) {
 }
 
 void destroyHeatmapRuntimeTexturesNow(HeatmapRuntimeState& state) {
-    for (auto& kv : state.texture_cache) destroyTileTextureNow(kv.second.texture);
+    for (auto& kv : state.texture_cache) {
+        destroyTileTextureNow(kv.second.texture);
+        for (auto& layer : kv.second.raster_layers) destroyTileTextureNow(layer.gpu_texture);
+    }
     state.texture_cache.clear();
     if (state.raster_texture.descriptor) destroyTileTextureNow(state.raster_texture);
     state.raster_texture = {};
@@ -72,7 +89,21 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
         aggregate_entry.cells = std::move(done.second.cells);
         aggregate_entry.last_used_frame = ++state.texture_cache_frame;
         bool aggregate_has_texture = false;
-        if (done.second.has_raster && done.second.raster.w > 0 && done.second.raster.h > 0 && !done.second.raster.rgba.empty()) {
+        if (!done.second.raster_layers.empty()) {
+            aggregate_entry.raster_layers = std::move(done.second.raster_layers);
+            for (auto& layer : aggregate_entry.raster_layers) {
+                aggregate_has_texture = finalizeTileTextureDescriptor(layer.gpu_texture) || aggregate_has_texture;
+            }
+            if (!aggregate_entry.raster_layers.empty()) {
+                aggregate_entry.raster = aggregate_entry.raster_layers.front().raster;
+            }
+            if (aggregate_has_texture) recordGpuProfilerEvent("heatmap raster direct gpu");
+        } else if (done.second.has_gpu_texture) {
+            aggregate_entry.raster = done.second.raster;
+            aggregate_entry.texture = std::move(done.second.gpu_texture);
+            aggregate_has_texture = finalizeTileTextureDescriptor(aggregate_entry.texture);
+            if (aggregate_has_texture) recordGpuProfilerEvent("heatmap raster direct gpu");
+        } else if (done.second.has_raster && done.second.raster.w > 0 && done.second.raster.h > 0 && !done.second.raster.rgba.empty()) {
             saveHeatmapRasterCache(aggregateCachePath(root, done.first), done.first, done.second.raster);
             aggregate_entry.raster = done.second.raster;
             aggregate_has_texture = uploadRgbaTexture(
@@ -80,12 +111,18 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
                 (uint32_t)done.second.raster.w,
                 (uint32_t)done.second.raster.h,
                 aggregate_entry.texture);
+            if (aggregate_has_texture) recordGpuProfilerEvent("heatmap raster upload");
         }
         const bool aggregate_has_content = aggregate_has_texture || !aggregate_entry.cells.empty();
         if (aggregate_has_content || !any_active_heatmap) {
             auto old_cached_aggregate = state.texture_cache.find(done.first);
             if (old_cached_aggregate != state.texture_cache.end()) {
                 destroyTileTexture(old_cached_aggregate->second.texture);
+                for (auto& layer : old_cached_aggregate->second.raster_layers) {
+                    if (!recycleGpuAggregateTexture(layer.gpu_texture, (uint32_t)layer.raster.w, (uint32_t)layer.raster.h)) {
+                        destroyTileTexture(layer.gpu_texture);
+                    }
+                }
                 state.texture_cache.erase(old_cached_aggregate);
             }
             state.texture_cache.emplace(done.first, std::move(aggregate_entry));
@@ -140,6 +177,7 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
                     (uint32_t)disk_entry.raster.w,
                     (uint32_t)disk_entry.raster.h,
                     disk_entry.texture)) {
+                recordGpuProfilerEvent("heatmap raster cache upload");
                 state.texture_cache.emplace(heatmap_key, std::move(disk_entry));
                 pruneHeatmapTextureCache(state);
                 auto current = state.texture_cache.find(heatmap_key);
@@ -245,7 +283,8 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
         (ctx.can_use_cached_heatmap ? state.cached_cells :
         (should_recompute_heatmap ? frame_heat_cells : empty_heat_cells));
     const bool cached_aggregate_has_texture =
-        draw_cached_aggregate && draw_cached_aggregate->texture.descriptor;
+        draw_cached_aggregate &&
+        (!draw_cached_aggregate->raster_layers.empty() || draw_cached_aggregate->texture.descriptor);
 
     MapHeatmapDrawContext heatmap_draw_ctx;
     heatmap_draw_ctx.draw = ctx.draw;
@@ -262,6 +301,8 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
         cached_aggregate_has_texture ? &draw_cached_aggregate->texture : &state.raster_texture;
     heatmap_draw_ctx.heatmap_raster =
         draw_cached_aggregate ? &draw_cached_aggregate->raster : &state.cached_raster_meta;
+    heatmap_draw_ctx.heatmap_raster_layers =
+        draw_cached_aggregate ? &draw_cached_aggregate->raster_layers : nullptr;
     heatmap_draw_ctx.draw_cells = &draw_cells;
     heatmap_draw_ctx.project_world = ctx.project_world;
 
@@ -277,8 +318,9 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
     if (ctx.prof_heatmap_texture_resident) {
         ctx.prof_heatmap_texture_resident->store(
             heatmap_draw_ctx.heatmap_raster_texture_valid &&
-            heatmap_draw_ctx.heatmap_raster_texture &&
-            heatmap_draw_ctx.heatmap_raster_texture->descriptor,
+            ((heatmap_draw_ctx.heatmap_raster_layers && !heatmap_draw_ctx.heatmap_raster_layers->empty()) ||
+             (heatmap_draw_ctx.heatmap_raster_texture &&
+              heatmap_draw_ctx.heatmap_raster_texture->descriptor)),
             std::memory_order_relaxed);
     }
     if (ctx.prof_heatmap_async_inflight) {

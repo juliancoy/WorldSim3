@@ -17,6 +17,35 @@ ImVec4 defaultHeatColor(float t);
 
 namespace {
 constexpr char kHeatmapRasterCacheMagic[8] = {'W', 'S', '3', 'A', 'G', 'G', '1', '\0'};
+
+bool isGpuSplatFamilyAlgo(int algo) {
+    return algo == kAggregateGpuSplatBlur || algo == kAggregateGpuSplatHue;
+}
+
+ImVec4 hueSplatColor(const ImVec4& base, float t) {
+    float h = 0.0f;
+    float s = 0.0f;
+    float v = 0.0f;
+    ImGui::ColorConvertRGBtoHSV(
+        std::clamp(base.x, 0.0f, 1.0f),
+        std::clamp(base.y, 0.0f, 1.0f),
+        std::clamp(base.z, 0.0f, 1.0f),
+        h,
+        s,
+        v);
+    const float sat = std::clamp(0.25f + 0.75f * s, 0.0f, 1.0f);
+    const float val = std::clamp(0.22f + 0.78f * t, 0.0f, 1.0f);
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    ImGui::ColorConvertHSVtoRGB(h, sat, val, r, g, b);
+    if (s < 0.03f) {
+        r = std::clamp(base.x * (0.25f + 0.75f * t), 0.0f, 1.0f);
+        g = std::clamp(base.y * (0.25f + 0.75f * t), 0.0f, 1.0f);
+        b = std::clamp(base.z * (0.25f + 0.75f * t), 0.0f, 1.0f);
+    }
+    return ImVec4(r, g, b, 0.18f + 0.56f * t);
+}
 }
 
 bool loadHeatmapRasterCache(
@@ -134,7 +163,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             add(bins, (int)((s.x - origin_x) / cell), (int)((s.y - origin_y) / cell), s, 1.0);
                         } else if (algo == kAggregateKdeGaussian) {
                             kde_add(s, bw, 1.0);
-                        } else if (algo == kAggregateGpuSplatBlur) {
+                        } else if (isGpuSplatFamilyAlgo(algo)) {
                             kde_add(s, std::sqrt(bw * bw + blur * blur), 1.0);
                         } else if (algo == kAggregateHexBinning) {
                             const float hh = std::max(1.0f, cell * 0.8660254f);
@@ -201,7 +230,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         const int algo = settings.algo;
                         const bool smooth_surface =
                             algo == kAggregateKdeGaussian ||
-                            algo == kAggregateGpuSplatBlur ||
+                            isGpuSplatFamilyAlgo(algo) ||
                             algo == kAggregateMultiResPyramid;
                         CachedHeatCell cc;
                         cc.world_space = true;
@@ -235,7 +264,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                 for (const auto& s : samples) {
                     const int algo = s.algo;
                     if (algo != kAggregateKdeGaussian &&
-                        algo != kAggregateGpuSplatBlur &&
+                        !isGpuSplatFamilyAlgo(algo) &&
                         algo != kAggregateMultiResPyramid) continue;
                     raster_min_lon = std::min(raster_min_lon, s.lon);
                     raster_max_lon = std::max(raster_max_lon, s.lon);
@@ -285,10 +314,47 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                 auto build_raster_group = [&](const std::vector<HeatSample>& group) {
                     if (group.empty()) return;
                     const HeatSample& settings = group.front();
+                    if (isGpuSplatFamilyAlgo(settings.algo)) {
+                        std::string gpu_err;
+                        TileTexture gpu_texture;
+                        const float zf = settings.zoom_adaptive_bandwidth
+                            ? std::clamp(1.0f + 0.12f * (float)(max_zoom - zoom), 1.0f, 3.0f)
+                            : 1.0f;
+                        float sigma = std::max(1.0f, settings.bandwidth_px * zf);
+                        sigma = std::sqrt(sigma * sigma + settings.blur_sigma_px * settings.blur_sigma_px);
+                        if (buildGpuSplatAggregateTexture(
+                                group,
+                                rw,
+                                rh,
+                                raster_min_lon,
+                                raster_min_lat,
+                                raster_max_lon,
+                                raster_max_lat,
+                                sigma,
+                                settings.percentile_clip,
+                                gpu_texture,
+                                &gpu_err)) {
+                            out.has_raster = true;
+                            HeatmapRasterLayer raster_layer;
+                            raster_layer.raster = {
+                                rw,
+                                rh,
+                                raster_min_lon,
+                                raster_min_lat,
+                                raster_max_lon,
+                                raster_max_lat,
+                                {}
+                            };
+                            raster_layer.gpu_texture = std::move(gpu_texture);
+                            raster_layer.has_gpu_texture = true;
+                            out.raster_layers.push_back(std::move(raster_layer));
+                            return;
+                        }
+                    }
                     const float sx = (float)rw / std::max(0.0001f, raster_max_lon - raster_min_lon);
                     const float sy = (float)rh / std::max(0.0001f, raster_max_lat - raster_min_lat);
                     const bool preserved_gpu_splat =
-                        settings.algo == kAggregateGpuSplatBlur && !settings.allow_cpu_fallback;
+                        isGpuSplatFamilyAlgo(settings.algo);
                     const float screen_span_x =
                         viewport_w * (raster_max_lon - raster_min_lon) /
                         std::max(0.0001f, view_max_lon - view_min_lon);
@@ -304,7 +370,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         ? std::clamp(1.0f + 0.12f * (float)(max_zoom - zoom), 1.0f, 3.0f)
                         : 1.0f;
                     float sigma = std::max(1.0f, settings.bandwidth_px * zf);
-                    if (settings.algo == kAggregateGpuSplatBlur) sigma = std::sqrt(sigma * sigma + settings.blur_sigma_px * settings.blur_sigma_px);
+                    if (isGpuSplatFamilyAlgo(settings.algo)) sigma = std::sqrt(sigma * sigma + settings.blur_sigma_px * settings.blur_sigma_px);
                     if (settings.algo == kAggregateMultiResPyramid && settings.multires_enabled) sigma *= 1.0f + std::clamp(settings.multires_blend, 0.0f, 1.0f);
                     const float sigma_r = std::max(1.0f, sigma / screen_px_per_raster_px);
                     std::vector<float> density((size_t)rw * (size_t)rh, 0.0f);
@@ -312,7 +378,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     std::vector<float> gv(density.size(), 0.0f), sv(density.size(), 0.0f);
                     auto idx = [&](int x, int y) -> size_t { return (size_t)y * (size_t)rw + (size_t)x; };
                     bool gpu_ok = false;
-                    if (settings.algo == kAggregateGpuSplatBlur) {
+                    if (isGpuSplatFamilyAlgo(settings.algo)) {
                         std::string gpu_err;
                         gpu_ok = buildGpuSplatAggregate(
                             group,
@@ -366,7 +432,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                         src.swap(dst);
                     };
 
-                    if (!gpu_ok && !settings.allow_cpu_fallback && settings.algo == kAggregateGpuSplatBlur) {
+                    if (!gpu_ok && isGpuSplatFamilyAlgo(settings.algo)) {
                         return;
                     }
                     if (!gpu_ok) {
@@ -384,7 +450,8 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             if (s.prefer_gradient) gv[i] += 1.0f; else sv[i] += 1.0f;
                         }
                     }
-                    const bool skip_cpu_blur_for_gpu_splat = settings.algo == kAggregateGpuSplatBlur && gpu_ok && !settings.allow_cpu_fallback;
+                    const bool skip_cpu_blur_for_gpu_splat =
+                        isGpuSplatFamilyAlgo(settings.algo) && gpu_ok;
                     if (!skip_cpu_blur_for_gpu_splat) {
                         for (auto* field : {&density, &cr, &cg, &cb, &cw, &gv, &sv}) {
                             blur_field(*field, true);
@@ -410,9 +477,12 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             const float iw = cw[i] > 0.0f ? 1.0f / cw[i] : 0.0f;
                             const ImVec4 base(std::clamp((float)cr[i] * iw, 0.0f, 1.0f), std::clamp((float)cg[i] * iw, 0.0f, 1.0f), std::clamp((float)cb[i] * iw, 0.0f, 1.0f), 1.0f);
                             const bool use_gradient = gv[i] >= sv[i];
-                            const ImVec4 src = use_gradient
-                                ? ImVec4(0.12f + 0.70f * t, 0.35f + 0.30f * t, 0.75f - 0.62f * t, 0.62f * t)
-                                : ImVec4(base.x * (0.30f + 0.70f * t), base.y * (0.30f + 0.70f * t), base.z * (0.30f + 0.70f * t), 0.58f * t);
+                            const ImVec4 src =
+                                settings.algo == kAggregateGpuSplatHue
+                                    ? hueSplatColor(base, t)
+                                    : (use_gradient
+                                        ? ImVec4(0.12f + 0.70f * t, 0.35f + 0.30f * t, 0.75f - 0.62f * t, 0.62f * t)
+                                        : ImVec4(base.x * (0.30f + 0.70f * t), base.y * (0.30f + 0.70f * t), base.z * (0.30f + 0.70f * t), 0.58f * t));
                             blend_rgba(x, y, src);
                         }
                     }
@@ -422,7 +492,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     if (kv.second.empty()) continue;
                     const int algo = kv.second.front().algo;
                     if (algo == kAggregateKdeGaussian ||
-                        algo == kAggregateGpuSplatBlur ||
+                        isGpuSplatFamilyAlgo(algo) ||
                         algo == kAggregateMultiResPyramid) {
                         build_raster_group(kv.second);
                     } else {
@@ -478,7 +548,7 @@ if (heatmap_algo == kAggregateGridBinning || heatmap_algo == kAggregateMedianCho
         applyGridStrategy(heat_samples, global_heat_bins, origin_x, origin_y, global_heat_cell);
 } else if (heatmap_algo == kAggregateKdeGaussian) {
         applyKdeStrategy(heat_samples, global_heat_bins, origin_x, origin_y, global_heat_cell, bw_px);
-} else if (heatmap_algo == kAggregateGpuSplatBlur) {
+} else if (isGpuSplatFamilyAlgo(heatmap_algo)) {
         applyGpuSplatBlurStrategy(
             heat_samples, global_heat_bins, origin_x, origin_y, viewport_w, viewport_h, global_heat_cell, blur_sigma);
 } else if (heatmap_algo == kAggregateHexBinning) {
@@ -559,6 +629,19 @@ if (!global_heat_bins.empty()) {
                 const ImVec4 hc = defaultHeatColor(t);
                 fill = ImGui::ColorConvertFloat4ToU32(ImVec4(hc.x, hc.y, hc.z, 0.76f));
                 outline = ImGui::ColorConvertFloat4ToU32(ImVec4(hc.x * 0.72f, hc.y * 0.72f, hc.z * 0.72f, 0.88f));
+            } else if (heatmap_algo == kAggregateGpuSplatHue) {
+                const ImVec4 base(
+                    std::clamp((float)r_mean, 0.0f, 1.0f),
+                    std::clamp((float)g_mean, 0.0f, 1.0f),
+                    std::clamp((float)b_mean, 0.0f, 1.0f),
+                    1.0f);
+                const ImVec4 ramp = hueSplatColor(base, t);
+                fill = ImGui::ColorConvertFloat4ToU32(ramp);
+                outline = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                    std::clamp(ramp.x * 0.72f, 0.0f, 1.0f),
+                    std::clamp(ramp.y * 0.72f, 0.0f, 1.0f),
+                    std::clamp(ramp.z * 0.72f, 0.0f, 1.0f),
+                    0.82f));
             } else if (monochrome_bin || !prefer_gradient) {
                 const ImVec4 base(
                     std::clamp((float)r_mean, 0.0f, 1.0f),
@@ -602,7 +685,7 @@ if (!global_heat_bins.empty()) {
         } else {
                 const bool smooth_surface =
                     heatmap_algo == kAggregateKdeGaussian ||
-                    heatmap_algo == kAggregateGpuSplatBlur ||
+                    isGpuSplatFamilyAlgo(heatmap_algo) ||
                     heatmap_algo == kAggregateMultiResPyramid;
                 const float overlap = smooth_surface ? std::max(0.75f, global_heat_cell * 0.035f) : 0.0f;
                 const float x0 = origin_x + (float)bx * global_heat_cell;

@@ -34,7 +34,7 @@ The script auto-picks the newest file in `data/inbox/hud_pit/`.
 
 Output:
 
-- `data/layers/hud_pit_homelessness_2007_2024_by_coc.geojson`
+- `data/world/earth/nation_state/us/state_region/md/layers/hud_pit_homelessness_2007_2024_by_coc.geojson`
 
 ## Explicit file path (optional)
 

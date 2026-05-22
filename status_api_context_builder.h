@@ -6,11 +6,19 @@ struct StatusApiContextFactoryInput {
     const char* app_version = nullptr;
     int protocol_version = 0;
     size_t tile_cache_max = 0;
+    const std::filesystem::path* root = nullptr;
 
     std::atomic<bool>* stop = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
+    std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    MapFilterState* map_filter_state = nullptr;
+    FilterResultSet* active_filter_result_set = nullptr;
+    std::vector<QueryMapLayer>* query_layers = nullptr;
+    std::string* active_filter_status = nullptr;
     TimeCubeService* time_cube_service = nullptr;
     ScreenshotRequestState* screenshot = nullptr;
+    HoverDebugState* hover_debug_state = nullptr;
 
     std::mutex* status_mutex = nullptr;
     std::vector<LayerRuntimeState>* layer_states = nullptr;
@@ -22,7 +30,6 @@ struct StatusApiContextFactoryInput {
     std::chrono::steady_clock::time_point* hydration_started_at = nullptr;
 
     std::atomic<size_t>* hydrated_count = nullptr;
-    std::atomic<size_t>* triangulated_count = nullptr;
     std::atomic<size_t>* prof_tile_cache_size = nullptr;
     std::atomic<int>* current_zoom_state = nullptr;
     std::atomic<double>* current_lon_state = nullptr;
@@ -30,7 +37,6 @@ struct StatusApiContextFactoryInput {
     std::atomic<size_t>* visible_vacant_parcels_last_frame = nullptr;
     std::atomic<size_t>* vacant_parcels_matched_total = nullptr;
     std::atomic<size_t>* vacant_parcels_with_geometry_total = nullptr;
-    std::atomic<size_t>* vacant_parcels_triangulated_renderable_total = nullptr;
 
     std::atomic<double>* perf_frame_ms_avg = nullptr;
     std::atomic<double>* perf_frame_ms_last = nullptr;
@@ -55,6 +61,9 @@ struct StatusApiContextFactoryInput {
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
+    std::mutex* api_control_mutex = nullptr;
+    ApiFilterControlCommand* api_filter_control_cmd = nullptr;
+    std::vector<ApiQueryControlCommand>* api_query_control_cmds = nullptr;
 
     std::mutex* layer_profile_mutex = nullptr;
     std::vector<LayerProfileSnapshot>* layer_profile_snapshot = nullptr;
@@ -68,12 +77,15 @@ struct StatusApiContextFactoryInput {
     std::atomic<double>* prof_owner_ms_last = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
     std::atomic<double>* prof_overlay_ms_last = nullptr;
     std::atomic<double>* prof_present_ms_last = nullptr;
     std::atomic<size_t>* prof_tiles_drawn_last = nullptr;
     std::atomic<size_t>* prof_features_considered_last = nullptr;
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
     std::atomic<size_t>* prof_projection_world_ring_cache_entries = nullptr;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "cache_io.h"
 #include "layer_runtime.h"
 #include "parcel_unified.h"
 #include "types.h"
@@ -26,6 +27,7 @@ struct DerivedLayerCachesContext {
     int tax_lien_layer_idx = -1;
     int tax_sale_layer_idx = -1;
     int parcel_layer_idx = -1;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
 
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
@@ -38,7 +40,7 @@ struct DerivedLayerCachesContext {
     size_t* zoning_zone_discovered_feature_count = nullptr;
 
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
-    std::vector<LayerDef::FeatureGeom>* harmonized_real_property_features = nullptr;
+    std::vector<LayerDef::FeatureRecord>* harmonized_real_property_features = nullptr;
     std::vector<std::string>* harmonized_real_property_source_files = nullptr;
     std::string* harmonized_real_property_signature = nullptr;
     size_t* cached_real_property_size = nullptr;
@@ -69,6 +71,8 @@ struct DerivedLayerCachesContext {
     std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     std::vector<double>* parcel_tax_lien_amount_by_feature = nullptr;
     std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
+    std::vector<std::string>* parcel_blocklot_by_feature = nullptr;
+    std::string* parcel_blocklot_cached_signature = nullptr;
 
     std::atomic<size_t>* vacant_notice_rows_matched_total = nullptr;
     std::atomic<size_t>* vacant_rehab_rows_matched_total = nullptr;
@@ -77,8 +81,12 @@ struct DerivedLayerCachesContext {
     std::atomic<size_t>* vacant_parcels_triangulated_renderable_total = nullptr;
 
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    std::vector<std::string>* parcel_owner_search_by_feature = nullptr;
+    std::vector<std::string>* real_property_owner_search_by_feature = nullptr;
+    std::vector<std::string>* parcel_address_search_by_feature = nullptr;
     size_t* unified_parcel_cached_size = nullptr;
     std::string* unified_parcel_cached_signature = nullptr;
+    std::string* last_refresh_inputs_signature = nullptr;
     size_t* unified_real_property_cached_size = nullptr;
     int* unified_vacancy_generation_applied = nullptr;
     int* unified_tax_generation_applied = nullptr;

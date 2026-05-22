@@ -36,6 +36,8 @@
 
 ## Record Filters
 - Filters tab
+- SQL tab
+- Active Queries tab
 - Vacancy-Parcel tab
 - Gradient tab
 - Owners tab

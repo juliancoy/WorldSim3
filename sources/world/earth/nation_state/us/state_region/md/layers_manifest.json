@@ -1,37 +1,5 @@
 [
   {
-    "name": "Maryland Parcels",
-    "file": "regional_parcels.geojson",
-    "color": "#ffd92f",
-    "description": "Canonical generated parcel layer for Maryland jurisdictions. Preferred source is Maryland Planning MdProperty View parcel polygons, with county-native parcel feeds used only when they are materially better than the statewide Maryland Planning product. Normalized fields include jurisdiction, source_parcel_id, account_id, blocklot, address, owner, land_value, improvement_value, current_value, sale_price, sale_date, year_built, and sdat_link.",
-    "download": false,
-    "reason": "Generated locally from jurisdiction parcel/property downloads by worldsim_regional_parcel_builder. Prefer Maryland Planning MdProperty View parcel polygons and Maryland statewide real-property assessments for broad county coverage; use county-native feeds only when they provide meaningfully better geometry or attributes.",
-    "import": {
-      "type": "regional_parcel_builder"
-    },
-    "source_urls": [
-      "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
-      "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-      "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0",
-      "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
-      "https://data.howardcountymd.gov/",
-      "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
-      "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
-      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AProperty_Public_NoName&outputFormat=application/json",
-      "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
-      "https://opendata.maryland.gov/resource/ed4q-f8tm.csv",
-      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download"
-    ],
-    "category": "housing",
-    "subcategory": "Parcels & Ownership",
-    "region": "Maryland",
-    "scale": "parcel",
-    "default_enabled": false
-  },
-  {
     "name": "Baltimore City Parcels",
     "file": "parcel.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
@@ -41,39 +9,58 @@
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Baltimore County Parcels",
     "file": "baltimore_county_parcels.geojson",
     "color": "#a6cee3",
-    "description": "Normalized Baltimore County parcel geometry staging layer. Source is Baltimore County ArcGIS REST Tax parcel (MapServer/1), which supports geoJSON queries and includes owner/value/year-built fields. Convert and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Normalized Baltimore County parcel geometry staging layer. Source is Baltimore County ArcGIS REST Tax parcel (MapServer/1), which supports geoJSON queries and includes owner/value/year-built fields. Convert and normalize for direct runtime and analytics use.",
     "download": false,
-    "reason": "Baltimore County publishes a machine-readable ArcGIS REST tax parcel layer; keep this staging layer generated/normalized before inclusion in regional_parcels.geojson.",
-    "reference_url": "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+    "reason": "Baltimore County publishes a machine-readable ArcGIS REST tax parcel layer; keep this staging layer generated/normalized for direct runtime and analytics use.",
+    "reference_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
-      "https://bcgis.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
-      "https://www.baltimorecountymd.gov/departments/information-technology/gis/data-download",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/info/iteminfo",
       "https://planning.maryland.gov/pages/ourproducts/downloadfiles.aspx"
     ],
     "import": {
       "type": "arcgis_feature_layer",
-      "service_url": "https://bcgisdev.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1"
+      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
+      "normalizer": "baltimore_county_parcels"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_county"
     }
   },
   {
     "name": "Howard County Parcels",
     "file": "howard_county_parcels.geojson",
     "color": "#b2df8a",
-    "description": "Normalized Howard County parcel geometry staging layer. Source is Howard County Property Boundaries/Cadastral data from the county data download site. Reproject and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Normalized Howard County parcel geometry staging layer. Source is Howard County Property Boundaries/Cadastral data from the county data download site. Reproject and normalize for direct runtime and analytics use.",
     "download": false,
-    "reason": "Howard County publishes a direct property shapefile ZIP and WFS/GeoJSON service; WFS coordinates are EPSG:2248, so normalize/reproject before inclusion in regional_parcels.geojson.",
+    "reason": "Howard County publishes a direct property shapefile ZIP and WFS/GeoJSON service; WFS coordinates are EPSG:2248, so normalize/reproject for direct runtime and analytics use.",
     "reference_url": "https://data.howardcountymd.gov/DataDownload/METADATA/Property.html",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
@@ -92,13 +79,22 @@
       "url": "https://data.howardcountymd.gov/DataDownload/ESRI/property.zip",
       "shapefile": "Property.shp",
       "source_crs": "EPSG:2248"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
     }
   },
   {
     "name": "Allegany County Parcels",
     "file": "allegany_county_parcels.geojson",
     "color": "#cab2d6",
-    "description": "Preferred Allegany County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons. Import the official county parcel ZIP before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Allegany County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons. Import the official county parcel ZIP for direct runtime and analytics use.",
     "download": false,
     "reason": "Use the official Maryland Planning parcel polygon ZIP for Allegany County from the Maryland parcel download catalog.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -110,20 +106,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
     ],
     "import": {
       "type": "zipped_shapefile",
       "url": "https://www.dropbox.com/scl/fi/0vq8xyexfe2juqcoeclqn/ALLEparcels0226.zip?dl=1&rlkey=6dfrsl38xrpujh6ouczpwnikp",
       "shapefile": "ALLEPOLY.shp",
       "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "allegany_county"
     }
   },
   {
     "name": "Anne Arundel County Parcels",
     "file": "anne_arundel_county_parcels.geojson",
     "color": "#fb9a99",
-    "description": "Preferred Anne Arundel County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Anne Arundel County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Anne Arundel County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -135,14 +140,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/4grva91527p7dc7pk96zc/ANNEparcels0226.zip?dl=1&rlkey=3ev0osf81ryh65nc443juweju",
+      "shapefile": "ANNEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "anne_arundel_county"
+    }
   },
   {
     "name": "Calvert County Parcels",
     "file": "calvert_county_parcels.geojson",
     "color": "#fdbf6f",
-    "description": "Preferred Calvert County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Calvert County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Calvert County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -154,14 +174,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/1d18z9vwbr8o9c329n7hb/CALVparcels0226.zip?dl=1&rlkey=wwjs2awg5nh88leik5upfin4u",
+      "shapefile": "CALVPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "calvert_county"
+    }
   },
   {
     "name": "Caroline County Parcels",
     "file": "caroline_county_parcels.geojson",
     "color": "#b3de69",
-    "description": "Preferred Caroline County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Caroline County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Caroline County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -173,14 +208,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/e6070aylp5n5oo4bohodt/CAROparcels0226.zip?dl=1&rlkey=4itc5bvhvrnzsbgsm9wp0v1vi",
+      "shapefile": "CAROPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "caroline_county"
+    }
   },
   {
     "name": "Carroll County Parcels",
     "file": "carroll_county_parcels.geojson",
     "color": "#fccde5",
-    "description": "Preferred Carroll County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Carroll County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Carroll County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -192,14 +242,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/g9voz3iu9yzourajhab3k/CARRparcels0226.zip?dl=1&rlkey=y5f6y65zcrh71k9jatb0y7ygz",
+      "shapefile": "CARRPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "carroll_county"
+    }
   },
   {
     "name": "Cecil County Parcels",
     "file": "cecil_county_parcels.geojson",
     "color": "#80b1d3",
-    "description": "Preferred Cecil County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Cecil County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Cecil County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -211,14 +276,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/5k5lik3jh3ev05dyqxofo/CECIparcels0226.zip?dl=1&rlkey=afnszcr4yc27slnai6xfxp8fn",
+      "shapefile": "CECIPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "cecil_county"
+    }
   },
   {
     "name": "Charles County Parcels",
     "file": "charles_county_parcels.geojson",
     "color": "#8dd3c7",
-    "description": "Preferred Charles County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Charles County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Charles County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -230,14 +310,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/nplpj2vibo6mfij9yvosd/CHARparcels0226.zip?dl=1&rlkey=zj8b42mxepjs0043exlqyanfi",
+      "shapefile": "CHARPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "charles_county"
+    }
   },
   {
     "name": "Dorchester County Parcels",
     "file": "dorchester_county_parcels.geojson",
     "color": "#ffffb3",
-    "description": "Preferred Dorchester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Dorchester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Dorchester County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -249,14 +344,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/rq5dhlu0ian6x15xiaac7/DORCparcels0226.zip?dl=1&rlkey=b5z8b9de701rd493c21saqa0i",
+      "shapefile": "DORCPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "dorchester_county"
+    }
   },
   {
     "name": "Frederick County Parcels",
     "file": "frederick_county_parcels.geojson",
     "color": "#bc80bd",
-    "description": "Preferred Frederick County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Frederick County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Frederick County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -268,14 +378,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/9wt3rwqv0u23gebgl9tfa/FREDparcels0226.zip?dl=1&rlkey=p59y96s9k1neapw19tgxd7xen",
+      "shapefile": "FREDPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "frederick_county"
+    }
   },
   {
     "name": "Garrett County Parcels",
     "file": "garrett_county_parcels.geojson",
     "color": "#ccebc5",
-    "description": "Preferred Garrett County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Garrett County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Garrett County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -287,14 +412,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/whplsq4nkd7lh8xbyv6dz/GARRparcels0226.zip?dl=1&rlkey=pb7m5jtmb1qkpvd1toqjj6ggd",
+      "shapefile": "GARRPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "garrett_county"
+    }
   },
   {
     "name": "Harford County Parcels",
     "file": "harford_county_parcels.geojson",
     "color": "#ffed6f",
-    "description": "Preferred Harford County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Harford County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Harford County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -306,14 +446,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/h17fdtpi5rlfezmjvrwqa/HARFparcels0226.zip?dl=1&rlkey=bh763wr1s3tz5z6y3b2o7ne32",
+      "shapefile": "HARFPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "harford_county"
+    }
   },
   {
     "name": "Kent County Parcels",
     "file": "kent_county_parcels.geojson",
     "color": "#bebada",
-    "description": "Preferred Kent County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Kent County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Kent County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -325,14 +480,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/esnv0nzpk2o0uibmterif/KENTparcels0226.zip?dl=1&rlkey=f7eszhurib9rcaox4g57vghaf",
+      "shapefile": "KENTPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "kent_county"
+    }
   },
   {
     "name": "Montgomery County Parcels",
     "file": "montgomery_county_parcels.geojson",
     "color": "#f4cae4",
-    "description": "Preferred Montgomery County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Montgomery County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Montgomery County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -344,14 +514,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/cfz86bco1s8lxmqm9b2ux/MONTparcels0226.zip?dl=1&rlkey=7n5o9icvdy83a0b6qhyy68mz3",
+      "shapefile": "MONTPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "montgomery_county"
+    }
   },
   {
     "name": "Prince George's County Parcels",
     "file": "prince_georges_county_parcels.geojson",
     "color": "#b3cde3",
-    "description": "Preferred Prince George's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Prince George's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Prince George's County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -363,14 +548,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/h74wrhh7e5m3o1rkx51jy/PRINparcels0226.zip?dl=1&rlkey=u5ly9afqgehr3tsp3rtc1fgja",
+      "shapefile": "PRINPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "prince_georges_county"
+    }
   },
   {
     "name": "Queen Anne's County Parcels",
     "file": "queen_annes_county_parcels.geojson",
     "color": "#decbe4",
-    "description": "Preferred Queen Anne's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Queen Anne's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Queen Anne's County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -382,14 +582,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/k30hp5aaopaem6kf7kigi/QUEEparcels0226.zip?dl=1&rlkey=rc99o6igbr4ktx561deh0yazv",
+      "shapefile": "QUEEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "queen_annes_county"
+    }
   },
   {
     "name": "St. Mary's County Parcels",
     "file": "st_marys_county_parcels.geojson",
     "color": "#fed9a6",
-    "description": "Preferred St. Mary's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred St. Mary's County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for St. Mary's County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -401,14 +616,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/j7sxbgr2lm4kgpzp027im/STMAparcels0226.zip?dl=1&rlkey=4dl0u5qpjuj6ahrbz2qwq2bi1",
+      "shapefile": "STMAPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "st_marys_county"
+    }
   },
   {
     "name": "Somerset County Parcels",
     "file": "somerset_county_parcels.geojson",
     "color": "#e5d8bd",
-    "description": "Preferred Somerset County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Somerset County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Somerset County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -420,14 +650,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/4x0x495lyd9buejgesdq9/SOMEparcels0226.zip?dl=1&rlkey=rus957682qasf063rpgjkchmv",
+      "shapefile": "SOMEPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "somerset_county"
+    }
   },
   {
     "name": "Talbot County Parcels",
     "file": "talbot_county_parcels.geojson",
     "color": "#fddaec",
-    "description": "Preferred Talbot County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Talbot County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Talbot County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -439,14 +684,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/mfcan19ls76ftvfb4js6a/TALBparcels0226.zip?dl=1&rlkey=hec1eqadkui5rtj9w260rfjdd",
+      "shapefile": "TALBPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "talbot_county"
+    }
   },
   {
     "name": "Washington County Parcels",
     "file": "washington_county_parcels.geojson",
     "color": "#cbd5e8",
-    "description": "Preferred Washington County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Washington County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Washington County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -458,14 +718,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/xqp1pwc83o32rxh0tv3re/WASHparcels0226.zip?dl=1&rlkey=mcntcjujf63poxwa6cy610896",
+      "shapefile": "WASHPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "washington_county"
+    }
   },
   {
     "name": "Wicomico County Parcels",
     "file": "wicomico_county_parcels.geojson",
     "color": "#b3e2cd",
-    "description": "Preferred Wicomico County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Wicomico County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Wicomico County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -477,14 +752,29 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/m38c63axnabt6uzrhl5wg/WICOparcels0226.zip?dl=1&rlkey=cwx7xits93t0batx6w0kngq13",
+      "shapefile": "WICOPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "wicomico_county"
+    }
   },
   {
     "name": "Worcester County Parcels",
     "file": "worcester_county_parcels.geojson",
     "color": "#fdcdac",
-    "description": "Preferred Worcester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize before inclusion in regional_parcels.geojson.",
+    "description": "Preferred Worcester County parcel staging layer sourced from Maryland Planning MdProperty View parcel polygons or the statewide geodatabase. Extract and normalize for direct runtime and analytics use.",
     "download": false,
     "reason": "Prefer the official Maryland Planning statewide parcel polygon product for Worcester County unless a county-native feed proves materially better.",
     "reference_url": "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
@@ -496,8 +786,23 @@
     "source_urls": [
       "https://planning.maryland.gov/Pages/OurProducts/DownloadFiles.aspx",
       "https://planning.maryland.gov/MSDC/Pages/91_property_mapping/parcel-data.aspx",
-      "https://planning.maryland.gov/Pages/OurProducts/PropertyMapProducts/MDPropertyViewProducts.aspx"
-    ]
+      "https://mdgeodata.md.gov/imap/rest/services/PlanningCadastre/MD_ParcelBoundaries/MapServer"
+    ],
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://www.dropbox.com/scl/fi/2yxas503opb7bopi2svls/WORCparcels0226.zip?dl=1&rlkey=57mz9ovyuieorvzlw4gp0hsbq",
+      "shapefile": "WORCPOLY.shp",
+      "source_crs": "EPSG:26985"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "worcester_county"
+    }
   },
   {
     "name": "Howard County Real Property Assessments",
@@ -505,7 +810,7 @@
     "color": "#33a02c",
     "description": "Official Maryland Open Data real-property assessment records filtered to Howard County. Provides account id, property address, assessed values, sale segment fields, year built, and SDAT/FINDER links. Public owner names are intentionally not included in this source.",
     "download": false,
-    "reason": "Use the official Maryland Open Data Socrata CSV endpoint instead of scraping SDAT Real Property Search pages; join to Howard County parcels by account_id/ACCTID before inclusion in regional_parcels.geojson.",
+    "reason": "Use the official Maryland Open Data Socrata CSV endpoint instead of scraping SDAT Real Property Search pages; join to Howard County parcels by account_id/ACCTID for direct runtime and analytics use.",
     "reference_url": "https://opendata.maryland.gov/Business-and-Economy/Maryland-Real-Property-Assessments-Hidden-Property/ed4q-f8tm",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
@@ -519,6 +824,15 @@
     "import": {
       "type": "socrata_csv_properties",
       "url": "https://opendata.maryland.gov/resource/ed4q-f8tm.csv?%24limit=500000&%24select=county_name_mdp_field_cntyname%2Caccount_id_mdp_field_acctid%2Crecord_key_account_number_sdat_field_3%2Cmdp_street_address_mdp_field_address%2Cmdp_street_address_city_mdp_field_city%2Cmdp_street_address_zip_code_mdp_field_zipcode%2Ccurrent_cycle_data_land_value_mdp_field_names_nfmlndvl_curlndvl_and_sallndvl_sdat_field_164%2Ccurrent_cycle_data_improvements_value_mdp_field_names_nfmimpvl_curimpvl_and_salimpvl_sdat_field_165%2Ccurrent_assessment_year_total_assessment_sdat_field_172%2Cc_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235%2Csales_segment_1_consideration_mdp_field_considr1_sdat_field_90%2Csales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89%2Creal_property_search_link%2Cfinder_online_link&%24where=county_name_mdp_field_cntyname%3D%22Howard%20County%22"
+    },
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
     }
   },
   {
@@ -530,7 +844,16 @@
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_record",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Property Value (Parcels)",
@@ -538,6 +861,8 @@
     "color": "#238b45",
     "heatmap_field": "value_usd",
     "description": "Derived parcel layer with estimated property value from real property records (tax base, assessed components, or sale price fallback).",
+    "download": false,
+    "reason": "Generated locally by joining parcel.geojson with real_property_information.geojson assessment/value fields.",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
@@ -545,7 +870,16 @@
     "source_urls": [
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Year Built (Parcels)",
@@ -562,7 +896,16 @@
     "source_urls": [
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/64110b108565433d8da40dd0e422064e/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Parcel Intelligence (Derived)",
@@ -570,6 +913,8 @@
     "color": "#7a0177",
     "heatmap_field": "risk_score",
     "description": "Derived parcel analytics layer: distress risk, investment momentum, ownership concentration, vacancy-duration proxies, tax/value ratios, chronology metrics, and relative z-scores.",
+    "download": false,
+    "reason": "Generated locally from parcel, real-property, vacancy, tax, and notice layers.",
     "category": "housing",
     "subcategory": "Parcels & Ownership",
     "scale": "parcel",
@@ -581,7 +926,16 @@
       "https://data.baltimorecity.gov/api/download/v1/items/691d65a5f85640e6aaa46930bd9dc102/geojson?layers=1",
       "https://data.baltimorecity.gov/api/download/v1/items/efaf11a277fd417bbc15887fc3d627ca/geojson?layers=0",
       "https://data.baltimorecity.gov/api/download/v1/items/20ca888a394c4f77b0a9c31668f605b3/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Vacant Building Notices",
@@ -592,26 +946,48 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Vacant Code",
     "file": "open_notices_vacant.geojson",
     "color": "#33a02c",
-    "description": "Open Notices Dashboard records where Notice_Type is Vacant. This is the code-split dashboard feed, separate from the legacy Vacant Building Notices open layer. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "description": "Open Notices Dashboard records where Notice_Type is Vacant. This is the code-split dashboard feed, separate from the Vacant Building Notices open layer. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Vacant Code Parcels",
     "file": "open_notices_vacant_parcels.geojson",
     "color": "#1b7837",
     "description": "Parcel polygon join of Open Notices Dashboard Vacant records by BLOCKLOT. Includes matched_event_count, first/latest issue date, and source samples; generated by the integrated C++ parcel matcher at startup or with --force-build-parcel-matched-layers.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching Open Notices Dashboard Vacant records against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -619,26 +995,48 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Exterior Code",
     "file": "open_notices_exterior.geojson",
     "color": "#e31a1c",
     "description": "Open Notices Dashboard records where Notice_Type is Exterior. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Exterior Code Parcels",
     "file": "open_notices_exterior_parcels.geojson",
     "color": "#b2182b",
     "description": "Parcel polygon join of Open Notices Dashboard Exterior records by BLOCKLOT. Multiple notices per parcel are summarized with matched_event_count and latest date.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching Open Notices Dashboard Exterior records against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -646,26 +1044,48 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior Code",
     "file": "open_notices_interior.geojson",
     "color": "#1f78b4",
     "description": "Open Notices Dashboard records where Notice_Type is Interior. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior Code Parcels",
     "file": "open_notices_interior_parcels.geojson",
     "color": "#2166ac",
     "description": "Parcel polygon join of Open Notices Dashboard Interior records by BLOCKLOT. Multiple notices per parcel are summarized with matched_event_count and latest date.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching Open Notices Dashboard Interior records against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -673,26 +1093,48 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior/Exterior Code",
     "file": "open_notices_interior_exterior.geojson",
     "color": "#ff7f00",
     "description": "Open Notices Dashboard records where Notice_Type is Interior/Exterior. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Interior/Exterior Code Parcels",
     "file": "open_notices_interior_exterior_parcels.geojson",
     "color": "#ef8a62",
     "description": "Parcel polygon join of Open Notices Dashboard Interior/Exterior records by BLOCKLOT. Multiple notices per parcel are summarized with matched_event_count and latest date.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching Open Notices Dashboard Interior/Exterior records against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -700,26 +1142,48 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Other Code",
     "file": "open_notices_other.geojson",
     "color": "#6a3d9a",
     "description": "Open Notices Dashboard records where Notice_Type is Other. The public Open Notices feed currently does not expose a distinct Failure-to-Abate/FTA notice type. Generated from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the Open Notices Dashboard feed by scripts/build_notice_code_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Notices - Other Code Parcels",
     "file": "open_notices_other_parcels.geojson",
     "color": "#762a83",
     "description": "Parcel polygon join of Open Notices Dashboard Other records by BLOCKLOT. Multiple notices per parcel are summarized with matched_event_count and latest date.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching Open Notices Dashboard Other records against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -727,7 +1191,16 @@
     "source_urls": [
       "https://services1.arcgis.com/UWYHeuuJISiGmgXx/ArcGIS/rest/services/OpenNoticesDashboard/FeatureServer/0",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Vacant Building Rehabs",
@@ -738,26 +1211,48 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Buildings",
     "file": "codemap_recently_rehabbed_vacant_buildings.geojson",
     "color": "#00a6a6",
     "description": "CodeMap Datamax point layer for recently rehabbed vacant buildings since 2022. Strong public success proxy; generated from dmxLandPlanning/MapServer/38 by scripts/build_codemap_rehab_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the CodeMap Datamax feed by scripts/build_codemap_rehab_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed Vacant Building Parcels",
     "file": "codemap_recently_rehabbed_vacant_building_parcels.geojson",
     "color": "#01665e",
     "description": "Parcel polygon join of CodeMap Recently Rehabbed Vacant Buildings points by BLOCKLOT. Use for parcel fill and owner/filter joins; generated by the integrated C++ parcel matcher at startup or with --force-build-parcel-matched-layers.",
+    "download": false,
+    "reason": "Generated locally by parcel-matching the CodeMap rehab points against parcel geometry.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
@@ -765,20 +1260,40 @@
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/38",
       "https://data.baltimorecity.gov/api/download/v1/items/85767997c73d4b9292415f2661466273/geojson?layers=0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CodeMap Recently Rehabbed VBN Parcels",
     "file": "codemap_recently_rehabbed_vbn_parcels.geojson",
     "color": "#008f5a",
     "description": "CodeMap Datamax parcel polygon layer for recently rehabbed vacant building notices since 2022. Use for parcel fill/joins; generated from dmxLandPlanning/MapServer/27 by scripts/build_codemap_rehab_layers.py.",
+    "download": false,
+    "reason": "Generated locally from the CodeMap Datamax parcel rehab feed by scripts/build_codemap_rehab_layers.py.",
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
     "default_enabled": false,
     "source_urls": [
       "https://egis.baltimorecity.gov/egis/rest/services/Housing/dmxLandPlanning/MapServer/27"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Tax Lien Certificate Sale Properties",
@@ -789,7 +1304,16 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "2021 Tax Sale List",
@@ -800,7 +1324,16 @@
     "category": "housing",
     "subcategory": "Tax & Enforcement",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Open Bid List - Vacants to Value",
@@ -811,7 +1344,16 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Completed City Demo",
@@ -822,7 +1364,16 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Housing and Building Permits 2019-Present",
@@ -833,7 +1384,16 @@
     "category": "housing",
     "subcategory": "Building Conditions",
     "scale": "parcel",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "MD DHCD Multifamily Sites",
@@ -849,7 +1409,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_MultifamilySites/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Targeted Areas",
@@ -864,7 +1433,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/0"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Qualified Census Tracts",
@@ -879,7 +1457,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/1"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Communities of Opportunity",
@@ -894,7 +1481,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/2"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Small Difficult Development Areas",
@@ -909,7 +1505,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/3"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Rural Areas",
@@ -924,7 +1529,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/5"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD BRHP Opportunity Designations",
@@ -939,7 +1553,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/6"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Baltimore County Opportunity Areas",
@@ -954,7 +1577,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/7"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "MD DHCD Just Communities",
@@ -969,7 +1601,16 @@
     "default_enabled": false,
     "source_urls": [
       "https://mdgeodata.md.gov/imap/rest/services/BusinessEconomy/MD_HousingDesignatedAreas/FeatureServer/9"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "Zoning",
@@ -980,7 +1621,16 @@
     "category": "zoning",
     "subcategory": "Land Use",
     "scale": "parcel",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Streets",
@@ -991,7 +1641,16 @@
     "category": "infrastructure",
     "subcategory": "Transportation",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Major Drainage",
@@ -1002,7 +1661,16 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Water (Infrastructure Layer 19)",
@@ -1013,7 +1681,16 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Rate of Clogged Storm Drain Reports (CSA)",
@@ -1024,7 +1701,16 @@
     "category": "infrastructure",
     "subcategory": "Utilities",
     "scale": "line",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Median Price of Homes Sold (CSA)",
@@ -1035,7 +1721,16 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "csa",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Total Number of Businesses (CSA)",
@@ -1046,7 +1741,16 @@
     "category": "housing",
     "subcategory": "Economy",
     "scale": "csa",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "Life Expectancy (CSA)",
@@ -1057,7 +1761,16 @@
     "category": "public_health",
     "subcategory": "Mortality",
     "scale": "csa",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Asthma (Baltimore Tracts)",
@@ -1069,7 +1782,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Diabetes (Baltimore Tracts)",
@@ -1081,7 +1803,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Obesity (Baltimore Tracts)",
@@ -1093,7 +1824,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Stroke (Baltimore Tracts)",
@@ -1105,7 +1845,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Depression (Baltimore Tracts)",
@@ -1117,7 +1866,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Total Population (Baltimore Tracts)",
@@ -1129,7 +1887,16 @@
     "category": "public_health",
     "subcategory": "Population & Denominator",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES No Health Insurance (Baltimore Tracts)",
@@ -1141,7 +1908,16 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Annual Checkup (Baltimore Tracts)",
@@ -1153,7 +1929,16 @@
     "category": "public_health",
     "subcategory": "Care Access",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES High Blood Pressure (Baltimore Tracts)",
@@ -1165,7 +1950,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Coronary Heart Disease (Baltimore Tracts)",
@@ -1177,7 +1971,16 @@
     "category": "public_health",
     "subcategory": "Chronic Disease",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Current Smoking (Baltimore Tracts)",
@@ -1189,7 +1992,16 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Physical Inactivity (Baltimore Tracts)",
@@ -1201,7 +2013,16 @@
     "category": "public_health",
     "subcategory": "Risk Factors",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC PLACES Frequent Mental Distress (Baltimore Tracts)",
@@ -1213,7 +2034,16 @@
     "category": "public_health",
     "subcategory": "Behavioral Health",
     "scale": "tract",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "CDC SVI 2022 (Baltimore Tracts)",
@@ -1225,7 +2055,16 @@
     "category": "public_health",
     "subcategory": "Social Vulnerability",
     "scale": "tract",
-    "default_enabled": true
+    "default_enabled": true,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HMDA Mortgage Activity 2024 (Baltimore Tracts)",
@@ -1244,7 +2083,16 @@
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=1",
       "https://ffiec.cfpb.gov/v2/data-browser-api/view/csv?counties=24510&years=2024&actions_taken=3",
       "https://services3.arcgis.com/ZvidGQkLaDJxRSJ2/arcgis/rest/services/PLACES_LocalData_for_BetterHealth/FeatureServer/3/query?where=CountyFIPS%3D%2724510%27&outFields=TractFIPS,CountyFIPS,CountyName,StateAbbr,TotalPopulation,TotalPop18plus&f=geojson"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HUD Continuum of Care Boundaries (Maryland)",
@@ -1255,7 +2103,16 @@
     "category": "public_health",
     "subcategory": "Homelessness",
     "scale": "region",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "HUD Continuum of Care Boundary (Baltimore City CoC MD-503)",
@@ -1266,7 +2123,16 @@
     "category": "public_health",
     "subcategory": "Homelessness",
     "scale": "region",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
     "name": "HUD PIT Homelessness Trends by CoC (2007-2024)",
@@ -1283,7 +2149,16 @@
     "source_urls": [
       "https://www.huduser.gov/portal/datasets/ahar.html",
       "https://services.arcgis.com/VTyQ9soqVukalItT/arcgis/rest/services/CoC_Geo_Type/FeatureServer/0/query?where=ST_1%3D%27MD%27&outFields=ST_1,STATE_NAME,COCNUM,COCNAME,HudNum,Geo_Type&returnGeometry=true&f=geojson"
-    ]
+    ],
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
   },
   {
     "name": "NIBRS Group A Crime Data (2022-Present)",
@@ -1294,17 +2169,191 @@
     "category": "safety",
     "subcategory": "Crime",
     "scale": "point",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
   },
   {
-    "name": "Part 1 Crime Data (Legacy SRS)",
-    "file": "crime_part_1_legacy_srs.geojson",
-    "url": "https://data.baltimorecity.gov/api/download/v1/items/e0992dddbbf64231976d5d57763ec4f5/geojson?layers=0",
-    "color": "#4575b4",
-    "description": "Legacy Part I (SRS-era) crime incidents for historical trend analysis.",
-    "category": "safety",
-    "subcategory": "Crime",
+    "name": "Code Collective Events",
+    "file": "upcoming_baltimore_events.geojson",
+    "color": "#2a9d8f",
+    "description": "Code Collective Events feed for Baltimore with provided latitude/longitude coordinates.",
+    "category": "infrastructure",
+    "subcategory": "Events",
     "scale": "point",
-    "default_enabled": false
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "point_event",
+    "reference_url": "https://codecollective.us/upcoming_events.json",
+    "source_urls": [
+      "https://codecollective.us/upcoming_events.json"
+    ],
+    "import": {
+      "type": "json_point_feed",
+      "url": "https://codecollective.us/upcoming_events.json",
+      "item_path": "",
+      "lon_field": "location.longitude",
+      "lat_field": "location.latitude",
+      "artifact_file": "upcoming_baltimore_events.source.json"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_city"
+    }
+  },
+  {
+    "name": "Baltimore County Zoning",
+    "file": "baltimore_county_zoning.geojson",
+    "color": "#f4a261",
+    "description": "Current zoning districts for Baltimore County from the county ArcGIS zoning service.",
+    "reference_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1",
+    "source_urls": [
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1",
+      "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/DevelopmentManagement/Zoning/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "baltimore_county"
+    }
+  },
+  {
+    "name": "Montgomery County Zoning",
+    "file": "montgomery_county_zoning.geojson",
+    "color": "#f6bd60",
+    "description": "Countywide zoning polygons for Montgomery County from the county zoning ArcGIS service.",
+    "reference_url": "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1",
+    "source_urls": [
+      "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1",
+      "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://gis4.montgomerycountymd.gov/arcgis/rest/services/general/zoning/MapServer/1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "montgomery_county"
+    }
+  },
+  {
+    "name": "Anne Arundel County Zoning",
+    "file": "anne_arundel_county_zoning.geojson",
+    "color": "#e76f51",
+    "description": "Official adopted zoning layer for Anne Arundel County from the county planning ArcGIS service.",
+    "reference_url": "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7",
+    "source_urls": [
+      "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7",
+      "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://gis.aacounty.org/arcgis/rest/services/OpenData/Planning_aacoPZProd_OpenData/MapServer/7"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "anne_arundel_county"
+    }
+  },
+  {
+    "name": "Prince George's County Zoning",
+    "file": "prince_georges_county_zoning.geojson",
+    "color": "#d97706",
+    "description": "Countywide zoning polygons for Prince George's County from the Planning Department open data shapefile.",
+    "reference_url": "https://gisdata.pgplanning.org/opendata/search.asp?s=zoning",
+    "source_urls": [
+      "https://gisdata.pgplanning.org/opendata/search.asp?s=zoning",
+      "https://gisdata.pgplanning.org/opendata/downloadzip.asp?FileName=../data/ShapeFile/Zoning_Py.zip"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "zipped_shapefile",
+      "url": "https://gisdata.pgplanning.org/opendata/downloadzip.asp?FileName=../data/ShapeFile/Zoning_Py.zip",
+      "shapefile": "Zoning_Py.shp",
+      "source_crs": "EPSG:6488"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "prince_georges_county"
+    }
+  },
+  {
+    "name": "Howard County Zoning",
+    "file": "howard_county_zoning.geojson",
+    "url": "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AZoning&outputFormat=application/json&srsName=EPSG%3A4326",
+    "color": "#bc6c25",
+    "description": "Official Howard County zoning polygons from the county GeoServer WFS service.",
+    "reference_url": "https://hcgeoserver.howardcountymd.gov:8443/geoserver/ows?service=WFS&version=1.1.0&request=GetCapabilities",
+    "source_urls": [
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/general/ows?service=WFS&version=1.0.0&request=GetFeature&typeName=general%3AZoning&outputFormat=application/json&srsName=EPSG%3A4326",
+      "https://data.howardcountymd.gov/datadownload/metadata/zoning.html",
+      "https://hcgeoserver.howardcountymd.gov:8443/geoserver/wms?service=WMS&version=1.1.1&request=GetCapabilities"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "howard_county"
+    }
   }
 ]

@@ -36,7 +36,6 @@ struct LayerDependencyCoordinatorContext {
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
     int tax_sale_layer_idx = -1;
-    int zoning_layer_idx = -1;
 
     bool filter_enabled = false;
     const char* filter_owner = nullptr;

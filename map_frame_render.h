@@ -1,8 +1,10 @@
 #pragma once
 
 #include "filters.h"
+#include "cache_io.h"
 #include "heatmap_runtime.h"
 #include "layer_runtime.h"
+#include "map_render_hover.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
 #include "render_policy.h"
@@ -22,13 +24,18 @@ struct RenderFrameOrchestrationContext {
     ImDrawList* draw = nullptr;
     ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size = ImVec2(0.0f, 0.0f);
-    int zoom = 0;
+    double* center_lon = nullptr;
+    double* center_lat = nullptr;
+    double* zoom_ptr = nullptr;
+    int max_zoom = 0;
+    double zoom = 0.0;
     int math_zoom = 0;
     float zoom_scale = 1.0f;
     int lod_ring_step = 1;
 
     int zoning_layer_idx = -1;
     int parcel_layer_idx = -1;
+    int crime_nibrs_layer_idx = -1;
     int vacant_notice_layer_idx = -1;
     int vacant_rehab_layer_idx = -1;
     int tax_lien_layer_idx = -1;
@@ -57,11 +64,16 @@ struct RenderFrameOrchestrationContext {
     bool heatmap_controls_active = false;
 
     int parcel_parameter_mode = 0;
+    float map_polygon_fill_opacity = 170.0f / 255.0f;
 
     const ImVec4* vacancy_notice_color = nullptr;
     const ImVec4* vacancy_rehab_color = nullptr;
 
     std::vector<LayerDef>* layers = nullptr;
+    const std::unordered_map<size_t, PointGeometryArtifact>* point_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolylineGeometryArtifact>* polyline_geometry_artifacts = nullptr;
+    const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
+    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
     const std::vector<bool>* layer_heatmap_enabled = nullptr;
@@ -91,12 +103,14 @@ struct RenderFrameOrchestrationContext {
 
     HeatmapRuntimeState* heatmap_runtime = nullptr;
     MapProjectionCache* projection = nullptr;
+    const MapHoverState* hover_state = nullptr;
 
     std::function<bool(size_t)> is_parcel_related_layer;
     std::function<bool(size_t)> layer_uses_heatmap_aggregate;
     std::function<bool(size_t)> layer_uses_lod_geometry;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&)> feature_passes_filters;
-    std::function<bool(size_t, size_t, const LayerDef::FeatureGeom&, ImU32&)> query_map_color;
+    std::function<bool(size_t)> layer_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
+    std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&, ImU32&)> query_map_color;
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
 

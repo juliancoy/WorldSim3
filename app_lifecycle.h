@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "filters.h"
 #include "heatmap_render.h"
 #include "layer_runtime.h"
 #include "profiling.h"
@@ -39,12 +40,15 @@ struct FrameFinalizationContext {
     std::atomic<double>* prof_owner_ms_last = nullptr;
     std::atomic<double>* prof_tile_ms_last = nullptr;
     std::atomic<double>* prof_layer_ms_last = nullptr;
+    std::atomic<double>* prof_owner_filter_ms_last = nullptr;
     std::atomic<double>* prof_heatmap_ms_last = nullptr;
     std::atomic<double>* prof_overlay_ms_last = nullptr;
     std::atomic<double>* prof_present_ms_last = nullptr;
     std::atomic<size_t>* prof_tiles_drawn_last = nullptr;
     std::atomic<size_t>* prof_features_considered_last = nullptr;
     std::atomic<size_t>* prof_features_drawn_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_candidates_last = nullptr;
+    std::atomic<size_t>* prof_owner_filter_matches_last = nullptr;
     std::atomic<size_t>* prof_retired_textures = nullptr;
     std::atomic<size_t>* prof_tile_cache_size = nullptr;
     std::atomic<size_t>* prof_heat_samples_last = nullptr;
@@ -52,6 +56,7 @@ struct FrameFinalizationContext {
     std::vector<ProfileFrameSample>* profile_samples = nullptr;
     size_t* profile_sample_pos = nullptr;
     size_t* profile_sample_count = nullptr;
+    bool dark_mode = false;
 };
 
 struct AppShutdownContext {
@@ -60,7 +65,9 @@ struct AppShutdownContext {
     GLFWwindow* window = nullptr;
     std::vector<LayerDef>* layers = nullptr;
     bool hover_inspector_enabled = true;
-    int* hover_inspector_mode = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
+    int* parcel_parameter_mode = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
     std::vector<bool>* layer_hover_enabled = nullptr;
@@ -112,17 +119,24 @@ struct AppShutdownContext {
     int* crime_year_max = nullptr;
     char* owner_search_query = nullptr;
     std::unordered_set<std::string>* selected_owners = nullptr;
+    std::unordered_map<std::string, bool>* event_sector_enabled = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;
-    int* zoom = nullptr;
+    double* zoom = nullptr;
+    std::vector<QueryHistoryEntry>* query_history = nullptr;
     size_t* selected_parcel_idx = nullptr;
     std::vector<size_t>* selected_parcel_indices = nullptr;
+    std::string* selected_parcel_stable_id = nullptr;
+    std::vector<std::string>* selected_parcel_stable_ids = nullptr;
     std::atomic<bool>* hydration_stop = nullptr;
     std::thread* time_cube_ui_worker = nullptr;
     std::condition_variable* hydrate_req_cv = nullptr;
-    std::condition_variable* tri_cv = nullptr;
+    std::condition_variable* spatial_cv = nullptr;
+    std::atomic<bool>* parcel_render_stop = nullptr;
+    std::condition_variable* parcel_render_cv = nullptr;
     std::vector<std::thread>* hydration_workers = nullptr;
-    std::thread* triangulation_worker = nullptr;
+    std::thread* spatial_index_worker = nullptr;
+    std::thread* parcel_render_worker = nullptr;
     std::thread* status_api_worker = nullptr;
     std::thread* dataset_api_worker = nullptr;
     std::thread* lan_discovery_worker = nullptr;

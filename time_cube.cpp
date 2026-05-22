@@ -1,5 +1,6 @@
 #include "time_cube.h"
 
+#include "app_utils.h"
 #include "cache_io.h"
 
 #include <algorithm>
@@ -176,7 +177,7 @@ TimeCubeDataset TimeCubeService::indexDataset(size_t index, const LayerDef& laye
     dataset.snapshot_year = spec.snapshot_year;
     dataset.exclusion_reason = spec.reason;
 
-    const fs::path layer_path = root_ / "data" / "layers" / layer.file;
+    const fs::path layer_path = resolveStoredLayerPath(root_, layer);
     if (!fs::exists(layer_path)) {
         dataset.error = "local dataset file is missing";
         return dataset;
