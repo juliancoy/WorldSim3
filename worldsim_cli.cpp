@@ -2797,6 +2797,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     constexpr const char* kMode = "build-geometry-duckdb-artifacts";
     const auto started_at = std::chrono::steady_clock::now();
     std::vector<LayerDef> layers = loadManifest(root);
+    const WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
     const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
     emitCliProgress(
@@ -2857,8 +2858,29 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
             " failed=" + std::to_string(geometry_failed_count) +
             " skipped=" + std::to_string(geometry_skipped_count));
 
+    bool parcel_render_attempted = false;
+    bool parcel_render_ok = true;
+    json parcel_render_output = json::object();
+    if (indices.parcel_layer_idx >= 0 &&
+        static_cast<size_t>(indices.parcel_layer_idx) < layers.size()) {
+        parcel_render_attempted = true;
+        const LayerDef& parcel_layer = layers[static_cast<size_t>(indices.parcel_layer_idx)];
+        emitCliProgress(
+            kMode,
+            "parcel-render",
+            "warming parcel render cache for " + parcel_layer.file);
+        int parcel_render_exit = 0;
+        parcel_render_output = warmParcelRenderCacheOne(root, parcel_layer.file, parcel_render_exit);
+        parcel_render_ok = (parcel_render_exit == 0);
+        if (!parcel_render_ok) geometry_failed_count += 1;
+        emitCliProgress(
+            kMode,
+            "parcel-render-complete",
+            "layer=" + parcel_layer.file +
+                " ok=" + std::string(parcel_render_ok ? "true" : "false"));
+    }
+
     emitCliProgress(kMode, "duckdb", "building parcel consolidation artifacts");
-    WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
     ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
     emitCliProgress(
         kMode,
@@ -2993,6 +3015,12 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
                 ? std::string(geometry_result_by_file[layer.file].value("geometry_class", "unknown"))
                 : std::string("unknown")},
             {"geometry_output", geometry_result_by_file.contains(layer.file) ? geometry_result_by_file[layer.file] : json::object()},
+            {"parcel_render_output", (parcel_render_attempted &&
+                indices.parcel_layer_idx >= 0 &&
+                static_cast<size_t>(indices.parcel_layer_idx) < layers.size() &&
+                layer.file == layers[static_cast<size_t>(indices.parcel_layer_idx)].file)
+                ? parcel_render_output
+                : json::object()},
             {"duckdb_outputs", std::move(duckdb_outputs)}
         });
     }
@@ -3002,7 +3030,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     emitCliProgress(
         kMode,
         "complete",
-        "ok=" + std::string((have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
+        "ok=" + std::string((have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok && parcel_render_ok) ? "true" : "false") +
             " elapsed=" + formatElapsedMs(total_elapsed_ms));
 
     json source_load = {
@@ -3029,7 +3057,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
 
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
-        {"ok", have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok},
+        {"ok", have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok && parcel_render_ok},
         {"worker_count", worker_count},
         {"source_load", std::move(source_load)},
         {"geometry", {
@@ -3037,6 +3065,11 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
             {"failed_count", geometry_failed_count},
             {"skipped_count", geometry_skipped_count},
             {"results", std::move(geometry_results)}
+        }},
+        {"parcel_render", {
+            {"attempted", parcel_render_attempted},
+            {"ok", parcel_render_ok},
+            {"result", std::move(parcel_render_output)}
         }},
         {"duckdb", {
             {"ok", duckdb_ok},
