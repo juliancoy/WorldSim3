@@ -62,7 +62,15 @@ std::string firstDisplayProperty(const LayerDef& layer, size_t feature_idx, std:
 std::string blockLotJoinKeyFromParts(const std::string& block, const std::string& lot);
 std::string featureBlockLotJoinKey(const LayerDef::FeatureRecord& fg);
 std::string featureBlockLotJoinKey(const LayerDef& layer, size_t feature_idx);
-std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+std::string featureSourcePrimaryKeyForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+std::string featureIdentitySeedForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+std::string featureEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+std::string featureGeometryEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+std::string featureSourceFeatureIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx);
+void ensureFeatureIdentityForLayerFeature(const LayerDef& layer, LayerDef::FeatureRecord& fg, size_t feature_idx);
+void ensureFeatureIdentityForLayer(LayerDef& layer);
+void ensureFeatureIdentityForLayerFile(const std::string& layer_file, std::vector<LayerDef::FeatureRecord>& features);
+size_t featureIndexForEntityId(const LayerDef& layer, const std::string& entity_id);
 std::filesystem::path provenanceStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
 std::filesystem::path provenanceSourceArtifactPath(const std::filesystem::path& root, const LayerDef& layer, const std::string& artifact_name);
 std::filesystem::path resolveStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);

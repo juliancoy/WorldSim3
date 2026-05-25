@@ -3,27 +3,31 @@
 #include "types.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+struct ParcelSelectionRef {
+    int layer_idx = -1;
+    std::string entity_id;
+};
+
 struct ParcelSelectionState {
     bool show_details = false;
-    size_t active_idx = (size_t)-1;
-    std::string active_stable_id;
-    std::vector<size_t> indices;
-    std::unordered_set<size_t> index_set;
-    std::vector<std::string> stable_ids;
-    std::unordered_set<std::string> stable_id_set;
+    int active_layer_idx = -1;
+    std::string active_entity_id;
+    std::vector<ParcelSelectionRef> refs;
+    std::vector<std::string> entity_ids;
+    std::unordered_set<std::string> entity_id_set;
 };
 
 void clearParcelSelection(ParcelSelectionState& selection);
 bool selectParcel(
     ParcelSelectionState& selection,
-    size_t idx,
-    const std::string& stable_id,
-    size_t parcel_count,
+    int layer_idx,
+    const std::string& entity_id,
     bool append_toggle);
-bool selectParcel(ParcelSelectionState& selection, size_t idx, size_t parcel_count, bool append_toggle);
-void pruneParcelSelection(ParcelSelectionState& selection, size_t parcel_count);
-void reconcileParcelSelection(ParcelSelectionState& selection, const LayerDef& parcel_layer);
+void pruneParcelSelection(ParcelSelectionState& selection, const std::vector<LayerDef>& layers);
+void reconcileParcelSelection(ParcelSelectionState& selection, const std::vector<LayerDef>& layers);

@@ -99,6 +99,18 @@
 #include "vacancy_overlay.h"
 #include "status_api.h"
 #include "dataset_lan_api.h"
+#include "env_config.h"
+#include "app_runtime_bootstrap.h"
+#include "app_background_services.h"
+#include "app_ui_state_bootstrap.h"
+#include "app_window_service.h"
+#include "crime_point_runtime_service.h"
+#include "parcel_runtime_service.h"
+#include "point_layer_runtime_service.h"
+#include "polyline_layer_runtime_service.h"
+#include "polygon_artifact_runtime_service.h"
+#include "zoning_runtime_service.h"
+#include "startup_preprocess_service.h"
 #include "worldsim_cli.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_bootstrap.h"
@@ -164,444 +176,6 @@ ImU32 mapPolygonFillColor(ImU32 color, float opacity) {
     return (color & 0x00FFFFFFu) | (alpha << 24);
 }
 
-struct ParcelRenderCacheRequest {
-    std::string layer_file;
-    std::string source_signature;
-    fs::path cache_path;
-};
-
-struct ParcelRenderCacheResult {
-    std::string layer_file;
-    std::string source_signature;
-    ParcelRenderCacheBlob blob;
-    std::string error;
-};
-
-struct StartupPreprocessIssue {
-    std::string kind;
-    std::string layer_file;
-    std::string message;
-    std::string artifact_path;
-};
-
-struct StartupPreprocessPlan {
-    bool required = false;
-    bool duckdb_required = false;
-    std::vector<StartupPreprocessIssue> issues;
-};
-
-struct StartupPreprocessRunResult {
-    int exit_code = 1;
-    fs::path log_path;
-};
-
-bool isZoningPolygonLayerApp(const LayerDef& layer) {
-    if (layerUsesPointGeometry(layer)) return false;
-    if (layer.category == LayerDef::Category::Zoning) return true;
-    const std::string file_lower = toLowerAscii(layer.file);
-    const std::string name_lower = toLowerAscii(layer.name);
-    return file_lower.find("zoning") != std::string::npos ||
-           name_lower.find("zoning") != std::string::npos;
-}
-
-GeometryArtifactClass startupGeometryClassForLayer(const LayerDef& layer, bool is_parcel_layer) {
-    if (is_parcel_layer) return GeometryArtifactClass::Polygon;
-    if (layerUsesPointGeometry(layer)) return GeometryArtifactClass::Point;
-    if (layerUsesPolylineGeometry(layer)) return GeometryArtifactClass::Polyline;
-    return GeometryArtifactClass::Polygon;
-}
-
-std::string shellQuote(const std::string& s) {
-    std::string out = "'";
-    for (char ch : s) {
-        if (ch == '\'') out += "'\\''";
-        else out.push_back(ch);
-    }
-    out += "'";
-    return out;
-}
-
-std::string currentExecutablePath(const char* argv0) {
-#if defined(__linux__)
-    std::error_code ec;
-    fs::path p = fs::read_symlink("/proc/self/exe", ec);
-    if (!ec && !p.empty()) return p.string();
-#endif
-    return argv0 && *argv0 ? std::string(argv0) : std::string("./worldsim3");
-}
-
-fs::path startupPreprocessLogPath(const fs::path& root) {
-    return root / "data" / "logs" / "startup_preprocess_latest.log";
-}
-
-void printStartupPreprocessPlan(
-    const StartupPreprocessPlan& plan,
-    std::ostream& out) {
-    out << "[worldsim3] startup preprocess required=" << (plan.required ? "true" : "false")
-        << " duckdb_required=" << (plan.duckdb_required ? "true" : "false")
-        << " issues=" << plan.issues.size() << "\n";
-    for (const auto& issue : plan.issues) {
-        out << "[worldsim3] preprocess issue kind=" << issue.kind
-            << " layer=" << issue.layer_file
-            << " message=\"" << issue.message << "\"";
-        if (!issue.artifact_path.empty()) out << " artifact=" << issue.artifact_path;
-        out << "\n";
-    }
-}
-
-StartupPreprocessRunResult runStartupPreprocessSubprocess(
-    const fs::path& root,
-    const std::string& command,
-    std::vector<std::string>* ui_log_lines = nullptr,
-    std::mutex* ui_log_mutex = nullptr,
-    std::atomic<bool>* done = nullptr,
-    std::atomic<int>* exit_code = nullptr) {
-    StartupPreprocessRunResult result;
-    result.log_path = startupPreprocessLogPath(root);
-    std::error_code ec;
-    fs::create_directories(result.log_path.parent_path(), ec);
-    std::ofstream log(result.log_path, std::ios::out | std::ios::trunc);
-
-    auto emit = [&](const std::string& line) {
-        std::cerr << "[worldsim3-preprocess] " << line << "\n";
-        if (log) {
-            log << line << "\n";
-            log.flush();
-        }
-        if (ui_log_lines && ui_log_mutex) {
-            std::lock_guard<std::mutex> lk(*ui_log_mutex);
-            ui_log_lines->push_back(line);
-            if (ui_log_lines->size() > 400) ui_log_lines->erase(ui_log_lines->begin(), ui_log_lines->begin() + 80);
-        }
-    };
-
-    emit("log=" + result.log_path.string());
-    emit("$ " + command);
-    FILE* pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        emit("failed to start preprocess subprocess");
-        result.exit_code = 127;
-        if (exit_code) exit_code->store(result.exit_code, std::memory_order_relaxed);
-        if (done) done->store(true, std::memory_order_relaxed);
-        return result;
-    }
-
-    char buf[512];
-    while (fgets(buf, sizeof(buf), pipe)) {
-        std::string line(buf);
-        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-        emit(line);
-    }
-    const int rc = pclose(pipe);
-    result.exit_code = WIFEXITED(rc) ? WEXITSTATUS(rc) : 1;
-    emit("exit_code=" + std::to_string(result.exit_code));
-    if (exit_code) exit_code->store(result.exit_code, std::memory_order_relaxed);
-    if (done) done->store(true, std::memory_order_relaxed);
-    return result;
-}
-
-void applyPersistedLayerEnabledStateForPreflight(const fs::path& root, std::vector<LayerDef>& layers) {
-    std::ifstream in(root / "data" / "layer_ui_state.json");
-    if (!in) return;
-    json j;
-    try {
-        in >> j;
-    } catch (...) {
-        return;
-    }
-    if (!j.contains("layers") || !j["layers"].is_object()) return;
-    const auto& obj = j["layers"];
-    for (auto& layer : layers) {
-        auto it = obj.find(layer.file);
-        if (it != obj.end() && it->is_boolean()) layer.enabled = it->get<bool>();
-    }
-}
-
-bool persistedGeometryArtifactReady(
-    const fs::path& root,
-    const LayerDef& layer,
-    bool is_primary_parcel_layer,
-    const std::string& sig,
-    fs::path& out_path) {
-    if (is_primary_parcel_layer) {
-        out_path = root / "data" / "cache" / "render" /
-            (layerArtifactBasenameForFile(layer.file) + ".parcel-render.bin");
-        ParcelRenderCacheBlob blob;
-        return loadBinaryParcelRenderCache(out_path, sig, blob) && !blob.features.empty();
-    }
-    const GeometryArtifactClass cls = startupGeometryClassForLayer(layer, false);
-    out_path = geometryArtifactCachePathForLayerFile(root, layer.file, cls);
-    if (cls == GeometryArtifactClass::Point) {
-        PointGeometryArtifact artifact;
-        return loadBinaryPointGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
-    }
-    if (cls == GeometryArtifactClass::Polyline) {
-        PolylineGeometryArtifact artifact;
-        return loadBinaryPolylineGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
-    }
-    if (cls == GeometryArtifactClass::Polygon) {
-        PolygonGeometryArtifact artifact;
-        return loadBinaryPolygonGeometryArtifact(out_path, sig, artifact) && !artifact.features.empty();
-    }
-    return false;
-}
-
-StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
-    StartupPreprocessPlan plan;
-    std::vector<LayerDef> layers = loadManifest(root);
-    applyPersistedLayerEnabledStateForPreflight(root, layers);
-    LayerRegistry registry;
-    registry.refresh(root, layers);
-    const int primary_parcel_idx = registry.indices().parcel_layer_idx;
-
-    for (size_t i = 0; i < layers.size(); ++i) {
-        const LayerDef& layer = layers[i];
-        if (!layer.enabled) continue;
-        const fs::path layer_path = resolveStoredLayerPath(root, layer);
-        std::string sig;
-        if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
-            plan.required = true;
-            plan.issues.push_back(StartupPreprocessIssue{
-                "source",
-                layer.file,
-                "source signature unavailable; preprocessing cannot build this layer until the canonical/input artifact exists",
-                canonicalLayerPathForFile(root, layer.file).string()
-            });
-            continue;
-        }
-        fs::path artifact_path;
-        if (!persistedGeometryArtifactReady(root, layer, primary_parcel_idx >= 0 && (int)i == primary_parcel_idx, sig, artifact_path)) {
-            plan.required = true;
-            plan.issues.push_back(StartupPreprocessIssue{
-                "geometry",
-                layer.file,
-                "compiled geometry artifact missing or stale",
-                artifact_path.string()
-            });
-        }
-    }
-
-    DuckDbAnalytics analytics(root);
-    const bool duckdb_stale = analytics.needsRebuild(layers);
-    const bool duckdb_valid = !duckdb_stale && analytics.validateExistingCache();
-    if (!duckdb_valid) {
-        plan.required = true;
-        plan.duckdb_required = true;
-        plan.issues.push_back(StartupPreprocessIssue{
-            "duckdb",
-            "data/worldsim.duckdb",
-            duckdb_stale ? "DuckDB semantic artifact missing or stale" : analytics.status().message,
-            analytics.status().db_path
-        });
-    }
-
-    return plan;
-}
-
-void uploadCurrentImGuiFonts(ImGui_ImplVulkanH_Window& wd) {
-    VkCommandPool command_pool = wd.Frames[wd.FrameIndex].CommandPool;
-    VkCommandBuffer command_buffer = wd.Frames[wd.FrameIndex].CommandBuffer;
-    check_vk_result(vkResetCommandPool(g_Device, command_pool, 0));
-    VkCommandBufferBeginInfo begin_info{};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    check_vk_result(vkBeginCommandBuffer(command_buffer, &begin_info));
-    ImGui_ImplVulkan_CreateFontsTexture();
-    check_vk_result(vkEndCommandBuffer(command_buffer));
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &command_buffer;
-    {
-        std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
-        check_vk_result(vkDeviceWaitIdle(g_Device));
-    }
-    ImGui_ImplVulkan_DestroyFontsTexture();
-}
-
-int runStartupPreprocessWindow(
-    const fs::path& root,
-    const AppSettings& app_settings,
-    const StartupPreprocessPlan& initial_plan,
-    const WorldsimCliOptions& cli_options,
-    const char* argv0) {
-    if (!glfwInit()) return 1;
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(880, 520, "WorldSim3 Preprocess Required", nullptr, nullptr);
-    if (!window) {
-        glfwTerminate();
-        return 1;
-    }
-
-    uint32_t extensions_count = 0;
-    const char** extensions = glfwGetRequiredInstanceExtensions(&extensions_count);
-    SetupVulkan(extensions, extensions_count);
-
-    VkSurfaceKHR surface;
-    VkResult err = glfwCreateWindowSurface(g_Instance, window, g_Allocator, &surface);
-    if (err != VK_SUCCESS) return 1;
-    ImGui_ImplVulkanH_Window pre_wd{};
-    int w = 0;
-    int h = 0;
-    glfwGetFramebufferSize(window, &w, &h);
-    SetupVulkanWindow(&pre_wd, surface, w, h);
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    configureWorldsimFonts();
-    applyWorldsimUiTheme(app_settings.dark_mode);
-    ImGui_ImplGlfw_InitForVulkan(window, true);
-    ImGui_ImplVulkan_InitInfo init_info{};
-    init_info.Instance = g_Instance;
-    init_info.PhysicalDevice = g_PhysicalDevice;
-    init_info.Device = g_Device;
-    init_info.QueueFamily = g_QueueFamily;
-    init_info.Queue = g_Queue;
-    init_info.DescriptorPool = g_DescriptorPool;
-    init_info.RenderPass = pre_wd.RenderPass;
-    init_info.MinImageCount = g_MinImageCount;
-    init_info.ImageCount = pre_wd.ImageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    init_info.CheckVkResultFn = check_vk_result;
-    ImGui_ImplVulkan_Init(&init_info);
-    uploadCurrentImGuiFonts(pre_wd);
-
-    std::mutex log_mutex;
-    std::vector<std::string> log_lines;
-    std::atomic<bool> worker_done{false};
-    std::atomic<int> worker_exit{-1};
-    fs::path preprocess_log_path = startupPreprocessLogPath(root);
-    const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
-    const std::string exe = currentExecutablePath(argv0);
-    std::string command = shellQuote(exe) + " --build-geometry-duckdb-artifacts";
-    if (reserve_cores > 0) command += " --reserve-cores " + std::to_string(reserve_cores);
-    command += " 2>&1";
-
-    std::thread worker([&] {
-        StartupPreprocessRunResult result = runStartupPreprocessSubprocess(
-            root,
-            command,
-            &log_lines,
-            &log_mutex,
-            &worker_done,
-            &worker_exit);
-        preprocess_log_path = result.log_path;
-    });
-
-    bool proceed = false;
-    bool quit = false;
-    bool swapchain_rebuild = false;
-    while (!glfwWindowShouldClose(window) && !quit && !proceed) {
-        glfwPollEvents();
-        int fb_w = 0;
-        int fb_h = 0;
-        glfwGetFramebufferSize(window, &fb_w, &fb_h);
-        if (fb_w > 0 && fb_h > 0 && (fb_w != pre_wd.Width || fb_h != pre_wd.Height)) {
-            check_vk_result(vkDeviceWaitIdle(g_Device));
-            ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
-            ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &pre_wd, g_QueueFamily, g_Allocator, fb_w, fb_h, g_MinImageCount);
-            pre_wd.FrameIndex = 0;
-        }
-
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize, ImGuiCond_Always);
-        ImGui::Begin("Preprocess", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-        ImGui::TextUnformatted("WorldSim3 preprocess is running before the main UI starts.");
-        ImGui::TextWrapped("Runtime rendering no longer builds missing geometry, DuckDB, or property artifacts. The main UI will start only after this separate preprocessing step completes.");
-        ImGui::Separator();
-        ImGui::Text("Initial work items: %zu", initial_plan.issues.size());
-        ImGui::SameLine();
-        ImGui::Text("DuckDB: %s", initial_plan.duckdb_required ? "required" : "current");
-        ImGui::TextDisabled("Log: %s", preprocess_log_path.string().c_str());
-        if (ImGui::BeginChild("preprocess_issues", ImVec2(0, 120), true)) {
-            for (const auto& issue : initial_plan.issues) {
-                ImGui::BulletText("[%s] %s", issue.kind.c_str(), issue.layer_file.c_str());
-                if (!issue.message.empty()) ImGui::TextWrapped("  %s", issue.message.c_str());
-                if (!issue.artifact_path.empty()) ImGui::TextDisabled("  %s", issue.artifact_path.c_str());
-            }
-        }
-        ImGui::EndChild();
-        ImGui::SeparatorText("Preprocess Log");
-        if (!worker_done.load(std::memory_order_relaxed)) {
-            ImGui::ProgressBar(-1.0f * (float)ImGui::GetTime(), ImVec2(-1, 0), "running");
-        } else {
-            const int rc = worker_exit.load(std::memory_order_relaxed);
-            ImGui::Text("preprocess exit code: %d", rc);
-            if (rc == 0) {
-                ImGui::TextColored(ImVec4(0.25f, 0.75f, 0.35f, 1.0f), "Artifacts prepared. Launching main UI.");
-                proceed = true;
-            } else {
-                ImGui::TextColored(ImVec4(0.90f, 0.25f, 0.18f, 1.0f), "Preprocess failed. Main UI will not start with stale artifacts.");
-                ImGui::TextWrapped("See terminal output or %s", preprocess_log_path.string().c_str());
-                if (ImGui::Button("Quit")) quit = true;
-            }
-        }
-        if (ImGui::BeginChild("preprocess_log", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
-            std::lock_guard<std::mutex> lk(log_mutex);
-            const size_t start = log_lines.size() > 120 ? log_lines.size() - 120 : 0;
-            for (size_t i = start; i < log_lines.size(); ++i) ImGui::TextUnformatted(log_lines[i].c_str());
-            if (!worker_done.load(std::memory_order_relaxed)) ImGui::SetScrollHereY(1.0f);
-        }
-        ImGui::EndChild();
-        ImGui::End();
-        ImGui::Render();
-        FrameRenderSecondary(&pre_wd, ImGui::GetDrawData(), swapchain_rebuild);
-        FramePresentSecondary(&pre_wd, swapchain_rebuild);
-        if (swapchain_rebuild) swapchain_rebuild = false;
-        if (proceed) std::this_thread::sleep_for(std::chrono::milliseconds(250));
-        else std::this_thread::sleep_for(std::chrono::milliseconds(16));
-    }
-
-    if (worker.joinable()) worker.join();
-    const int rc = worker_exit.load(std::memory_order_relaxed);
-    check_vk_result(vkDeviceWaitIdle(g_Device));
-    ImGui_ImplVulkan_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    ImGui_ImplVulkanH_DestroyWindow(g_Instance, g_Device, &pre_wd, g_Allocator);
-    CleanupVulkan();
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    return (proceed && rc == 0) ? 0 : 1;
-}
-
-int runStartupPreprocessCli(
-    const fs::path& root,
-    const AppSettings& app_settings,
-    const StartupPreprocessPlan& plan,
-    const WorldsimCliOptions& cli_options,
-    const char* argv0) {
-    printStartupPreprocessPlan(plan, std::cerr);
-    if (!plan.required) {
-        std::cout << json{
-            {"mode", "startup-preprocess"},
-            {"ok", true},
-            {"required", false},
-            {"message", "startup artifacts are current"}
-        }.dump(2) << '\n';
-        return 0;
-    }
-
-    const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
-    const std::string exe = currentExecutablePath(argv0);
-    std::string command = shellQuote(exe) + " --build-geometry-duckdb-artifacts";
-    if (reserve_cores > 0) command += " --reserve-cores " + std::to_string(reserve_cores);
-    command += " 2>&1";
-
-    StartupPreprocessRunResult result = runStartupPreprocessSubprocess(root, command);
-    std::cout << json{
-        {"mode", "startup-preprocess"},
-        {"ok", result.exit_code == 0},
-        {"required", true},
-        {"exit_code", result.exit_code},
-        {"log_path", result.log_path.string()}
-    }.dump(2) << '\n';
-    return result.exit_code == 0 ? 0 : result.exit_code;
-}
 }
 
 int runWorldSim3App(int argc, char** argv) {
@@ -611,6 +185,7 @@ int runWorldSim3App(int argc, char** argv) {
     runtime.argc = argc;
     runtime.argv = argv;
     runtime.root = root;
+    applyDotEnvEnvironment(root);
     const WorldsimCliOptions cli_options = parseWorldsimCliOptions(argc, argv);
     if (cli_options.run_color_editor) {
         if (cli_options.color_editor_session_file.empty()) return 1;
@@ -638,11 +213,8 @@ int runWorldSim3App(int argc, char** argv) {
         }
     }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    preloadLayersFromEnvironment(root);
-
-    StartupPreprocessPlan preprocess_plan = inspectStartupPreprocessPlan(root);
     if (cli_options.run_startup_preprocess) {
+        StartupPreprocessPlan preprocess_plan = inspectStartupPreprocessPlan(root);
         return runStartupPreprocessCli(
             root,
             app_settings,
@@ -650,6 +222,11 @@ int runWorldSim3App(int argc, char** argv) {
             cli_options,
             argc > 0 ? argv[0] : nullptr);
     }
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    preloadLayersFromEnvironment(root);
+
+    StartupPreprocessPlan preprocess_plan = inspectStartupPreprocessPlan(root);
     printStartupPreprocessPlan(preprocess_plan, std::cerr);
     if (preprocess_plan.required) {
         const int preprocess_rc = runStartupPreprocessWindow(
@@ -671,163 +248,25 @@ int runWorldSim3App(int argc, char** argv) {
     }
 
     g_EnableValidationLayers = app_settings.vulkan_validation_enabled;
-    if (!glfwInit()) return 1;
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    int initial_window_w = 1600;
-    int initial_window_h = 1000;
-    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) {
-        int work_x = 0;
-        int work_y = 0;
-        int work_w = 0;
-        int work_h = 0;
-        glfwGetMonitorWorkarea(monitor, &work_x, &work_y, &work_w, &work_h);
-        if (work_w > 0 && work_h > 0) {
-            initial_window_w = std::min(initial_window_w, std::max(640, (int)std::floor((float)work_w * 0.90f)));
-            initial_window_h = std::min(initial_window_h, std::max(420, (int)std::floor((float)work_h * 0.85f)));
-        }
+    AppWindowServiceContext window_ctx;
+    std::string window_error;
+    if (!initializeAppWindows(app_settings, window_ctx, &window_error)) {
+        if (!window_error.empty()) std::fprintf(stderr, "[worldsim3] window/bootstrap init failed: %s\n", window_error.c_str());
+        return 1;
     }
-    GLFWwindow* window = glfwCreateWindow(initial_window_w, initial_window_h, "Baltimore Vulkan Map", nullptr, nullptr);
-
-    uint32_t extensions_count = 0;
-    const char** extensions = glfwGetRequiredInstanceExtensions(&extensions_count);
-    SetupVulkan(extensions, extensions_count);
-
-    VkSurfaceKHR surface;
-    VkResult err = glfwCreateWindowSurface(g_Instance, window, g_Allocator, &surface);
-    if (err != VK_SUCCESS) return 1;
-
-    int w, h;
-    glfwGetFramebufferSize(window, &w, &h);
-    ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
-    SetupVulkanWindow(wd, surface, w, h);
-    {
-        std::string parcel_upload_error;
-        if (!startParcelGpuUploadWorker(&parcel_upload_error)) {
-            std::fprintf(stderr, "[worldsim3] Failed to start parcel GPU upload worker: %s\n", parcel_upload_error.c_str());
-        }
-    }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiContext* main_imgui_context = ImGui::GetCurrentContext();
-    configureWorldsimFonts();
-    applyWorldsimUiTheme(app_settings.dark_mode);
-
-    ImGui_ImplGlfw_InitForVulkan(window, true);
-    ImGui_ImplVulkan_InitInfo init_info{};
-    init_info.Instance = g_Instance;
-    init_info.PhysicalDevice = g_PhysicalDevice;
-    init_info.Device = g_Device;
-    init_info.QueueFamily = g_QueueFamily;
-    init_info.Queue = g_Queue;
-    init_info.DescriptorPool = g_DescriptorPool;
-    init_info.RenderPass = wd->RenderPass;
-    init_info.MinImageCount = g_MinImageCount;
-    init_info.ImageCount = wd->ImageCount;
-    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
-    init_info.CheckVkResultFn = check_vk_result;
-    ImGui_ImplVulkan_Init(&init_info);
-
-    {
-        VkCommandPool command_pool = wd->Frames[wd->FrameIndex].CommandPool;
-        VkCommandBuffer command_buffer = wd->Frames[wd->FrameIndex].CommandBuffer;
-        check_vk_result(vkResetCommandPool(g_Device, command_pool, 0));
-        VkCommandBufferBeginInfo begin_info{};
-        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        check_vk_result(vkBeginCommandBuffer(command_buffer, &begin_info));
-        ImGui_ImplVulkan_CreateFontsTexture();
-        check_vk_result(vkEndCommandBuffer(command_buffer));
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &command_buffer;
-        {
-            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-            check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
-            check_vk_result(vkDeviceWaitIdle(g_Device));
-        }
-        ImGui_ImplVulkan_DestroyFontsTexture();
-    }
-
-    GLFWwindow* download_queue_window = glfwCreateWindow(500, 320, "Download Queue", nullptr, nullptr);
-    if (!download_queue_window) return 1;
-    int main_x = 0;
-    int main_y = 0;
-    glfwGetWindowPos(window, &main_x, &main_y);
-    glfwSetWindowPos(download_queue_window, main_x + 1620, main_y + 96);
-    VkSurfaceKHR download_queue_surface;
-    err = glfwCreateWindowSurface(g_Instance, download_queue_window, g_Allocator, &download_queue_surface);
-    if (err != VK_SUCCESS) return 1;
-    ImGui_ImplVulkanH_Window download_queue_wd{};
-    int dq_w = 0;
-    int dq_h = 0;
-    glfwGetFramebufferSize(download_queue_window, &dq_w, &dq_h);
-    SetupVulkanWindow(&download_queue_wd, download_queue_surface, dq_w, dq_h);
-    bool download_queue_swapchain_rebuild = false;
-
-    ImGuiContext* download_queue_imgui_context = ImGui::CreateContext();
-    ImGui::SetCurrentContext(download_queue_imgui_context);
-    configureWorldsimFonts();
-    applyWorldsimUiTheme(app_settings.dark_mode);
-    ImGui_ImplGlfw_InitForVulkan(download_queue_window, false);
-    glfwSetWindowUserPointer(download_queue_window, download_queue_imgui_context);
-    glfwSetWindowFocusCallback(download_queue_window, [](GLFWwindow* cb_window, int focused) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_WindowFocusCallback(cb_window, focused);
-    });
-    glfwSetCursorEnterCallback(download_queue_window, [](GLFWwindow* cb_window, int entered) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_CursorEnterCallback(cb_window, entered);
-    });
-    glfwSetCursorPosCallback(download_queue_window, [](GLFWwindow* cb_window, double x, double y) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_CursorPosCallback(cb_window, x, y);
-    });
-    glfwSetMouseButtonCallback(download_queue_window, [](GLFWwindow* cb_window, int button, int action, int mods) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_MouseButtonCallback(cb_window, button, action, mods);
-    });
-    glfwSetScrollCallback(download_queue_window, [](GLFWwindow* cb_window, double xoffset, double yoffset) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_ScrollCallback(cb_window, xoffset, yoffset);
-    });
-    glfwSetKeyCallback(download_queue_window, [](GLFWwindow* cb_window, int key, int scancode, int action, int mods) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_KeyCallback(cb_window, key, scancode, action, mods);
-    });
-    glfwSetCharCallback(download_queue_window, [](GLFWwindow* cb_window, unsigned int c) {
-        ImGui::SetCurrentContext(static_cast<ImGuiContext*>(glfwGetWindowUserPointer(cb_window)));
-        ImGui_ImplGlfw_CharCallback(cb_window, c);
-    });
-    ImGui_ImplVulkan_InitInfo queue_init_info = init_info;
-    queue_init_info.RenderPass = download_queue_wd.RenderPass;
-    queue_init_info.ImageCount = download_queue_wd.ImageCount;
-    ImGui_ImplVulkan_Init(&queue_init_info);
-    {
-        VkCommandPool command_pool = download_queue_wd.Frames[download_queue_wd.FrameIndex].CommandPool;
-        VkCommandBuffer command_buffer = download_queue_wd.Frames[download_queue_wd.FrameIndex].CommandBuffer;
-        check_vk_result(vkResetCommandPool(g_Device, command_pool, 0));
-        VkCommandBufferBeginInfo begin_info{};
-        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        check_vk_result(vkBeginCommandBuffer(command_buffer, &begin_info));
-        ImGui_ImplVulkan_CreateFontsTexture();
-        check_vk_result(vkEndCommandBuffer(command_buffer));
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &command_buffer;
-        {
-            std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-            check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, VK_NULL_HANDLE));
-            check_vk_result(vkDeviceWaitIdle(g_Device));
-        }
-        ImGui_ImplVulkan_DestroyFontsTexture();
-    }
-    ImGui::SetCurrentContext(main_imgui_context);
-
-    ImGui::SetCurrentContext(main_imgui_context);
+    const int initial_window_w = window_ctx.initial_window_w;
+    const int initial_window_h = window_ctx.initial_window_h;
+    GLFWwindow* window = window_ctx.main_window;
+    int w = window_ctx.main_framebuffer_w;
+    int h = window_ctx.main_framebuffer_h;
+    ImGui_ImplVulkanH_Window* wd = window_ctx.main_window_data;
+    ImGuiContext* main_imgui_context = window_ctx.main_imgui_context;
+    GLFWwindow* download_queue_window = window_ctx.download_queue_window;
+    ImGui_ImplVulkanH_Window download_queue_wd = window_ctx.download_queue_window_data;
+    int dq_w = window_ctx.download_queue_framebuffer_w;
+    int dq_h = window_ctx.download_queue_framebuffer_h;
+    bool download_queue_swapchain_rebuild = window_ctx.download_queue_swapchain_rebuild;
+    ImGuiContext* download_queue_imgui_context = window_ctx.download_queue_imgui_context;
 
     BootstrapProgress bootstrap;
     bootstrap.running.store(false, std::memory_order_relaxed);
@@ -962,36 +401,12 @@ int runWorldSim3App(int argc, char** argv) {
     size_t projection_generation = 0;
     LayerFeatureRenderCache feature_render_cache;
     uint64_t feature_render_state_key = 0;
-    std::string parcel_gpu_uploaded_signature;
-    std::string parcel_geometry_locked_signature;
-    std::string parcel_geometry_restart_required_signature;
-    std::string parcel_render_requested_signature;
-    std::string parcel_gpu_upload_requested_signature;
-    std::unordered_map<size_t, std::string> zoning_gpu_uploaded_signatures;
-    uint64_t parcel_gpu_filter_state_key = 0;
-    uint64_t parcel_gpu_overlay_state_key = 0;
-    uint64_t parcel_gpu_outline_state_key = 0;
-    std::unordered_map<size_t, uint64_t> zoning_gpu_color_state_keys;
-    std::unordered_map<size_t, uint64_t> zoning_gpu_outline_state_keys;
-    std::vector<ImU32> parcel_gpu_last_base_colors;
-    std::vector<ImU32> parcel_gpu_last_overlay_colors;
-    std::vector<ImU32> parcel_gpu_last_outline_colors;
-    ParcelRenderCacheBlob parcel_gpu_render_blob;
-    std::unordered_map<size_t, std::vector<ImU32>> zoning_gpu_last_base_colors;
-    std::unordered_map<size_t, std::vector<ImU32>> zoning_gpu_last_outline_colors;
-    std::unordered_map<size_t, ParcelRenderCacheBlob> zoning_gpu_render_blobs;
-    std::string crime_point_gpu_uploaded_signature;
-    uint64_t crime_point_gpu_color_state_key = 0;
-    PointGeometryArtifact crime_point_gpu_artifact;
-    std::unordered_map<size_t, uint64_t> point_gpu_color_state_keys;
-    std::unordered_map<size_t, uint64_t> point_gpu_glyph_state_keys;
-    std::unordered_map<size_t, uint64_t> polyline_gpu_color_state_keys;
-    std::unordered_map<size_t, PointGeometryArtifact> point_geometry_artifacts;
-    std::unordered_map<size_t, std::string> point_geometry_artifact_signatures;
-    std::unordered_map<size_t, PolylineGeometryArtifact> polyline_geometry_artifacts;
-    std::unordered_map<size_t, std::string> polyline_geometry_artifact_signatures;
-    std::unordered_map<size_t, PolygonGeometryArtifact> polygon_geometry_artifacts;
-    std::unordered_map<size_t, std::string> polygon_geometry_artifact_signatures;
+    ParcelRuntimeState parcel_runtime_state;
+    ZoningRuntimeState zoning_runtime_state;
+    CrimePointRuntimeState crime_point_runtime_state;
+    PointLayerRuntimeState point_layer_runtime_state;
+    PolylineLayerRuntimeState polyline_layer_runtime_state;
+    PolygonArtifactRuntimeState polygon_artifact_runtime_state;
     std::atomic<size_t> prof_projection_world_ring_cache_entries{0};
     std::atomic<size_t> prof_projection_world_extent_cache_entries{0};
     std::atomic<size_t> prof_projection_cache_generation{0};
@@ -1110,36 +525,9 @@ int runWorldSim3App(int argc, char** argv) {
     std::mutex api_control_mutex;
     ApiFilterControlCommand api_filter_control_cmd;
     std::vector<ApiQueryControlCommand> api_query_control_cmds;
-    const std::array<const char*, 24> parcel_jurisdiction_options = {
-        "Allegany County",
-        "Anne Arundel County",
-        "Baltimore City",
-        "Baltimore County",
-        "Calvert County",
-        "Caroline County",
-        "Carroll County",
-        "Cecil County",
-        "Charles County",
-        "Dorchester County",
-        "Frederick County",
-        "Garrett County",
-        "Harford County",
-        "Howard County",
-        "Kent County",
-        "Montgomery County",
-        "Prince George's County",
-        "Queen Anne's County",
-        "St. Mary's County",
-        "Somerset County",
-        "Talbot County",
-        "Washington County",
-        "Wicomico County",
-        "Worcester County"
-    };
     ParcelJurisdictionFilterState parcel_jurisdiction_filter_state;
-    for (const char* jurisdiction : parcel_jurisdiction_options) {
-        parcel_jurisdiction_filter_state.selected_jurisdictions.insert(jurisdiction);
-    }
+    const auto& parcel_jurisdiction_options = defaultParcelJurisdictionOptions();
+    seedDefaultParcelJurisdictions(parcel_jurisdiction_filter_state);
     std::unordered_map<std::string, std::string> owner_class_overrides;
     bool owner_class_overrides_loaded = false;
     bool owner_class_overrides_dirty = false;
@@ -1158,76 +546,9 @@ int runWorldSim3App(int argc, char** argv) {
 
     std::vector<bool> hydration_requested(layers.size(), false);
     std::vector<bool> hydration_required(layers.size(), false);
-    auto initializeLayerFromPersistedArtifacts = [&](size_t idx) {
-        if (idx >= layers.size() || idx >= layer_states.size()) return;
-        const fs::path layer_path = resolveStoredLayerPath(root, layers[idx]);
-        std::string sig;
-        std::string resolved_kind;
-        if (!resolveLayerSourceSignature(layer_path, sig, &resolved_kind)) {
-            std::lock_guard<std::mutex> lk(status_mutex);
-            layer_states[idx].status = LayerPipelineStatus::Failed;
-            layer_states[idx].feature_count = 0;
-            layer_states[idx].error = "canonical metadata/signature missing";
-            layer_states[idx].hydration_source_signature.clear();
-            layer_states[idx].hydration_source_kind.clear();
-            layer_states[idx].hydration_phase = "metadata_missing";
-            return;
-        }
-        const bool is_parcel = parcel_layer_idx >= 0 && (int)idx == parcel_layer_idx;
-        const GeometryArtifactClass cls = startupGeometryClassForLayer(layers[idx], is_parcel);
-        const fs::path artifact_path = is_parcel
-            ? (root / "data" / "cache" / "render" / (layerArtifactBasenameForFile(layers[idx].file) + ".parcel-render.bin"))
-            : geometryArtifactCachePathForLayerFile(root, layers[idx].file, cls);
-
-        bool artifact_ok = false;
-        size_t artifact_features = 0;
-        if (is_parcel) {
-            ParcelRenderCacheBlob blob;
-            artifact_ok = loadBinaryParcelRenderCache(artifact_path, sig, blob);
-            artifact_features = blob.features.size();
-        } else if (cls == GeometryArtifactClass::Point) {
-            PointGeometryArtifact artifact;
-            artifact_ok = loadBinaryPointGeometryArtifact(artifact_path, sig, artifact);
-            artifact_features = artifact.features.size();
-        } else if (cls == GeometryArtifactClass::Polyline) {
-            PolylineGeometryArtifact artifact;
-            artifact_ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact);
-            artifact_features = artifact.features.size();
-        } else if (cls == GeometryArtifactClass::Polygon) {
-            PolygonGeometryArtifact artifact;
-            artifact_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact);
-            artifact_features = artifact.features.size();
-        }
-
-        std::lock_guard<std::mutex> lk(status_mutex);
-        layer_states[idx].hydration_source_signature = sig;
-        layer_states[idx].hydration_source_kind = resolved_kind;
-        layer_states[idx].hydration_loaded_from_cache = true;
-        layer_states[idx].geometry_artifact_class = cls;
-        layer_states[idx].geometry_artifact_path = artifact_path.string();
-        layer_states[idx].geometry_source_signature = artifact_ok ? sig : std::string{};
-        layer_states[idx].geometry_loaded_from_artifact = artifact_ok;
-        layer_states[idx].geometry_phase = artifact_ok ? "artifact_ready" : "artifact_missing";
-        layer_states[idx].feature_count = artifact_features;
-        if (artifact_ok) {
-            layer_states[idx].status = LayerPipelineStatus::Ready;
-            layer_states[idx].hydration_phase = "metadata_only_geometry_artifact";
-            layer_states[idx].error.clear();
-        } else {
-            layer_states[idx].status = LayerPipelineStatus::Queued;
-            layer_states[idx].hydration_phase = "metadata_only_artifact_missing";
-            layer_states[idx].error = "compiled geometry artifact missing or stale";
-        }
-    };
-    for (size_t i = 0; i < layers.size(); ++i) {
-        if (layers[i].enabled) initializeLayerFromPersistedArtifacts(i);
-    }
+    initializeEnabledLayerStatesFromPersistedArtifacts(root, layers, parcel_layer_idx, status_mutex, layer_states);
     auto recomputeHydratedCount = [&]() {
-        size_t ready_count = 0;
-        std::lock_guard<std::mutex> lk(status_mutex);
-        for (const auto& state : layer_states) {
-            if (state.status == LayerPipelineStatus::Ready) ++ready_count;
-        }
+        const size_t ready_count = countReadyLayerStates(status_mutex, layer_states);
         hydrated_count.store(ready_count, std::memory_order_relaxed);
         last_hydration_progress_at = std::chrono::steady_clock::now();
         last_hydrated_seen = ready_count;
@@ -1246,7 +567,7 @@ int runWorldSim3App(int argc, char** argv) {
         if (!layers[idx].enabled && !required) return;
         hydration_requested[idx] = true;
         if (required) hydration_required[idx] = true;
-        initializeLayerFromPersistedArtifacts(idx);
+        initializeLayerStateFromPersistedArtifacts(root, layers, parcel_layer_idx, status_mutex, layer_states, idx);
         recomputeHydratedCount();
         hydration_requested[idx] = false;
     };
@@ -1271,152 +592,103 @@ int runWorldSim3App(int argc, char** argv) {
     };
     std::vector<std::thread> hydration_workers;
     std::thread spatial_index_worker = startSpatialIndexWorker(layer_workers_ctx);
-    std::atomic<bool> parcel_render_stop{false};
-    std::mutex parcel_render_req_mutex;
-    std::condition_variable parcel_render_cv;
-    std::deque<ParcelRenderCacheRequest> parcel_render_requests;
-    std::mutex parcel_render_result_mutex;
-    std::deque<ParcelRenderCacheResult> parcel_render_results;
-    std::thread parcel_render_worker([&] {
-        while (!parcel_render_stop.load(std::memory_order_relaxed)) {
-            ParcelRenderCacheRequest req;
-            {
-                std::unique_lock<std::mutex> lk(parcel_render_req_mutex);
-                parcel_render_cv.wait(lk, [&] {
-                    return parcel_render_stop.load(std::memory_order_relaxed) || !parcel_render_requests.empty();
-                });
-                if (parcel_render_stop.load(std::memory_order_relaxed)) break;
-                req = std::move(parcel_render_requests.front());
-                parcel_render_requests.pop_front();
-            }
 
-            ParcelRenderCacheResult result;
-            result.layer_file = req.layer_file;
-            result.source_signature = req.source_signature;
-            if (!loadBinaryParcelRenderCache(req.cache_path, req.source_signature, result.blob)) {
-                result.error = "compiled parcel render artifact missing or stale; run the artifact build CLI";
-            }
-
-            {
-                std::lock_guard<std::mutex> lk(parcel_render_result_mutex);
-                parcel_render_results.push_back(std::move(result));
-                while (parcel_render_results.size() > 4) {
-                    parcel_render_results.pop_front();
-                }
-            }
+    AppBackgroundServices background_services;
+    startAppBackgroundServices(AppBackgroundServicesBootstrapInput{
+        .app_version = kAppVersion,
+        .protocol_version = kProtocolVersion,
+        .root = &root,
+        .stop = &hydration_stop,
+        .status_api = StatusApiContextFactoryInput{
+            .app_version = kAppVersion,
+            .protocol_version = kProtocolVersion,
+            .tile_cache_max = kMaxTileCache,
+            .root = &root,
+            .stop = &hydration_stop,
+            .layers = &layers,
+            .duckdb_analytics = &duckdb_analytics,
+            .unified_parcels = &unified_parcels,
+            .map_filter_state = &map_filter_state,
+            .active_filter_result_set = &parcel_jurisdiction_filter_state.result_set,
+            .query_layers = &query_layers,
+            .active_filter_status = &parcel_jurisdiction_filter_state.status,
+            .time_cube_service = &time_cube_service,
+            .screenshot = &g_ScreenshotState,
+            .status_mutex = &status_mutex,
+            .layer_states = &layer_states,
+            .layer_fill_mutex = &layer_fill_mutex,
+            .layer_fill_enabled = &layer_fill_enabled,
+            .layer_hover_enabled = &layer_hover_enabled,
+            .layer_inspect_enabled = &layer_inspect_enabled,
+            .layer_heatmap_enabled = &layer_heatmap_enabled,
+            .hydration_started_at = &hydration_started_at,
+            .hydrated_count = &hydrated_count,
+            .prof_tile_cache_size = &prof_tile_cache_size,
+            .current_zoom_state = &current_zoom_state,
+            .current_lon_state = &current_lon_state,
+            .current_lat_state = &current_lat_state,
+            .visible_vacant_parcels_last_frame = &visible_vacant_parcels_last_frame,
+            .vacant_parcels_matched_total = &vacant_parcels_matched_total,
+            .vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total,
+            .perf_frame_ms_avg = &perf_frame_ms_avg,
+            .perf_frame_ms_last = &perf_frame_ms_last,
+            .perf_fps_avg = &perf_fps_avg,
+            .ui_left_panel_frac = &ui_left_panel_frac,
+            .ui_right_panel_frac = &ui_right_panel_frac,
+            .render_fill_attempts_last_frame = &render_fill_attempts_last_frame,
+            .render_fill_success_last_frame = &render_fill_success_last_frame,
+            .render_fill_no_triangles_last_frame = &render_fill_no_triangles_last_frame,
+            .render_fill_bad_indices_last_frame = &render_fill_bad_indices_last_frame,
+            .api_layer_mutex = &api_layer_mutex,
+            .api_layer_enable_cmds = &api_layer_enable_cmds,
+            .api_layer_fill_cmds = &api_layer_fill_cmds,
+            .api_layer_download_cmds = &api_layer_download_cmds,
+            .api_zoom_cmd = &api_zoom_cmd,
+            .api_lon_cmd = &api_lon_cmd,
+            .api_lat_cmd = &api_lat_cmd,
+            .api_ui_cmd_seq = &api_ui_cmd_seq,
+            .api_ui_cmd_kind = &api_ui_cmd_kind,
+            .api_ui_cmd_x = &api_ui_cmd_x,
+            .api_ui_cmd_y = &api_ui_cmd_y,
+            .api_ui_cmd_button = &api_ui_cmd_button,
+            .api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y,
+            .api_control_mutex = &api_control_mutex,
+            .api_filter_control_cmd = &api_filter_control_cmd,
+            .api_query_control_cmds = &api_query_control_cmds,
+            .layer_profile_mutex = &layer_profile_mutex,
+            .layer_profile_snapshot = &layer_profile_snapshot,
+            .profile_mutex = &profile_mutex,
+            .profile_samples = &profile_samples,
+            .profile_sample_pos = &profile_sample_pos,
+            .profile_sample_count = &profile_sample_count,
+            .profile_reset_generation = &profile_reset_generation,
+            .prof_ui_ms_last = &prof_ui_ms_last,
+            .prof_owner_ms_last = &prof_owner_ms_last,
+            .prof_tile_ms_last = &prof_tile_ms_last,
+            .prof_layer_ms_last = &prof_layer_ms_last,
+            .prof_owner_filter_ms_last = &prof_owner_filter_ms_last,
+            .prof_heatmap_ms_last = &prof_heatmap_ms_last,
+            .prof_overlay_ms_last = &prof_overlay_ms_last,
+            .prof_present_ms_last = &prof_present_ms_last,
+            .prof_tiles_drawn_last = &prof_tiles_drawn_last,
+            .prof_features_considered_last = &prof_features_considered_last,
+            .prof_features_drawn_last = &prof_features_drawn_last,
+            .prof_owner_filter_candidates_last = &prof_owner_filter_candidates_last,
+            .prof_owner_filter_matches_last = &prof_owner_filter_matches_last,
+            .prof_heat_samples_last = &prof_heat_samples_last,
+            .prof_retired_textures = &prof_retired_textures,
+            .prof_projection_world_ring_cache_entries = &prof_projection_world_ring_cache_entries,
+            .prof_projection_world_extent_cache_entries = &prof_projection_world_extent_cache_entries,
+            .prof_projection_cache_generation = &prof_projection_cache_generation,
+            .prof_heatmap_gpu_splat_active = &prof_heatmap_gpu_splat_active,
+            .prof_heatmap_high_quality = &prof_heatmap_high_quality,
+            .prof_heatmap_cache_valid = &prof_heatmap_cache_valid,
+            .prof_heatmap_texture_resident = &prof_heatmap_texture_resident,
+            .prof_heatmap_async_inflight = &prof_heatmap_async_inflight,
+            .prof_heatmap_cache_key = &prof_heatmap_cache_key,
+            .prof_heatmap_texture_cache_entries = &prof_heatmap_texture_cache_entries
         }
-    });
-
-    HoverDebugState hover_debug_state;
-    StatusApiContextFactoryInput status_api_input;
-    status_api_input.app_version = kAppVersion;
-    status_api_input.protocol_version = kProtocolVersion;
-    status_api_input.tile_cache_max = kMaxTileCache;
-    status_api_input.root = &root;
-    status_api_input.stop = &hydration_stop;
-    status_api_input.layers = &layers;
-    status_api_input.duckdb_analytics = &duckdb_analytics;
-    status_api_input.unified_parcels = &unified_parcels;
-    status_api_input.map_filter_state = &map_filter_state;
-    status_api_input.active_filter_result_set = &parcel_jurisdiction_filter_state.result_set;
-    status_api_input.query_layers = &query_layers;
-    status_api_input.active_filter_status = &parcel_jurisdiction_filter_state.status;
-    status_api_input.time_cube_service = &time_cube_service;
-    status_api_input.screenshot = &g_ScreenshotState;
-    status_api_input.hover_debug_state = &hover_debug_state;
-    status_api_input.status_mutex = &status_mutex;
-    status_api_input.layer_states = &layer_states;
-    status_api_input.layer_fill_mutex = &layer_fill_mutex;
-    status_api_input.layer_fill_enabled = &layer_fill_enabled;
-    status_api_input.layer_hover_enabled = &layer_hover_enabled;
-    status_api_input.layer_inspect_enabled = &layer_inspect_enabled;
-    status_api_input.layer_heatmap_enabled = &layer_heatmap_enabled;
-    status_api_input.hydration_started_at = &hydration_started_at;
-    status_api_input.hydrated_count = &hydrated_count;
-    status_api_input.prof_tile_cache_size = &prof_tile_cache_size;
-    status_api_input.current_zoom_state = &current_zoom_state;
-    status_api_input.current_lon_state = &current_lon_state;
-    status_api_input.current_lat_state = &current_lat_state;
-    status_api_input.visible_vacant_parcels_last_frame = &visible_vacant_parcels_last_frame;
-    status_api_input.vacant_parcels_matched_total = &vacant_parcels_matched_total;
-    status_api_input.vacant_parcels_with_geometry_total = &vacant_parcels_with_geometry_total;
-    status_api_input.perf_frame_ms_avg = &perf_frame_ms_avg;
-    status_api_input.perf_frame_ms_last = &perf_frame_ms_last;
-    status_api_input.perf_fps_avg = &perf_fps_avg;
-    status_api_input.ui_left_panel_frac = &ui_left_panel_frac;
-    status_api_input.ui_right_panel_frac = &ui_right_panel_frac;
-    status_api_input.render_fill_attempts_last_frame = &render_fill_attempts_last_frame;
-    status_api_input.render_fill_success_last_frame = &render_fill_success_last_frame;
-    status_api_input.render_fill_no_triangles_last_frame = &render_fill_no_triangles_last_frame;
-    status_api_input.render_fill_bad_indices_last_frame = &render_fill_bad_indices_last_frame;
-    status_api_input.api_layer_mutex = &api_layer_mutex;
-    status_api_input.api_layer_enable_cmds = &api_layer_enable_cmds;
-    status_api_input.api_layer_fill_cmds = &api_layer_fill_cmds;
-    status_api_input.api_layer_download_cmds = &api_layer_download_cmds;
-    status_api_input.api_zoom_cmd = &api_zoom_cmd;
-    status_api_input.api_lon_cmd = &api_lon_cmd;
-    status_api_input.api_lat_cmd = &api_lat_cmd;
-    status_api_input.api_ui_cmd_seq = &api_ui_cmd_seq;
-    status_api_input.api_ui_cmd_kind = &api_ui_cmd_kind;
-    status_api_input.api_ui_cmd_x = &api_ui_cmd_x;
-    status_api_input.api_ui_cmd_y = &api_ui_cmd_y;
-    status_api_input.api_ui_cmd_button = &api_ui_cmd_button;
-    status_api_input.api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y;
-    status_api_input.api_control_mutex = &api_control_mutex;
-    status_api_input.api_filter_control_cmd = &api_filter_control_cmd;
-    status_api_input.api_query_control_cmds = &api_query_control_cmds;
-    status_api_input.layer_profile_mutex = &layer_profile_mutex;
-    status_api_input.layer_profile_snapshot = &layer_profile_snapshot;
-    status_api_input.profile_mutex = &profile_mutex;
-    status_api_input.profile_samples = &profile_samples;
-    status_api_input.profile_sample_pos = &profile_sample_pos;
-    status_api_input.profile_sample_count = &profile_sample_count;
-    status_api_input.profile_reset_generation = &profile_reset_generation;
-    status_api_input.prof_ui_ms_last = &prof_ui_ms_last;
-    status_api_input.prof_owner_ms_last = &prof_owner_ms_last;
-    status_api_input.prof_tile_ms_last = &prof_tile_ms_last;
-    status_api_input.prof_layer_ms_last = &prof_layer_ms_last;
-    status_api_input.prof_owner_filter_ms_last = &prof_owner_filter_ms_last;
-    status_api_input.prof_heatmap_ms_last = &prof_heatmap_ms_last;
-    status_api_input.prof_overlay_ms_last = &prof_overlay_ms_last;
-    status_api_input.prof_present_ms_last = &prof_present_ms_last;
-    status_api_input.prof_tiles_drawn_last = &prof_tiles_drawn_last;
-    status_api_input.prof_features_considered_last = &prof_features_considered_last;
-    status_api_input.prof_features_drawn_last = &prof_features_drawn_last;
-    status_api_input.prof_owner_filter_candidates_last = &prof_owner_filter_candidates_last;
-    status_api_input.prof_owner_filter_matches_last = &prof_owner_filter_matches_last;
-    status_api_input.prof_heat_samples_last = &prof_heat_samples_last;
-    status_api_input.prof_retired_textures = &prof_retired_textures;
-    status_api_input.prof_projection_world_ring_cache_entries = &prof_projection_world_ring_cache_entries;
-    status_api_input.prof_projection_world_extent_cache_entries = &prof_projection_world_extent_cache_entries;
-    status_api_input.prof_projection_cache_generation = &prof_projection_cache_generation;
-    status_api_input.prof_heatmap_gpu_splat_active = &prof_heatmap_gpu_splat_active;
-    status_api_input.prof_heatmap_high_quality = &prof_heatmap_high_quality;
-    status_api_input.prof_heatmap_cache_valid = &prof_heatmap_cache_valid;
-    status_api_input.prof_heatmap_texture_resident = &prof_heatmap_texture_resident;
-    status_api_input.prof_heatmap_async_inflight = &prof_heatmap_async_inflight;
-    status_api_input.prof_heatmap_cache_key = &prof_heatmap_cache_key;
-    status_api_input.prof_heatmap_texture_cache_entries = &prof_heatmap_texture_cache_entries;
-    std::thread status_api_worker = startStatusApiWorker(makeStatusApiContext(status_api_input));
-
-    std::mutex p2p_mutex;
-    std::unordered_map<std::string, std::vector<json>> p2p_mailbox;
-    std::thread dataset_api_worker = startDatasetApiWorker(DatasetLanApiContext{
-        kAppVersion,
-        kProtocolVersion,
-        root,
-        &hydration_stop,
-        &p2p_mutex,
-        &p2p_mailbox
-    });
-    std::thread lan_discovery_worker = startLanDiscoveryWorker(DatasetLanApiContext{
-        kAppVersion,
-        kProtocolVersion,
-        root,
-        &hydration_stop,
-        &p2p_mutex,
-        &p2p_mailbox
-    });
+    }, background_services);
 
 
 
@@ -1503,12 +775,9 @@ int runWorldSim3App(int argc, char** argv) {
     ElementInfoUiState element_info_state{{}, (size_t)-1, false, owner_info_property_query, sizeof(owner_info_property_query)};
     ParcelSelectionState parcel_selection;
     bool& show_selected_parcel_details = parcel_selection.show_details;
-    size_t& selected_parcel_idx = parcel_selection.active_idx;
-    std::string& selected_parcel_stable_id = parcel_selection.active_stable_id;
-    auto& selected_parcel_indices = parcel_selection.indices;
-    auto& selected_parcel_index_set = parcel_selection.index_set;
-    auto& selected_parcel_stable_ids = parcel_selection.stable_ids;
-    auto& selected_parcel_stable_id_set = parcel_selection.stable_id_set;
+    std::string& selected_parcel_entity_id = parcel_selection.active_entity_id;
+    auto& selected_parcel_entity_ids = parcel_selection.entity_ids;
+    auto& selected_parcel_entity_id_set = parcel_selection.entity_id_set;
     auto& filter_zip = map_filter_state.zip;
     auto& crime_filter_enabled = map_filter_state.crime.enabled;
     auto& crime_filter_homicide = map_filter_state.crime.homicide;
@@ -1522,71 +791,22 @@ int runWorldSim3App(int argc, char** argv) {
     auto& crime_filter_use_year = map_filter_state.crime.use_year;
     auto& crime_year_min = map_filter_state.crime.year_min;
     auto& crime_year_max = map_filter_state.crime.year_max;
-    loadLayerBrowseUiState(
-        root,
-        &layer_browse_state.selected_nation_state,
-        &layer_browse_state.selected_state_region);
-    loadFilterUiState(
-        root,
-        &filter_enabled,
-        &filter_use_date,
-        &filter_year_min,
-        &filter_year_max,
-        filter_blocklot,
-        sizeof(filter_blocklot),
-        filter_status,
-        sizeof(filter_status),
-        filter_address,
-        sizeof(filter_address),
-        filter_owner,
-        sizeof(filter_owner),
-        filter_zip,
-        sizeof(filter_zip),
-        &crime_filter_enabled,
-        &crime_filter_homicide,
-        &crime_filter_robbery,
-        &crime_filter_assault,
-        &crime_filter_burglary,
-        &crime_filter_theft,
-        &crime_filter_auto_theft,
-        &crime_filter_drug,
-        &crime_filter_shooting,
-        &crime_filter_use_year,
-        &crime_year_min,
-        &crime_year_max,
+    AppUiStateBootstrapInput ui_state_bootstrap_input{
+        &root,
+        &layers,
+        &layer_browse_state,
+        &map_filter_state,
         owner_search_query,
         sizeof(owner_search_query),
-        &selected_owners,
-        &map_filter_state.event_sector_enabled);
-    loadQueryHistoryUiState(root, &query_history);
-    ensureCommunitySectorFilterDefaults(map_filter_state.event_sector_enabled);
-    loadMapUiState(
-        root,
+        &query_history,
         &center_lon,
         &center_lat,
         &zoom,
-        &selected_parcel_idx,
-        &selected_parcel_indices,
-        &selected_parcel_stable_id,
-        &selected_parcel_stable_ids);
-    auto resolve_active_zoning_layer_idx = [&]() -> int {
-        if (zoning_layer_idx >= 0 && (size_t)zoning_layer_idx < layers.size() &&
-            layers[(size_t)zoning_layer_idx].enabled && isZoningPolygonLayerApp(layers[(size_t)zoning_layer_idx])) {
-            return zoning_layer_idx;
-        }
-        for (size_t i = 0; i < layers.size(); ++i) {
-            if (layers[i].enabled && isZoningPolygonLayerApp(layers[i])) return (int)i;
-        }
-        return layer_registry.indices().zoning_layer_idx;
+        &zoning_layer_idx,
+        layer_registry.indices().zoning_layer_idx,
+        &parcel_selection
     };
-    zoning_layer_idx = resolve_active_zoning_layer_idx();
-    zoom = std::clamp(zoom, (double)kMinZoom, (double)kMaxZoom);
-    center_lat = std::clamp(center_lat, -85.0, 85.0);
-    selected_parcel_index_set.clear();
-    for (size_t idx : selected_parcel_indices) selected_parcel_index_set.insert(idx);
-    selected_parcel_stable_id_set.clear();
-    for (const std::string& stable_id : selected_parcel_stable_ids) selected_parcel_stable_id_set.insert(stable_id);
-    show_selected_parcel_details = !selected_parcel_indices.empty() && selected_parcel_idx != (size_t)-1;
+    loadPersistedAppUiState(ui_state_bootstrap_input);
     std::vector<std::pair<std::string, int>> crime_breakdown;
     std::vector<int> record_year_hist(201, 0); // 1900..2100
     std::vector<float> record_year_hist_plot(201, 0.0f);
@@ -1822,6 +1042,7 @@ int runWorldSim3App(int argc, char** argv) {
     bool active_color_editor_outline_target = false;
     bool pending_external_layer_fill_state_changed = false;
     bool pending_external_layer_heatmap_state_changed = false;
+    ParcelRenderCacheBlob& parcel_gpu_render_blob = parcel_runtime_state.render_blob;
 
     auto collect_numeric_layer_values = [&](const LayerDef& layer) {
         std::vector<double> values;
@@ -2351,7 +1572,7 @@ int runWorldSim3App(int argc, char** argv) {
             &api_control_mutex,
             &api_filter_control_cmd,
             &api_query_control_cmds,
-            &parcel_gpu_filter_state_key,
+            &parcel_runtime_state.filter_state_key,
             &api_ui_cmd_last_seq,
             &api_ui_mouse_release_pending,
             &api_ui_mouse_release_button,
@@ -2476,7 +1697,12 @@ int runWorldSim3App(int argc, char** argv) {
                 [&](size_t i, bool outline) { open_external_color_editor(i, outline); }
             });
         }
-        if (left_panel.geography_changed) zoning_layer_idx = resolve_active_zoning_layer_idx();
+        if (left_panel.geography_changed) {
+            zoning_layer_idx = resolveActiveZoningLayerIndex(
+                layers,
+                zoning_layer_idx,
+                layer_registry.indices().zoning_layer_idx);
+        }
         bool zoning_filters_changed = left_panel.zoning_filters_changed;
         bool event_sector_filters_changed = left_panel.event_sector_filters_changed;
         const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
@@ -2739,6 +1965,7 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.layers = &layers;
         derived_layer_caches_ctx.layer_states = &layer_states;
         derived_layer_caches_ctx.app_settings = &app_settings;
+        derived_layer_caches_ctx.duckdb_analytics = &duckdb_analytics;
         derived_layer_caches_ctx.zoning_layer_idx = zoning_layer_idx;
         derived_layer_caches_ctx.real_property_layer_idx = real_property_layer_idx;
         derived_layer_caches_ctx.vacant_notice_layer_idx = vacant_notice_layer_idx;
@@ -2746,7 +1973,7 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.tax_lien_layer_idx = tax_lien_layer_idx;
         derived_layer_caches_ctx.tax_sale_layer_idx = tax_sale_layer_idx;
         derived_layer_caches_ctx.parcel_layer_idx = parcel_layer_idx;
-        derived_layer_caches_ctx.parcel_render_blob = &parcel_gpu_render_blob;
+        derived_layer_caches_ctx.parcel_render_blob = &parcel_runtime_state.render_blob;
         derived_layer_caches_ctx.zoning_metadata = &zoning_metadata;
         derived_layer_caches_ctx.zoning_zone_enabled = &zoning_zone_enabled;
         derived_layer_caches_ctx.zoning_zone_color = &zoning_zone_color;
@@ -2920,1251 +2147,115 @@ int runWorldSim3App(int argc, char** argv) {
             return feature_render_cache;
         };
 
-        if (parcel_layer_idx >= 0 && (size_t)parcel_layer_idx < layers.size() &&
-            (size_t)parcel_layer_idx < layer_states.size()) {
-            const LayerDef& parcel_layer = layers[(size_t)parcel_layer_idx];
-            LayerRuntimeState& parcel_state = layer_states[(size_t)parcel_layer_idx];
-            if (gpu_profiler_reload_requested) {
-                clearGpuProfilerAlertState();
-                clearParcelGpuBuffers();
-                parcel_gpu_uploaded_signature.clear();
-                parcel_render_requested_signature.clear();
-                parcel_gpu_upload_requested_signature.clear();
-                parcel_gpu_filter_state_key = 0;
-                parcel_gpu_overlay_state_key = 0;
-                parcel_gpu_outline_state_key = 0;
-                parcel_gpu_last_base_colors.clear();
-                parcel_gpu_last_overlay_colors.clear();
-                parcel_gpu_last_outline_colors.clear();
-                gpu_profiler_reload_requested = false;
-            }
-            const bool parcel_ready =
-                parcel_state.status == LayerPipelineStatus::Ready &&
-                !parcel_state.hydration_source_signature.empty();
-            if (!parcel_ready) {
-                parcel_state.geometry_gpu_resident = false;
-                parcel_state.geometry_gpu_pick_ready = false;
-                if (parcel_geometry_locked_signature.empty()) {
-                    clearParcelGpuBuffers();
-                    parcel_gpu_uploaded_signature.clear();
-                    parcel_render_requested_signature.clear();
-                    parcel_gpu_upload_requested_signature.clear();
-                    parcel_gpu_filter_state_key = 0;
-                    parcel_gpu_overlay_state_key = 0;
-                    parcel_gpu_outline_state_key = 0;
-                    parcel_gpu_last_base_colors.clear();
-                    parcel_gpu_last_overlay_colors.clear();
-                    parcel_gpu_last_outline_colors.clear();
-                    parcel_gpu_render_blob = ParcelRenderCacheBlob{};
-                }
-            } else {
-                const std::string& sig = parcel_state.hydration_source_signature;
-                const fs::path render_cache_path =
-                    root / "data" / "cache" / "render" /
-                    (layerArtifactBasenameForFile(parcel_layer.file) + ".parcel-render.bin");
-                const bool parcel_geometry_refresh_allowed =
-                    parcel_geometry_locked_signature.empty() || sig == parcel_geometry_locked_signature;
-                if (!parcel_geometry_refresh_allowed) {
-                    if (parcel_geometry_restart_required_signature != sig) {
-                        std::fprintf(
-                            stderr,
-                            "[worldsim3] Parcel geometry source changed from %s to %s after startup. "
-                            "Parcel GPU geometry is session-static; restart required for geometry refresh.\n",
-                            parcel_geometry_locked_signature.c_str(),
-                            sig.c_str());
-                        parcel_geometry_restart_required_signature = sig;
-                    }
-                } else if (parcel_render_requested_signature != sig && parcel_gpu_uploaded_signature != sig) {
-                    {
-                        std::lock_guard<std::mutex> lk(parcel_render_req_mutex);
-                        parcel_render_requests.clear();
-                        parcel_render_requests.push_back(ParcelRenderCacheRequest{
-                            parcel_layer.file,
-                            sig,
-                            render_cache_path
-                        });
-                    }
-                    parcel_render_requested_signature = sig;
-                    parcel_render_cv.notify_one();
-                }
+        syncParcelGpuLayer(
+            ParcelRuntimeSyncInput{
+                .root = &root,
+                .app_settings = &app_settings,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .parcel_layer_idx = parcel_layer_idx,
+                .property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson"),
+                .vacant_notice_layer_idx = vacant_notice_layer_idx,
+                .vacant_rehab_layer_idx = vacant_rehab_layer_idx,
+                .tax_lien_layer_idx = tax_lien_layer_idx,
+                .tax_sale_layer_idx = tax_sale_layer_idx,
+                .parcel_parameter_mode = parcel_parameter_mode,
+                .layer_choropleth_gamma = &layer_choropleth_gamma,
+                .layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip,
+                .layer_normalize_mode = &layer_normalize_mode,
+                .layer_fill_enabled = &layer_fill_enabled,
+                .map_filter_state = &map_filter_state,
+                .parcel_jurisdiction_result_set = &parcel_jurisdiction_filter_state.result_set,
+                .query_layers = &query_layers,
+                .unified_parcels = &unified_parcels,
+                .parcel_vac_notice_by_feature = &parcel_vac_notice_by_feature,
+                .parcel_vac_rehab_by_feature = &parcel_vac_rehab_by_feature,
+                .parcel_tax_lien_by_feature = &parcel_tax_lien_by_feature,
+                .parcel_tax_sale_by_feature = &parcel_tax_sale_by_feature,
+                .selected_parcel_id_set = &selected_parcel_entity_id_set,
+                .gpu_profiler_reload_requested = &gpu_profiler_reload_requested,
+                .feature_render_state_key = feature_render_state_key,
+                .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+                    return ensure_frame_feature_render_cache();
+                },
+                .parcel_area_sq_m = [&](size_t parcel_idx) -> double {
+                    return parcel_area_sq_m(parcel_idx);
+                },
+            },
+            parcel_runtime_state);
 
-                if (parcel_geometry_refresh_allowed) {
-                    std::lock_guard<std::mutex> lk(parcel_render_result_mutex);
-                    while (!parcel_render_results.empty()) {
-                        ParcelRenderCacheResult result = std::move(parcel_render_results.front());
-                        parcel_render_results.pop_front();
-                        if (result.layer_file != parcel_layer.file || result.source_signature != sig) {
-                            continue;
-                        }
-                        if (!result.blob.features.empty()) {
-                            parcel_gpu_render_blob = std::move(result.blob);
-                            parcel_render_requested_signature.clear();
-                            if (parcel_gpu_upload_requested_signature != sig) {
-                                std::string gpu_error;
-                                if (requestParcelGpuUpload(parcel_gpu_render_blob, &gpu_error)) {
-                                    recordGpuProfilerEvent("parcel GPU upload requested");
-                                    parcel_gpu_upload_requested_signature = sig;
-                                } else {
-                                    std::fprintf(stderr, "[worldsim3] Parcel GPU upload request failed: %s\n", gpu_error.c_str());
-                                    recordGpuProfilerEvent("parcel GPU upload request failed");
-                                }
-                            }
-                        }
-                    }
-                }
-                if (parcel_geometry_refresh_allowed) {
-                    std::string adopted_signature;
-                    std::string upload_error;
-                    if (drainParcelGpuUploadResults(&sig, &adopted_signature, &upload_error)) {
-                        if (adopted_signature == sig) {
-                            parcel_gpu_uploaded_signature = sig;
-                            if (parcel_geometry_locked_signature.empty()) {
-                                parcel_geometry_locked_signature = sig;
-                            }
-                            parcel_geometry_restart_required_signature.clear();
-                            parcel_gpu_upload_requested_signature.clear();
-                            parcel_gpu_filter_state_key = 0;
-                            parcel_gpu_overlay_state_key = 0;
-                            parcel_gpu_outline_state_key = 0;
-                            parcel_gpu_last_base_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                            parcel_gpu_last_overlay_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                            parcel_gpu_last_outline_colors.assign(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        }
-                    } else if (!upload_error.empty()) {
-                        std::fprintf(stderr, "[worldsim3] Parcel GPU upload failed: %s\n", upload_error.c_str());
-                        recordGpuProfilerEvent("parcel GPU upload failed");
-                        parcel_gpu_upload_requested_signature.clear();
-                    }
-                }
-                if (parcel_gpu_uploaded_signature == sig &&
-                    parcel_geometry_refresh_allowed &&
-                    !parcel_gpu_render_blob.features.empty()) {
-                    parcel_state.geometry_gpu_resident = true;
-                    parcel_state.geometry_gpu_pick_ready = true;
-                    parcel_state.geometry_phase = "gpu_ready";
-                    auto hash_mix = [](uint64_t& h, uint64_t v) {
-                        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-                    };
-                    auto hash_cstr = [&](uint64_t& h, const char* s) {
-                        const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
-                        while (*p) {
-                            hash_mix(h, *p);
-                            ++p;
-                        }
-                    };
-                    auto hash_f32 = [&](uint64_t& h, float value) {
-                        uint32_t bits = 0;
-                        std::memcpy(&bits, &value, sizeof(bits));
-                        hash_mix(h, bits);
-                    };
-                    uint64_t color_state_key = 1469598103934665603ULL;
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_min);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.year_max);
-                    hash_cstr(color_state_key, map_filter_state.blocklot);
-                    hash_cstr(color_state_key, map_filter_state.status);
-                    hash_cstr(color_state_key, map_filter_state.address);
-                    hash_cstr(color_state_key, map_filter_state.owner);
-                    hash_cstr(color_state_key, map_filter_state.zip);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.selected_owners.size());
-                    for (const auto& owner : map_filter_state.selected_owners) {
-                        for (unsigned char ch : owner) hash_mix(color_state_key, ch);
-                    }
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.active);
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.features.size());
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.blocklots.size());
-                    hash_mix(color_state_key, (uint64_t)parcel_jurisdiction_filter_state.result_set.owners.size());
-                    hash_mix(color_state_key, (uint64_t)query_layers.size());
-                    for (const auto& ql : query_layers) {
-                        hash_mix(color_state_key, (uint64_t)ql.enabled);
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.active);
-                        hash_mix(color_state_key, (uint64_t)ql.row_count);
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.blocklots.size());
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.owners.size());
-                        for (float c : ql.color) {
-                            uint32_t bits = 0;
-                            std::memcpy(&bits, &c, sizeof(bits));
-                            hash_mix(color_state_key, bits);
-                        }
-                    }
-                    uint64_t overlay_state_key = color_state_key;
-                    hash_mix(overlay_state_key, (uint64_t)parcel_parameter_mode);
-                    hash_mix(color_state_key, (uint64_t)parcel_parameter_mode);
-                    uint32_t gamma_bits = 0;
-                    if ((size_t)parcel_layer_idx < layer_choropleth_gamma.size()) {
-                        std::memcpy(&gamma_bits, &layer_choropleth_gamma[(size_t)parcel_layer_idx], sizeof(gamma_bits));
-                    }
-                    uint32_t polygon_fill_opacity_bits = 0;
-                    std::memcpy(
-                        &polygon_fill_opacity_bits,
-                        &app_settings.map_polygon_fill_opacity,
-                        sizeof(polygon_fill_opacity_bits));
-                    hash_mix(overlay_state_key, gamma_bits);
-                    hash_mix(color_state_key, gamma_bits);
-                    hash_mix(color_state_key, polygon_fill_opacity_bits);
-                    hash_mix(overlay_state_key, (uint64_t)layer_fill_enabled.size());
-                    hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_notice_layer_idx] : false));
-                    hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)vacant_rehab_layer_idx] : false));
-                    hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)tax_lien_layer_idx] : false));
-                    hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)tax_sale_layer_idx] : false));
-                    hash_mix(overlay_state_key, (uint64_t)layers[(size_t)parcel_layer_idx].enabled);
-                    hash_mix(overlay_state_key, (uint64_t)(vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size() ? layers[(size_t)vacant_notice_layer_idx].enabled : false));
-                    hash_mix(overlay_state_key, (uint64_t)(vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size() ? layers[(size_t)vacant_rehab_layer_idx].enabled : false));
-                    hash_mix(overlay_state_key, (uint64_t)(tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size() ? layers[(size_t)tax_lien_layer_idx].enabled : false));
-                    hash_mix(overlay_state_key, (uint64_t)(tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size() ? layers[(size_t)tax_sale_layer_idx].enabled : false));
-                    hash_mix(overlay_state_key, (uint64_t)selected_parcel_indices.size());
-                    for (size_t selected_idx : selected_parcel_indices) hash_mix(overlay_state_key, (uint64_t)selected_idx);
-                    uint64_t outline_state_key = overlay_state_key;
+        syncZoningGpuLayers(
+            ZoningRuntimeSyncInput{
+                .root = &root,
+                .app_settings = &app_settings,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .parcel_layer_idx = parcel_layer_idx,
+                .map_filter_state = &map_filter_state,
+                .query_layers = &query_layers,
+                .zoning_zone_enabled = &zoning_zone_enabled,
+                .zoning_zone_color = &zoning_zone_color,
+                .layer_fill_enabled = &layer_fill_enabled,
+                .feature_render_state_key = feature_render_state_key,
+                .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+                    return ensure_frame_feature_render_cache();
+                },
+            },
+            zoning_runtime_state);
 
-                    const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
-                    hash_mix(color_state_key, feature_render_state_key);
-                    hash_mix(overlay_state_key, feature_render_state_key);
-                    hash_mix(outline_state_key, feature_render_state_key);
-                    const int property_value_layer_idx = layer_registry.findLayerByFile("property_value_parcels.geojson");
-                    auto hash_state_f32 = [&](uint64_t& h, float value) {
-                        uint32_t bits = 0;
-                        std::memcpy(&bits, &value, sizeof(bits));
-                        hash_mix(h, bits);
-                    };
-                    hash_mix(color_state_key, (uint64_t)layers[(size_t)parcel_layer_idx].enabled);
-                    hash_mix(color_state_key, (uint64_t)((size_t)parcel_layer_idx < layer_fill_enabled.size() ? layer_fill_enabled[(size_t)parcel_layer_idx] : false));
-                    hash_state_f32(color_state_key, parcel_layer.color.x);
-                    hash_state_f32(color_state_key, parcel_layer.color.y);
-                    hash_state_f32(color_state_key, parcel_layer.color.z);
-                    hash_state_f32(color_state_key, parcel_layer.color.w);
+        syncCrimePointGpuLayer(
+            CrimePointRuntimeSyncInput{
+                .root = &root,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .crime_nibrs_layer_idx = crime_nibrs_layer_idx,
+                .map_filter_state = &map_filter_state,
+                .query_layers = &query_layers,
+                .feature_render_state_key = feature_render_state_key,
+                .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+                    return ensure_frame_feature_render_cache();
+                },
+            },
+            crime_point_runtime_state);
 
-                    if (color_state_key != parcel_gpu_filter_state_key) {
-                        std::vector<ImU32> parcel_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
-                        const bool value_choropleth_enabled =
-                            (parcel_parameter_mode == 2 || parcel_parameter_mode == 3) && layers[(size_t)parcel_layer_idx].enabled;
-                        const size_t parcel_value_control_layer_idx =
-                            property_value_layer_idx >= 0 ? (size_t)property_value_layer_idx : (size_t)parcel_layer_idx;
-                        const float parcel_gamma =
-                            parcel_value_control_layer_idx < layer_choropleth_gamma.size()
-                                ? layer_choropleth_gamma[parcel_value_control_layer_idx]
-                                : 1.0f;
-                        const float parcel_clip =
-                            parcel_value_control_layer_idx < layer_heatmap_percentile_clip.size()
-                                ? layer_heatmap_percentile_clip[parcel_value_control_layer_idx]
-                                : 100.0f;
-                        const int parcel_normalize_mode =
-                            parcel_value_control_layer_idx < layer_normalize_mode.size()
-                                ? std::clamp(layer_normalize_mode[parcel_value_control_layer_idx], 0, 3)
-                                : 1;
-                        auto current_value_at = [&](size_t parcel_idx) -> double {
-                            const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
-                            return rec ? rec->current_value : 0.0;
-                        };
-                        auto current_value_per_area_at = [&](size_t parcel_idx) -> double {
-                            const double area = parcel_area_sq_m(parcel_idx);
-                            if (!(area > 0.0) || !std::isfinite(area)) return 0.0;
-                            const double value = current_value_at(parcel_idx);
-                            return value > 0.0 && std::isfinite(value) ? value / area : 0.0;
-                        };
-                        std::vector<double> value_samples;
-                        if (value_choropleth_enabled) {
-                            value_samples.reserve(parcel_gpu_render_blob.features.size());
-                            for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
-                                const uint32_t feature_idx = rec.feature_idx;
-                                const FeatureRenderState* render_state =
-                                    findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                                if (render_state && !render_state->visible) continue;
-                                const double v = parcel_parameter_mode == 3
-                                    ? current_value_per_area_at(feature_idx)
-                                    : current_value_at(feature_idx);
-                                if (v > 0.0 && std::isfinite(v)) value_samples.push_back(v);
-                            }
-                        }
-                        const ApproxHistogram value_hist = buildApproxHistogram(value_samples, parcel_clip);
-                        const bool value_range_valid = value_choropleth_enabled && value_hist.rangeValid();
-                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
-                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            const FeatureRenderState* render_state =
-                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (render_state && !render_state->visible) {
-                                parcel_colors[i] = IM_COL32(0, 0, 0, 0);
-                                continue;
-                            }
-                            if (value_range_valid) {
-                                const double v = parcel_parameter_mode == 3
-                                    ? current_value_per_area_at(feature_idx)
-                                    : current_value_at(feature_idx);
-                                if (v > 0.0 && std::isfinite(v)) {
-                                    const float normalized =
-                                        parcel_normalize_mode == 0
-                                            ? value_hist.normalizeLinear(v)
-                                            : (parcel_normalize_mode == 3 ? value_hist.normalizeEqualCountZones(v) : value_hist.normalizeApproxPercentile(v));
-                                    const float t = applyPowerGamma(
-                                        normalized,
-                                        parcel_gamma);
-                                    parcel_colors[i] = mapPolygonFillColor(
-                                        ImGui::ColorConvertFloat4ToU32(heatColor(t)),
-                                        app_settings.map_polygon_fill_opacity);
-                                    continue;
-                                }
-                            }
-                            if (render_state && render_state->has_query_color) {
-                                parcel_colors[i] = mapPolygonFillColor(
-                                    render_state->query_color,
-                                    app_settings.map_polygon_fill_opacity);
-                            } else {
-                                parcel_colors[i] = mapPolygonFillColor(base_color, app_settings.map_polygon_fill_opacity);
-                            }
-                        }
-                        std::string color_error;
-                        if (updateParcelGpuColorBuffer(parcel_colors, &color_error)) {
-                            parcel_gpu_filter_state_key = color_state_key;
-                            parcel_gpu_last_base_colors = parcel_colors;
-                        }
-                    }
-                    const ImVec4 lien_c =
-                        (tax_lien_layer_idx >= 0 && (size_t)tax_lien_layer_idx < layers.size())
-                            ? layers[(size_t)tax_lien_layer_idx].color
-                            : ImVec4(0.95f, 0.55f, 0.1f, 1.0f);
-                    const ImVec4 sale_c =
-                        (tax_sale_layer_idx >= 0 && (size_t)tax_sale_layer_idx < layers.size())
-                            ? layers[(size_t)tax_sale_layer_idx].color
-                            : ImVec4(0.85f, 0.2f, 0.1f, 1.0f);
-                    const ImVec4 notice_c =
-                        (vacant_notice_layer_idx >= 0 && (size_t)vacant_notice_layer_idx < layers.size())
-                            ? layers[(size_t)vacant_notice_layer_idx].color
-                            : ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-                    const ImVec4 rehab_c =
-                        (vacant_rehab_layer_idx >= 0 && (size_t)vacant_rehab_layer_idx < layers.size())
-                            ? layers[(size_t)vacant_rehab_layer_idx].color
-                            : ImVec4(0.0f, 1.0f, 1.0f, 1.0f);
-                    hash_state_f32(overlay_state_key, notice_c.x);
-                    hash_state_f32(overlay_state_key, notice_c.y);
-                    hash_state_f32(overlay_state_key, notice_c.z);
-                    hash_state_f32(overlay_state_key, notice_c.w);
-                    hash_state_f32(overlay_state_key, rehab_c.x);
-                    hash_state_f32(overlay_state_key, rehab_c.y);
-                    hash_state_f32(overlay_state_key, rehab_c.z);
-                    hash_state_f32(overlay_state_key, rehab_c.w);
-                    hash_state_f32(overlay_state_key, lien_c.x);
-                    hash_state_f32(overlay_state_key, lien_c.y);
-                    hash_state_f32(overlay_state_key, lien_c.z);
-                    hash_state_f32(overlay_state_key, lien_c.w);
-                    hash_state_f32(overlay_state_key, sale_c.x);
-                    hash_state_f32(overlay_state_key, sale_c.y);
-                    hash_state_f32(overlay_state_key, sale_c.z);
-                    hash_state_f32(overlay_state_key, sale_c.w);
-                    outline_state_key = overlay_state_key;
+        syncPointGpuLayers(
+            PointLayerRuntimeSyncInput{
+                .root = &root,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .map_filter_state = &map_filter_state,
+                .query_layers = &query_layers,
+                .feature_render_state_key = feature_render_state_key,
+                .crime_nibrs_layer_idx = crime_nibrs_layer_idx,
+                .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+                    return ensure_frame_feature_render_cache();
+                },
+            },
+            point_layer_runtime_state);
 
-                    if (overlay_state_key != parcel_gpu_overlay_state_key) {
-                        auto layer_fill_enabled_at = [&](int idx) -> bool {
-                            return idx >= 0 && (size_t)idx < layer_fill_enabled.size() && layer_fill_enabled[(size_t)idx];
-                        };
-                        auto layer_enabled_at = [&](int idx) -> bool {
-                            return idx >= 0 && (size_t)idx < layers.size() && layers[(size_t)idx].enabled;
-                        };
-                        auto value_at = [](const std::vector<int>& values, size_t idx) -> int {
-                            return idx < values.size() ? values[idx] : 0;
-                        };
-                        auto parameter_value = [&](size_t parcel_idx) -> double {
-                            switch (parcel_parameter_mode) {
-                                case 1:
-                                    return parcel_area_sq_m(parcel_idx);
-                                case 2: {
-                                    const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
-                                    return rec ? rec->current_value : 0.0;
-                                }
-                                case 3: {
-                                    const UnifiedParcelRecord* rec = unifiedParcelAt(unified_parcels, parcel_idx);
-                                    const double area = parcel_area_sq_m(parcel_idx);
-                                    if (!rec || !(area > 0.0) || !std::isfinite(area)) return 0.0;
-                                    return rec->current_value > 0.0 && std::isfinite(rec->current_value)
-                                        ? rec->current_value / area
-                                        : 0.0;
-                                }
-                                default:
-                                    return 0.0;
-                            }
-                        };
-                        std::vector<ImU32> overlay_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const bool parameter_fill_enabled = parcel_parameter_mode == 1 && layer_enabled_at(parcel_layer_idx);
-                        const bool vacancy_fill_enabled =
-                            (layer_enabled_at(vacant_notice_layer_idx) || layer_enabled_at(vacant_rehab_layer_idx)) &&
-                            (layer_fill_enabled_at(vacant_notice_layer_idx) || layer_fill_enabled_at(vacant_rehab_layer_idx));
-                        const bool tax_fill_enabled =
-                            (layer_enabled_at(tax_lien_layer_idx) || layer_enabled_at(tax_sale_layer_idx)) &&
-                            (layer_fill_enabled_at(tax_lien_layer_idx) || layer_fill_enabled_at(tax_sale_layer_idx));
-                        std::vector<double> parameter_samples;
-                        if (parameter_fill_enabled) {
-                            parameter_samples.reserve(parcel_gpu_render_blob.features.size());
-                            for (const ParcelRenderFeatureRecord& rec : parcel_gpu_render_blob.features) {
-                                const uint32_t feature_idx = rec.feature_idx;
-                                const FeatureRenderState* render_state =
-                                    findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                                if (render_state && !render_state->visible) continue;
-                                const double v = parameter_value(feature_idx);
-                                if (v > 0.0 && std::isfinite(v)) parameter_samples.push_back(v);
-                            }
-                        }
-                        const float parameter_clip =
-                            (size_t)parcel_layer_idx < layer_heatmap_percentile_clip.size()
-                                ? layer_heatmap_percentile_clip[(size_t)parcel_layer_idx]
-                                : 100.0f;
-                        const int parameter_normalize_mode =
-                            (size_t)parcel_layer_idx < layer_normalize_mode.size()
-                                ? std::clamp(layer_normalize_mode[(size_t)parcel_layer_idx], 0, 3)
-                                : 1;
-                        const ApproxHistogram parameter_hist = buildApproxHistogram(parameter_samples, parameter_clip);
-                        const bool parameter_range_valid = parameter_fill_enabled && parameter_hist.rangeValid();
-                        const ImU32 selected_overlay = IM_COL32(255, 230, 0, 112);
-                        const float parcel_gamma =
-                            (size_t)parcel_layer_idx < layer_choropleth_gamma.size()
-                                ? layer_choropleth_gamma[(size_t)parcel_layer_idx]
-                                : 1.0f;
-                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
-                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            const FeatureRenderState* render_state =
-                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (render_state && !render_state->visible) {
-                                continue;
-                            }
-                            ImU32 overlay = IM_COL32(0, 0, 0, 0);
-                            if (parameter_range_valid) {
-                                const double v = parameter_value(feature_idx);
-                                if (v > 0.0 && std::isfinite(v)) {
-                                    const float normalized =
-                                        parameter_normalize_mode == 0
-                                            ? parameter_hist.normalizeLinear(v)
-                                            : (parameter_normalize_mode == 3 ? parameter_hist.normalizeEqualCountZones(v) : parameter_hist.normalizeApproxPercentile(v));
-                                    const float t = applyPowerGamma(
-                                        normalized,
-                                        parcel_gamma);
-                                    overlay = colorWithAlpha(heatColor(t), 150);
-                                }
-                            }
-                            const int vac_notice = value_at(parcel_vac_notice_by_feature, feature_idx);
-                            const int vac_rehab = value_at(parcel_vac_rehab_by_feature, feature_idx);
-                            const int vac_weight = overlayWeight(
-                                layer_enabled_at(vacant_notice_layer_idx), vac_notice,
-                                layer_enabled_at(vacant_rehab_layer_idx), vac_rehab);
-                            if (vacancy_fill_enabled && vac_weight > 0) {
-                                const int alpha = scaledOverlayAlpha(120, 18, 120, 230, vac_weight);
-                                const ImVec4 vac_base = blendVacancyColor(
-                                    notice_c,
-                                    rehab_c,
-                                    vac_notice,
-                                    vac_rehab);
-                                overlay = colorWithAlpha(vac_base, alpha);
-                            }
-                            const int lien_count = value_at(parcel_tax_lien_by_feature, feature_idx);
-                            const int sale_count = value_at(parcel_tax_sale_by_feature, feature_idx);
-                            const int tax_weight = overlayWeight(
-                                layer_enabled_at(tax_lien_layer_idx), lien_count,
-                                layer_enabled_at(tax_sale_layer_idx), sale_count);
-                            if (tax_fill_enabled && tax_weight > 0) {
-                                const int alpha = scaledOverlayAlpha(90, 10, 90, 210, tax_weight);
-                                const ImVec4 tax_base = blendTaxColor(
-                                    lien_c,
-                                    sale_c,
-                                    layer_enabled_at(tax_lien_layer_idx),
-                                    layer_enabled_at(tax_sale_layer_idx),
-                                    lien_count,
-                                    sale_count);
-                                overlay = colorWithAlpha(tax_base, alpha);
-                            }
-                            if (selected_parcel_index_set.find((size_t)feature_idx) != selected_parcel_index_set.end()) {
-                                overlay = selected_overlay;
-                            }
-                            overlay_colors[i] = overlay;
-                        }
-                        std::string overlay_error;
-                        if (updateParcelGpuOverlayColorBuffer(overlay_colors, &overlay_error)) {
-                            parcel_gpu_overlay_state_key = overlay_state_key;
-                            parcel_gpu_last_overlay_colors = overlay_colors;
-                        }
-                    }
-                    if (outline_state_key != parcel_gpu_outline_state_key) {
-                        std::vector<ImU32> outline_colors(parcel_gpu_render_blob.features.size(), IM_COL32(0, 0, 0, 0));
-                        const ImU32 selected_outline = IM_COL32(255, 240, 64, 255);
-                        for (size_t i = 0; i < parcel_gpu_render_blob.features.size(); ++i) {
-                            const uint32_t feature_idx = parcel_gpu_render_blob.features[i].feature_idx;
-                            const FeatureRenderState* render_state =
-                                findFeatureRenderState(cached_feature_render, (size_t)parcel_layer_idx, feature_idx);
-                            if (render_state && !render_state->visible) {
-                                continue;
-                            }
-                            if (selected_parcel_index_set.find((size_t)feature_idx) != selected_parcel_index_set.end()) {
-                                outline_colors[i] = selected_outline;
-                                continue;
-                            }
-                            ImU32 outline =
-                                i < parcel_gpu_last_base_colors.size()
-                                    ? parcel_gpu_last_base_colors[i]
-                                    : ImGui::ColorConvertFloat4ToU32(parcel_layer.color);
-                            const ImU32 overlay_fill =
-                                i < parcel_gpu_last_overlay_colors.size()
-                                    ? parcel_gpu_last_overlay_colors[i]
-                                    : IM_COL32(0, 0, 0, 0);
-                            if ((overlay_fill >> 24) != 0) {
-                                const ImVec4 overlay_v = ImGui::ColorConvertU32ToFloat4(overlay_fill);
-                                outline = colorWithAlpha(darkenColor(overlay_v, 0.60f), 235);
-                            } else {
-                                ImVec4 base_v = ImGui::ColorConvertU32ToFloat4(outline);
-                                outline = colorWithAlpha(darkenColor(base_v, 0.72f), 220);
-                            }
-                            outline_colors[i] = outline;
-                        }
-                        std::string outline_error;
-                        if (updateParcelGpuOutlineColorBuffer(outline_colors, &outline_error)) {
-                            parcel_gpu_outline_state_key = outline_state_key;
-                        }
-                    }
-                }
-            }
-        }
+        syncPolylineGpuLayers(
+            PolylineLayerRuntimeSyncInput{
+                .root = &root,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .map_filter_state = &map_filter_state,
+                .query_layers = &query_layers,
+                .feature_render_state_key = feature_render_state_key,
+                .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+                    return ensure_frame_feature_render_cache();
+                },
+            },
+            polyline_layer_runtime_state);
 
-        {
-            auto is_zoning_polygon_layer = [&](const LayerDef& layer) {
-                if (layerUsesPointGeometry(layer)) return false;
-                if (layer.category == LayerDef::Category::Zoning) return true;
-                const std::string file_lower = toLowerAscii(layer.file);
-                const std::string name_lower = toLowerAscii(layer.name);
-                return file_lower.find("zoning") != std::string::npos ||
-                       name_lower.find("zoning") != std::string::npos;
-            };
-            auto build_polygon_gpu_blob = [&](const PolygonGeometryArtifact& artifact, ParcelRenderCacheBlob& out) {
-                out = ParcelRenderCacheBlob{};
-                out.source_signature = artifact.header.source_signature;
-                out.vertices = artifact.vertices;
-                out.vertex_feature_refs = artifact.feature_refs;
-                out.indices = artifact.fill_indices;
-                if (out.indices.empty() && !out.vertices.empty()) out.indices.push_back(0);
-                out.line_indices = artifact.line_indices;
-                out.features.reserve(artifact.features.size());
-                for (const GeometryArtifactFeatureRecord& rec : artifact.features) {
-                    ParcelRenderFeatureRecord dst;
-                    dst.feature_idx = rec.feature_idx;
-                    dst.vertex_offset = rec.vertex_offset;
-                    dst.vertex_count = rec.vertex_count;
-                    dst.index_offset = rec.index_offset;
-                    dst.index_count = rec.index_count;
-                    dst.line_index_offset = rec.aux_index_offset;
-                    dst.line_index_count = rec.aux_index_count;
-                    dst.min_lon = rec.min_lon;
-                    dst.min_lat = rec.min_lat;
-                    dst.max_lon = rec.max_lon;
-                    dst.max_lat = rec.max_lat;
-                    out.features.push_back(dst);
-                }
-                out.chunks.reserve(artifact.chunks.size());
-                for (const GeometryArtifactChunkRecord& rec : artifact.chunks) {
-                    ParcelRenderChunkRecord dst;
-                    dst.chunk_idx = rec.chunk_idx;
-                    dst.feature_offset = rec.feature_offset;
-                    dst.feature_count = rec.feature_count;
-                    dst.vertex_offset = rec.vertex_offset;
-                    dst.vertex_count = rec.vertex_count;
-                    dst.index_offset = rec.index_offset;
-                    dst.index_count = rec.index_count;
-                    dst.line_index_offset = rec.aux_index_offset;
-                    dst.line_index_count = rec.aux_index_count;
-                    dst.min_lon = rec.min_lon;
-                    dst.min_lat = rec.min_lat;
-                    dst.max_lon = rec.max_lon;
-                    dst.max_lat = rec.max_lat;
-                    out.chunks.push_back(dst);
-                }
-                return
-                    !out.vertices.empty() &&
-                    !out.vertex_feature_refs.empty() &&
-                    !out.indices.empty() &&
-                    !out.line_indices.empty() &&
-                    !out.features.empty();
-            };
-            auto hash_mix = [](uint64_t& h, uint64_t v) {
-                h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            };
-            auto hash_cstr = [&](uint64_t& h, const char* s) {
-                const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
-                while (*p) {
-                    hash_mix(h, *p);
-                    ++p;
-                }
-            };
-            auto hash_f32 = [&](uint64_t& h, float value) {
-                uint32_t bits = 0;
-                std::memcpy(&bits, &value, sizeof(bits));
-                hash_mix(h, bits);
-            };
-
-            for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
-                const LayerDef& layer = layers[li];
-                LayerRuntimeState& state = layer_states[li];
-                const bool polygon_gpu_ready =
-                    layer.enabled &&
-                    !layerUsesPointGeometry(layer) &&
-                    !layerUsesPolylineGeometry(layer) &&
-                    (int)li != parcel_layer_idx &&
-                    state.status == LayerPipelineStatus::Ready &&
-                    !state.hydration_source_signature.empty();
-                if (!polygon_gpu_ready) {
-                    clearZoningGpuBuffers(li);
-                    clearZoningGpuDrawState(li);
-                    zoning_gpu_uploaded_signatures.erase(li);
-                    zoning_gpu_color_state_keys.erase(li);
-                    zoning_gpu_outline_state_keys.erase(li);
-                    zoning_gpu_last_base_colors.erase(li);
-                    zoning_gpu_last_outline_colors.erase(li);
-                    zoning_gpu_render_blobs.erase(li);
-                    if (state.geometry_artifact_class == GeometryArtifactClass::Polygon) {
-                        state.geometry_gpu_resident = false;
-                    }
-                    continue;
-                }
-
-                const std::string zoning_signature =
-                    std::to_string(li) + ":" + state.hydration_source_signature;
-                if (zoning_gpu_uploaded_signatures[li] != zoning_signature) {
-                    const fs::path artifact_path =
-                        geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polygon);
-                    PolygonGeometryArtifact artifact;
-                    ParcelRenderCacheBlob blob;
-                    if (!loadBinaryPolygonGeometryArtifact(artifact_path, state.hydration_source_signature, artifact) ||
-                        (!layer.features.empty() && artifact.features.size() != layer.features.size()) ||
-                        !build_polygon_gpu_blob(artifact, blob)) {
-                        clearZoningGpuBuffers(li);
-                        clearZoningGpuDrawState(li);
-                        zoning_gpu_uploaded_signatures.erase(li);
-                        zoning_gpu_color_state_keys.erase(li);
-                        zoning_gpu_outline_state_keys.erase(li);
-                        zoning_gpu_last_base_colors.erase(li);
-                        zoning_gpu_last_outline_colors.erase(li);
-                        zoning_gpu_render_blobs.erase(li);
-                        state.geometry_gpu_resident = false;
-                        continue;
-                    }
-                    blob.source_signature = zoning_signature;
-                    std::string zoning_error;
-                    if (ensureZoningGpuBuffersResident(li, blob, &zoning_error)) {
-                        zoning_gpu_render_blobs[li] = std::move(blob);
-                        zoning_gpu_uploaded_signatures[li] = zoning_signature;
-                        zoning_gpu_color_state_keys.erase(li);
-                        zoning_gpu_outline_state_keys.erase(li);
-                        zoning_gpu_last_base_colors[li].assign(zoning_gpu_render_blobs[li].features.size(), IM_COL32(0, 0, 0, 0));
-                        zoning_gpu_last_outline_colors[li].assign(zoning_gpu_render_blobs[li].features.size(), IM_COL32(0, 0, 0, 0));
-                    } else {
-                        std::fprintf(stderr, "[worldsim3] Polygon GPU upload failed for layer %zu (%s): %s\n",
-                            li, layer.name.c_str(), zoning_error.c_str());
-                        clearZoningGpuBuffers(li);
-                        clearZoningGpuDrawState(li);
-                        zoning_gpu_uploaded_signatures.erase(li);
-                        zoning_gpu_color_state_keys.erase(li);
-                        zoning_gpu_outline_state_keys.erase(li);
-                        zoning_gpu_last_base_colors.erase(li);
-                        zoning_gpu_last_outline_colors.erase(li);
-                        zoning_gpu_render_blobs.erase(li);
-                        state.geometry_gpu_resident = false;
-                        continue;
-                    }
-                }
-
-                auto blob_it = zoning_gpu_render_blobs.find(li);
-                if (blob_it == zoning_gpu_render_blobs.end() || blob_it->second.features.empty()) {
-                    state.geometry_gpu_resident = false;
-                    continue;
-                }
-                const ParcelRenderCacheBlob& blob = blob_it->second;
-                state.geometry_gpu_resident = true;
-                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
-
-                uint64_t color_state_key = 1469598103934665603ULL;
-                hash_mix(color_state_key, feature_render_state_key);
-                hash_cstr(color_state_key, zoning_signature.c_str());
-                hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.use_date);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.year_min);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.year_max);
-                hash_cstr(color_state_key, map_filter_state.blocklot);
-                hash_cstr(color_state_key, map_filter_state.status);
-                hash_cstr(color_state_key, map_filter_state.address);
-                hash_cstr(color_state_key, map_filter_state.owner);
-                hash_cstr(color_state_key, map_filter_state.zip);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.selected_owners.size());
-                for (const auto& owner : map_filter_state.selected_owners) {
-                    for (unsigned char ch : owner) hash_mix(color_state_key, ch);
-                }
-                hash_mix(color_state_key, (uint64_t)query_layers.size());
-                for (const auto& ql : query_layers) {
-                    hash_mix(color_state_key, (uint64_t)ql.enabled);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.active);
-                    hash_mix(color_state_key, (uint64_t)ql.row_count);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
-                    for (float c : ql.color) hash_f32(color_state_key, c);
-                }
-                hash_mix(color_state_key, (uint64_t)zoning_zone_enabled.size());
-                for (const auto& [zone_key, enabled] : zoning_zone_enabled) {
-                    for (unsigned char ch : zone_key) hash_mix(color_state_key, ch);
-                    hash_mix(color_state_key, (uint64_t)enabled);
-                }
-                hash_mix(color_state_key, (uint64_t)zoning_zone_color.size());
-                for (const auto& [zone_key, color] : zoning_zone_color) {
-                    for (unsigned char ch : zone_key) hash_mix(color_state_key, ch);
-                    hash_f32(color_state_key, color.x);
-                    hash_f32(color_state_key, color.y);
-                    hash_f32(color_state_key, color.z);
-                    hash_f32(color_state_key, color.w);
-                }
-                hash_mix(color_state_key, (uint64_t)layer_fill_enabled[li]);
-                hash_f32(color_state_key, layer.color.x);
-                hash_f32(color_state_key, layer.color.y);
-                hash_f32(color_state_key, layer.color.z);
-                hash_f32(color_state_key, layer.color.w);
-                hash_f32(color_state_key, app_settings.map_polygon_fill_opacity);
-                uint64_t outline_state_key = color_state_key;
-                hash_f32(outline_state_key, layer.outline_color.x);
-                hash_f32(outline_state_key, layer.outline_color.y);
-                hash_f32(outline_state_key, layer.outline_color.z);
-                hash_f32(outline_state_key, layer.outline_color.w);
-
-                if (zoning_gpu_color_state_keys[li] != color_state_key) {
-                    std::vector<ImU32> zoning_colors(blob.features.size(), IM_COL32(0, 0, 0, 0));
-                    const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                    for (size_t i = 0; i < blob.features.size(); ++i) {
-                        const uint32_t feature_idx = blob.features[i].feature_idx;
-                        if (!(li < layer_fill_enabled.size() && layer_fill_enabled[li])) continue;
-                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
-                        if (render_state && !render_state->visible) continue;
-                        ImU32 color = base_color;
-                        if ((size_t)feature_idx < layer.features.size() && is_zoning_polygon_layer(layer)) {
-                            const LayerDef::FeatureRecord& fg = layer.features[(size_t)feature_idx];
-                            const std::string zkey = zoningClassKey(fg);
-                            auto it_col = zoning_zone_color.find(zkey);
-                            if (it_col != zoning_zone_color.end()) {
-                                color = ImGui::ColorConvertFloat4ToU32(it_col->second);
-                            }
-                        }
-                        if (render_state && render_state->has_query_color) color = render_state->query_color;
-                        zoning_colors[i] = mapPolygonFillColor(color, app_settings.map_polygon_fill_opacity);
-                    }
-                    std::string color_error;
-                    if (updateZoningGpuColorBuffer(li, zoning_colors, &color_error)) {
-                        zoning_gpu_color_state_keys[li] = color_state_key;
-                        zoning_gpu_last_base_colors[li] = std::move(zoning_colors);
-                    }
-                }
-                if (zoning_gpu_outline_state_keys[li] != outline_state_key) {
-                    std::vector<ImU32> outline_colors(blob.features.size(), IM_COL32(0, 0, 0, 0));
-                    const ImU32 outline_color = ImGui::ColorConvertFloat4ToU32(layer.outline_color);
-                    for (size_t i = 0; i < blob.features.size(); ++i) {
-                        const uint32_t feature_idx = blob.features[i].feature_idx;
-                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, (size_t)feature_idx);
-                        if (render_state && !render_state->visible) continue;
-                        outline_colors[i] = outline_color;
-                    }
-                    std::string outline_error;
-                    if (updateZoningGpuOutlineColorBuffer(li, outline_colors, &outline_error)) {
-                        zoning_gpu_outline_state_keys[li] = outline_state_key;
-                        zoning_gpu_last_outline_colors[li] = std::move(outline_colors);
-                    }
-                }
-            }
-        }
-
-        if (crime_nibrs_layer_idx >= 0 &&
-            (size_t)crime_nibrs_layer_idx < layers.size() &&
-            (size_t)crime_nibrs_layer_idx < layer_states.size()) {
-            const LayerDef& crime_layer = layers[(size_t)crime_nibrs_layer_idx];
-            LayerRuntimeState& crime_state = layer_states[(size_t)crime_nibrs_layer_idx];
-            const fs::path crime_artifact_path =
-                geometryArtifactCachePathForLayerFile(root, crime_layer.file, GeometryArtifactClass::Point);
-            crime_state.geometry_artifact_class = GeometryArtifactClass::Point;
-            crime_state.geometry_artifact_path = crime_artifact_path.string();
-            const bool crime_ready =
-                crime_layer.enabled &&
-                crime_state.status == LayerPipelineStatus::Ready &&
-                !crime_state.hydration_source_signature.empty();
-            if (!crime_ready) {
-                crime_state.geometry_source_signature.clear();
-                crime_state.geometry_phase.clear();
-                crime_state.geometry_loaded_from_artifact = false;
-                crime_state.geometry_gpu_resident = false;
-                clearCrimePointGpuBuffers();
-                clearCrimePointGpuDrawState();
-                crime_point_gpu_uploaded_signature.clear();
-                crime_point_gpu_color_state_key = 0;
-                crime_point_gpu_artifact = PointGeometryArtifact{};
-            } else {
-                const std::string& sig = crime_state.hydration_source_signature;
-                if (crime_point_gpu_uploaded_signature != sig) {
-                    PointGeometryArtifact point_artifact;
-                    std::vector<uint32_t> point_glyphs;
-                    if (!loadBinaryPointGeometryArtifact(crime_artifact_path, sig, point_artifact)) {
-                        crime_state.geometry_source_signature = sig;
-                        crime_state.geometry_phase = "artifact_missing";
-                        crime_state.geometry_loaded_from_artifact = false;
-                        crime_state.geometry_gpu_resident = false;
-                        std::fprintf(stderr,
-                            "[worldsim3] Crime point geometry artifact load failed for %s (%s)\n",
-                            crime_layer.file.c_str(),
-                            crime_artifact_path.string().c_str());
-                        clearCrimePointGpuBuffers();
-                        clearCrimePointGpuDrawState();
-                        crime_point_gpu_uploaded_signature.clear();
-                        crime_point_gpu_color_state_key = 0;
-                        crime_point_gpu_artifact = PointGeometryArtifact{};
-                    } else if (point_artifact.positions.size() != point_artifact.features.size() ||
-                               (!crime_layer.features.empty() && point_artifact.features.size() != crime_layer.features.size())) {
-                        crime_state.geometry_source_signature = sig;
-                        crime_state.geometry_phase = "artifact_feature_mismatch";
-                        crime_state.geometry_loaded_from_artifact = false;
-                        crime_state.geometry_gpu_resident = false;
-                        std::fprintf(stderr,
-                            "[worldsim3] Crime point geometry artifact feature mismatch for %s: artifact=%zu runtime=%zu\n",
-                            crime_layer.file.c_str(),
-                            point_artifact.features.size(),
-                            crime_layer.features.size());
-                        clearCrimePointGpuBuffers();
-                        clearCrimePointGpuDrawState();
-                        crime_point_gpu_uploaded_signature.clear();
-                        crime_point_gpu_color_state_key = 0;
-                        crime_point_gpu_artifact = PointGeometryArtifact{};
-                    } else {
-                    point_glyphs.reserve(point_artifact.features.size());
-                    for (size_t i = 0; i < point_artifact.features.size(); ++i) {
-                        if (i < crime_layer.features.size()) point_glyphs.push_back(crimePointGlyphCode(crime_layer.features[i]));
-                        else point_glyphs.push_back(0u);
-                    }
-                    std::string gpu_error;
-                    if (ensureCrimePointGpuBuffersResident(sig, point_artifact.positions, &gpu_error) &&
-                        updateCrimePointGpuGlyphBuffer(point_glyphs, &gpu_error)) {
-                        crime_state.geometry_source_signature = sig;
-                        crime_state.geometry_phase = "gpu_ready";
-                        crime_state.geometry_loaded_from_artifact = true;
-                        crime_state.geometry_gpu_resident = true;
-                        crime_point_gpu_artifact = std::move(point_artifact);
-                        crime_point_gpu_uploaded_signature = sig;
-                        crime_point_gpu_color_state_key = 0;
-                    } else {
-                        crime_state.geometry_source_signature = sig;
-                        crime_state.geometry_phase = "gpu_upload_failed";
-                        crime_state.geometry_loaded_from_artifact = false;
-                        crime_state.geometry_gpu_resident = false;
-                        std::fprintf(stderr, "[worldsim3] Crime point GPU upload failed: %s\n", gpu_error.c_str());
-                        clearCrimePointGpuBuffers();
-                        clearCrimePointGpuDrawState();
-                        crime_point_gpu_uploaded_signature.clear();
-                        crime_point_gpu_artifact = PointGeometryArtifact{};
-                    }
-                    }
-                }
-                if (crime_point_gpu_uploaded_signature == sig &&
-                    crime_point_gpu_artifact.positions.size() == crime_point_gpu_artifact.features.size()) {
-                    crime_state.geometry_source_signature = sig;
-                    crime_state.geometry_phase = "gpu_ready";
-                    crime_state.geometry_loaded_from_artifact = true;
-                    crime_state.geometry_gpu_resident = true;
-                    auto hash_mix = [](uint64_t& h, uint64_t v) {
-                        h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-                    };
-                    auto hash_cstr = [&](uint64_t& h, const char* s) {
-                        const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
-                        while (*p) {
-                            hash_mix(h, *p);
-                            ++p;
-                        }
-                    };
-                    auto hash_f32 = [&](uint64_t& h, float value) {
-                        uint32_t bits = 0;
-                        std::memcpy(&bits, &value, sizeof(bits));
-                        hash_mix(h, bits);
-                    };
-                    uint64_t color_state_key = 1469598103934665603ULL;
-                    hash_mix(color_state_key, (uint64_t)crime_nibrs_layer_idx);
-                    hash_mix(color_state_key, (uint64_t)crime_layer.enabled);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.enabled);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.homicide);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.robbery);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.assault);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.burglary);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.theft);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.auto_theft);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.drug);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.shooting);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.use_year);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.year_min);
-                    hash_mix(color_state_key, (uint64_t)map_filter_state.crime.year_max);
-                    hash_mix(color_state_key, (uint64_t)query_layers.size());
-                    for (const auto& ql : query_layers) {
-                        hash_mix(color_state_key, (uint64_t)ql.enabled);
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.active);
-                        hash_mix(color_state_key, (uint64_t)ql.row_count);
-                        hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
-                        for (float c : ql.color) hash_f32(color_state_key, c);
-                    }
-
-                    const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
-                    hash_mix(color_state_key, feature_render_state_key);
-
-                    if (color_state_key != crime_point_gpu_color_state_key) {
-                        const size_t crime_feature_count = crime_point_gpu_artifact.features.size();
-                        std::vector<ImU32> point_colors(crime_feature_count, IM_COL32(0, 0, 0, 0));
-                        const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(crime_layer.color);
-                        for (size_t i = 0; i < crime_feature_count; ++i) {
-                            const FeatureRenderState* render_state =
-                                findFeatureRenderState(cached_feature_render, (size_t)crime_nibrs_layer_idx, i);
-                            ImU32 color = base_color;
-                            if (render_state) {
-                                if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
-                                else if (render_state->has_query_color) color = render_state->query_color;
-                            }
-                            point_colors[i] = color;
-                        }
-                        std::string color_error;
-                        if (updateCrimePointGpuColorBuffer(point_colors, &color_error)) {
-                            crime_point_gpu_color_state_key = color_state_key;
-                        }
-                    }
-                }
-            }
-        } else {
-            clearCrimePointGpuBuffers();
-            clearCrimePointGpuDrawState();
-            crime_point_gpu_uploaded_signature.clear();
-            crime_point_gpu_color_state_key = 0;
-            crime_point_gpu_artifact = PointGeometryArtifact{};
-        }
-
-        auto hash_mix = [](uint64_t& h, uint64_t v) {
-            h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-        };
-        auto hash_cstr = [&](uint64_t& h, const char* s) {
-            const unsigned char* p = reinterpret_cast<const unsigned char*>(s ? s : "");
-            while (*p) {
-                hash_mix(h, *p);
-                ++p;
-            }
-        };
-        auto hash_f32 = [&](uint64_t& h, float value) {
-            uint32_t bits = 0;
-            std::memcpy(&bits, &value, sizeof(bits));
-            hash_mix(h, bits);
-        };
-        auto point_glyph_for_layer_feature = [&](const LayerDef& layer, const LayerDef::FeatureRecord* fg) -> uint32_t {
-            if (fg && isLikelyCrimePointLayer(layer)) return crimePointGlyphCode(*fg);
-            if (containsCaseInsensitive(layer.name, "water")) return 6u;
-            if (containsCaseInsensitive(layer.name, "health")) return 5u;
-            if (containsCaseInsensitive(layer.name, "school")) return 4u;
-            if (containsCaseInsensitive(layer.name, "market")) return 2u;
-            if (containsCaseInsensitive(layer.name, "police")) return 2u;
-            if (containsCaseInsensitive(layer.name, "church")) return 3u;
-            if (containsCaseInsensitive(layer.name, "industry")) return 1u;
-            if (containsCaseInsensitive(layer.name, "filling")) return 1u;
-            if (containsCaseInsensitive(layer.name, "event") ||
-                containsCaseInsensitive(layer.subcategory, "event") ||
-                containsCaseInsensitive(layer.duckdb_role, "point_event")) {
-                return 6u;
-            }
-            switch (layer.category) {
-                case LayerDef::Category::PublicHealth: return 5u;
-                case LayerDef::Category::Infrastructure: return 1u;
-                case LayerDef::Category::Safety: return 2u;
-                case LayerDef::Category::Zoning: return 4u;
-                case LayerDef::Category::Housing:
-                default: return 0u;
-            }
-        };
-
-        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
-            if ((int)li == crime_nibrs_layer_idx) continue;
-            const LayerDef& layer = layers[li];
-            LayerRuntimeState& state = layer_states[li];
-            if (!layerUsesPointGeometry(layer) ||
-                !layer.enabled ||
-                state.status != LayerPipelineStatus::Ready ||
-                state.hydration_source_signature.empty()) {
-                point_geometry_artifacts.erase(li);
-                point_geometry_artifact_signatures.erase(li);
-                clearPointLayerGpuBuffers(li);
-                point_gpu_color_state_keys.erase(li);
-                point_gpu_glyph_state_keys.erase(li);
-                if (state.geometry_artifact_class == GeometryArtifactClass::Point) {
-                    state.geometry_source_signature.clear();
-                    state.geometry_phase.clear();
-                    state.geometry_loaded_from_artifact = false;
-                    state.geometry_gpu_resident = false;
-                }
-                continue;
-            }
-
-            const fs::path artifact_path =
-                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Point);
-            state.geometry_artifact_class = GeometryArtifactClass::Point;
-            state.geometry_artifact_path = artifact_path.string();
-            const std::string& sig = state.hydration_source_signature;
-            auto sig_it = point_geometry_artifact_signatures.find(li);
-            if (sig_it != point_geometry_artifact_signatures.end() &&
-                sig_it->second == sig &&
-                point_geometry_artifacts.find(li) != point_geometry_artifacts.end()) {
-                state.geometry_source_signature = sig;
-                state.geometry_phase = "artifact_validated";
-                state.geometry_loaded_from_artifact = true;
-                state.geometry_gpu_resident = pointLayerGpuBuffersResident(li);
-            } else {
-                PointGeometryArtifact artifact;
-                if (!loadBinaryPointGeometryArtifact(artifact_path, sig, artifact) ||
-                    artifact.positions.size() != artifact.features.size() ||
-                    (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
-                    point_geometry_artifacts.erase(li);
-                    point_geometry_artifact_signatures.erase(li);
-                    clearPointLayerGpuBuffers(li);
-                    point_gpu_color_state_keys.erase(li);
-                    point_gpu_glyph_state_keys.erase(li);
-                    state.geometry_source_signature = sig;
-                    state.geometry_phase = "artifact_missing";
-                    state.geometry_loaded_from_artifact = false;
-                    state.geometry_gpu_resident = false;
-                    continue;
-                }
-
-                point_geometry_artifacts[li] = std::move(artifact);
-                point_geometry_artifact_signatures[li] = sig;
-                state.geometry_source_signature = sig;
-                std::string gpu_error;
-                if (ensurePointLayerGpuBuffersResident(li, point_geometry_artifacts[li], &gpu_error)) {
-                    state.geometry_phase = "gpu_ready";
-                    state.geometry_gpu_resident = true;
-                } else {
-                    std::fprintf(stderr,
-                        "[worldsim3] Point GPU upload failed for layer %zu (%s): %s\n",
-                        li, layer.name.c_str(), gpu_error.c_str());
-                    clearPointLayerGpuBuffers(li);
-                    point_gpu_color_state_keys.erase(li);
-                    point_gpu_glyph_state_keys.erase(li);
-                    state.geometry_phase = "gpu_upload_failed";
-                    state.geometry_gpu_resident = false;
-                }
-                state.geometry_loaded_from_artifact = true;
-            }
-
-            if (state.geometry_gpu_resident) {
-                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
-                uint64_t color_state_key = 1469598103934665603ULL;
-                hash_mix(color_state_key, feature_render_state_key);
-                hash_mix(color_state_key, (uint64_t)li);
-                hash_cstr(color_state_key, sig.c_str());
-                hash_mix(color_state_key, (uint64_t)layer.enabled);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
-                hash_mix(color_state_key, (uint64_t)query_layers.size());
-                for (const auto& ql : query_layers) {
-                    hash_mix(color_state_key, (uint64_t)ql.enabled);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.active);
-                    hash_mix(color_state_key, (uint64_t)ql.row_count);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
-                    for (float c : ql.color) hash_f32(color_state_key, c);
-                }
-                hash_f32(color_state_key, layer.color.x);
-                hash_f32(color_state_key, layer.color.y);
-                hash_f32(color_state_key, layer.color.z);
-                hash_f32(color_state_key, layer.color.w);
-                if (point_gpu_color_state_keys[li] != color_state_key) {
-                    const size_t point_feature_count = point_geometry_artifacts[li].features.size();
-                    std::vector<ImU32> point_colors(point_feature_count, IM_COL32(0, 0, 0, 0));
-                    const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                    for (size_t i = 0; i < point_feature_count; ++i) {
-                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
-                        ImU32 color = base_color;
-                        if (render_state) {
-                            if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
-                            else if (render_state->has_query_color) color = render_state->query_color;
-                        }
-                        point_colors[i] = color;
-                    }
-                    std::string color_error;
-                    if (updatePointLayerGpuColorBuffer(li, point_colors, &color_error)) {
-                        point_gpu_color_state_keys[li] = color_state_key;
-                    }
-                }
-                const uint64_t glyph_state_key = color_state_key ^ 0x9f8d4c53b1a2401dULL;
-                if (point_gpu_glyph_state_keys[li] != glyph_state_key) {
-                    const size_t point_feature_count = point_geometry_artifacts[li].features.size();
-                    std::vector<uint32_t> glyph_codes(point_feature_count, 0u);
-                    for (size_t i = 0; i < point_feature_count; ++i) {
-                        const LayerDef::FeatureRecord* fg = i < layer.features.size() ? &layer.features[i] : nullptr;
-                        glyph_codes[i] = point_glyph_for_layer_feature(layer, fg);
-                    }
-                    std::string glyph_error;
-                    if (updatePointLayerGpuGlyphBuffer(li, glyph_codes, &glyph_error)) {
-                        point_gpu_glyph_state_keys[li] = glyph_state_key;
-                    }
-                }
-            }
-        }
-
-        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
-            const LayerDef& layer = layers[li];
-            LayerRuntimeState& state = layer_states[li];
-            if (!layerUsesPolylineGeometry(layer) ||
-                !layer.enabled ||
-                state.status != LayerPipelineStatus::Ready ||
-                state.hydration_source_signature.empty()) {
-                polyline_geometry_artifacts.erase(li);
-                polyline_geometry_artifact_signatures.erase(li);
-                clearPolylineLayerGpuBuffers(li);
-                polyline_gpu_color_state_keys.erase(li);
-                if (state.geometry_artifact_class == GeometryArtifactClass::Polyline) {
-                    state.geometry_source_signature.clear();
-                    state.geometry_phase.clear();
-                    state.geometry_loaded_from_artifact = false;
-                    state.geometry_gpu_resident = false;
-                }
-                continue;
-            }
-
-            const fs::path artifact_path =
-                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polyline);
-            state.geometry_artifact_class = GeometryArtifactClass::Polyline;
-            state.geometry_artifact_path = artifact_path.string();
-            const std::string& sig = state.hydration_source_signature;
-            auto sig_it = polyline_geometry_artifact_signatures.find(li);
-            if (sig_it != polyline_geometry_artifact_signatures.end() &&
-                sig_it->second == sig &&
-                polyline_geometry_artifacts.find(li) != polyline_geometry_artifacts.end()) {
-                state.geometry_source_signature = sig;
-                state.geometry_phase = "artifact_validated";
-                state.geometry_loaded_from_artifact = true;
-                state.geometry_gpu_resident = polylineLayerGpuBuffersResident(li);
-            } else {
-                PolylineGeometryArtifact artifact;
-                if (!loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact) ||
-                    (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
-                    polyline_geometry_artifacts.erase(li);
-                    polyline_geometry_artifact_signatures.erase(li);
-                    clearPolylineLayerGpuBuffers(li);
-                    polyline_gpu_color_state_keys.erase(li);
-                    state.geometry_source_signature = sig;
-                    state.geometry_phase = "artifact_missing";
-                    state.geometry_loaded_from_artifact = false;
-                    state.geometry_gpu_resident = false;
-                    continue;
-                }
-
-                polyline_geometry_artifacts[li] = std::move(artifact);
-                polyline_geometry_artifact_signatures[li] = sig;
-                state.geometry_source_signature = sig;
-                std::string gpu_error;
-                if (ensurePolylineLayerGpuBuffersResident(li, polyline_geometry_artifacts[li], &gpu_error)) {
-                    state.geometry_phase = "gpu_ready";
-                    state.geometry_gpu_resident = true;
-                } else {
-                    std::fprintf(stderr,
-                        "[worldsim3] Polyline GPU upload failed for layer %zu (%s): %s\n",
-                        li, layer.name.c_str(), gpu_error.c_str());
-                    clearPolylineLayerGpuBuffers(li);
-                    polyline_gpu_color_state_keys.erase(li);
-                    state.geometry_phase = "gpu_upload_failed";
-                    state.geometry_gpu_resident = false;
-                }
-                state.geometry_loaded_from_artifact = true;
-            }
-
-            if (state.geometry_gpu_resident) {
-                const LayerFeatureRenderCache& cached_feature_render = ensure_frame_feature_render_cache();
-                uint64_t color_state_key = 1469598103934665603ULL;
-                hash_mix(color_state_key, feature_render_state_key);
-                hash_mix(color_state_key, (uint64_t)li);
-                hash_cstr(color_state_key, sig.c_str());
-                hash_mix(color_state_key, (uint64_t)layer.enabled);
-                hash_mix(color_state_key, (uint64_t)map_filter_state.enabled);
-                hash_mix(color_state_key, (uint64_t)query_layers.size());
-                for (const auto& ql : query_layers) {
-                    hash_mix(color_state_key, (uint64_t)ql.enabled);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.active);
-                    hash_mix(color_state_key, (uint64_t)ql.row_count);
-                    hash_mix(color_state_key, (uint64_t)ql.result_set.features.size());
-                    for (float c : ql.color) hash_f32(color_state_key, c);
-                }
-                hash_f32(color_state_key, layer.color.x);
-                hash_f32(color_state_key, layer.color.y);
-                hash_f32(color_state_key, layer.color.z);
-                hash_f32(color_state_key, layer.color.w);
-                if (polyline_gpu_color_state_keys[li] != color_state_key) {
-                    const size_t line_feature_count = polyline_geometry_artifacts[li].features.size();
-                    std::vector<ImU32> line_colors(line_feature_count, IM_COL32(0, 0, 0, 0));
-                    const ImU32 base_color = ImGui::ColorConvertFloat4ToU32(layer.color);
-                    for (size_t i = 0; i < line_feature_count; ++i) {
-                        const FeatureRenderState* render_state = findFeatureRenderState(cached_feature_render, li, i);
-                        ImU32 color = base_color;
-                        if (render_state) {
-                            if (!render_state->visible) color = IM_COL32(0, 0, 0, 0);
-                            else if (render_state->has_query_color) color = render_state->query_color;
-                        }
-                        line_colors[i] = color;
-                    }
-                    std::string color_error;
-                    if (updatePolylineLayerGpuColorBuffer(li, line_colors, &color_error)) {
-                        polyline_gpu_color_state_keys[li] = color_state_key;
-                    }
-                }
-            }
-        }
-
-        for (size_t li = 0; li < layers.size() && li < layer_states.size(); ++li) {
-            const LayerDef& layer = layers[li];
-            LayerRuntimeState& state = layer_states[li];
-            const bool parcel_layer = (int)li == parcel_layer_idx;
-            if (layerUsesPointGeometry(layer) ||
-                layerUsesPolylineGeometry(layer) ||
-                !layer.enabled ||
-                state.status != LayerPipelineStatus::Ready ||
-                state.hydration_source_signature.empty() ||
-                parcel_layer) {
-                polygon_geometry_artifacts.erase(li);
-                polygon_geometry_artifact_signatures.erase(li);
-                if (state.geometry_artifact_class == GeometryArtifactClass::Polygon && !parcel_layer) {
-                    state.geometry_source_signature.clear();
-                    state.geometry_phase.clear();
-                    state.geometry_loaded_from_artifact = false;
-                    state.geometry_gpu_resident = false;
-                }
-                continue;
-            }
-
-            const fs::path artifact_path =
-                geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polygon);
-            state.geometry_artifact_class = GeometryArtifactClass::Polygon;
-            state.geometry_artifact_path = artifact_path.string();
-            const std::string& sig = state.hydration_source_signature;
-            auto sig_it = polygon_geometry_artifact_signatures.find(li);
-                if (sig_it != polygon_geometry_artifact_signatures.end() &&
-                    sig_it->second == sig &&
-                    polygon_geometry_artifacts.find(li) != polygon_geometry_artifacts.end()) {
-                    state.geometry_source_signature = sig;
-                    state.geometry_phase = "artifact_validated";
-                    state.geometry_loaded_from_artifact = true;
-                    state.geometry_gpu_resident = zoning_gpu_uploaded_signatures.find(li) != zoning_gpu_uploaded_signatures.end();
-                    continue;
-                }
-
-            PolygonGeometryArtifact artifact;
-            if (!loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact) ||
-                (!layer.features.empty() && artifact.features.size() != layer.features.size())) {
-                polygon_geometry_artifacts.erase(li);
-                polygon_geometry_artifact_signatures.erase(li);
-                state.geometry_source_signature = sig;
-                state.geometry_phase = "artifact_missing";
-                state.geometry_loaded_from_artifact = false;
-                state.geometry_gpu_resident = false;
-                continue;
-            }
-
-            polygon_geometry_artifacts[li] = std::move(artifact);
-            polygon_geometry_artifact_signatures[li] = sig;
-            state.geometry_source_signature = sig;
-            state.geometry_phase = zoning_gpu_uploaded_signatures.find(li) != zoning_gpu_uploaded_signatures.end()
-                ? "gpu_ready"
-                : "artifact_validated";
-            state.geometry_loaded_from_artifact = true;
-            state.geometry_gpu_resident = zoning_gpu_uploaded_signatures.find(li) != zoning_gpu_uploaded_signatures.end();
-        }
+        syncPolygonGeometryArtifacts(
+            PolygonArtifactRuntimeSyncInput{
+                .root = &root,
+                .layers = &layers,
+                .layer_states = &layer_states,
+                .parcel_layer_idx = parcel_layer_idx,
+                .gpu_uploaded_signatures = &zoning_runtime_state.uploaded_signatures,
+            },
+            polygon_artifact_runtime_state);
 
         if (!map_window_fullscreen) {
             drawRightPanelWindow(RightPanelContext{
@@ -4178,7 +2269,7 @@ int runWorldSim3App(int argc, char** argv) {
                 map_w,
                 &layers,
                 &unified_parcels,
-                &parcel_gpu_render_blob,
+                &parcel_runtime_state.render_blob,
                 &map_filter_state,
                 &query_layers,
                 &query_history,
@@ -4186,8 +2277,8 @@ int runWorldSim3App(int argc, char** argv) {
                 &zoning_zone_enabled,
                 &real_property_by_blocklot,
                 &selected_owners,
-                &selected_parcel_index_set,
-                &selected_parcel_indices,
+                &selected_parcel_entity_id_set,
+                &selected_parcel_entity_ids,
                 &parcel_selection,
                 &element_info_state,
                 &show_selected_parcel_details,
@@ -4291,10 +2382,10 @@ int runWorldSim3App(int argc, char** argv) {
             kMaxZoom,
             kMaxInternalMathZoom,
             &layers,
-            &point_geometry_artifacts,
-            &polyline_geometry_artifacts,
-            &polygon_geometry_artifacts,
-            &parcel_gpu_render_blob,
+            &point_layer_runtime_state.geometry_artifacts,
+            &polyline_layer_runtime_state.geometry_artifacts,
+            &polygon_artifact_runtime_state.geometry_artifacts,
+            &parcel_runtime_state.render_blob,
             &layer_spatial,
             &map_filter_state,
             &query_layers,
@@ -4303,11 +2394,11 @@ int runWorldSim3App(int argc, char** argv) {
             &zoning_zone_enabled,
             &zoning_zone_color,
             &parcel_selection,
-            &selected_parcel_indices,
+            &selected_parcel_entity_ids,
             &show_selected_zone_details,
             &selected_zone_idx,
             &element_info_state,
-            &hover_debug_state,
+            &background_services.hover_debug_state,
             real_property_layer_idx,
             parcel_layer_idx,
             zoning_layer_idx,
@@ -4578,22 +2669,17 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.center_lat = &center_lat;
     shutdown_input.zoom = &zoom;
     shutdown_input.query_history = &query_history;
-    shutdown_input.selected_parcel_idx = &selected_parcel_idx;
-    shutdown_input.selected_parcel_indices = &selected_parcel_indices;
-    shutdown_input.selected_parcel_stable_id = &selected_parcel_stable_id;
-    shutdown_input.selected_parcel_stable_ids = &selected_parcel_stable_ids;
+    shutdown_input.selected_parcel_entity_id = &selected_parcel_entity_id;
+    shutdown_input.selected_parcel_entity_ids = &selected_parcel_entity_ids;
     shutdown_input.hydration_stop = &hydration_stop;
     shutdown_input.time_cube_ui_worker = &time_cube_ui_worker;
     shutdown_input.hydrate_req_cv = &hydrate_req_cv;
     shutdown_input.spatial_cv = &spatial_cv;
-    shutdown_input.parcel_render_stop = &parcel_render_stop;
-    shutdown_input.parcel_render_cv = &parcel_render_cv;
     shutdown_input.hydration_workers = &hydration_workers;
     shutdown_input.spatial_index_worker = &spatial_index_worker;
-    shutdown_input.parcel_render_worker = &parcel_render_worker;
-    shutdown_input.status_api_worker = &status_api_worker;
-    shutdown_input.dataset_api_worker = &dataset_api_worker;
-    shutdown_input.lan_discovery_worker = &lan_discovery_worker;
+    shutdown_input.status_api_worker = &background_services.status_api_worker;
+    shutdown_input.dataset_api_worker = &background_services.dataset_api_worker;
+    shutdown_input.lan_discovery_worker = &background_services.lan_discovery_worker;
     shutdown_input.heatmap_raster_texture = &heatmap_runtime.raster_texture;
     AppShutdownContext shutdown_ctx = makeAppShutdownContext(shutdown_input);
     shutdownWorldSimApp(shutdown_ctx);

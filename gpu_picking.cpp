@@ -17,6 +17,12 @@ GpuPickRequest makePickRequest(const MapHoverQuery& query) {
     return request;
 }
 
+bool isParcelInteractionLayer(const LayerDef& layer) {
+    return layer.scale == "parcel" &&
+           !layerUsesPointGeometry(layer) &&
+           !layerUsesPolylineGeometry(layer);
+}
+
 void tryPickPointForLayer(
     const MapHoverQuery& query,
     bool hover_target,
@@ -56,21 +62,53 @@ void tryPickPointForLayer(
 
 void tryPickParcel(const MapHoverQuery& query, MapHoverState& out) {
     if (!query.map_hovered || (!query.parcel_hover_active && !query.parcel_inspect_active) ||
-        !query.layers || query.parcel_layer_idx < 0) {
+        !query.layers) {
         return;
     }
-    const size_t layer_idx = (size_t)query.parcel_layer_idx;
-    if (layer_idx >= query.layers->size()) return;
-    const LayerDef& layer = (*query.layers)[layer_idx];
-    if (!layer.enabled) return;
+    const bool hover_target = query.parcel_hover_active;
+    const auto* enabled_flags = hover_target ? query.layer_hover_enabled : query.layer_inspect_enabled;
+    const int active_layer_idx = hover_target ? query.active_hover_layer_idx : query.active_click_layer_idx;
+    std::vector<size_t> candidate_layers;
+    candidate_layers.reserve(query.layers->size());
+    auto append_candidate = [&](int layer_idx) {
+        if (layer_idx < 0) return;
+        const size_t idx = (size_t)layer_idx;
+        if (idx >= query.layers->size()) return;
+        if (std::find(candidate_layers.begin(), candidate_layers.end(), idx) != candidate_layers.end()) return;
+        if (enabled_flags && idx < enabled_flags->size() && !(*enabled_flags)[idx]) return;
+        const LayerDef& layer = (*query.layers)[idx];
+        if (!layer.enabled || !isParcelInteractionLayer(layer)) return;
+        candidate_layers.push_back(idx);
+    };
 
-    size_t feature_idx = (size_t)-1;
-    std::string pick_error;
-    if (!gpuPickParcelFeature(makePickRequest(query), &feature_idx, &pick_error)) {
+    append_candidate(active_layer_idx);
+    append_candidate(query.parcel_layer_idx);
+    for (size_t layer_idx = 0; layer_idx < query.layers->size(); ++layer_idx) {
+        append_candidate((int)layer_idx);
+    }
+
+    const GpuPickRequest request = makePickRequest(query);
+    for (size_t layer_idx : candidate_layers) {
+        const LayerDef& layer = (*query.layers)[layer_idx];
+        size_t feature_idx = (size_t)-1;
+        std::string entity_id;
+        std::string pick_error;
+        if ((int)layer_idx == query.parcel_layer_idx) {
+            if (!gpuPickParcelFeature(request, &feature_idx, &entity_id, &pick_error)) {
+                continue;
+            }
+            if (query.parcel_render_blob && feature_idx >= query.parcel_render_blob->features.size()) continue;
+        } else {
+            if (!gpuPickZoningFeature(layer_idx, request, &feature_idx, &entity_id, &pick_error)) {
+                continue;
+            }
+        }
+        if (feature_idx >= layer.features.size()) continue;
+        out.hovered_parcel_layer_idx = (int)layer_idx;
+        out.hovered_parcel_idx = feature_idx;
+        out.hovered_parcel_entity_id = entity_id;
         return;
     }
-    if (query.parcel_render_blob && feature_idx >= query.parcel_render_blob->features.size()) return;
-    out.hovered_parcel_idx = feature_idx;
 }
 
 void tryPickZone(const MapHoverQuery& query, MapHoverState& out) {
@@ -84,13 +122,15 @@ void tryPickZone(const MapHoverQuery& query, MapHoverState& out) {
     if (!layer.enabled) return;
 
     size_t feature_idx = (size_t)-1;
+    std::string entity_id;
     std::string pick_error;
-    if (!gpuPickZoningFeature(layer_idx, makePickRequest(query), &feature_idx, &pick_error)) {
+    if (!gpuPickZoningFeature(layer_idx, makePickRequest(query), &feature_idx, &entity_id, &pick_error)) {
         return;
     }
     if (feature_idx >= layer.features.size()) return;
     out.hovered_zone_idx = feature_idx;
     out.hovered_zone = &layer.features[feature_idx];
+    out.hovered_zone_entity_id = entity_id;
 }
 }
 

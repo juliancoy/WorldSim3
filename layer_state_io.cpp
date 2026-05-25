@@ -770,10 +770,8 @@ void loadMapUiState(
     double* center_lon,
     double* center_lat,
     double* zoom,
-    size_t* selected_parcel_idx,
-    std::vector<size_t>* selected_parcel_indices,
-    std::string* selected_parcel_stable_id,
-    std::vector<std::string>* selected_parcel_stable_ids) {
+    std::string* selected_parcel_entity_id,
+    std::vector<std::string>* selected_parcel_entity_ids) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -799,26 +797,17 @@ void loadMapUiState(
     }
     if (j.contains("parcel_selection") && j["parcel_selection"].is_object()) {
         const json& s = j["parcel_selection"];
-        if (selected_parcel_idx && s.contains("active_idx") && s["active_idx"].is_number_unsigned()) {
-            *selected_parcel_idx = s["active_idx"].get<size_t>();
-        }
-        if (selected_parcel_indices && s.contains("indices") && s["indices"].is_array()) {
-            selected_parcel_indices->clear();
-            for (const auto& v : s["indices"]) {
-                if (v.is_number_unsigned()) selected_parcel_indices->push_back(v.get<size_t>());
+        if (selected_parcel_entity_id) {
+            selected_parcel_entity_id->clear();
+            if (s.contains("active_entity_id") && s["active_entity_id"].is_string()) {
+                *selected_parcel_entity_id = s["active_entity_id"].get<std::string>();
             }
         }
-        if (selected_parcel_stable_id) {
-            selected_parcel_stable_id->clear();
-            if (s.contains("active_stable_id") && s["active_stable_id"].is_string()) {
-                *selected_parcel_stable_id = s["active_stable_id"].get<std::string>();
-            }
-        }
-        if (selected_parcel_stable_ids) {
-            selected_parcel_stable_ids->clear();
-            if (s.contains("stable_ids") && s["stable_ids"].is_array()) {
-                for (const auto& v : s["stable_ids"]) {
-                    if (v.is_string()) selected_parcel_stable_ids->push_back(v.get<std::string>());
+        if (selected_parcel_entity_ids) {
+            selected_parcel_entity_ids->clear();
+            if (s.contains("entity_ids") && s["entity_ids"].is_array()) {
+                for (const auto& v : s["entity_ids"]) {
+                    if (v.is_string()) selected_parcel_entity_ids->push_back(v.get<std::string>());
                 }
             }
         }
@@ -830,10 +819,8 @@ void saveMapUiState(
     double center_lon,
     double center_lat,
     double zoom,
-    size_t selected_parcel_idx,
-    const std::vector<size_t>& selected_parcel_indices,
-    const std::string& selected_parcel_stable_id,
-    const std::vector<std::string>& selected_parcel_stable_ids) {
+    const std::string& selected_parcel_entity_id,
+    const std::vector<std::string>& selected_parcel_entity_ids) {
     fs::create_directories(root / "data");
     json j = json::object();
     {
@@ -855,13 +842,9 @@ void saveMapUiState(
     if (!j.contains("map_views") || !j["map_views"].is_object()) j["map_views"] = json::object();
     j["map_views"][mapViewKey()] = map_view;
     json selection = json::object();
-    if (selected_parcel_idx == (size_t)-1) selection["active_idx"] = nullptr;
-    else selection["active_idx"] = selected_parcel_idx;
-    selection["active_stable_id"] = selected_parcel_stable_id.empty() ? json(nullptr) : json(selected_parcel_stable_id);
-    selection["indices"] = json::array();
-    for (size_t idx : selected_parcel_indices) selection["indices"].push_back(idx);
-    selection["stable_ids"] = json::array();
-    for (const std::string& stable_id : selected_parcel_stable_ids) selection["stable_ids"].push_back(stable_id);
+    selection["active_entity_id"] = selected_parcel_entity_id.empty() ? json(nullptr) : json(selected_parcel_entity_id);
+    selection["entity_ids"] = json::array();
+    for (const std::string& entity_id : selected_parcel_entity_ids) selection["entity_ids"].push_back(entity_id);
     j["parcel_selection"] = std::move(selection);
     std::ofstream out(root / "data" / "layer_ui_state.json");
     if (out) out << j.dump(2);

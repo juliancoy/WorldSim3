@@ -8,6 +8,7 @@
 #include "map_render_projection.h"
 #include "parcel_unified.h"
 #include "render_policy.h"
+#include "selection.h"
 #include "types.h"
 
 #include <atomic>
@@ -95,7 +96,7 @@ struct RenderFrameOrchestrationContext {
     const std::vector<int>* parcel_tax_lien_by_feature = nullptr;
     const std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
-    const std::vector<size_t>* selected_parcel_indices = nullptr;
+    const ParcelSelectionState* parcel_selection = nullptr;
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     const std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
     const std::vector<QueryMapLayer>* query_layers = nullptr;

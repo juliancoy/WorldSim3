@@ -3,6 +3,7 @@
 #include "duckdb_analytics.h"
 #include "owner_info.h"
 #include "parcel_unified.h"
+#include "selection.h"
 #include "types.h"
 
 #include <cstddef>
@@ -15,8 +16,7 @@ struct ParcelInfoTabContext {
     DuckDbAnalytics* duckdb_analytics = nullptr;
     OwnerInfoUiState* owner_info_state = nullptr;
     int parcel_layer_idx = -1;
-    size_t selected_parcel_idx = (size_t)-1;
-    const std::vector<size_t>* selected_parcel_indices = nullptr;
+    const ParcelSelectionState* parcel_selection = nullptr;
     bool show_selected_parcel_details = false;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     int real_property_layer_idx = -1;

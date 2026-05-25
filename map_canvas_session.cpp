@@ -1,5 +1,6 @@
 #include "map_canvas_session.h"
 
+#include "app_utils.h"
 #include "layer_geometry.h"
 #include "map_render_basemap.h"
 
@@ -16,6 +17,25 @@ bool layerToggleEnabled(const std::vector<bool>* values, int idx) {
 
 bool activeLayerMatches(int active_layer_idx, int layer_idx) {
     return active_layer_idx >= 0 && active_layer_idx == layer_idx;
+}
+
+bool isParcelInteractionLayer(const std::vector<LayerDef>& layers, int layer_idx) {
+    if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return false;
+    const LayerDef& layer = layers[(size_t)layer_idx];
+    return layer.enabled &&
+           layer.scale == "parcel" &&
+           !layerUsesPointGeometry(layer) &&
+           !layerUsesPolylineGeometry(layer);
+}
+
+bool anyParcelInteractionLayerEnabled(const std::vector<LayerDef>& layers, const std::vector<bool>* values) {
+    if (!values) return false;
+    const size_t count = std::min(layers.size(), values->size());
+    for (size_t i = 0; i < count; ++i) {
+        if (!(*values)[i]) continue;
+        if (isParcelInteractionLayer(layers, (int)i)) return true;
+    }
+    return false;
 }
 }
 
@@ -57,11 +77,9 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.project_world = [map_viewport](const ImVec2& wp) { return map_viewport.projectWorld(wp); };
 
     session.parcel_hover_active =
-        activeLayerMatches(ctx.active_hover_layer_idx, ctx.parcel_layer_idx) &&
-        layerToggleEnabled(ctx.layer_hover_enabled, ctx.parcel_layer_idx);
+        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled);
     session.parcel_inspect_active =
-        activeLayerMatches(ctx.active_click_layer_idx, ctx.parcel_layer_idx) &&
-        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.parcel_layer_idx);
+        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled);
     session.zoning_hover_active =
         activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);

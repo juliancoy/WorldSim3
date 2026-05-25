@@ -50,9 +50,12 @@ struct MapHoverQuery {
 };
 
 struct MapHoverState {
+    int hovered_parcel_layer_idx = -1;
     size_t hovered_parcel_idx = (size_t)-1;
+    std::string hovered_parcel_entity_id;
     const LayerDef::FeatureRecord* hovered_zone = nullptr;
     size_t hovered_zone_idx = (size_t)-1;
+    std::string hovered_zone_entity_id;
     const LayerDef::FeatureRecord* hovered_point = nullptr;
     size_t hovered_point_idx = (size_t)-1;
     int hovered_point_layer_idx = -1;
@@ -69,6 +72,7 @@ struct HoverDebugState {
     float mouse_lon = 0.0f;
     float mouse_lat = 0.0f;
     bool hovered_parcel = false;
+    int hovered_parcel_layer_idx = -1;
     size_t hovered_parcel_idx = (size_t)-1;
     bool hovered_zone = false;
     size_t hovered_zone_idx = (size_t)-1;

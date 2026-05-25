@@ -16,9 +16,17 @@ struct GeometryArtifactHeader {
     std::string source_signature;
 };
 
+constexpr uint32_t kCanonicalFeatureBinaryVersion = 5;
+constexpr uint32_t kPointGeometryArtifactVersion = 3;
+constexpr uint32_t kPolylineGeometryArtifactVersion = 3;
+constexpr uint32_t kPolygonGeometryArtifactVersion = 4;
+
 struct GeometryArtifactFeatureRecord {
     uint32_t feature_idx = 0;
-    std::string feature_id;
+    std::string entity_id;
+    std::string geometry_entity_id;
+    std::string source_feature_id;
+    std::string source_primary_key;
     uint32_t vertex_offset = 0;
     uint32_t vertex_count = 0;
     uint32_t index_offset = 0;
@@ -76,6 +84,10 @@ struct PolygonGeometryArtifact {
 
 struct ParcelRenderFeatureRecord {
     uint32_t feature_idx = 0;
+    std::string entity_id;
+    std::string geometry_entity_id;
+    std::string source_feature_id;
+    std::string source_primary_key;
     uint32_t vertex_offset = 0;
     uint32_t vertex_count = 0;
     uint32_t index_offset = 0;
@@ -138,6 +150,10 @@ bool loadBinaryPointGeometryArtifact(
     const std::filesystem::path& cache_path,
     const std::string& sig,
     PointGeometryArtifact& out);
+bool validateBinaryPointGeometryArtifactHeader(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    uint64_t* out_feature_count = nullptr);
 void saveBinaryPointGeometryArtifact(
     const std::filesystem::path& cache_path,
     const PointGeometryArtifact& artifact);
@@ -151,6 +167,10 @@ bool loadBinaryPolylineGeometryArtifact(
     const std::filesystem::path& cache_path,
     const std::string& sig,
     PolylineGeometryArtifact& out);
+bool validateBinaryPolylineGeometryArtifactHeader(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    uint64_t* out_feature_count = nullptr);
 void saveBinaryPolylineGeometryArtifact(
     const std::filesystem::path& cache_path,
     const PolylineGeometryArtifact& artifact);
@@ -164,6 +184,10 @@ bool loadBinaryPolygonGeometryArtifact(
     const std::filesystem::path& cache_path,
     const std::string& sig,
     PolygonGeometryArtifact& out);
+bool validateBinaryPolygonGeometryArtifactHeader(
+    const std::filesystem::path& cache_path,
+    const std::string& sig,
+    uint64_t* out_feature_count = nullptr);
 void saveBinaryPolygonGeometryArtifact(
     const std::filesystem::path& cache_path,
     const PolygonGeometryArtifact& artifact);
@@ -191,20 +215,10 @@ bool binaryHydrationCacheShouldBeCompacted(
     const std::vector<LayerDef::FeatureRecord>& features,
     const std::vector<LayerDef::FeatureProperties>* feature_properties = nullptr);
 
-bool buildParcelRenderCacheBlob(
-    const std::vector<LayerDef::FeatureRecord>& features,
-    const std::string& sig,
+bool buildParcelRenderCacheBlobFromPolygonArtifact(
+    const PolygonGeometryArtifact& artifact,
     ParcelRenderCacheBlob& out,
-    size_t chunk_feature_budget = 4096);
-
-bool loadBinaryParcelRenderCache(
-    const std::filesystem::path& cache_path,
-    const std::string& sig,
-    ParcelRenderCacheBlob& out);
-
-void saveBinaryParcelRenderCache(
-    const std::filesystem::path& cache_path,
-    const ParcelRenderCacheBlob& blob);
+    std::string* error = nullptr);
 
 bool loadBinaryCanonicalMetadata(
     const std::filesystem::path& cache_path,

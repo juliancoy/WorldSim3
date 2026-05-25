@@ -117,12 +117,15 @@ GPU resident data:
 - Base color buffer.
 - Overlay color buffer.
 - Outline color buffer.
+- Per-feature parcel identity carried in the resident artifact records.
 
 Base parcel colors are rebuilt only when their color/filter key changes. The base color buffer uses cached visibility and cached query color, plus value choropleth output when a parcel parameter mode requires it.
 
 Overlay colors are separate from base colors. Vacancy, tax, area, value, and selected-parcel overlays write to the overlay buffer. Outlines are computed from base/overlay/selection state and uploaded separately.
 
 There is no normal frame-loop CPU parcel geometry fallback. Parcel overlays use GPU color buffers over the resident parcel geometry. If GPU parcel geometry is unavailable, parcel geometry remains non-drawable until the resident buffers are restored.
+
+Parcel runtime selection and overlay logic must consume parcel identity from the resident parcel artifact itself. A parcel render feature without `entity_id` is an invalid artifact and must be rejected during artifact-to-runtime conversion or GPU upload preparation. The frame loop must not recover by reindexing into `LayerDef::features` through `feature_idx`.
 
 ### Zoning Layers
 
@@ -236,4 +239,4 @@ Do not rebuild geometry, filters, or color buffers just because the camera panne
 
 `render_tail_pass.*` and `map_render_overlays.*` handle late parcel overlays.
 
-`app_main_loop.cpp` currently owns several persistent GPU color/geometry buffers and their state keys. New render work should prefer moving reusable state behind smaller services when that reduces coupling, but it must preserve the same invalidation contracts.
+The target backend owns persistent GPU color/geometry buffers behind dedicated services and typed runtime aggregates. New render work should land in parcel, zoning, point, polyline, GPU-pick, tile-texture, or frame-present services as appropriate, while preserving the same invalidation contracts.

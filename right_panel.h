@@ -51,8 +51,8 @@ struct RightPanelContext {
     std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
 
     std::unordered_set<std::string>* selected_owners = nullptr;
-    std::unordered_set<size_t>* selected_parcel_index_set = nullptr;
-    std::vector<size_t>* selected_parcel_indices = nullptr;
+    std::unordered_set<std::string>* selected_parcel_id_set = nullptr;
+    std::vector<std::string>* selected_parcel_ids = nullptr;
     ParcelSelectionState* parcel_selection = nullptr;
     ElementInfoUiState* element_info_state = nullptr;
 

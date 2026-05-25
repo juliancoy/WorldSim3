@@ -8,6 +8,17 @@ Every runtime-readable layer is identified by the embedded `source_signature` in
 
 This signature is the invalidation key shared by compiled geometry artifacts, derived caches, and DuckDB analytics.
 
+`source_signature` is an artifact-generation identity, not a per-feature or
+per-entity business identity. The target shape for feature/entity identity is
+described in `worldwideflatidentitymodel.md`: flat global entity IDs, separate
+geometry IDs, explicit source provenance rows, and hierarchy expressed as
+relations.
+
+Current render and filter code still derives dense runtime coordinates such as
+`(layer_idx, feature_idx)` from stable entity IDs when it needs direct geometry
+access. Those coordinates are implementation detail only; query and selection
+contracts should expose stable entity IDs instead.
+
 ## Disk-Persisted Artifact Overview
 
 WorldSim3 should converge on three broad classes of disk artifacts:
@@ -306,7 +317,7 @@ SQL-backed structure:
     "mode": "sql",
     "source": "sql_tab"
   },
-  "sql": "SELECT parcel_layer_idx AS layer_idx, parcel_feature_idx AS feature_idx, blocklot, owner, address FROM unified_parcels WHERE owner ILIKE '%llc%'",
+  "sql": "SELECT parcel_layer_idx AS layer_idx, parcel_entity_id AS entity_id, blocklot, owner, address FROM unified_parcels WHERE owner ILIKE '%llc%'",
   "presentation": {
     "name": "Owner Followup",
     "color": {"r": 1.0, "g": 0.48, "b": 0.08, "a": 1.0}
@@ -322,6 +333,14 @@ SQL-backed structure:
   }
 }
 ```
+
+Current note:
+
+- this shape reflects the repository's present parcel-selection contract
+- future repeatable-query and map-selection outputs should be able to expose a
+  stable entity identity in addition to layer-local feature coordinates
+- moving queries to global entity identity is an architectural migration, not a
+  reason to break existing replayable query behavior in place
 
 The same definition should be executable by:
 
@@ -434,7 +453,7 @@ Use artifact-health and warm/build commands that operate directly on compiled ge
 
 ## Startup Layer Scheduling
 
-On startup, `app_main_loop.cpp` should enqueue every enabled geometry layer for geometry-artifact acquisition.
+On startup, the app startup/bootstrap service should enqueue every enabled geometry layer for geometry-artifact acquisition.
 
 That does not mean a text interchange export should ever be reparsed during normal startup. The preferred path is:
 
@@ -543,6 +562,12 @@ Invalidation should use propagated geometry-artifact source signatures, not only
 
 Derived parcel joins should be columnar after semantic load. Runtime code should get compact arrays such as `parcel_blocklot_by_feature`, owner search text, address search text, status, zip, numeric values, and per-feature overlay arrays from DuckDB tables or DuckDB-derived sidecars. Layer enable/disable toggles must not rescan parcel property bags with `getPropertyValue(...)` or `firstDisplayProperty(...)`; toggles should only flip visibility/color state or reuse existing derived arrays.
 
+Current implemented rule for the primary parcel layer:
+
+- runtime parcel semantic arrays and `unified_parcels` now hydrate from DuckDB-backed parcel semantic snapshot queries over `layer_features` and `unified_parcels`
+- if DuckDB parcel semantics are unavailable, runtime clears those parcel semantic arrays instead of rebuilding them from canonical parcel property bags as a hidden fallback
+- real-property harmonization and some non-parcel semantic families still have follow-on migration work, but primary parcel search/detail/filter counts are no longer supposed to come from startup property-bag scans
+
 Runtime canonical loads must not duplicate property storage. If a layer owns `feature_properties`, property lookup should use the layer-indexed accessors directly; the transient feature-property registry is only for temporary feature vectors that do not have an owning `LayerDef::feature_properties` array. Rebuilding a global pointer registry or copying every property pair during startup is not an acceptable disk-cache strategy because it turns persisted column data back into session-only CPU property bags.
 
 The next target state is to persist the high-traffic derived columns in DuckDB and optionally mirror them into versioned binary sidecars. Startup should prefer opening DuckDB or matching sidecars for fields such as parcel blocklot, owner search text, address search text, normalized status, zip, and numeric value/tax fields. If DuckDB or the sidecar source signatures match, startup must not scan canonical property bags to rebuild those columns.
@@ -618,9 +643,9 @@ Normal interactive startup should not do this:
 
 That canonical-binary path is allowed for explicit rebuild, validation, and migration tooling. It is not the professional steady-state startup path when `data/worldsim.duckdb` is current.
 
-The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied.
+The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied. The database also stores per-layer analytics signatures in `analytics_layer_state`, so a stale result can be narrowed to the affected layer files instead of forcing a full-table rewrite by default.
 
-DuckDB artifact hydration is isolated in `DuckDbAnalytics::ensureCurrentArtifact()`. That function is the normal provisioning entrypoint: it validates and reuses `data/worldsim.duckdb` when the artifact is current, and calls the unconditional low-level writer `DuckDbAnalytics::rebuild()` only when the output artifact does not exist, has an outdated source signature, or fails structural validation.
+DuckDB artifact hydration is isolated in `DuckDbAnalytics::ensureCurrentArtifact()`. That function is the normal provisioning entrypoint: it validates and reuses `data/worldsim.duckdb` when the artifact is current; when the database is structurally valid but stale, it incrementally refreshes the changed `layer_features` rows and then regenerates dependent projections such as `unified_parcels`, `parcel_events`, `geography_feature_collections`, and the analytics metadata tables/views. It calls the unconditional low-level writer `DuckDbAnalytics::rebuild()` only when the output artifact does not exist, the schema is no longer compatible, or structural validation fails.
 
 Runtime layer hydration and DuckDB artifact hydration are separate responsibilities:
 
@@ -630,7 +655,7 @@ Runtime layer hydration and DuckDB artifact hydration are separate responsibilit
 - explicit CLI/provisioning flows may invoke `ensureCurrentArtifact()` after the required source/parcel inputs have been prepared
 - explicit destructive/manual maintenance flows may invoke `rebuild()` directly when the operator intentionally wants a full rewrite
 
-DuckDB rebuild is intentionally explicit. The SQL tab exposes a rebuild button, and command-line/offline tools may also rebuild it. The frame loop does not automatically rebuild `data/worldsim.duckdb`, because a full rebuild can write multiple gigabytes and can stall the UI while parcels are still becoming render-ready.
+DuckDB rebuild is intentionally explicit. The SQL tab exposes a rebuild button, and command-line/offline tools may also rebuild it. The frame loop does not automatically rebuild `data/worldsim.duckdb`, because a full rebuild can write multiple gigabytes and can stall the UI while parcels are still becoming render-ready. When the existing database is structurally valid, stale input should prefer an incremental per-layer refresh over a full drop-and-rebuild of the entire database artifact.
 
 If DuckDB is missing or stale:
 

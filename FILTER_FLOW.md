@@ -7,7 +7,7 @@ This document defines the runtime filter flow and the boundary between browse st
 `MapFilterState` is the single source of truth for generic runtime UI filters.
 
 - Definition: [filters.h](/mnt/Cancer/worldsim3/filters.h:34)
-- Owner instance: [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp:710)
+- Owner instance: app runtime state / main-loop service context
 - Runtime evaluator: [filters.cpp](/mnt/Cancer/worldsim3/filters.cpp:218)
 
 `MapFilterState` contains generic runtime filters:

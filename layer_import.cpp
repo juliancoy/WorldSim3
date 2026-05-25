@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstdint>
@@ -26,6 +27,79 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
+std::string previewBytesForError(const std::string& text, size_t max_len = 160) {
+    std::string out;
+    out.reserve(std::min(text.size(), max_len));
+    for (char ch : text) {
+        if (out.size() >= max_len) break;
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        if (ch == '\n' || ch == '\r' || ch == '\t') out.push_back(' ');
+        else if (std::isprint(uch)) out.push_back(ch);
+        else out.push_back('?');
+    }
+    return trimDisplayValue(out);
+}
+
+std::string trimLeadingWhitespace(std::string text) {
+    size_t i = 0;
+    while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
+    return text.substr(i);
+}
+
+bool looksLikeMissingCensusKeyHtml(const std::string& text) {
+    const std::string normalized = toLowerAscii(trimLeadingWhitespace(text));
+    return normalized.find("<html") != std::string::npos &&
+           normalized.find("missing key") != std::string::npos;
+}
+
+bool validateCensusAcsDownloadArtifact(const fs::path& path, std::string& error) {
+    std::ifstream in(path);
+    if (!in) {
+        error = "failed to open downloaded ACS response " + path.string();
+        return false;
+    }
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    const std::string raw = buffer.str();
+    const std::string trimmed = trimLeadingWhitespace(raw);
+    if (trimmed.empty()) {
+        error = "ACS response is empty: " + path.string();
+        return false;
+    }
+    if (looksLikeMissingCensusKeyHtml(trimmed)) {
+        error =
+            "ACS download rejected: Census returned a 'Missing Key' HTML page for " + path.string() +
+            ". Configure WORLDSIM_CENSUS_API_KEY or CENSUS_API_KEY.";
+        return false;
+    }
+    if (trimmed.front() != '[') {
+        error =
+            "ACS download rejected: expected a JSON header/data array in " + path.string() +
+            " preview=\"" + previewBytesForError(trimmed) + "\"";
+        return false;
+    }
+    return true;
+}
+
+std::string censusApiKeyFromEnvironment() {
+    const char* key = std::getenv("WORLDSIM_CENSUS_API_KEY");
+    if (key && *key) return std::string(key);
+    key = std::getenv("CENSUS_API_KEY");
+    if (key && *key) return std::string(key);
+    return {};
+}
+
+std::string censusImportUrlWithKey(const LayerDef& layer) {
+    std::string url = layer.import_url;
+    if (url.empty()) return url;
+    if (url.find("key=") != std::string::npos) return url;
+    const std::string key = censusApiKeyFromEnvironment();
+    if (key.empty()) return url;
+    url += (url.find('?') == std::string::npos) ? '?' : '&';
+    url += "key=" + key;
+    return url;
+}
+
 bool sourceGeometryFilenameMatchesTargetLayer(
     const fs::path& source_geometry_path,
     const fs::path& target_layer_path) {
@@ -1396,7 +1470,35 @@ std::unordered_map<std::string, json> parseCensusAcsRowsByGeoid(
     const std::string& survey) {
     std::ifstream in(acs_json_path);
     if (!in) throw std::runtime_error("failed to open ACS response " + acs_json_path.string());
-    json rows = json::parse(in, nullptr, true, true);
+    std::ostringstream buffer;
+    buffer << in.rdbuf();
+    const std::string raw = buffer.str();
+    const std::string trimmed = trimLeadingWhitespace(raw);
+    if (trimmed.empty()) {
+        throw std::runtime_error("ACS response is empty: " + acs_json_path.string());
+    }
+    if (looksLikeMissingCensusKeyHtml(trimmed)) {
+        throw std::runtime_error(
+            "ACS response is a Census 'Missing Key' HTML page, not JSON: " +
+            acs_json_path.string() +
+            ". Configure WORLDSIM_CENSUS_API_KEY or CENSUS_API_KEY and refresh the ACS source artifact.");
+    }
+    if (trimmed.front() != '[') {
+        throw std::runtime_error(
+            "ACS response is not a JSON header/data array: " +
+            acs_json_path.string() +
+            " preview=\"" + previewBytesForError(trimmed) + "\"");
+    }
+
+    json rows;
+    try {
+        rows = json::parse(trimmed, nullptr, true, true);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(
+            "failed to parse ACS JSON " + acs_json_path.string() +
+            ": " + e.what() +
+            " preview=\"" + previewBytesForError(trimmed) + "\"");
+    }
     if (!rows.is_array() || rows.empty() || !rows[0].is_array()) {
         throw std::runtime_error("ACS response is not a header/data array");
     }
@@ -2312,7 +2414,12 @@ VersionedDownloadResult downloadOrImportLayer(
                 ? fs::path(layer.import_artifact_file)
                 : fs::path(out_path.stem().string() + ".acs.json");
         const fs::path acs_json_path = provenanceSourceArtifactPath(root, layer, artifact_name.string());
-        VersionedDownloadResult dl = downloadUrlVersioned(layer.import_url, acs_json_path, root / "data" / "versions");
+        VersionedDownloadResult dl = downloadUrlVersioned(
+            censusImportUrlWithKey(layer),
+            acs_json_path,
+            root / "data" / "versions",
+            {},
+            validateCensusAcsDownloadArtifact);
         if (!dl.ok) return dl;
         try {
             const fs::path source_path = provenanceSourceArtifactPath(root, layer, out_path.filename().string());
@@ -2504,7 +2611,9 @@ void saveCanonicalLayerBinary(
     const std::vector<LayerDef::FeatureRecord>& features,
     const std::vector<LayerDef::FeatureProperties>& feature_properties) {
     const fs::path canonical_path = fs::path(target_layer_path.string() + ".canonical.bin");
-    saveBinaryCanonicalFeatureCollection(canonical_path, sig, features, &feature_properties);
+    std::vector<LayerDef::FeatureRecord> canonical_features = features;
+    ensureFeatureIdentityForLayerFile(target_layer_path.filename().string(), canonical_features);
+    saveBinaryCanonicalFeatureCollection(canonical_path, sig, canonical_features, &feature_properties);
     std::error_code ec;
     fs::remove(target_layer_path, ec);
 }
@@ -2512,7 +2621,8 @@ void saveCanonicalLayerBinary(
 void persistCanonicalLayerBinaryAndRemoveGeoJson(const fs::path& geojson_path) {
     if (geojson_path.extension() != ".geojson") return;
     std::vector<LayerDef::FeatureProperties> feature_properties;
-    const std::vector<LayerDef::FeatureRecord> features = loadLayerPointsFromFile(geojson_path, &feature_properties);
+    std::vector<LayerDef::FeatureRecord> features = loadLayerPointsFromFile(geojson_path, &feature_properties);
+    ensureFeatureIdentityForLayerFile(geojson_path.filename().string(), features);
     const std::string sig = fileSignature(geojson_path);
     const fs::path canonical_path = fs::path(geojson_path.string() + ".canonical.bin");
     saveBinaryCanonicalFeatureCollection(canonical_path, sig, features, &feature_properties);

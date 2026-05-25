@@ -1,9 +1,12 @@
 #include "gear_panel.h"
 
+#include "env_config.h"
 #include "imgui.h"
 #include "ui_theme.h"
 
+#include <array>
 #include <atomic>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -42,6 +45,44 @@ void drawGearPanel(
                         saveAppSettings(root, *app_settings);
                     }
                     ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
+                } else {
+                    ImGui::TextDisabled("App settings unavailable.");
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Credentials")) {
+                if (app_settings) {
+                    static std::array<char, 256> census_key_buffer{};
+                    static std::string loaded_key_value;
+                    static bool show_census_key = false;
+                    const std::string env_key_value = loadDotEnvValue(root, "CENSUS_API_KEY");
+                    if (loaded_key_value != env_key_value) {
+                        loaded_key_value = env_key_value;
+                        std::fill(census_key_buffer.begin(), census_key_buffer.end(), '\0');
+                        const size_t copy_len = std::min(loaded_key_value.size(), census_key_buffer.size() - 1);
+                        if (copy_len > 0) std::memcpy(census_key_buffer.data(), loaded_key_value.data(), copy_len);
+                    }
+                    ImGui::TextUnformatted("Census API Key");
+                    ImGui::TextDisabled("Stored in the repo .env file and used when shell environment variables are not set.");
+                    ImGuiInputTextFlags input_flags = show_census_key ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_Password;
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::InputText("##census_api_key", census_key_buffer.data(), census_key_buffer.size(), input_flags);
+                    ImGui::Checkbox("Show key", &show_census_key);
+                    if (ImGui::Button("Save Census Key")) {
+                        std::string error;
+                        if (setDotEnvValue(root, "CENSUS_API_KEY", census_key_buffer.data(), &error)) {
+                            loaded_key_value = census_key_buffer.data();
+                            applyDotEnvEnvironment(root);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear Census Key")) {
+                        std::string error;
+                        removeDotEnvValue(root, "CENSUS_API_KEY", &error);
+                        loaded_key_value.clear();
+                        std::fill(census_key_buffer.begin(), census_key_buffer.end(), '\0');
+                    }
+                    ImGui::TextDisabled("Persists in .env as the single source of truth.");
                 } else {
                     ImGui::TextDisabled("App settings unavailable.");
                 }

@@ -21,11 +21,10 @@ struct DuckDbParcelDetailSnapshot {
 
 DuckDbParcelDetailSnapshot loadDuckDbParcelDetailSnapshot(
     DuckDbAnalytics* duckdb_analytics,
-    int parcel_layer_idx,
-    size_t parcel_feature_idx) {
+    const std::string& parcel_entity_id) {
     DuckDbParcelDetailSnapshot out;
     if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok) return out;
-    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail((size_t)parcel_layer_idx, parcel_feature_idx);
+    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail(parcel_entity_id);
     if (!detail.ok || detail.rows.empty()) return out;
     const auto& row = detail.rows.front();
     auto cell = [&](const char* column) -> std::string {
@@ -46,9 +45,9 @@ DuckDbParcelDetailSnapshot loadDuckDbParcelDetailSnapshot(
     return out;
 }
 
-bool drawDuckDbParcelDetail(OwnerInfoUiState* owner_info_state, DuckDbAnalytics* duckdb_analytics, int parcel_layer_idx, size_t parcel_feature_idx) {
+bool drawDuckDbParcelDetail(OwnerInfoUiState* owner_info_state, DuckDbAnalytics* duckdb_analytics, const std::string& parcel_entity_id) {
     if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok) return false;
-    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail((size_t)parcel_layer_idx, parcel_feature_idx);
+    const DuckDbQueryResult detail = duckdb_analytics->queryUnifiedParcelDetail(parcel_entity_id);
     if (!detail.ok || detail.rows.empty()) return false;
     const auto& row = detail.rows.front();
     auto cell = [&](const char* column) -> std::string {
@@ -130,12 +129,12 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
 
     const bool parcel_info_valid =
         ctx.show_selected_parcel_details &&
-        ctx.selected_parcel_indices &&
-        !ctx.selected_parcel_indices->empty() &&
+        ctx.parcel_selection &&
+        !ctx.parcel_selection->refs.empty() &&
         ctx.layers &&
-        ctx.parcel_layer_idx >= 0 &&
-        (size_t)ctx.parcel_layer_idx < ctx.layers->size() &&
-        ctx.selected_parcel_idx < (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size();
+        ctx.parcel_selection->active_layer_idx >= 0 &&
+        (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size() &&
+        !ctx.parcel_selection->active_entity_id.empty();
 
     if (!parcel_info_valid) {
         ImGui::TextDisabled("Select a parcel from the map or address results to view parcel details.");
@@ -143,11 +142,13 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
         if (ImGui::Button("Clear Parcel Selection")) {
             if (ctx.clear_parcel_selection) ctx.clear_parcel_selection();
         } else {
+            const int active_layer_idx = ctx.parcel_selection->active_layer_idx;
+            const std::string active_feature_id = ctx.parcel_selection->active_entity_id;
             const UnifiedParcelRecord* selected_unified = ctx.unified_parcels
-                ? unifiedParcelAt(*ctx.unified_parcels, ctx.selected_parcel_idx)
+                ? unifiedParcelAt(*ctx.unified_parcels, active_feature_id)
                 : nullptr;
             const DuckDbParcelDetailSnapshot duckdb_detail =
-                loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx);
+                loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, active_feature_id);
             std::string blocklot_raw = selected_unified ? selected_unified->blocklot : std::string();
             int vac_notice = 0;
             int vac_rehab = 0;
@@ -157,8 +158,8 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             double tax_sale_amount = 0.0;
             double current_value_total = 0.0;
             if (ctx.unified_parcels) {
-                for (size_t sel_idx : *ctx.selected_parcel_indices) {
-                    const UnifiedParcelRecord* u = unifiedParcelAt(*ctx.unified_parcels, sel_idx);
+                for (const ParcelSelectionRef& ref : ctx.parcel_selection->refs) {
+                    const UnifiedParcelRecord* u = unifiedParcelAt(*ctx.unified_parcels, ref.entity_id);
                     if (!u) continue;
                     vac_notice += u->vacant_notice_count;
                     vac_rehab += u->vacant_rehab_count;
@@ -169,7 +170,7 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                     current_value_total += u->current_value;
                 }
             }
-            if (ctx.selected_parcel_indices->size() == 1 && duckdb_detail.ok) {
+            if (ctx.parcel_selection->refs.size() == 1 && duckdb_detail.ok) {
                 blocklot_raw = duckdb_detail.blocklot.empty() ? blocklot_raw : duckdb_detail.blocklot;
                 vac_notice = duckdb_detail.vacant_notice_count;
                 vac_rehab = duckdb_detail.vacant_rehab_count;
@@ -190,7 +191,7 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             }
 
             ImGui::Separator();
-            ImGui::Text("Selected Parcels: %zu", ctx.selected_parcel_indices->size());
+            ImGui::Text("Selected Parcels: %zu", ctx.parcel_selection->refs.size());
             ImGui::Text("Active BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
             ImGui::Text("Vacant Notices: %d", vac_notice);
             ImGui::Text("Vacant Rehab Records: %d", vac_rehab);
@@ -205,10 +206,10 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
                 drawOwnerInfoLink(*ctx.owner_info_state, summary_owner, "open_owner_info_parcel_tab");
             }
             if (duckdb_detail.ok) {
-                drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx);
+                drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, active_feature_id);
             } else if (selected_unified) {
                 drawUnifiedParcelDetail(ctx.owner_info_state, *selected_unified);
-            } else if (!drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, ctx.parcel_layer_idx, ctx.selected_parcel_idx)) {
+            } else if (!drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, active_feature_id)) {
                 drawRealPropertySummary(selected_rp);
             }
         }

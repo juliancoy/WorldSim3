@@ -4,10 +4,10 @@
 
 - `main.cpp`: Minimal executable entry point. Delegates startup to `runWorldSim3App`.
 - `worldsim_app.h`: Public declaration for the application runner.
-- `worldsim_app.cpp`: Vulkan, swapchain, texture upload, tile-cache, screenshot, and frame present/render implementation.
-- `worldsim_app_internal.h`: Internal declarations shared between the Vulkan implementation and the app run loop.
-- `app_main_loop.cpp`: Compiled translation unit for `runWorldSim3App`, containing app state setup, the main frame loop, and top-level orchestration of the extracted runtime/UI/render modules.
-- `worldsim_app_run_state.h`: Declaration-only shared run-state struct used for ongoing run-loop modularization.
+- `worldsim_app.cpp`: Transitional render-backend facade. Target ownership is split across Vulkan context, frame present, GPU layer residency, GPU picking, and tile-texture services.
+- `worldsim_app_internal.h`: Transitional internal declarations shared across the app shell and render backend until service extraction is complete.
+- `app_main_loop.cpp`: Transitional application-shell coordinator for `runWorldSim3App`. Target ownership is split across startup preprocess, window/bootstrap, runtime bootstrap/state, background services, main loop, and shutdown services.
+- `worldsim_app_run_state.h`: Shared run-state declarations that should converge into typed runtime/service contexts.
 - `app_lifecycle.cpp`: Compiled frame finalization and shutdown implementation, including profiling sample capture, settings persistence, worker joins, and renderer cleanup.
 - `app_lifecycle.h`: Typed lifecycle contexts and lifecycle function declarations.
 
@@ -141,7 +141,7 @@ Most record/analysis tabs now have their own `.cpp`.
 - `README.md`: Project overview and usage documentation.
 - `TODO.md`: Working checklist used by the in-app gear/source panel.
 - `NEW_VISUAL_MODELS.md`: Visual model and heatmap implementation plan/options.
-- `REFACTOR.md`: Refactor plan and progress notes for decomposing the original monolithic app.
+- `REFACTOR.md`: Target service architecture and extraction plan for the app shell and render backend.
 - `layers_plan.md`: Dataset/layer planning notes.
 - `FILES.md`: This file; describes the purpose of each authored top-level file.
 

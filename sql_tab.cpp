@@ -135,7 +135,7 @@ void renderSqlTab(
     std::vector<QueryHistoryEntry>& query_history) {
     static char query_name[96] = "Query 1";
     static char query_sql[kQueryBufferSize] =
-        "SELECT parcel_layer_idx AS layer_idx, parcel_feature_idx AS feature_idx, blocklot, owner, address, current_value\n"
+        "SELECT parcel_layer_idx AS layer_idx, parcel_entity_id AS entity_id, blocklot, owner, address, current_value\n"
         "FROM unified_parcels\n"
         "WHERE owner IN (SELECT owner FROM ui_selected_owners)\n"
         "   OR blocklot IN (SELECT blocklot FROM ui_selected_parcels)\n"
@@ -158,7 +158,7 @@ void renderSqlTab(
     }
 
     ImGui::SeparatorText("Map Query Entrypoint");
-    ImGui::TextWrapped("Queries become colored map layers when they return layer_idx + feature_idx, blocklot, or owner.");
+    ImGui::TextWrapped("Queries become colored map layers when they return layer_idx + entity_id, blocklot, or owner.");
     ImGui::Text("Selected owners exposed to SQL: %zu", map_filter_state.selected_owners.size());
     ImGui::Text("Selected parcels exposed to SQL: %zu", selected_parcels.size());
     ImGui::TextDisabled("Use ui_selected_owners in SQL to query the current Owners-tab selection.");
@@ -325,7 +325,7 @@ void renderSqlTab(
     ImGui::SeparatorText("Example Queries");
     if (ImGui::SmallButton("Selected owners parcels")) {
         copyToQueryBuffer(query_sql,
-            "SELECT parcel_layer_idx AS layer_idx, parcel_feature_idx AS feature_idx, blocklot, owner, address, current_value\n"
+            "SELECT parcel_layer_idx AS layer_idx, parcel_entity_id AS entity_id, blocklot, owner, address, current_value\n"
             "FROM unified_parcels\n"
             "WHERE owner IN (SELECT owner FROM ui_selected_owners)\n"
             "   OR blocklot IN (SELECT blocklot FROM ui_selected_parcels)\n"
@@ -334,7 +334,7 @@ void renderSqlTab(
     ImGui::SameLine();
     if (ImGui::SmallButton("Vacant by status")) {
         copyToQueryBuffer(query_sql,
-            "SELECT parcel_layer_idx AS layer_idx, parcel_feature_idx AS feature_idx, blocklot, owner, address, status, current_value\n"
+            "SELECT parcel_layer_idx AS layer_idx, parcel_entity_id AS entity_id, blocklot, owner, address, status, current_value\n"
             "FROM unified_parcels\n"
             "WHERE vacant_notice_count > 0 OR vacant_rehab_count > 0\n"
             "LIMIT 5000;");
@@ -355,27 +355,21 @@ void drawSqlTab(
     double center_lon,
     double center_lat,
     double zoom,
-    const std::vector<size_t>& selected_parcel_indices,
-    bool show_selected_parcel_details,
-    int parcel_layer_idx,
-    size_t selected_parcel_idx,
+    const ParcelSelectionState& parcel_selection,
     std::vector<QueryMapLayer>& query_layers,
     std::vector<QueryHistoryEntry>& query_history) {
     if (!ImGui::BeginTabItem("SQL")) return;
 
     std::vector<DuckDbSelectedParcel> sql_selected_parcels;
-    const bool sql_selected_parcel_valid =
-        show_selected_parcel_details && !selected_parcel_indices.empty() && parcel_layer_idx >= 0 &&
-        (size_t)parcel_layer_idx < layers.size() &&
-        selected_parcel_idx < layers[(size_t)parcel_layer_idx].features.size();
-    if (sql_selected_parcel_valid) {
-        for (size_t sel_idx : selected_parcel_indices) {
-            if (sel_idx >= layers[(size_t)parcel_layer_idx].features.size()) continue;
-            const auto& selected = layers[(size_t)parcel_layer_idx].features[sel_idx];
+    if (parcel_selection.show_details && !parcel_selection.refs.empty()) {
+        for (const ParcelSelectionRef& ref : parcel_selection.refs) {
+            if (ref.layer_idx < 0 || (size_t)ref.layer_idx >= layers.size()) continue;
+            const size_t feature_idx = featureIndexForEntityId(layers[(size_t)ref.layer_idx], ref.entity_id);
+            if (feature_idx >= layers[(size_t)ref.layer_idx].features.size()) continue;
+            const auto& selected = layers[(size_t)ref.layer_idx].features[feature_idx];
             sql_selected_parcels.push_back(DuckDbSelectedParcel{
-                (size_t)parcel_layer_idx,
-                sel_idx,
-                std::string(),
+                (size_t)ref.layer_idx,
+                ref.entity_id,
                 featureBlockLotJoinKey(selected)
             });
         }

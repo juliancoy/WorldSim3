@@ -251,7 +251,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
     if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.center_lon || !ctx.center_lat || !ctx.zoom ||
         !ctx.layers || !ctx.layer_spatial || !ctx.map_filter_state || !ctx.query_layers || !ctx.real_property_by_blocklot ||
         !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.zoning_zone_color || !ctx.parcel_selection ||
-        !ctx.selected_parcel_indices || !ctx.show_selected_zone_details || !ctx.selected_zone_idx || !ctx.element_info_state ||
+        !ctx.selected_parcel_ids || !ctx.show_selected_zone_details || !ctx.selected_zone_idx || !ctx.element_info_state ||
         !ctx.layer_fill_enabled || !ctx.layer_hover_enabled || !ctx.layer_inspect_enabled || !ctx.layer_heatmap_enabled ||
         !ctx.layer_heatmap_algo || !ctx.layer_heatmap_max_zoom || !ctx.layer_parcel_detail_min_zoom || !ctx.layer_heatmap_cell_px ||
         !ctx.layer_heatmap_bandwidth_px || !ctx.layer_heatmap_blur_sigma_px || !ctx.layer_heatmap_percentile_clip ||
@@ -340,11 +340,17 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
                 ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
                 ctx.hover_debug_state->selected_parcel =
-                    ctx.parcel_selection && ctx.parcel_selection->active_idx != (size_t)-1;
+                    ctx.parcel_selection && !ctx.parcel_selection->active_entity_id.empty();
                 ctx.hover_debug_state->selected_parcel_idx =
-                    ctx.parcel_selection ? ctx.parcel_selection->active_idx : (size_t)-1;
+                    (ctx.parcel_selection &&
+                     ctx.parcel_selection->active_layer_idx >= 0 &&
+                     (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
+                        ? featureIndexForEntityId(
+                            (*ctx.layers)[(size_t)ctx.parcel_selection->active_layer_idx],
+                            ctx.parcel_selection->active_entity_id)
+                        : (size_t)-1;
                 ctx.hover_debug_state->selected_parcel_count =
-                    ctx.parcel_selection ? ctx.parcel_selection->indices.size() : 0;
+                    ctx.parcel_selection ? ctx.parcel_selection->entity_ids.size() : 0;
             }
             const MapCornerControlState map_corner_controls = hitTestMapCornerControls(ctx, map_canvas_session);
             drawMapFpsOverlay(map_canvas_session);
@@ -551,7 +557,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.owner_text_filter_result_set = ctx.owner_text_filter_result_set;
             map_frame_session_ctx.address_text_filter_result_set = ctx.address_text_filter_result_set;
             map_frame_session_ctx.feature_render_cache = ctx.feature_render_cache;
-            map_frame_session_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
+            map_frame_session_ctx.selected_parcel_ids = ctx.selected_parcel_ids;
             map_frame_session_ctx.zoning_metadata = ctx.zoning_metadata;
             map_frame_session_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
             map_frame_session_ctx.zoning_zone_color = ctx.zoning_zone_color;
@@ -580,7 +586,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.projection = map_canvas_session.projection_cache;
             map_frame_session_ctx.should_fill_layer_polygon = map_canvas_session.should_fill_layer_polygon;
             map_frame_session_ctx.project_world = map_canvas_session.project_world;
-            map_frame_session_ctx.open_parcel_element = [&](size_t idx) { openElementParcelPage(*ctx.element_info_state, idx); };
+            map_frame_session_ctx.open_parcel_element = [&](const std::string& parcel_entity_id) {
+                openElementParcelPage(*ctx.element_info_state, parcel_entity_id);
+            };
             map_frame_session_ctx.prof_layer_ms_last = ctx.prof_layer_ms_last;
             map_frame_session_ctx.prof_owner_filter_ms_last = ctx.prof_owner_filter_ms_last;
             map_frame_session_ctx.prof_heatmap_ms_last = ctx.prof_heatmap_ms_last;

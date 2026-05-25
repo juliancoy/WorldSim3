@@ -152,9 +152,9 @@ Files:
 
 - [layer_workers.h](/mnt/Cancer/worldsim3/layer_workers.h)
 - [layer_workers.cpp](/mnt/Cancer/worldsim3/layer_workers.cpp)
-- [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp)
+- app runtime bootstrap/state service
+- render backend geometry residency service
 - [worldsim_app.h](/mnt/Cancer/worldsim3/worldsim_app.h)
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
 - [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp)
 - [map_render_selection.cpp](/mnt/Cancer/worldsim3/map_render_selection.cpp)
 
@@ -182,7 +182,7 @@ Goal:
 
 Files:
 
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- render backend GPU-pick service
 - [map_render_hover.h](/mnt/Cancer/worldsim3/map_render_hover.h)
 - [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp)
 - [map_inspection.h](/mnt/Cancer/worldsim3/map_inspection.h)
@@ -238,8 +238,8 @@ Goal:
 Files:
 
 - [layer_workers.cpp](/mnt/Cancer/worldsim3/layer_workers.cpp)
-- [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp)
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- app runtime bootstrap/state service
+- render backend polyline residency/picking services
 - [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp)
 - [map_render_selection.cpp](/mnt/Cancer/worldsim3/map_render_selection.cpp)
 
@@ -294,7 +294,7 @@ Goal:
 Files:
 
 - [layer_workers.cpp](/mnt/Cancer/worldsim3/layer_workers.cpp)
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- render backend polygon residency service
 - [map_render_layers.h](/mnt/Cancer/worldsim3/map_render_layers.h)
 - [map_render_layers.cpp](/mnt/Cancer/worldsim3/map_render_layers.cpp)
 - [map_render_overlays.cpp](/mnt/Cancer/worldsim3/map_render_overlays.cpp)
@@ -322,7 +322,7 @@ Goal:
 
 Files:
 
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- render backend GPU-pick service
 - [map_render_hover.cpp](/mnt/Cancer/worldsim3/map_render_hover.cpp)
 - [map_render_selection.cpp](/mnt/Cancer/worldsim3/map_render_selection.cpp)
 - [map_inspection.cpp](/mnt/Cancer/worldsim3/map_inspection.cpp)
@@ -411,8 +411,8 @@ Files:
 - [layer_workers.cpp](/mnt/Cancer/worldsim3/layer_workers.cpp)
 - [cache_io.cpp](/mnt/Cancer/worldsim3/cache_io.cpp)
 - [types.h](/mnt/Cancer/worldsim3/types.h)
-- [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp)
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- app runtime bootstrap/state service
+- render backend geometry services
 - any remaining consumers of `LayerDef::FeatureRecord`
 
 Changes:
@@ -438,7 +438,7 @@ Goal:
 
 Files:
 
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- render backend services
 - [cache_io.cpp](/mnt/Cancer/worldsim3/cache_io.cpp)
 - [layer_runtime.cpp](/mnt/Cancer/worldsim3/layer_runtime.cpp)
 - docs files
@@ -469,7 +469,7 @@ Safe parallel slices after Slice 8:
 Avoid parallel overlap on:
 
 - [cache_io.cpp](/mnt/Cancer/worldsim3/cache_io.cpp)
-- [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+- render backend service write scopes
 - [layer_workers.cpp](/mnt/Cancer/worldsim3/layer_workers.cpp)
 
 unless the write scopes are explicitly partitioned.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cache_io.h"
+#include "duckdb_analytics.h"
 #include "layer_runtime.h"
 #include "map_render_hover.h"
 #include "parcel_unified.h"
@@ -23,12 +24,13 @@ struct MapInspectionContext {
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
     const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     ParcelSelectionState* parcel_selection = nullptr;
-    std::function<void(size_t)> open_parcel_element;
+    std::function<void(const std::string&)> open_parcel_element;
     bool* show_selected_zone_details = nullptr;
     size_t* selected_zone_idx = nullptr;
     const MapHoverState* hover_state = nullptr;
@@ -42,4 +44,35 @@ struct MapInspectionContext {
     int real_property_layer_idx = -1;
 };
 
+struct ParcelHoverResolution {
+    bool hit = false;
+    int layer_idx = -1;
+    size_t feature_idx = (size_t)-1;
+    std::string entity_id;
+    const UnifiedParcelRecord* unified_record = nullptr;
+};
+
+struct ParcelHoverDetail {
+    bool available = false;
+    std::string parcel_entity_id;
+    std::string blocklot;
+    std::string owner;
+    std::string owner_display;
+    std::string address;
+    std::string zipcode;
+    std::string status;
+    bool parcel_has_geometry = false;
+    bool has_property_record = false;
+    LayerDef::FeatureExtent parcel_extent;
+    int vacant_notice_count = 0;
+    int vacant_rehab_count = 0;
+    int tax_lien_count = 0;
+    int tax_sale_count = 0;
+    double tax_lien_amount = 0.0;
+    double tax_sale_amount = 0.0;
+};
+
+ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx);
+ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered);
+bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append);
 void handleMapInspection(const MapInspectionContext& ctx);

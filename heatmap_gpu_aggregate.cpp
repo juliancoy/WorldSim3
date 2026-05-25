@@ -149,7 +149,7 @@ std::condition_variable g_gpu_cv;
 uint64_t g_gpu_resource_epoch = 0;
 bool g_gpu_shutdown_requested = false;
 
-uint32_t findMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties) {
+uint32_t aggregateFindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties mem;
     vkGetPhysicalDeviceMemoryProperties(g_PhysicalDevice, &mem);
     for (uint32_t i = 0; i < mem.memoryTypeCount; ++i) {
@@ -170,7 +170,7 @@ bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyF
 
     VkMemoryRequirements req{};
     vkGetBufferMemoryRequirements(g_Device, out_buf, &req);
-    uint32_t mt = findMemoryType(req.memoryTypeBits, properties);
+    uint32_t mt = aggregateFindMemoryType(req.memoryTypeBits, properties);
     if (mt == UINT32_MAX) return false;
 
     VkMemoryAllocateInfo ai{};
@@ -219,7 +219,7 @@ bool createImage(
 
     VkMemoryRequirements req{};
     vkGetImageMemoryRequirements(g_Device, out_image, &req);
-    uint32_t mt = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    uint32_t mt = aggregateFindMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (mt == UINT32_MAX) return false;
     VkMemoryAllocateInfo alloc{};
     alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;

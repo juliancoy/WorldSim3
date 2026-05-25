@@ -31,13 +31,13 @@ Make search behave like a property-finding workflow, not just a layer filter:
   - `Normalized address match`
   - `All query terms matched`
   - `No property address found`
-- Include owner and block/lot fallback in the same search box only when address search fails.
+- Include owner and block/lot search in the same workflow only as an explicit secondary search mode, not as an identity fallback.
 - Cache normalized address strings per parcel so repeated searches do not rescan and normalize every frame.
 
 ### Medium Term
 
 - Build a `PropertySearchIndex` after parcel geometry artifacts and parcel/real-property joins are ready:
-  - `parcel_feature_idx`
+  - `parcel_entity_id`
   - normalized property address
   - raw display address
   - normalized owner
@@ -93,7 +93,7 @@ Make search behave like a property-finding workflow, not just a layer filter:
 
 ### Implementation Steps
 
-1. Add runtime state in `app_main_loop.cpp`:
+1. Add runtime state in the app runtime state/service layer:
    - `bool polygon_filter_enabled`
    - `bool polygon_filter_drawing`
    - `std::vector<ImVec2> polygon_filter_vertices_lonlat`

@@ -104,8 +104,8 @@ double parcelAreaSqM(
 
 double parcelCurrentValue(const std::vector<UnifiedParcelRecord>* unified_parcels, size_t parcel_idx) {
     if (!unified_parcels) return 0.0;
-    const UnifiedParcelRecord* rec = unifiedParcelAt(*unified_parcels, parcel_idx);
-    return rec ? rec->current_value : 0.0;
+    if (parcel_idx >= unified_parcels->size()) return 0.0;
+    return (*unified_parcels)[parcel_idx].current_value;
 }
 
 double parcelParameterValue(

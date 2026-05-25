@@ -15,7 +15,7 @@
 #include <vector>
 
 struct AddressLocateMatch {
-    size_t parcel_idx = (size_t)-1;
+    std::string parcel_entity_id;
     int score = 0;
     std::string address;
 };
@@ -26,7 +26,7 @@ struct FiltersTabContext {
     const std::vector<LayerDef>* layers = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
-    const std::unordered_set<size_t>* selected_parcel_index_set = nullptr;
+    const std::unordered_set<std::string>* selected_parcel_id_set = nullptr;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     int parcel_layer_idx = -1;
     int real_property_layer_idx = -1;
@@ -54,7 +54,7 @@ struct FiltersTabContext {
     int* selected_record_year_total = nullptr;
     std::vector<std::string>* selected_record_year_samples = nullptr;
     std::function<void()> clear_parcel_selection;
-    std::function<bool(size_t, bool)> select_parcel_idx;
+    std::function<bool(const std::string&, bool)> select_parcel_id;
 };
 
 void drawFiltersTab(const FiltersTabContext& ctx);

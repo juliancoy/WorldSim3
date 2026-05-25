@@ -271,7 +271,8 @@ VersionedDownloadResult downloadUrlVersioned(
     const std::string& url,
     const fs::path& out_path,
     const fs::path& versions_root,
-    const DownloadProgressCallback& on_progress) {
+    const DownloadProgressCallback& on_progress,
+    const DownloadValidationCallback& validator) {
     VersionedDownloadResult res;
     const fs::path meta_path = versions_root / "metadata" / (out_path.filename().string() + ".json");
     fs::create_directories(meta_path.parent_path());
@@ -414,6 +415,15 @@ VersionedDownloadResult downloadUrlVersioned(
         fs::remove(tmp, ec);
         res.message = "http code " + std::to_string(code);
         return res;
+    }
+    if (validator) {
+        std::string validation_error;
+        if (!validator(tmp, validation_error)) {
+            std::error_code ec;
+            fs::remove(tmp, ec);
+            res.message = validation_error.empty() ? "download validation failed" : validation_error;
+            return res;
+        }
     }
 
     const bool had_old = fs::exists(out_path);

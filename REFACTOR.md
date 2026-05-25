@@ -1,191 +1,231 @@
-# WorldSim3 Refactor Plan: Keep Code Files Under 2000 Lines
+# WorldSim3 Refactor Plan: Target Service Architecture
 
-## Objective
+This document describes the intended service decomposition for the app shell and render backend. The transition starts from `worldsim_app.cpp` and `app_main_loop.cpp`, but the target architecture is expressed in terms of service ownership rather than temporary file boundaries.
 
-Refactor the codebase so every **first-party** code file is under 2000 lines, while preserving runtime behavior.
+## Refactor Goals
 
-- Scope includes: `*.cpp`, `*.h`, `*.hpp`, `*.inc`, and Python tooling scripts.
-- Third-party vendored code is tracked separately (see `stb_image.h` policy below).
-
-## Implementation Progress
-
-Completed so far:
-
-1. `worldsim_cli.{h,cpp}` extracted from `worldsim_app_run.cpp` for CLI parsing/dispatch.
-2. `worldsim_dataset_bootstrap.{h,cpp}` extracted for preload/download bootstrap behavior.
-3. `worldsim_bootstrap.{h,cpp}` extracted for key layer index discovery.
-4. `worldsim_app_run.cpp` reduced below 2000 lines using incremental extraction and include-unit decomposition.
-
-## Current Over-Limit Files
-
-Based on `python countlines.py` output:
-
-1. `stb_image.h` (7988 lines) - vendored third-party file; do not hand-edit.
-
-All first-party C++ and Python files are currently under 2000 lines.
-
-## Refactor Policy (Best Practice)
-
-1. Preserve behavior first; move code before changing logic.
-2. Split by domain ownership, not arbitrary line chunks.
-3. Minimize global state exposure by introducing context structs.
-4. Keep public headers narrow; prefer internal/private headers for implementation details.
-5. Add/keep automated guardrails (`tools/check_file_sizes.sh`) in CI.
-6. Treat third-party code separately from first-party size policy.
-
-## Third-Party File Policy (`stb_image.h`)
-
-`stb_image.h` is vendored external code. Best practice is:
-
-1. Keep it unmodified and pinned to a known upstream revision.
-2. Move it under a clear vendor path (`third_party/stb/stb_image.h`) if desired.
-3. Exclude vendored files from first-party line limits (already done in `tools/check_file_sizes.sh`).
-
-This avoids carrying a custom fork and reduces upgrade risk.
-
-## High-Level Extraction Strategy
-
-Primary split target: `worldsim_app_run.cpp`.
-
-### Phase 1: App Entry and Bootstrap
-
-Move CLI parsing and startup/bootstrap orchestration out of `worldsim_app_run.cpp`.
-
-### Phase 2: Frame Pipeline Decomposition
-
-Split frame-loop responsibilities into dedicated units (input, simulation, render pass orchestration).
-
-### Phase 3: UI Panel Orchestration
-
-Move tab/panel wiring and per-panel state adapters into separate module files.
-
-### Phase 4: Networking and Service Coordination
-
-Extract realtime/session/LAN orchestration code paths from the run loop.
-
-### Phase 5: Runtime Integration Cleanup
-
-Centralize mutable runtime state into structured contexts and reduce cross-file coupling.
-
-## New Files To Create
-
-The following files should be introduced (professional naming, single-responsibility boundaries):
-
-1. `worldsim_cli.h`
-2. `worldsim_cli.cpp`
-3. `worldsim_bootstrap.h`
-4. `worldsim_bootstrap.cpp`
-5. `worldsim_runtime_context.h`
-6. `worldsim_frame_loop.h`
-7. `worldsim_frame_loop.cpp`
-8. `worldsim_render_loop.h`
-9. `worldsim_render_loop.cpp`
-10. `worldsim_ui_coordinator.h`
-11. `worldsim_ui_coordinator.cpp`
-12. `worldsim_network_coordinator.h`
-13. `worldsim_network_coordinator.cpp`
-14. `worldsim_dataset_bootstrap.h`
-15. `worldsim_dataset_bootstrap.cpp`
-16. `worldsim_command_dispatch.h`
-17. `worldsim_command_dispatch.cpp`
-18. `worldsim_shutdown.h`
-19. `worldsim_shutdown.cpp`
-
-## Existing Files Impacted By This Refactor
-
-### Core build/runtime
-
-1. `CMakeLists.txt` (add new compilation units)
-2. `worldsim_app_run.cpp` (major reduction; orchestrator-only end state)
-3. `worldsim_app.cpp` (ownership handoff for helper implementations, include cleanup)
-4. `worldsim_app_internal.h` (replace broad globals/includes with refined contexts)
-5. `worldsim_app.h` (public API remains small; verify unchanged contract)
-6. `main.cpp` (no behavior change expected; include/path updates only if needed)
-
-### App lifecycle and utilities
-
-7. `app_lifecycle.cpp`
-8. `app_lifecycle.h`
-9. `app_utils.cpp`
-10. `app_utils.h`
-11. `app_settings.cpp`
-12. `app_settings.h`
-
-### Rendering/map/layers integration touchpoints
-
-13. `layer_runtime.cpp`
-14. `layer_runtime.h`
-15. `layer_workers.cpp`
-16. `layer_workers.h`
-17. `layer_geometry.cpp`
-18. `layer_geometry.h`
-19. `heatmap_render.cpp`
-20. `heatmap_render.h`
-21. `time_cube.cpp`
-22. `time_cube.h`
-23. `time_cube_panel.cpp`
-24. `time_cube_panel.h`
-
-### Data and API/service integration
-
-25. `dataset_library.cpp`
-26. `dataset_library.h`
-27. `dataset_lan_api.cpp`
-28. `dataset_lan_api.h`
-29. `status_api.cpp`
-30. `status_api.h`
-31. `net_http_utils.cpp`
-32. `net_http_utils.h`
-33. `cache_io.cpp`
-34. `cache_io.h`
-
-### UI/domain panel integration
-
-35. `policy_panel.cpp`
-36. `policy_panel.h`
-37. `model_tabs_panel.cpp`
-38. `model_tabs_panel.h`
-39. `vacancy_overlay.cpp`
-40. `vacancy_overlay.h`
-41. `zoning.cpp`
-42. `zoning.h`
-
-### Realtime/session stack integration
-
-43. `arkavo_realtime_client.cpp`
-44. `arkavo_realtime_client.h`
-45. `arkavo_rtc_session_manager.cpp`
-46. `arkavo_rtc_session_manager.h`
-47. `arkavo_signaling_transport_curl.cpp`
-48. `arkavo_signaling_transport_curl.h`
-
-### Optional vendor path cleanup
-
-49. `stb_image.h` (only path/include relocation if moved under `third_party/`; no content edits)
+1. Reduce both files to thin orchestration units.
+2. Split by runtime ownership, not by arbitrary line chunks.
+3. Replace broad file-static/global state with explicit service contexts.
+4. Keep existing behavior and public entry points stable during extraction.
+5. Make the next extractions reviewable in small PRs.
 
 ## Target End State
 
-1. All first-party code files are under 2000 lines.
-2. `worldsim_app_run.cpp` becomes a thin orchestrator (target: 800-1500 lines).
-3. App runtime responsibilities are split across bounded coordinator modules listed above.
-4. Third-party vendored files remain excluded from first-party size policy.
-5. `tools/check_file_sizes.sh` stays green locally and in CI.
+End state:
 
-## Verification Checklist Per Refactor PR
+1. The application shell is a thin coordinator that sequences startup preprocess, runtime bootstrap, background services, the main loop service, and shutdown.
+2. The render backend is a thin facade over dedicated rendering services.
+3. Vulkan, GPU residency, GPU picking, tile textures, startup preprocess, runtime assembly, and shutdown all have explicit service ownership.
+4. Cross-service state is passed through typed runtime contexts rather than large file-static/global surfaces.
+
+## Proposed Services
+
+### Render backend services
+
+1. `vulkan_context_service.{h,cpp}`
+   Owns instance/device/queue/descriptor pool/sampler/command pool setup and teardown.
+
+2. `frame_present_service.{h,cpp}`
+   Owns `SetupVulkanWindow`, `FrameRender`, `FramePresent`, `FrameRenderSecondary`, `FramePresentSecondary`, and swapchain screenshot capture.
+
+3. `parcel_gpu_service.{h,cpp}`
+   Owns parcel residency, color uploads, draw state, draw callbacks, upload worker, retired payload draining, and residency/profiler status publishing.
+
+4. `zoning_gpu_service.{h,cpp}`
+   Owns zoning layer residency, descriptor sets, outline indirect compute, color buffers, and zoning draw callbacks.
+
+5. `point_layer_gpu_service.{h,cpp}`
+   Owns point layer and crime point residency, pipelines, descriptor sets, glyph/color uploads, and draw callbacks.
+
+6. `polyline_gpu_service.{h,cpp}`
+   Owns polyline layer residency, descriptors, pipelines, color uploads, and draw callbacks.
+
+7. `gpu_pick_service.{h,cpp}`
+   Owns offscreen pick render pass/resources, point pick staging buffers, and polygon/point pick execution.
+
+8. `tile_texture_service.{h,cpp}`
+   Owns texture upload, mip generation, descriptor finalization, tile cache LRU, cache eviction, and retired texture draining.
+
+### App shell services
+
+1. `startup_preprocess_service.{h,cpp}`
+   Owns `StartupPreprocessPlan`, subprocess execution, CLI mode, and preprocess UI window.
+
+2. `app_window_service.{h,cpp}`
+   Owns primary/secondary GLFW+ImGui window creation, context setup, font upload, and callback wiring for the download queue window.
+
+3. `app_runtime_bootstrap.{h,cpp}`
+   Owns initial runtime assembly currently done inline in `runWorldSim3App()`: layer loading, registry/index discovery, UI state load, derived state initialization, and default selections.
+
+4. `background_services_bootstrap.{h,cpp}`
+   Owns hydration workers, spatial worker, parcel render cache worker, status API worker, dataset API worker, and LAN discovery worker.
+
+5. `app_runtime_state.{h,cpp}`
+   Defines the state aggregates that are currently hundreds of locals inside `runWorldSim3App()`.
+
+6. `main_loop_service.{h,cpp}`
+   Owns the top-level while-loop sequencing and delegates to existing extracted modules such as `frame_prelude`, `map_tab`, `left_panel`, `right_panel`, and `layer_ui_state_sync`.
+
+7. `app_shutdown_service.{h,cpp}`
+   Owns stop flags, worker joins, queue drains, final persistence, and Vulkan/UI teardown ordering.
+
+## Recommended State Aggregates
+
+The first high-value move is not another utility function. It is introducing explicit state structs so service boundaries have something stable to receive.
+
+Create these aggregates before or alongside the service moves:
+
+1. `RenderBackendState`
+   Holds Vulkan globals, swapchain flags, upload command resources, screenshot state, and queue mutexes.
+
+2. `ParcelGpuRuntime`
+   Holds parcel buffers, draw state, upload worker state, retired payloads, and GPU profiler alert/status state.
+
+3. `LayerGpuRuntime`
+   Holds zoning, point, polyline, and crime layer GPU maps and per-layer draw state.
+
+4. `TileRuntime`
+   Holds tile cache, retired textures, tile sampler, and cache policy counters.
+
+5. `StartupRuntime`
+   Holds preprocess plan state, subprocess log lines, and preprocess UI progress state.
+
+6. `AppRuntimeState`
+   Holds the large mutable app state currently allocated as locals in `runWorldSim3App()`.
+
+7. `BackgroundServiceHandles`
+   Holds worker threads, stop flags, queues, mutexes, and futures that need coordinated shutdown.
+
+## Extraction Order
+
+### Phase 1: Stabilize State Boundaries
+
+1. Introduce the runtime aggregates listed above.
+2. Move existing globals/locals into those structs without changing behavior.
+3. Pass those structs into existing helper functions.
+
+This is the lowest-risk step and makes later file moves mechanical.
+
+### Phase 2: Move startup preprocess behind `startup_preprocess_service`
+
+Move out:
+
+1. `StartupPreprocessIssue`
+2. `StartupPreprocessPlan`
+3. `StartupPreprocessRunResult`
+4. `inspectStartupPreprocessPlan()`-related helpers
+5. `runStartupPreprocessWindow()`
+6. `runStartupPreprocessCli()`
+
+Result:
+
+The app coordinator keeps only the decision point for whether preprocess must run.
+
+### Phase 3: Move window/bootstrap behind `app_window_service`
+
+Move out:
+
+1. Main GLFW window sizing/creation
+2. Main ImGui Vulkan initialization
+3. Download queue window creation and callback wiring
+4. Font upload boilerplate for both windows
+
+Result:
+
+Window/bootstrap details disappear from the top-level app coordinator.
+
+### Phase 4: Move worker startup behind `background_services_bootstrap`
+
+Move out:
+
+1. Hydration worker startup
+2. Spatial worker startup
+3. Parcel render cache worker
+4. Status API worker
+5. Dataset API worker
+6. LAN discovery worker
+
+Result:
+
+Thread ownership is centralized and shutdown becomes tractable.
+
+### Phase 5: Move `tile_texture_service` and `gpu_pick_service`
+
+These two are relatively self-contained backend services and can move before the parcel/zoning draw path.
+
+### Phase 6: Move `parcel_gpu_service`
+
+Move out parcel-specific residency, color upload, upload worker, draw state, and callbacks as one service. Do not split parcel upload worker from parcel draw ownership; they share lifecycle and buffer state.
+
+### Phase 7: Move `zoning_gpu_service`
+
+Keep zoning outline indirect compute with zoning draw ownership. It should not live in a generic compute helper because its inputs are zoning-specific buffers and feature metadata.
+
+### Phase 8: Move `point_layer_gpu_service` and `polyline_gpu_service`
+
+These services mirror the already-established map/layer architecture and can share a small amount of internal helper code through a private header if needed.
+
+### Phase 9: Move `frame_present_service`
+
+Once the GPU draw services are out, frame/present code can depend on a stable render backend context rather than transitional globals.
+
+### Phase 10: Reduce the app shell to orchestration
+
+At this point the top-level runner should mostly do:
+
+1. Parse CLI / immediate commands
+2. Load settings
+3. Run startup preprocess gate
+4. Build app runtime
+5. Start background services
+6. Run main loop service
+7. Run shutdown service
+
+## Why This Split
+
+This split follows the intended ownership seams for the steady-state app:
+
+1. Parcel, zoning, point, and polyline rendering have distinct residency, color, and draw-state lifecycles.
+2. GPU picking has its own render pass and staging resources.
+3. Tile caching has its own lifecycle and memory-retirement policy.
+4. Startup preprocess already acts like a separate mode.
+5. Background workers form a service cluster with shared stop/join semantics.
+6. Existing modules such as `map_frame_session`, `map_tab`, `frame_prelude`, and `layer_ui_state_sync` already point toward service-style boundaries.
+
+## Concrete PR Slices
+
+1. PR 1: Refresh `REFACTOR.md`, add runtime aggregate structs, no logic changes.
+2. PR 2: Extract `startup_preprocess_service`.
+3. PR 3: Extract `app_window_service` and `app_shutdown_service`.
+4. PR 4: Extract `background_services_bootstrap` and thread handle structs.
+5. PR 5: Extract `tile_texture_service`.
+6. PR 6: Extract `gpu_pick_service`.
+7. PR 7: Extract `parcel_gpu_service`.
+8. PR 8: Extract `zoning_gpu_service`.
+9. PR 9: Extract `point_layer_gpu_service` and `polyline_gpu_service`.
+10. PR 10: Extract `frame_present_service` and leave the render backend facade/orchestrator only.
+
+## Guardrails
+
+1. Preserve the existing public API in `worldsim_app.h` until the moves are complete.
+2. Prefer move-only PRs before behavior changes.
+3. Keep the shutdown order identical while thread/service ownership is moving.
+4. Do not merge service boundaries that share only helper code; extract helpers later if duplication survives.
+5. Keep `docs/RUN_LOOP_MIGRATION.md` aligned as each phase lands so the migration notes do not drift again.
+
+## Verification Per Phase
 
 1. `cmake -S . -B build`
 2. `cmake --build build -j`
-3. `tools/check_file_sizes.sh`
-4. Launch smoke test: `./build/worldsim3`
-5. API smoke: `GET /status`, `GET /profile`
-6. UI smoke: map render, layer toggles, policy panel, time cube panel
+3. Launch smoke test: `./build/worldsim3`
+4. Exercise startup preprocess mode if touched
+5. Exercise map render, parcel/zoning rendering, and hover/pick behavior if GPU services are touched
+6. Exercise download queue, status API, and LAN discovery if background services are touched
 
-## Delivery Plan (PR Slicing)
+## Success Criteria
 
-1. PR 1: Add runtime context and CLI/bootstrap modules; no behavior changes.
-2. PR 2: Extract frame/render loop coordinators.
-3. PR 3: Extract UI coordinator and command dispatch.
-4. PR 4: Extract network/dataset bootstrap/shutdown coordinators.
-5. PR 5: Final cleanup, include minimization, and line-limit enforcement confirmation.
-
-This sequence keeps risk controlled and every step reviewable.
+1. App-shell responsibilities are owned by dedicated startup/bootstrap/loop/shutdown services.
+2. Render-backend responsibilities are owned by dedicated Vulkan/GPU/tile/pick/frame services.
+3. Service ownership is explicit enough that new work lands in service modules rather than temporary coordinator files.
+4. Runtime shutdown and worker lifecycle are explicit and reviewable.

@@ -66,7 +66,7 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
         ctx.polygon_geometry_artifacts,
         ctx.parcel_render_blob,
         ctx.parcel_layer_idx,
-        ctx.selected_parcel_indices,
+        ctx.parcel_selection,
         ctx.math_zoom,
         ctx.projection,
         ctx.project_world

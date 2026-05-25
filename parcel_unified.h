@@ -10,11 +10,13 @@
 
 struct UnifiedParcelRecord {
     size_t parcel_layer_idx = 0;
-    size_t parcel_feature_idx = 0;
+    size_t parcel_local_feature_idx = 0;
+    std::string parcel_entity_id;
+    std::string parcel_geometry_entity_id;
     std::string blocklot;
 
     int real_property_layer_idx = -1;
-    size_t real_property_feature_idx = (size_t)-1;
+    size_t real_property_local_feature_idx = (size_t)-1;
     std::string parcel_source_file;
     std::string property_source_file;
     bool parcel_has_geometry = false;
@@ -62,7 +64,9 @@ struct UnifiedParcelBuildRequest {
 
 std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildRequest& request);
 
-const UnifiedParcelRecord* unifiedParcelAt(const std::vector<UnifiedParcelRecord>& parcels, size_t parcel_feature_idx);
+const UnifiedParcelRecord* unifiedParcelAt(
+    const std::vector<UnifiedParcelRecord>& parcels,
+    const std::string& parcel_entity_id);
 const LayerDef::FeatureRecord* unifiedParcelGeometry(
     const UnifiedParcelRecord& record,
     const std::vector<LayerDef>& layers);

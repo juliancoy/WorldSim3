@@ -37,13 +37,15 @@ struct LayerDownloadSummary {
 };
 
 using DownloadProgressCallback = std::function<void(uint64_t, uint64_t)>;
+using DownloadValidationCallback = std::function<bool(const std::filesystem::path&, std::string&)>;
 
 bool downloadUrlToFile(const std::string& url, const std::filesystem::path& out_path, std::string& err);
 VersionedDownloadResult downloadUrlVersioned(
     const std::string& url,
     const std::filesystem::path& out_path,
     const std::filesystem::path& versions_root,
-    const DownloadProgressCallback& on_progress = {});
+    const DownloadProgressCallback& on_progress = {},
+    const DownloadValidationCallback& validator = {});
 FreshnessCheckResult checkUrlFreshnessVersioned(
     const std::string& url,
     const std::filesystem::path& out_path,

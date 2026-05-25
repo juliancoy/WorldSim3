@@ -1,5 +1,8 @@
 #pragma once
 
+#include "worldsim_app.h"
+#include "worldsim_gpu_state_internal.h"
+
 #include "imgui.h"
 #include "backends/imgui_impl_vulkan.h"
 #include "screenshot_state.h"
@@ -12,10 +15,15 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <list>
 #include <mutex>
+#include <optional>
+#include <atomic>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -61,13 +69,44 @@ extern VkQueue g_Queue;
 extern std::mutex g_QueueSubmitMutex;
 extern VkDescriptorPool g_DescriptorPool;
 extern VkSampler g_TileSampler;
+extern VkCommandPool g_UploadCommandPool;
+extern VkCommandBuffer g_UploadCommandBuffer;
 extern ImGui_ImplVulkanH_Window g_MainWindowData;
 extern int g_MinImageCount;
 extern bool g_SwapChainRebuild;
+extern bool g_MainSwapchainTransferSrcSupported;
+extern VkCommandBuffer g_CurrentFrameRenderCommandBuffer;
+extern VkRenderPass g_CurrentFrameRenderPass;
+extern uint32_t g_CurrentFrameRenderIndex;
+extern std::atomic<uint64_t> g_PresentedFrameSerial;
 extern std::unordered_map<std::string, TileCacheEntry> g_TileCache;
 extern std::list<std::string> g_TileLRU;
 extern bool g_EnableValidationLayers;
 extern std::vector<TileTexture> g_RetiredTextures;
+extern ParcelGpuBuffers g_ParcelGpuBuffers;
+extern bool g_ParcelGpuOverlayHasVisibleColors;
+extern bool g_ParcelGpuOutlineHasVisibleColors;
+extern ParcelGpuDrawState g_ParcelGpuDrawState;
+extern ParcelGpuPipeline g_ParcelGpuPipeline;
+extern std::unordered_map<size_t, ZoningGpuLayerState> g_ZoningGpuLayers;
+extern CrimePointGpuBuffers g_CrimePointGpuBuffers;
+extern CrimePointGpuDrawState g_CrimePointGpuDrawState;
+extern CrimePointGpuPipeline g_CrimePointGpuPipeline;
+extern std::atomic<bool> g_ParcelGpuUploadStop;
+extern std::mutex g_ParcelGpuUploadRequestMutex;
+extern std::condition_variable g_ParcelGpuUploadCv;
+extern std::optional<ParcelRenderCacheBlob> g_ParcelGpuUploadPendingRequest;
+extern std::mutex g_ParcelGpuUploadResultMutex;
+extern std::optional<ParcelGpuUploadResult> g_ParcelGpuUploadCompletedResult;
+extern std::thread g_ParcelGpuUploadWorker;
+extern std::vector<RetiredParcelGpuPayload> g_RetiredParcelGpuPayloads;
+extern std::mutex g_ParcelGpuStatusMutex;
+extern ParcelGpuResidencyStatus g_ParcelGpuStatusSnapshot;
+extern std::mutex g_GpuProfilerAlertMutex;
+extern GpuProfilerAlertState g_GpuProfilerAlertState;
+extern std::mutex g_GpuProfilerEventMutex;
+extern std::deque<GpuProfilerEvent> g_GpuProfilerEvents;
+extern GpuPickResources g_GpuPickResources;
 
 void check_vk_result(VkResult err);
 void SetupVulkan(const char** extensions, uint32_t extensions_count);
@@ -91,3 +130,41 @@ TileSample getTileSample(
     int y,
     int max_native_tile_zoom = kMaxNativeTileZoom);
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path& root);
+void recordZoningOutlineIndirectComputeDispatches(VkCommandBuffer cmd);
+uint64_t parcelDeviceLocalBytes(const ParcelGpuBuffers& buffers);
+uint64_t parcelHostVisibleBytes(const ParcelGpuBuffers& buffers);
+void publishParcelGpuStatusSnapshot();
+void destroyParcelGpuBuffer(ParcelGpuBuffer& b);
+void destroyParcelGpuBuffers(ParcelGpuBuffers& buffers);
+void waitForParcelGpuDeviceIdle();
+bool createHostVisibleParcelBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error);
+bool uploadDeviceLocalParcelBuffer(
+    const void* src,
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    ParcelGpuBuffer& out,
+    std::string* error);
+void retireParcelGpuBuffers(ParcelGpuBuffers&& buffers);
+bool createParcelGpuUploadContext(ParcelGpuUploadContext& out, std::string* error);
+void destroyParcelGpuUploadContext(ParcelGpuUploadContext& ctx);
+bool buildParcelGpuUploadPayload(
+    ParcelGpuUploadContext& ctx,
+    const ParcelRenderCacheBlob& blob,
+    ParcelGpuUploadPayload& out,
+    std::string* error);
+uint32_t parcelGpuDescriptorFrameCount();
+uint32_t findMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties);
+bool tryCreateBuffer(
+    VkDeviceSize size,
+    VkBufferUsageFlags usage,
+    VkMemoryPropertyFlags properties,
+    VkBuffer& buffer,
+    VkDeviceMemory& memory,
+    std::string* error);
+std::vector<uint32_t> loadSpirvFile(const char* path);
+void destroyGpuPickResources();
+void cleanupFeatureOverlayGpuServices();

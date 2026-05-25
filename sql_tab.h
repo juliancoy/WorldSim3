@@ -4,6 +4,7 @@
 #include "types.h"
 #include "filters.h"
 #include "parcel_unified.h"
+#include "selection.h"
 
 #include <filesystem>
 #include <vector>
@@ -35,9 +36,6 @@ void drawSqlTab(
     double center_lon,
     double center_lat,
     double zoom,
-    const std::vector<size_t>& selected_parcel_indices,
-    bool show_selected_parcel_details,
-    int parcel_layer_idx,
-    size_t selected_parcel_idx,
+    const ParcelSelectionState& parcel_selection,
     std::vector<QueryMapLayer>& query_layers,
     std::vector<QueryHistoryEntry>& query_history);

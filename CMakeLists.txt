@@ -99,8 +99,25 @@ FetchContent_MakeAvailable(libdatachannel)
 add_executable(worldsim3
   main.cpp
   worldsim_app.cpp
+  tile_texture_service.cpp
+  frame_present_service.cpp
+  parcel_gpu_service.cpp
+  gpu_pick_service.cpp
+  feature_overlay_gpu_service.cpp
+  app_window_service.cpp
+  app_runtime_bootstrap.cpp
+  app_background_services.cpp
+  app_ui_state_bootstrap.cpp
+  parcel_runtime_service.cpp
+  crime_point_runtime_service.cpp
+  point_layer_runtime_service.cpp
+  polyline_layer_runtime_service.cpp
+  polygon_artifact_runtime_service.cpp
+  zoning_runtime_service.cpp
   app_main_loop.cpp
+  startup_preprocess_service.cpp
   worldsim_cli.cpp
+  env_config.cpp
   worldsim_dataset_bootstrap.cpp
   worldsim_bootstrap.cpp
   aggregate_visualization_strategies.cpp
@@ -453,7 +470,6 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_projection_fill_cache_selftest --projection-fill-cache-selftest)
   add_worldsim_cli_test(worldsim3_projection_color_cache_selftest --projection-color-cache-selftest)
   add_worldsim_cli_test(worldsim3_polygon_hole_selftest --polygon-hole-selftest)
-  add_worldsim_cli_test(worldsim3_parcel_render_cache_selftest --parcel-render-cache-selftest)
   add_worldsim_cli_test(worldsim3_spatial_index_selftest --spatial-index-selftest)
   add_worldsim_cli_test(worldsim3_layer_profile_selftest --layer-profile-selftest)
   add_worldsim_cli_test(worldsim3_layer_runtime_status_selftest --layer-runtime-status-selftest)
@@ -461,6 +477,10 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_render_policy_selftest --render-policy-selftest)
   add_worldsim_cli_test(worldsim3_render_plan_selftest --render-plan-selftest)
   add_worldsim_cli_test(worldsim3_canonical_parcel_binary_selftest --canonical-parcel-binary-selftest)
+  add_worldsim_cli_test(worldsim3_parcel_polygon_identity_selftest --parcel-polygon-identity-selftest)
+  add_worldsim_cli_test(worldsim3_parcel_selection_ui_harness --parcel-selection-ui-harness)
+  add_worldsim_cli_test(worldsim3_parcel_hover_click_ui_harness --parcel-hover-click-ui-harness)
+  add_worldsim_cli_test(worldsim3_duckdb_parcel_semantic_snapshot_selftest --duckdb-parcel-semantic-snapshot-selftest)
   add_worldsim_cli_test(worldsim3_vacancy_selftest --vacancy-selftest)
   add_worldsim_integration_test(worldsim3_duckdb_parcel_ingest_selftest --duckdb-parcel-ingest-selftest)
 

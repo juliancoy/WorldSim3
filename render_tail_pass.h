@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "map_render_projection.h"
 #include "parcel_unified.h"
+#include "selection.h"
 #include "types.h"
 
 #include <cstddef>
@@ -40,7 +41,7 @@ struct RenderTailPassContext {
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
-    const std::vector<size_t>* selected_parcel_indices = nullptr;
+    const ParcelSelectionState* parcel_selection = nullptr;
     MapProjectionCache* projection = nullptr;
     std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;

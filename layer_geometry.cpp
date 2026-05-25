@@ -1,15 +1,35 @@
 #include "layer_geometry.h"
 
 #include "app_utils.h"
+#include "earcut.hpp"
 #include "feature_props.h"
 #include "geo.h"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <optional>
 
 using json = nlohmann::json;
 namespace fs = std::filesystem;
+
+void ensureFeatureTriangles(LayerDef::FeatureRecord& fg) {
+    if (!fg.triangles.empty() || fg.rings.empty()) return;
+
+    using EarcutPoint = std::array<double, 2>;
+    std::vector<std::vector<EarcutPoint>> polygon;
+    polygon.reserve(fg.rings.size());
+    for (const auto& ring : fg.rings) {
+        std::vector<EarcutPoint> out_ring;
+        out_ring.reserve(ring.size());
+        for (const ImVec2& p : ring) out_ring.push_back({static_cast<double>(p.x), static_cast<double>(p.y)});
+        if (out_ring.size() >= 2 && out_ring.front() == out_ring.back()) out_ring.pop_back();
+        if (out_ring.size() >= 3) polygon.push_back(std::move(out_ring));
+    }
+    if (polygon.empty()) return;
+
+    fg.triangles = mapbox::earcut<uint32_t>(polygon);
+}
 
 std::string jsonValueToString(const json& v) {
     if (v.is_string()) return v.get<std::string>();
@@ -54,6 +74,7 @@ std::vector<LayerDef::FeatureRecord> extractFeatureRecords(const json& geom) {
             if (ring.size() >= 3) fg.rings.push_back(std::move(ring));
         }
         if (!has || fg.rings.empty()) return std::nullopt;
+        ensureFeatureTriangles(fg);
 
         return fg;
     };

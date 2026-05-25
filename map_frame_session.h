@@ -102,7 +102,7 @@ struct MapFrameSessionContext {
     const FilterResultSet* owner_text_filter_result_set = nullptr;
     const FilterResultSet* address_text_filter_result_set = nullptr;
     const LayerFeatureRenderCache* feature_render_cache = nullptr;
-    std::vector<size_t>* selected_parcel_indices = nullptr;
+    std::vector<std::string>* selected_parcel_ids = nullptr;
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
@@ -135,7 +135,7 @@ struct MapFrameSessionContext {
 
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
-    std::function<void(size_t)> open_parcel_element;
+    std::function<void(const std::string&)> open_parcel_element;
 
     std::atomic<double>* prof_layer_ms_last = nullptr;
     std::atomic<double>* prof_owner_filter_ms_last = nullptr;

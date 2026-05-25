@@ -92,7 +92,7 @@ std::string controlsPresetSql(const std::string& preset) {
         return R"SQL(
             SELECT
                 parcel_layer_idx AS layer_idx,
-                parcel_feature_idx AS feature_idx,
+                parcel_entity_id AS entity_id,
                 blocklot,
                 owner,
                 owner_display,
@@ -103,14 +103,14 @@ std::string controlsPresetSql(const std::string& preset) {
                 property_source_file
             FROM unified_parcels
             WHERE current_value <= 0 OR current_value IS NULL
-            ORDER BY has_property_record DESC, owner_display, address, parcel_feature_idx
+            ORDER BY has_property_record DESC, owner_display, address, parcel_entity_id
         )SQL";
     }
     if (preset == "valued_parcels") {
         return R"SQL(
             SELECT
                 parcel_layer_idx AS layer_idx,
-                parcel_feature_idx AS feature_idx,
+                parcel_entity_id AS entity_id,
                 blocklot,
                 owner,
                 owner_display,
@@ -121,7 +121,7 @@ std::string controlsPresetSql(const std::string& preset) {
                 property_source_file
             FROM unified_parcels
             WHERE current_value > 0
-            ORDER BY current_value DESC, parcel_feature_idx
+            ORDER BY current_value DESC, parcel_entity_id
         )SQL";
     }
     return {};
@@ -129,13 +129,14 @@ std::string controlsPresetSql(const std::string& preset) {
 
 DuckDbQueryResult controlsPresetInMemory(
     const std::string& preset,
+    const std::vector<LayerDef>& layers,
     const std::vector<UnifiedParcelRecord>& parcels,
     size_t max_rows) {
     DuckDbQueryResult out;
     out.ok = true;
     out.columns = {
         "layer_idx",
-        "feature_idx",
+        "entity_id",
         "blocklot",
         "owner",
         "owner_display",
@@ -160,13 +161,18 @@ DuckDbQueryResult controlsPresetInMemory(
         if (!keep) continue;
         ++matched;
         out.result_set.layers.insert(rec.parcel_layer_idx);
-        out.result_set.features.insert(FeatureKey{rec.parcel_layer_idx, rec.parcel_feature_idx});
+        if (rec.parcel_layer_idx < layers.size()) {
+            const size_t feature_idx = featureIndexForEntityId(layers[rec.parcel_layer_idx], rec.parcel_entity_id);
+            if (feature_idx != (size_t)-1) {
+                out.result_set.features.insert(FeatureKey{rec.parcel_layer_idx, feature_idx});
+            }
+        }
         if (!rec.blocklot.empty()) out.result_set.blocklots.insert(rec.blocklot);
         if (!rec.owner.empty()) out.result_set.owners.insert(rec.owner);
         if (out.rows.size() < max_rows) {
             out.rows.push_back({
                 std::to_string((uint64_t)rec.parcel_layer_idx),
-                std::to_string((uint64_t)rec.parcel_feature_idx),
+                rec.parcel_entity_id,
                 rec.blocklot,
                 rec.owner,
                 rec.owner_display,
@@ -1368,7 +1374,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                              preset == "no_value" || preset == "valued_parcels") &&
                             !unified_parcels.empty();
                         if (can_use_memory_preset) {
-                            result = controlsPresetInMemory(preset, unified_parcels, max_rows);
+                            result = controlsPresetInMemory(preset, layers, unified_parcels, max_rows);
                         } else if (!duckdb_analytics.status().last_rebuild_ok && !duckdb_analytics.validateExistingCache()) {
                             result.ok = false;
                             result.message = duckdb_analytics.status().message;

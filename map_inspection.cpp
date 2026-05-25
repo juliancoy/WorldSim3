@@ -544,6 +544,104 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecor
 }
 }
 
+ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx) {
+    ParcelHoverResolution out;
+    if (!ctx.hover_state || !ctx.layers) return out;
+    out.layer_idx = ctx.hover_state->hovered_parcel_layer_idx;
+    out.feature_idx = ctx.hover_state->hovered_parcel_idx;
+    out.hit = out.feature_idx != (size_t)-1;
+    if (!out.hit) return out;
+    out.entity_id =
+        !ctx.hover_state->hovered_parcel_entity_id.empty()
+            ? ctx.hover_state->hovered_parcel_entity_id
+            : (out.layer_idx >= 0 &&
+               (size_t)out.layer_idx < ctx.layers->size() &&
+               out.feature_idx < (*ctx.layers)[(size_t)out.layer_idx].features.size())
+                ? featureEntityIdForLayerFeature(
+                    (*ctx.layers)[(size_t)out.layer_idx],
+                    (*ctx.layers)[(size_t)out.layer_idx].features[out.feature_idx],
+                    out.feature_idx)
+                : std::string();
+    out.unified_record =
+        (ctx.unified_parcels && !out.entity_id.empty())
+            ? unifiedParcelAt(*ctx.unified_parcels, out.entity_id)
+            : nullptr;
+    return out;
+}
+
+ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
+    ParcelHoverDetail out;
+    if (!hovered.hit || hovered.entity_id.empty()) return out;
+    out.parcel_entity_id = hovered.entity_id;
+
+    if (hovered.unified_record) {
+        const UnifiedParcelRecord& row = *hovered.unified_record;
+        out.available = true;
+        out.blocklot = row.blocklot;
+        out.owner = row.owner;
+        out.owner_display = row.owner_display;
+        out.address = row.address;
+        out.zipcode = row.zip;
+        out.status = row.status;
+        out.parcel_has_geometry = row.parcel_has_geometry;
+        out.has_property_record = row.has_property_record;
+        out.parcel_extent = row.parcel_extent;
+        out.vacant_notice_count = row.vacant_notice_count;
+        out.vacant_rehab_count = row.vacant_rehab_count;
+        out.tax_lien_count = row.tax_lien_count;
+        out.tax_sale_count = row.tax_sale_count;
+        out.tax_lien_amount = row.tax_lien_amount;
+        out.tax_sale_amount = row.tax_sale_amount;
+        return out;
+    }
+
+    if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) return out;
+    const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
+    if (!detail.ok || detail.rows.empty()) return out;
+    const auto& row = detail.rows.front();
+    auto cell = [&](const char* column) -> std::string {
+        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
+            if (detail.columns[i] == column) return row[i];
+        }
+        return {};
+    };
+    out.available = true;
+    out.blocklot = cell("blocklot");
+    out.owner = cell("owner");
+    out.owner_display = cell("owner_display");
+    out.address = cell("address");
+    out.zipcode = cell("zipcode");
+    out.status = cell("status");
+    out.parcel_has_geometry = trimDisplayValue(cell("parcel_has_geometry")) == "true";
+    out.has_property_record = trimDisplayValue(cell("has_property_record")) == "true";
+    out.parcel_extent.min_lon = (float)parseNumericField(cell("min_lon"));
+    out.parcel_extent.min_lat = (float)parseNumericField(cell("min_lat"));
+    out.parcel_extent.max_lon = (float)parseNumericField(cell("max_lon"));
+    out.parcel_extent.max_lat = (float)parseNumericField(cell("max_lat"));
+    out.vacant_notice_count = (int)parseNumericField(cell("vacant_notice_count"));
+    out.vacant_rehab_count = (int)parseNumericField(cell("vacant_rehab_count"));
+    out.tax_lien_count = (int)parseNumericField(cell("tax_lien_count"));
+    out.tax_sale_count = (int)parseNumericField(cell("tax_sale_count"));
+    out.tax_lien_amount = parseNumericField(cell("tax_lien_amount"));
+    out.tax_sale_amount = parseNumericField(cell("tax_sale_amount"));
+    return out;
+}
+
+bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append) {
+    if (!ctx.parcel_selection || !hovered.hit || hovered.entity_id.empty()) return false;
+    if (!selectParcel(
+            *ctx.parcel_selection,
+            hovered.layer_idx,
+            hovered.entity_id,
+            ctrl_append)) {
+        return false;
+    }
+    if (ctx.open_parcel_element) ctx.open_parcel_element(hovered.entity_id);
+    if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
+    if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
+    return true;
+}
+
 void handleMapInspection(const MapInspectionContext& ctx) {
     static bool event_stack_popup_open = false;
     static int event_stack_layer_idx = -1;
@@ -551,18 +649,17 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     static float event_stack_lat = 0.0f;
 
     if (!ctx.hover_state || !ctx.layers || !ctx.parcel_selection) return;
-    const size_t hovered_parcel_idx = ctx.hover_state->hovered_parcel_idx;
+    const ParcelHoverResolution hovered_parcel = resolveHoveredParcel(ctx);
+    const int hovered_parcel_layer_idx = hovered_parcel.layer_idx;
+    const size_t hovered_parcel_idx = hovered_parcel.feature_idx;
     const LayerDef::FeatureRecord* hovered_zone = ctx.hover_state->hovered_zone;
     const size_t hovered_zone_idx = ctx.hover_state->hovered_zone_idx;
     const LayerDef::FeatureRecord* hovered_point = ctx.hover_state->hovered_point;
     const int hovered_point_layer_idx = ctx.hover_state->hovered_point_layer_idx;
     const LayerDef::FeatureRecord* inspect_point = ctx.hover_state->inspect_point;
     const int inspect_point_layer_idx = ctx.hover_state->inspect_point_layer_idx;
-    const bool hovered_parcel_hit = hovered_parcel_idx != (size_t)-1;
-    const UnifiedParcelRecord* hovered_unified =
-        (ctx.unified_parcels && hovered_parcel_hit)
-        ? unifiedParcelAt(*ctx.unified_parcels, hovered_parcel_idx)
-        : nullptr;
+    const bool hovered_parcel_hit = hovered_parcel.hit;
+    const UnifiedParcelRecord* hovered_unified = hovered_parcel.unified_record;
 
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
@@ -599,50 +696,26 @@ void handleMapInspection(const MapInspectionContext& ctx) {
 
     if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel_hit) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
-        const std::string stable_id = hovered_unified ? normalizeJoinKey(hovered_unified->blocklot) : std::string();
-        size_t parcel_count = 0;
-        if (ctx.unified_parcels && !ctx.unified_parcels->empty()) {
-            parcel_count = ctx.unified_parcels->size();
-        } else if (ctx.parcel_render_blob && !ctx.parcel_render_blob->features.empty()) {
-            parcel_count = ctx.parcel_render_blob->features.size();
-        } else if (ctx.layers && ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
-            parcel_count = (*ctx.layers)[(size_t)ctx.parcel_layer_idx].features.size();
-        }
-        if (selectParcel(
-                *ctx.parcel_selection,
-                hovered_parcel_idx,
-                stable_id,
-                parcel_count,
-                ctrl) &&
-            ctx.open_parcel_element) {
-            ctx.open_parcel_element(hovered_parcel_idx);
-        }
-        if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
-        if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
+        applyParcelClickSelection(ctx, hovered_parcel, ctrl);
     } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && hovered_zone != nullptr) {
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = true;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = hovered_zone_idx;
         clearParcelSelection(*ctx.parcel_selection);
     }
 
-    if (ctx.parcel_hover_active && ctx.map_hovered && hovered_unified) {
-        const std::string& blocklot_raw = hovered_unified->blocklot;
-        const auto& vac_notice_vec = ctx.parcel_vac_notice_by_feature ? *ctx.parcel_vac_notice_by_feature : std::vector<int>{};
-        const auto& vac_rehab_vec = ctx.parcel_vac_rehab_by_feature ? *ctx.parcel_vac_rehab_by_feature : std::vector<int>{};
-        const auto& tax_lien_vec = ctx.parcel_tax_lien_by_feature ? *ctx.parcel_tax_lien_by_feature : std::vector<int>{};
-        const auto& tax_sale_vec = ctx.parcel_tax_sale_by_feature ? *ctx.parcel_tax_sale_by_feature : std::vector<int>{};
-        const auto& tax_lien_amount_vec = ctx.parcel_tax_lien_amount_by_feature ? *ctx.parcel_tax_lien_amount_by_feature : std::vector<double>{};
-        const auto& tax_sale_amount_vec = ctx.parcel_tax_sale_amount_by_feature ? *ctx.parcel_tax_sale_amount_by_feature : std::vector<double>{};
-        int vac_notice = (hovered_parcel_idx < vac_notice_vec.size()) ? vac_notice_vec[hovered_parcel_idx] : 0;
-        int vac_rehab = (hovered_parcel_idx < vac_rehab_vec.size()) ? vac_rehab_vec[hovered_parcel_idx] : 0;
-        int tax_lien = (hovered_parcel_idx < tax_lien_vec.size()) ? tax_lien_vec[hovered_parcel_idx] : 0;
-        int tax_sale = (hovered_parcel_idx < tax_sale_vec.size()) ? tax_sale_vec[hovered_parcel_idx] : 0;
-        double tax_lien_amount = (hovered_parcel_idx < tax_lien_amount_vec.size()) ? tax_lien_amount_vec[hovered_parcel_idx] : 0.0;
-        double tax_sale_amount = (hovered_parcel_idx < tax_sale_amount_vec.size()) ? tax_sale_amount_vec[hovered_parcel_idx] : 0.0;
+    const ParcelHoverDetail hovered_detail = resolveParcelHoverDetail(ctx, hovered_parcel);
+    if (ctx.parcel_hover_active && ctx.map_hovered && hovered_detail.available) {
+        const std::string& blocklot_raw = hovered_detail.blocklot;
+        const int vac_notice = hovered_detail.vacant_notice_count;
+        const int vac_rehab = hovered_detail.vacant_rehab_count;
+        const int tax_lien = hovered_detail.tax_lien_count;
+        const int tax_sale = hovered_detail.tax_sale_count;
+        const double tax_lien_amount = hovered_detail.tax_lien_amount;
+        const double tax_sale_amount = hovered_detail.tax_sale_amount;
         const LayerDef::FeatureRecord* hovered_zoning = hovered_zone;
-        if (hovered_unified->parcel_has_geometry &&
+        if (hovered_detail.parcel_has_geometry &&
             ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < ctx.layers->size()) {
-            const LayerDef::FeatureExtent& parcel_extent = hovered_unified->parcel_extent;
+            const LayerDef::FeatureExtent& parcel_extent = hovered_detail.parcel_extent;
             const float qlon = (parcel_extent.min_lon + parcel_extent.max_lon) * 0.5f;
             const float qlat = (parcel_extent.min_lat + parcel_extent.max_lat) * 0.5f;
             std::vector<uint32_t> zoning_candidates;

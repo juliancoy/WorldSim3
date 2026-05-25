@@ -271,7 +271,7 @@ std::vector<DuckDbSelectedParcel> selectedParcelsFromSnapshot(const QueryExecuti
     out.reserve(snapshot.selected_parcel_blocklots.size());
     for (const auto& blocklot : snapshot.selected_parcel_blocklots) {
         if (blocklot.empty()) continue;
-        out.push_back(DuckDbSelectedParcel{0, 0, std::string(), blocklot});
+        out.push_back(DuckDbSelectedParcel{0, std::string(), blocklot});
     }
     return out;
 }

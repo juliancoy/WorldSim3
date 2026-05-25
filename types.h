@@ -14,11 +14,6 @@ enum class GeometryArtifactClass {
     Polygon
 };
 
-struct StableFeatureId {
-    std::string layer_file;
-    std::string feature_id;
-};
-
 struct LayerDef {
     enum class Category {
         Housing,
@@ -82,6 +77,10 @@ struct LayerDef {
         float max_lat = 0.0f;
     };
     struct FeatureRecord {
+        std::string entity_id;
+        std::string geometry_entity_id;
+        std::string source_feature_id;
+        std::string source_primary_key;
         FeatureExtent extent;
         std::vector<std::vector<ImVec2>> rings;
         std::vector<std::vector<ImVec2>> paths;

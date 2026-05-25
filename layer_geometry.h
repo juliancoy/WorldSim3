@@ -15,6 +15,7 @@ std::vector<LayerDef::FeatureRecord> extractFeatureRecords(const nlohmann::json&
 std::vector<LayerDef::FeatureRecord> loadLayerPointsFromFile(
     const std::filesystem::path& full_path,
     std::vector<LayerDef::FeatureProperties>* out_feature_properties = nullptr);
+void ensureFeatureTriangles(LayerDef::FeatureRecord& fg);
 bool pointInRing(const std::vector<ImVec2>& ring, float x, float y);
 bool pointInFeature(const LayerDef::FeatureRecord& fg, float lon, float lat);
 int lodRingStepForZoom(int zoom);

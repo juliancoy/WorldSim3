@@ -22,6 +22,7 @@ struct DuckDbAnalyticsStatus {
 struct DuckDbArtifactEnsureResult {
     bool ok = false;
     bool rebuilt = false;
+    bool incrementally_updated = false;
     bool reused_existing = false;
     bool invalidated = false;
     std::string message;
@@ -37,20 +38,34 @@ struct DuckDbQueryResult {
 
 struct DuckDbSelectedParcel {
     size_t layer_idx = 0;
-    size_t feature_idx = 0;
-    std::string feature_id;
+    std::string entity_id;
     std::string blocklot;
 };
 
 struct DuckDbSearchHit {
     size_t layer_idx = 0;
-    size_t feature_idx = 0;
-    std::string feature_id;
+    std::string entity_id;
     std::string blocklot;
     std::string owner;
     std::string address;
     double current_value = 0.0;
     int score = 0;
+};
+
+struct DuckDbParcelSemanticSnapshot {
+    bool ok = false;
+    std::string source_signature;
+    std::vector<UnifiedParcelRecord> unified_parcels;
+    std::vector<std::string> parcel_blocklot_by_feature;
+    std::vector<std::string> parcel_owner_search_by_feature;
+    std::vector<std::string> parcel_address_search_by_feature;
+    std::vector<int> parcel_vac_notice_by_feature;
+    std::vector<int> parcel_vac_rehab_by_feature;
+    std::vector<int> parcel_tax_lien_by_feature;
+    std::vector<int> parcel_tax_sale_by_feature;
+    std::vector<double> parcel_tax_lien_amount_by_feature;
+    std::vector<double> parcel_tax_sale_amount_by_feature;
+    std::string message;
 };
 
 class DuckDbAnalytics {
@@ -60,6 +75,7 @@ public:
     const DuckDbAnalyticsStatus& status() const { return status_; }
     bool needsRebuild(const std::vector<LayerDef>& layers) const;
     bool validateExistingCache();
+    std::string buildSourceSignature() const;
     DuckDbArtifactEnsureResult ensureCurrentArtifact(
         const std::vector<LayerDef>& layers,
         const std::vector<UnifiedParcelRecord>& unified_parcels = {});
@@ -73,13 +89,12 @@ public:
         size_t parcel_layer_idx,
         const std::unordered_set<std::string>& jurisdictions,
         size_t max_rows = 1000) const;
-    DuckDbQueryResult queryUnifiedParcelDetail(
-        size_t parcel_layer_idx,
-        size_t parcel_feature_idx) const;
+    DuckDbQueryResult queryUnifiedParcelDetail(const std::string& parcel_entity_id) const;
     DuckDbQueryResult queryParcelEvents(
         const std::string& blocklot,
         size_t max_rows = 200) const;
     std::vector<DuckDbSearchHit> searchParcels(const std::string& query, size_t max_rows = 100) const;
+    DuckDbParcelSemanticSnapshot loadParcelSemanticSnapshot(size_t parcel_layer_idx) const;
 
 private:
     std::filesystem::path root_;

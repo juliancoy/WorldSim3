@@ -135,7 +135,7 @@ Exit:
 
 - [ ] Runtime statuses describe compiled geometry, not CPU geometry staging.
 
-### [app_main_loop.cpp](/mnt/Cancer/worldsim3/app_main_loop.cpp)
+### App startup/bootstrap service
 
 - [ ] Replace startup hydration queueing with geometry-artifact acquisition queueing.
 - [ ] Ensure non-drawable behavior when artifacts are missing is explicit and cheap.
@@ -152,7 +152,7 @@ Exit:
 - [ ] Expose runtime interfaces for loading/uploading compiled geometry artifacts by class.
 - [ ] Expose runtime interfaces for GPU picking result lookup.
 
-### [worldsim_app.cpp](/mnt/Cancer/worldsim3/worldsim_app.cpp)
+### Render backend geometry-residency and picking services
 
 - [ ] Generalize parcel GPU upload payload logic into:
   - [ ] point upload path
@@ -204,11 +204,11 @@ Exit:
 ### [map_inspection.cpp](/mnt/Cancer/worldsim3/map_inspection.cpp)
 
 - [ ] Remove CPU geometry dependency for feature detail resolution.
-- [~] Parcel inspection now prefers unified parcel metadata and blocklot lookup, but still has feature fallback paths.
+- [x] Parcel inspection resolves parcel identity through stable feature ID and unified parcel metadata.
 
 ### [selection.h](/mnt/Cancer/worldsim3/selection.h)
 
-- [ ] Replace selection identity based on layer index + feature index alone with stable feature IDs.
+- [x] Replace selection identity based on layer index + feature index alone with stable feature IDs.
 
 ### [selection.cpp](/mnt/Cancer/worldsim3/selection.cpp)
 

@@ -71,7 +71,9 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
         const auto& parcel = parcel_layer.features[i];
         UnifiedParcelRecord row;
         row.parcel_layer_idx = (size_t)request.parcel_layer_idx;
-        row.parcel_feature_idx = i;
+        row.parcel_local_feature_idx = i;
+        row.parcel_entity_id = featureEntityIdForLayerFeature(parcel_layer, parcel, i);
+        row.parcel_geometry_entity_id = featureGeometryEntityIdForLayerFeature(parcel_layer, parcel, i);
         row.blocklot = featureBlockLotJoinKey(parcel);
         row.parcel_source_file = sourceOfTruthForFeature(&parcel, parcel_layer.file);
         row.parcel_has_geometry = parcelHasGeometry(request.parcel_render_blob, i, &parcel);
@@ -85,7 +87,7 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
             real_property_features) {
             auto it = request.real_property_by_blocklot->find(row.blocklot);
             if (it != request.real_property_by_blocklot->end() && it->second < real_property_features->size()) {
-                row.real_property_feature_idx = it->second;
+                row.real_property_local_feature_idx = it->second;
                 row.has_property_record = true;
                 if (request.real_property_source_files && it->second < request.real_property_source_files->size()) {
                     row.property_source_file = (*request.real_property_source_files)[it->second];
@@ -96,8 +98,8 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
             }
         }
 
-        const LayerDef::FeatureRecord* rp = row.real_property_feature_idx != (size_t)-1
-            ? &(*real_property_features)[row.real_property_feature_idx]
+        const LayerDef::FeatureRecord* rp = row.real_property_local_feature_idx != (size_t)-1
+            ? &(*real_property_features)[row.real_property_local_feature_idx]
             : nullptr;
         row.owner_display = ownerDisplay(rp, parcel);
         row.owner = toLowerAscii(row.owner_display);
@@ -137,10 +139,15 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
     return out;
 }
 
-const UnifiedParcelRecord* unifiedParcelAt(const std::vector<UnifiedParcelRecord>& parcels, size_t parcel_feature_idx) {
-    if (parcel_feature_idx >= parcels.size()) return nullptr;
-    const UnifiedParcelRecord& row = parcels[parcel_feature_idx];
-    return row.parcel_feature_idx == parcel_feature_idx ? &row : nullptr;
+const UnifiedParcelRecord* unifiedParcelAt(
+    const std::vector<UnifiedParcelRecord>& parcels,
+    const std::string& parcel_entity_id) {
+    const std::string key = normalizeJoinKey(parcel_entity_id);
+    if (key.empty()) return nullptr;
+    for (const UnifiedParcelRecord& row : parcels) {
+        if (row.parcel_entity_id == key) return &row;
+    }
+    return nullptr;
 }
 
 const LayerDef::FeatureRecord* unifiedParcelGeometry(
@@ -148,8 +155,8 @@ const LayerDef::FeatureRecord* unifiedParcelGeometry(
     const std::vector<LayerDef>& layers) {
     if (record.parcel_layer_idx >= layers.size()) return nullptr;
     const auto& layer = layers[record.parcel_layer_idx];
-    if (record.parcel_feature_idx >= layer.features.size()) return nullptr;
-    return &layer.features[record.parcel_feature_idx];
+    if (record.parcel_local_feature_idx >= layer.features.size()) return nullptr;
+    return &layer.features[record.parcel_local_feature_idx];
 }
 
 const LayerDef::FeatureRecord* unifiedRealPropertyGeometry(
@@ -157,10 +164,10 @@ const LayerDef::FeatureRecord* unifiedRealPropertyGeometry(
     const std::vector<LayerDef>& layers) {
     if (record.real_property_layer_idx < 0) return nullptr;
     if ((size_t)record.real_property_layer_idx >= layers.size()) return nullptr;
-    if (record.real_property_feature_idx == (size_t)-1) return nullptr;
+    if (record.real_property_local_feature_idx == (size_t)-1) return nullptr;
     const auto& layer = layers[(size_t)record.real_property_layer_idx];
-    if (record.real_property_feature_idx >= layer.features.size()) return nullptr;
-    return &layer.features[record.real_property_feature_idx];
+    if (record.real_property_local_feature_idx >= layer.features.size()) return nullptr;
+    return &layer.features[record.real_property_local_feature_idx];
 }
 
 const LayerDef::FeatureRecord* resolveRealPropertyForBlocklot(

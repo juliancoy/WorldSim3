@@ -235,12 +235,12 @@ std::string repeatableFilterSql(const json& spec) {
     std::ostringstream sql;
     sql << "SELECT "
         << "parcel_layer_idx AS layer_idx, "
-        << "parcel_feature_idx AS feature_idx, "
+        << "parcel_entity_id AS entity_id, "
         << "blocklot, owner, owner_display, address, current_value, "
         << "has_property_record, parcel_source_file, property_source_file "
         << "FROM unified_parcels";
     if (!first) sql << " WHERE " << where.str();
-    sql << " ORDER BY parcel_feature_idx";
+    sql << " ORDER BY parcel_entity_id";
     return sql.str();
 }
 

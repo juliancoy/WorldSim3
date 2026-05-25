@@ -21,14 +21,16 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         return;
     }
 
-    auto focus_parcel_by_idx = [&](size_t idx) -> bool {
+    auto focus_parcel_by_id = [&](const std::string& entity_id) -> bool {
+        if (entity_id.empty()) return false;
         if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return false;
         const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
+        const size_t idx = featureIndexForEntityId(parcel_layer, entity_id);
         if (idx >= parcel_layer.features.size()) return false;
         LayerDef::FeatureExtent parcel_extent = {};
         bool has_parcel_extent = false;
         if (ctx.unified_parcels) {
-            if (const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, idx);
+            if (const UnifiedParcelRecord* rec = unifiedParcelAt(*ctx.unified_parcels, entity_id);
                 rec && rec->parcel_has_geometry) {
                 parcel_extent = rec->parcel_extent;
                 has_parcel_extent = true;
@@ -43,7 +45,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
             *ctx.center_lat = std::clamp(((double)parcel_extent.min_lat + (double)parcel_extent.max_lat) * 0.5, -85.0, 85.0);
             *ctx.zoom = std::max(*ctx.zoom, 18.0);
         }
-        return ctx.select_parcel_idx ? ctx.select_parcel_idx(idx, ImGui::GetIO().KeyCtrl) : false;
+        return ctx.select_parcel_id ? ctx.select_parcel_id(entity_id, ImGui::GetIO().KeyCtrl) : false;
     };
 
     auto locate_property_by_address = [&]() {
@@ -66,12 +68,12 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
             const std::vector<DuckDbSearchHit> hits = ctx.duckdb_analytics->searchParcels(query, 24);
             for (const auto& hit : hits) {
                 if (hit.layer_idx != (size_t)ctx.parcel_layer_idx) continue;
-                if (hit.feature_idx >= parcel_layer.features.size()) continue;
-                ctx.address_locate_matches->push_back({hit.feature_idx, hit.score, hit.address.empty() ? hit.blocklot : hit.address});
+                if (hit.entity_id.empty()) continue;
+                ctx.address_locate_matches->push_back({hit.entity_id, hit.score, hit.address.empty() ? hit.blocklot : hit.address});
             }
             if (!ctx.address_locate_matches->empty()) {
                 const auto& best = ctx.address_locate_matches->front();
-                if (!focus_parcel_by_idx(best.parcel_idx)) {
+                if (!focus_parcel_by_id(best.parcel_entity_id)) {
                     *ctx.address_locate_status = "DuckDB fuzzy match found, but parcel geometry is unavailable.";
                     return;
                 }
@@ -108,7 +110,11 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
             const std::string address = property_address_for(parcel);
             const int score = std::max(addressSearchScore(address, query), fuzzyTextScore(address, query));
             if (score <= 0) continue;
-            ctx.address_locate_matches->push_back({i, score, address});
+            ctx.address_locate_matches->push_back({
+                featureEntityIdForLayerFeature(parcel_layer, parcel, i),
+                score,
+                address
+            });
         }
         if (ctx.address_locate_matches->empty()) {
             *ctx.address_locate_status = "No matching property address found.";
@@ -117,11 +123,11 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         std::stable_sort(ctx.address_locate_matches->begin(), ctx.address_locate_matches->end(), [](const AddressLocateMatch& a, const AddressLocateMatch& b) {
             if (a.score != b.score) return a.score > b.score;
             if (a.address.size() != b.address.size()) return a.address.size() < b.address.size();
-            return a.parcel_idx < b.parcel_idx;
+            return a.parcel_entity_id < b.parcel_entity_id;
         });
         if (ctx.address_locate_matches->size() > kMaxAddressMatches) ctx.address_locate_matches->resize(kMaxAddressMatches);
         const auto& best = ctx.address_locate_matches->front();
-        if (!focus_parcel_by_idx(best.parcel_idx)) {
+        if (!focus_parcel_by_id(best.parcel_entity_id)) {
             *ctx.address_locate_status = "Address match found, but parcel geometry is unavailable.";
             return;
         }
@@ -190,12 +196,12 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         ImGui::BeginChild("address_match_list", ImVec2(0, 120), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
         for (size_t i = 0; i < ctx.address_locate_matches->size(); ++i) {
             const auto& m = (*ctx.address_locate_matches)[i];
-            std::string label = m.address.empty() ? ("Parcel #" + std::to_string(m.parcel_idx)) : m.address;
+            std::string label = m.address.empty() ? m.parcel_entity_id : m.address;
             label += "##addr_match_" + std::to_string(i);
-            const bool row_selected = ctx.selected_parcel_index_set &&
-                ctx.selected_parcel_index_set->find(m.parcel_idx) != ctx.selected_parcel_index_set->end();
+            const bool row_selected = ctx.selected_parcel_id_set &&
+                ctx.selected_parcel_id_set->find(m.parcel_entity_id) != ctx.selected_parcel_id_set->end();
             if (ImGui::Selectable(label.c_str(), row_selected)) {
-                if (focus_parcel_by_idx(m.parcel_idx)) {
+                if (focus_parcel_by_id(m.parcel_entity_id)) {
                     *ctx.address_locate_status = "Located: " + (m.address.empty() ? std::string("matching parcel") : m.address);
                 }
             }

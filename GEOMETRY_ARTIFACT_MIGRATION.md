@@ -121,6 +121,11 @@ Everything depends on stable feature IDs.
 
 Each compiled geometry record and each DuckDB row must be joinable through a stable feature identity that survives rebuilds.
 
+The long-term repository target for this contract is described in
+`worldwideflatidentitymodel.md`: a flat global entity identity, separate
+geometry identity, explicit source-feature provenance, and hierarchy modeled as
+relations rather than encoded inside IDs.
+
 Minimum requirements:
 
 - deterministic per-source feature ID
@@ -132,6 +137,14 @@ Preferred shape:
 
 - `layer_file`
 - `feature_id`
+
+Current implementation rule:
+
+- stable feature ID is the supported parcel/query identity contract
+- any remaining `(layer_idx, feature_idx)` or `(parcel_layer_idx, parcel_feature_idx)`
+  usage is an internal render coordinate only
+- new artifact and query work must preserve source identity without exposing
+  layer-local feature index as an external contract
 
 Optional internal acceleration keys may still use dense integer indices, but those indices must be derived from stable IDs, not treated as canonical IDs themselves.
 
@@ -273,6 +286,9 @@ Required columns:
 Strong recommendation:
 
 - make `(layer_file, feature_id)` the logical primary join key used across runtime and query systems
+- treat that pair as the migration bridge to the flat global identity model in
+  `worldwideflatidentitymodel.md`, not as the permanent worldwide identity
+  shape
 
 ### Derived Tables
 
@@ -283,6 +299,8 @@ That means derived parcel rows should retain enough identity to:
 - recolor geometry
 - drive selection overlays
 - resolve detail rows
+- promote cleanly from layer-scoped feature identity to flat global parcel/entity
+  identity
 
 without CPU geometry scans.
 
@@ -428,7 +446,7 @@ Tasks:
 
 Primary files:
 
-- `worldsim_app.cpp`
+- render backend geometry-residency services
 - `layer_workers.cpp`
 - `layer_runtime.cpp`
 
@@ -442,7 +460,7 @@ Tasks:
 
 Primary files:
 
-- `worldsim_app.cpp`
+- render backend GPU-pick service
 - map interaction modules
 
 Tasks:

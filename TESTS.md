@@ -101,32 +101,37 @@ Additional color-cache coverage:
 - Verifies overwriting the same parcel feature with a new style key replaces the retained feature color and subpolygon color vector.
 - Verifies color storage survives zoom/projection cache invalidation because it is independent from world-geometry caches.
 
-## Parcel Render Cache Self-Test
+## Parcel Geometry Artifact Checks
 
 ```bash
-./build/worldsim3 --parcel-render-cache-selftest
-./build/worldsim3 --warm-parcel-render-cache parcel.geojson
-./build/worldsim3 --warm-parcel-render-cache-all
+./build/worldsim3 --compile-polygon-geometry parcel.geojson
+./build/worldsim3 --validate-polygon-geometry parcel.geojson
 ./build/worldsim3 --parcel-artifact-health parcel.geojson
+./build/worldsim3 --parcel-polygon-identity-selftest
+./build/worldsim3 --parcel-selection-ui-harness
+./build/worldsim3 --parcel-hover-click-ui-harness
+./build/worldsim3 --duckdb-parcel-semantic-snapshot-selftest
 ```
 
 Purpose:
 
-- Verifies a parcel render sidecar blob can be built from the current parcel-prep pipeline.
-- Verifies the binary sidecar round-trips contiguous vertex/index data, line-index topology, plus feature/chunk tables.
-- Verifies a stale source signature is rejected.
+- Verifies the parcel polygon geometry artifact can be compiled from the current parcel-prep pipeline.
+- Verifies the compiled polygon artifact passes header/signature validation.
+- Verifies parcel artifact health across canonical binary, polygon geometry artifact, and DuckDB analytics.
 
 Expected pass signal:
 
 - Command exits `0`.
 - JSON contains `"ok": true`.
 
-Additional warmer coverage:
+Additional coverage:
 
-- `--warm-parcel-render-cache <layer>` verifies a real layer can be converted into a binary parcel render sidecar.
-- `--warm-parcel-render-cache-all` attempts the same conversion for every layer with the required inputs.
-- `--parcel-artifact-health <layer>` performs a lightweight header/size/signature audit of the canonical binary, parcel render sidecar, and DuckDB artifact without loading full feature bodies.
-- The parcel render self-test also verifies vertex-to-parcel-slot references and line-index topology round-trip, which are the lookups used by the GPU-side parcel fill and outline paths.
+- `--parcel-artifact-health <layer>` performs a lightweight header/size/signature audit of the canonical binary, polygon geometry artifact, and DuckDB artifact without loading full feature bodies.
+- Polygon artifact validation still covers the feature/chunk tables and the fill/line index buffers used by the GPU-side parcel fill and outline paths.
+- `--parcel-polygon-identity-selftest` verifies parcel polygon artifacts are accepted only when every feature carries `entity_id`, and that artifact-to-runtime parcel blob conversion rejects missing identity instead of falling back to CPU feature records.
+- `--parcel-selection-ui-harness` verifies selected-parcel highlighting is drawn from resident artifact identity only, and that a single selected `entity_id` highlights every matching geometry record for both the primary parcel blob and county polygon artifacts.
+- `--parcel-hover-click-ui-harness` verifies parcel hover resolves stable parcel identity, county-parcel hover detail can fall back through DuckDB when no in-memory unified parcel row is present, and click selection opens/selects the resolved parcel entity.
+- `--duckdb-parcel-semantic-snapshot-selftest` verifies the runtime parcel semantic snapshot is loaded from `layer_features` and `unified_parcels` in DuckDB, producing per-feature parcel counts/search fields without scanning canonical property bags.
 
 Current additional verification:
 

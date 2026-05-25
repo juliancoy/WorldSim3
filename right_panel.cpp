@@ -113,7 +113,7 @@ void drawMapTitleTab(const RightPanelContext& ctx) {
 void drawRightPanelWindow(const RightPanelContext& ctx) {
     if (!ctx.root || !ctx.app_settings || !ctx.duckdb_analytics || !ctx.layers || !ctx.unified_parcels || !ctx.map_filter_state ||
         !ctx.query_layers || !ctx.query_history || !ctx.zoning_metadata || !ctx.zoning_zone_enabled || !ctx.real_property_by_blocklot || !ctx.selected_owners ||
-        !ctx.selected_parcel_index_set || !ctx.selected_parcel_indices || !ctx.parcel_selection ||
+        !ctx.selected_parcel_id_set || !ctx.selected_parcel_ids || !ctx.parcel_selection ||
         !ctx.element_info_state || !ctx.show_selected_parcel_details || !ctx.show_selected_zone_details ||
         !ctx.selected_zone_idx || !ctx.center_lon || !ctx.center_lat || !ctx.zoom || !ctx.layer_heatmap_enabled ||
         !ctx.layer_heatmap_max_zoom || !ctx.layer_parcel_detail_min_zoom || !ctx.layer_heatmap_algo ||
@@ -137,26 +137,24 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
     auto clear_parcel_selection = [&]() {
         clearParcelSelection(*ctx.parcel_selection);
     };
-    auto select_parcel_idx = [&](size_t idx, bool append_toggle) -> bool {
+    auto select_parcel_id = [&](const std::string& entity_id, bool append_toggle) -> bool {
+        if (entity_id.empty()) return false;
         if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return false;
-        const auto& parcel_layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
-        if (idx >= parcel_layer.features.size()) return false;
         if (!selectParcel(
                 *ctx.parcel_selection,
-                idx,
-                featureStableIdForLayerFeature(parcel_layer, parcel_layer.features[idx], idx),
-                parcel_layer.features.size(),
+                ctx.parcel_layer_idx,
+                entity_id,
                 append_toggle)) {
             return false;
         }
-        openElementParcelPage(*ctx.element_info_state, idx);
+        openElementParcelPage(*ctx.element_info_state, entity_id);
         *ctx.show_selected_zone_details = false;
         *ctx.selected_zone_idx = (size_t)-1;
         return true;
     };
 
-    if (ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layers->size()) {
-        reconcileParcelSelection(*ctx.parcel_selection, (*ctx.layers)[(size_t)ctx.parcel_layer_idx]);
+    if (ctx.layers) {
+        reconcileParcelSelection(*ctx.parcel_selection, *ctx.layers);
     } else {
         clear_parcel_selection();
     }
@@ -195,7 +193,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.layers,
             ctx.unified_parcels,
             ctx.zoning_metadata,
-            ctx.selected_parcel_index_set,
+            ctx.selected_parcel_id_set,
             ctx.real_property_by_blocklot,
             ctx.parcel_layer_idx,
             ctx.real_property_layer_idx,
@@ -223,7 +221,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.selected_record_year_total,
             ctx.selected_record_year_samples,
             clear_parcel_selection,
-            select_parcel_idx
+            select_parcel_id
         });
         drawSqlTab(
             *ctx.duckdb_analytics,
@@ -235,10 +233,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             *ctx.center_lon,
             *ctx.center_lat,
             *ctx.zoom,
-            *ctx.selected_parcel_indices,
-            *ctx.show_selected_parcel_details,
-            ctx.parcel_layer_idx,
-            ctx.parcel_selection->active_idx,
+            *ctx.parcel_selection,
             *ctx.query_layers,
             *ctx.query_history);
         ActiveQueriesTabContext active_queries_ctx{
@@ -336,8 +331,8 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.real_property_layer_idx,
             ctx.unified_parcels,
             ctx.real_property_by_blocklot,
-            ctx.selected_parcel_index_set,
-            ctx.selected_parcel_indices,
+            ctx.selected_parcel_id_set,
+            ctx.selected_parcel_ids,
             *ctx.show_selected_parcel_details,
             ctx.vacant_notice_layer_idx,
             ctx.vacant_rehab_layer_idx,
@@ -351,7 +346,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.map_w,
             ctx.main_panel_h,
             clear_parcel_selection,
-            select_parcel_idx
+            select_parcel_id
         });
         drawOwnersTab(OwnersTabContext{
             ctx.owner_aggregates,

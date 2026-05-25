@@ -6,13 +6,10 @@
 struct WorldsimCliOptions {
     bool show_help = false;
     bool run_vacancy_selftest = false;
-    bool run_warm_parcel_render_cache = false;
-    bool run_warm_parcel_render_cache_all = false;
     bool run_projection_cache_selftest = false;
     bool run_projection_fill_cache_selftest = false;
     bool run_projection_color_cache_selftest = false;
     bool run_polygon_hole_selftest = false;
-    bool run_parcel_render_cache_selftest = false;
     bool run_spatial_index_selftest = false;
     bool run_layer_profile_selftest = false;
     bool run_layer_runtime_status_selftest = false;
@@ -20,6 +17,10 @@ struct WorldsimCliOptions {
     bool run_render_policy_selftest = false;
     bool run_render_plan_selftest = false;
     bool run_canonical_parcel_binary_selftest = false;
+    bool run_parcel_polygon_identity_selftest = false;
+    bool run_parcel_selection_ui_harness = false;
+    bool run_parcel_hover_click_ui_harness = false;
+    bool run_duckdb_parcel_semantic_snapshot_selftest = false;
     bool run_duckdb_parcel_ingest_selftest = false;
     bool run_inspect_canonical_parcel_binary = false;
     bool run_validate_canonical_parcel_binary = false;
@@ -46,7 +47,6 @@ struct WorldsimCliOptions {
     bool reserve_cores_set = false;
     std::string download_phase;
     std::string generate_canonical_phase;
-    std::string warm_parcel_render_cache_file;
     std::string canonical_parcel_binary_file;
     std::string point_geometry_file;
     std::string polyline_geometry_file;

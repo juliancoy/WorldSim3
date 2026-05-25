@@ -180,7 +180,7 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.parcel_tax_lien_by_feature = ctx.parcel_tax_lien_by_feature;
     render_frame_ctx.parcel_tax_sale_by_feature = ctx.parcel_tax_sale_by_feature;
     render_frame_ctx.unified_parcels = ctx.unified_parcels;
-    render_frame_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
+    render_frame_ctx.parcel_selection = ctx.parcel_selection;
     render_frame_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
     render_frame_ctx.zoning_zone_color = ctx.zoning_zone_color;
     render_frame_ctx.query_layers = ctx.query_layers;
@@ -296,6 +296,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.zoning_layer_idx,
         ctx.layers,
         ctx.unified_parcels,
+        ctx.duckdb_analytics,
         ctx.parcel_render_blob,
         ctx.polygon_geometry_artifacts,
         ctx.layer_spatial,

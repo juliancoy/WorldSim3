@@ -684,7 +684,35 @@ std::string featureBlockLotJoinKey(const LayerDef& layer, size_t feature_idx) {
         getPropertyValue(layer, feature_idx, "lot"));
 }
 
-std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+std::string featureSourcePrimaryKeyForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    auto candidate = [&](std::initializer_list<const char*> keys) {
+        for (const char* key : keys) {
+            std::string v = trimDisplayValue(getPropertyValue(fg, key));
+            if (!v.empty()) return v;
+        }
+        return std::string();
+    };
+
+    std::string key = candidate({
+        "source_primary_key", "SOURCE_PRIMARY_KEY", "feature_id", "FEATURE_ID", "FeatureID",
+        "globalid", "GLOBALID", "GlobalID", "regional_parcel_id", "source_parcel_id",
+        "account_id", "OBJECTID_1", "OBJECTID", "objectid", "ID", "id", "PIN", "pin"
+    });
+    if (key.empty()) key = featureBlockLotJoinKey(fg);
+    if (!key.empty()) return normalizeJoinKey(key);
+
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(6)
+       << trimDisplayValue(layer.file) << ':'
+       << fg.extent.min_lon << ','
+       << fg.extent.min_lat << ','
+       << fg.extent.max_lon << ','
+       << fg.extent.max_lat << ':'
+       << feature_idx;
+    return normalizeJoinKey(ss.str());
+}
+
+std::string featureIdentitySeedForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
     auto candidate = [&](std::initializer_list<const char*> keys) {
         for (const char* key : keys) {
             std::string v = trimDisplayValue(getPropertyValue(fg, key));
@@ -716,6 +744,57 @@ std::string featureStableIdForLayerFeature(const LayerDef& layer, const LayerDef
        << fg.extent.max_lat << ':'
        << feature_idx;
     return normalizeJoinKey(ss.str());
+}
+
+std::string featureEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    if (!fg.entity_id.empty()) return normalizeJoinKey(fg.entity_id);
+    return normalizeJoinKey("entity:" + trimDisplayValue(layer.file) + ":" +
+                            featureIdentitySeedForLayerFeature(layer, fg, feature_idx));
+}
+
+std::string featureGeometryEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    if (!fg.geometry_entity_id.empty()) return normalizeJoinKey(fg.geometry_entity_id);
+    return normalizeJoinKey("geometry:" + trimDisplayValue(layer.file) + ":" +
+                            featureIdentitySeedForLayerFeature(layer, fg, feature_idx));
+}
+
+std::string featureSourceFeatureIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    if (!fg.source_feature_id.empty()) return normalizeJoinKey(fg.source_feature_id);
+    return normalizeJoinKey("source:" + trimDisplayValue(layer.file) + ":" +
+                            featureSourcePrimaryKeyForLayerFeature(layer, fg, feature_idx));
+}
+
+void ensureFeatureIdentityForLayerFeature(const LayerDef& layer, LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    fg.source_primary_key = featureSourcePrimaryKeyForLayerFeature(layer, fg, feature_idx);
+    fg.entity_id = featureEntityIdForLayerFeature(layer, fg, feature_idx);
+    fg.geometry_entity_id = featureGeometryEntityIdForLayerFeature(layer, fg, feature_idx);
+    fg.source_feature_id = featureSourceFeatureIdForLayerFeature(layer, fg, feature_idx);
+}
+
+void ensureFeatureIdentityForLayer(LayerDef& layer) {
+    for (size_t feature_idx = 0; feature_idx < layer.features.size(); ++feature_idx) {
+        ensureFeatureIdentityForLayerFeature(layer, layer.features[feature_idx], feature_idx);
+    }
+}
+
+void ensureFeatureIdentityForLayerFile(const std::string& layer_file, std::vector<LayerDef::FeatureRecord>& features) {
+    LayerDef synthetic_layer;
+    synthetic_layer.file = layer_file;
+    synthetic_layer.logical_id = defaultLayerLogicalIdForFile(layer_file);
+    for (size_t feature_idx = 0; feature_idx < features.size(); ++feature_idx) {
+        ensureFeatureIdentityForLayerFeature(synthetic_layer, features[feature_idx], feature_idx);
+    }
+}
+
+size_t featureIndexForEntityId(const LayerDef& layer, const std::string& entity_id) {
+    const std::string key = normalizeJoinKey(entity_id);
+    if (key.empty()) return (size_t)-1;
+    for (size_t feature_idx = 0; feature_idx < layer.features.size(); ++feature_idx) {
+        if (featureEntityIdForLayerFeature(layer, layer.features[feature_idx], feature_idx) == key) {
+            return feature_idx;
+        }
+    }
+    return (size_t)-1;
 }
 
 void openUrlInBrowser(const std::string& url) {

@@ -3,13 +3,17 @@
 #include "app_utils.h"
 #include "cache_io.h"
 #include "duckdb_analytics.h"
+#include "env_config.h"
 #include "feature_props.h"
 #include "layer_import.h"
 #include "layer_geometry.h"
 #include "layer_state_io.h"
 #include "layer_pipeline_drain.h"
+#include "map_inspection.h"
+#include "map_render_selection.h"
 #include "map_render_projection.h"
 #include "parcel_consolidation.h"
+#include "selection.h"
 #include "profiling_layer_snapshot.h"
 #include "render_layer_pass.h"
 #include "render_plan_builder.h"
@@ -20,6 +24,7 @@
 #include "vacancy_overlay.h"
 
 #include <duckdb.hpp>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -28,6 +33,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
@@ -38,6 +44,60 @@ using json = nlohmann::json;
 namespace {
 bool nearlyEqual(float a, float b) {
     return std::fabs(a - b) <= 0.00001f;
+}
+
+uint64_t memoryBytesFromEnvOrDefault(const char* env_name, uint64_t default_mb) {
+    const char* raw = std::getenv(env_name);
+    if (!raw || !*raw) return default_mb * 1024ull * 1024ull;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(raw, &end, 10);
+    if (end == raw || parsed == 0ull) return default_mb * 1024ull * 1024ull;
+    return parsed * 1024ull * 1024ull;
+}
+
+std::optional<uint64_t> readMemAvailableBytes() {
+    std::ifstream in("/proc/meminfo");
+    if (!in) return std::nullopt;
+    std::string key;
+    uint64_t value_kb = 0;
+    std::string unit;
+    while (in >> key >> value_kb >> unit) {
+        if (key == "MemAvailable:") return value_kb * 1024ull;
+    }
+    return std::nullopt;
+}
+
+unsigned int memoryCappedWorkerCount(
+    unsigned int cpu_worker_count,
+    uint64_t bytes_per_job,
+    uint64_t reserve_bytes,
+    std::string* reason = nullptr) {
+    if (reason) reason->clear();
+    if (cpu_worker_count <= 1u) return 1u;
+    const std::optional<uint64_t> mem_available = readMemAvailableBytes();
+    if (!mem_available.has_value()) {
+        if (reason) *reason = "mem_available_unavailable";
+        return cpu_worker_count;
+    }
+    const uint64_t available = *mem_available;
+    if (available <= reserve_bytes + bytes_per_job) {
+        if (reason) {
+            *reason = "mem_available=" + std::to_string(available / (1024ull * 1024ull)) +
+                      "MB reserve=" + std::to_string(reserve_bytes / (1024ull * 1024ull)) +
+                      "MB bytes_per_job=" + std::to_string(bytes_per_job / (1024ull * 1024ull)) + "MB";
+        }
+        return 1u;
+    }
+    const uint64_t usable = available - reserve_bytes;
+    const uint64_t memory_workers = std::max<uint64_t>(1ull, usable / bytes_per_job);
+    const unsigned int capped = static_cast<unsigned int>(std::min<uint64_t>(cpu_worker_count, memory_workers));
+    if (reason) {
+        *reason = "mem_available=" + std::to_string(available / (1024ull * 1024ull)) +
+                  "MB reserve=" + std::to_string(reserve_bytes / (1024ull * 1024ull)) +
+                  "MB bytes_per_job=" + std::to_string(bytes_per_job / (1024ull * 1024ull)) +
+                  "MB memory_workers=" + std::to_string(memory_workers);
+    }
+    return std::max(1u, capped);
 }
 
 bool isBareLayerFilename(const std::string& file) {
@@ -276,20 +336,27 @@ bool loadLocalLayersForCli(
     std::vector<LayerDef>& layers,
     bool verbose,
     LocalLayerLoadSummary& summary,
-    bool ssot_only = false) {
+    bool ssot_only = false,
+    const std::vector<size_t>* requested_indices = nullptr) {
     summary = {};
     std::vector<size_t> local_indices;
-    local_indices.reserve(layers.size());
-    for (size_t i = 0; i < layers.size(); ++i) {
+    local_indices.reserve(requested_indices ? requested_indices->size() : layers.size());
+    const auto consider_index = [&](size_t i) {
+        if (i >= layers.size()) return;
         const bool exists = ssot_only
             ? layerHasLocalSsotSource(root, layers[i])
             : layerHasLocalAnalyticsSource(root, layers[i]);
         if (!exists) {
             summary.skipped_missing_layer_count += 1;
-            continue;
+            return;
         }
         summary.local_layer_count += 1;
         local_indices.push_back(i);
+    };
+    if (requested_indices) {
+        for (size_t i : *requested_indices) consider_index(i);
+    } else {
+        for (size_t i = 0; i < layers.size(); ++i) consider_index(i);
     }
     summary.requested_indices = local_indices;
     summary.requested_layer_count = local_indices.size();
@@ -327,6 +394,38 @@ bool loadLocalLayersForCli(
     summary.elapsed_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - started_at).count();
     return summary.failed_layer_count == 0;
+}
+
+std::vector<size_t> parcelConsolidationInputLayerIndices(const WorldsimLayerIndices& indices) {
+    std::vector<size_t> out;
+    out.reserve(6);
+    auto append = [&](int layer_idx) {
+        if (layer_idx < 0) return;
+        const size_t idx = (size_t)layer_idx;
+        if (std::find(out.begin(), out.end(), idx) == out.end()) out.push_back(idx);
+    };
+    append(indices.parcel_layer_idx);
+    append(indices.real_property_layer_idx);
+    append(indices.vacant_notice_layer_idx);
+    append(indices.vacant_rehab_layer_idx);
+    append(indices.tax_lien_layer_idx);
+    append(indices.tax_sale_layer_idx);
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+void releaseLoadedLayerFeatures(
+    std::vector<LayerDef>& layers,
+    const std::unordered_set<size_t>* keep_indices = nullptr) {
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (keep_indices && keep_indices->contains(i)) continue;
+        layers[i].features.clear();
+        layers[i].feature_properties.clear();
+        layers[i].features.shrink_to_fit();
+        layers[i].feature_properties.shrink_to_fit();
+        refreshLayerGeometryUsageCache(layers[i]);
+        rebuildFeaturePropertyRegistryForLayer(layers[i]);
+    }
 }
 
 LayerDef layerFromManifestItemForCli(const json& item) {
@@ -438,9 +537,14 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
     }
 
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
-    const unsigned int worker_count = std::max(
+    const unsigned int cpu_worker_count = std::max(
         1u,
         hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
+    const uint64_t bytes_per_job = memoryBytesFromEnvOrDefault("WORLDSIM_CANONICAL_JOB_MEMORY_MB", 1536ull);
+    const uint64_t reserve_bytes = memoryBytesFromEnvOrDefault("WORLDSIM_CANONICAL_MEMORY_HEADROOM_MB", 2048ull);
+    std::string memory_backpressure_reason;
+    const unsigned int worker_count =
+        memoryCappedWorkerCount(cpu_worker_count, bytes_per_job, reserve_bytes, &memory_backpressure_reason);
 
     emitCliProgress(
         kMode,
@@ -450,8 +554,10 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
             " manifest_path=" + manifest_path.string() +
             " manifest_items=" + std::to_string(items_json.size()) +
             " jobs=" + std::to_string(jobs.size()) +
+            " cpu_worker_count=" + std::to_string(cpu_worker_count) +
             " worker_count=" + std::to_string(worker_count) +
-            " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
+            " reserve_cores=" + std::to_string(std::max(0, reserve_cores)) +
+            " memory_backpressure=" + memory_backpressure_reason);
 
     size_t generated = 0;
     size_t skipped = 0;
@@ -547,6 +653,29 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
             return result;
         }
 
+        if (meta.version != kCanonicalFeatureBinaryVersion) {
+            std::vector<LayerDef::FeatureRecord> features;
+            std::vector<LayerDef::FeatureProperties> feature_properties;
+            if (!loadBinaryCanonicalFeatureCollection(canonical_path, meta.source_signature, features, &feature_properties)) {
+                result.status = CanonicalJobResult::Status::Failed;
+                result.message = "canonical rewrite load failed";
+                std::lock_guard<std::mutex> lock(progress_mutex);
+                emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "error", result.message);
+                return result;
+            }
+            saveBinaryCanonicalFeatureCollection(canonical_path, meta.source_signature, features, &feature_properties);
+            if (!loadBinaryCanonicalMetadata(canonical_path, meta) ||
+                meta.version != kCanonicalFeatureBinaryVersion ||
+                meta.source_signature.empty() ||
+                meta.feature_count == 0) {
+                result.status = CanonicalJobResult::Status::Failed;
+                result.message = "canonical rewrite verification failed";
+                std::lock_guard<std::mutex> lock(progress_mutex);
+                emitCanonicalLayerProgress(kMode, job.index, jobs.size(), result.layer_id, "error", result.message);
+                return result;
+            }
+        }
+
         result.status = CanonicalJobResult::Status::Generated;
         result.feature_count = meta.feature_count;
         result.message = canonical_path.string();
@@ -622,7 +751,9 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
         {"mode", "generate-canonical-files"},
         {"phase", selected_phase},
         {"manifest_path", manifest_path.string()},
+        {"cpu_worker_count", cpu_worker_count},
         {"worker_count", worker_count},
+        {"memory_backpressure", memory_backpressure_reason},
         {"considered", considered},
         {"generated", generated},
         {"skipped", skipped},
@@ -857,119 +988,28 @@ int runPolygonHoleSelftest() {
         ++centroid_count;
     }
 
-    ParcelRenderCacheBlob blob;
-    const bool render_blob_ok = buildParcelRenderCacheBlob({feature}, "polygon_hole_selftest_sig", blob, 64);
-    const bool render_blob_shape_ok =
-        render_blob_ok &&
-        blob.vertices.size() == flattened.size() &&
-        blob.indices.size() == feature.triangles.size() &&
-        blob.line_indices.size() == 16 &&
-        blob.features.size() == 1 &&
-        blob.chunks.size() == 1;
+    LayerDef layer;
+    layer.file = "polygon_hole_selftest.geojson";
+    PolygonGeometryArtifact artifact;
+    const bool artifact_ok = buildPolygonGeometryArtifact(layer, {feature}, "polygon_hole_selftest_sig", artifact, 64);
+    const bool artifact_shape_ok =
+        artifact_ok &&
+        artifact.vertices.size() == flattened.size() &&
+        artifact.fill_indices.size() == feature.triangles.size() &&
+        artifact.line_indices.size() == 16 &&
+        artifact.features.size() == 1 &&
+        artifact.chunks.size() == 1;
 
     json out = {
         {"mode", "polygon-hole-selftest"},
-        {"ok", shell_point_inside && hole_point_rejected && outside_point_rejected && centroids_valid && render_blob_shape_ok},
+        {"ok", shell_point_inside && hole_point_rejected && outside_point_rejected && centroids_valid && artifact_shape_ok},
         {"shell_point_inside", shell_point_inside},
         {"hole_point_rejected", hole_point_rejected},
         {"outside_point_rejected", outside_point_rejected},
         {"triangle_index_count", feature.triangles.size()},
         {"triangle_count", centroid_count},
         {"centroids_valid", centroids_valid},
-        {"render_blob_ok", render_blob_shape_ok}
-    };
-    std::cout << out.dump(2) << '\n';
-    return out["ok"].get<bool>() ? 0 : 1;
-}
-
-int runParcelRenderCacheSelftest(const fs::path& root) {
-    std::vector<LayerDef::FeatureRecord> features;
-
-    LayerDef::FeatureRecord a;
-    a.extent.min_lon = -76.7f;
-    a.extent.min_lat = 39.2f;
-    a.extent.max_lon = -76.6f;
-    a.extent.max_lat = 39.3f;
-    a.rings.push_back({
-        ImVec2(-76.7f, 39.2f),
-        ImVec2(-76.6f, 39.2f),
-        ImVec2(-76.6f, 39.3f),
-        ImVec2(-76.7f, 39.3f)
-    });
-    a.triangles = {0, 1, 2, 0, 2, 3};
-    features.push_back(a);
-
-    LayerDef::FeatureRecord b;
-    b.extent.min_lon = -76.5f;
-    b.extent.min_lat = 39.1f;
-    b.extent.max_lon = -76.4f;
-    b.extent.max_lat = 39.2f;
-    b.rings.push_back({
-        ImVec2(-76.5f, 39.1f),
-        ImVec2(-76.4f, 39.1f),
-        ImVec2(-76.4f, 39.2f),
-        ImVec2(-76.5f, 39.2f)
-    });
-    b.triangles = {0, 1, 2, 0, 2, 3};
-    features.push_back(b);
-
-    LayerDef::FeatureRecord outline_only;
-    outline_only.extent.min_lon = -76.3f;
-    outline_only.extent.min_lat = 39.0f;
-    outline_only.extent.max_lon = -76.2f;
-    outline_only.extent.max_lat = 39.1f;
-    outline_only.rings.push_back({
-        ImVec2(-76.3f, 39.0f),
-        ImVec2(-76.2f, 39.0f),
-        ImVec2(-76.2f, 39.1f),
-        ImVec2(-76.3f, 39.1f)
-    });
-    features.push_back(outline_only);
-
-    const std::string sig = "parcel_render_selftest_sig";
-    ParcelRenderCacheBlob blob;
-    const bool built = buildParcelRenderCacheBlob(features, sig, blob, 1);
-    const fs::path test_dir = root / "data" / "cache" / "selftest";
-    const fs::path cache_path = test_dir / "parcel_render_cache_selftest.bin";
-    if (built) saveBinaryParcelRenderCache(cache_path, blob);
-
-    ParcelRenderCacheBlob loaded;
-    const bool loaded_ok = built && loadBinaryParcelRenderCache(cache_path, sig, loaded);
-    ParcelRenderCacheBlob stale;
-    const bool stale_rejected = !loadBinaryParcelRenderCache(cache_path, "wrong_sig", stale);
-    const bool same =
-        loaded_ok &&
-        loaded.source_signature == sig &&
-        loaded.vertices.size() == 12 &&
-        loaded.vertex_feature_refs.size() == 12 &&
-        loaded.indices.size() == 12 &&
-        loaded.line_indices.size() == 24 &&
-        loaded.features.size() == 3 &&
-        loaded.chunks.size() == 3 &&
-        loaded.chunks[0].feature_count == 1 &&
-        loaded.chunks[1].feature_count == 1 &&
-        loaded.chunks[2].feature_count == 1 &&
-        loaded.features[0].line_index_count == 8 &&
-        loaded.features[1].line_index_count == 8 &&
-        loaded.features[2].index_count == 0 &&
-        loaded.features[2].line_index_count == 8;
-
-    std::error_code ec;
-    fs::remove(cache_path, ec);
-    fs::remove(test_dir, ec);
-
-    json out = {
-        {"mode", "parcel-render-cache-selftest"},
-        {"ok", built && same && stale_rejected},
-        {"built", built},
-        {"loaded", loaded_ok},
-        {"vertex_count", loaded.vertices.size()},
-        {"vertex_feature_ref_count", loaded.vertex_feature_refs.size()},
-        {"index_count", loaded.indices.size()},
-        {"line_index_count", loaded.line_indices.size()},
-        {"feature_records", loaded.features.size()},
-        {"chunk_records", loaded.chunks.size()},
-        {"stale_signature_rejected", stale_rejected}
+        {"polygon_artifact_ok", artifact_shape_ok}
     };
     std::cout << out.dump(2) << '\n';
     return out["ok"].get<bool>() ? 0 : 1;
@@ -1427,38 +1467,6 @@ BinaryCacheHeader readTriCacheHeader(const fs::path& path) {
     return out;
 }
 
-BinaryCacheHeader readParcelRenderCacheHeader(const fs::path& path) {
-    BinaryCacheHeader out;
-    out.file_size_bytes = fileSizeOrZero(path);
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
-        out.error = "missing";
-        return out;
-    }
-    char magic[8];
-    if (!in.read(magic, sizeof(magic)) || std::string(magic, magic + 7) != "WS3PRD1") {
-        out.error = "bad_magic";
-        return out;
-    }
-    uint32_t endian = 0;
-    if (!readCliU32(in, out.version) || !readCliU32(in, endian) || out.version != 2 || endian != 0x01020304u) {
-        out.error = "bad_header";
-        return out;
-    }
-    if (!readCliString(in, out.source_signature) ||
-        !readCliU32(in, out.vertices) ||
-        !readCliU32(in, out.indices) ||
-        !readCliU32(in, out.line_indices) ||
-        !readCliU32(in, out.features) ||
-        !readCliU32(in, out.chunks)) {
-        out.error = "bad_metadata";
-        return out;
-    }
-    out.count = out.features;
-    out.ok = true;
-    return out;
-}
-
 json binaryHeaderJson(const BinaryCacheHeader& h, const std::string& expected_sig, uint64_t expected_count) {
     const bool signature_match = h.ok && h.source_signature == expected_sig;
     const bool count_match = h.ok && (expected_count == 0 || h.count == expected_count);
@@ -1501,9 +1509,7 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const std::string storage_key = resolveLayerStorageKey(root, file);
     const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
     const fs::path canonical_path = canonicalLayerPathForFile(root, storage_key);
-        const fs::path render_path =
-            root / "data" / "cache" / "render" /
-            (layerArtifactBasenameForFile(storage_key) + ".parcel-render.bin");
+    const fs::path polygon_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
     const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
 
     std::string resolved_sig;
@@ -1515,7 +1521,11 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const uint64_t expected_count = canonical_ok ? canonical_meta.feature_count : 0;
     const std::string expected_sig = resolved ? resolved_sig : canonical_meta.source_signature;
 
-    const BinaryCacheHeader render = readParcelRenderCacheHeader(render_path);
+    uint64_t polygon_feature_count = 0;
+    const bool polygon_ok = validateBinaryPolygonGeometryArtifactHeader(
+        polygon_path,
+        expected_sig,
+        &polygon_feature_count);
 
     std::error_code legacy_artifact_ec;
     const bool legacy_layer_artifact_present = fs::exists(layer_path, legacy_artifact_ec) && !legacy_artifact_ec;
@@ -1525,9 +1535,7 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
 
     json recommendations = json::array();
     if (!canonical_ok) recommendations.push_back("build canonical parcel binary");
-    if (!render.ok || render.source_signature != expected_sig) {
-        recommendations.push_back("run --warm-parcel-render-cache " + file);
-    }
+    if (!polygon_ok) recommendations.push_back("compile polygon geometry artifact");
     if (!duckdb_present) recommendations.push_back("rebuild DuckDB analytics cache");
     if (legacy_layer_artifact_present) {
         recommendations.push_back("remove stale legacy stored-layer artifact; normal runtime uses canonical binary only");
@@ -1536,7 +1544,7 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const bool ok =
         resolved &&
         canonical_ok &&
-        render.ok && render.source_signature == expected_sig &&
+        polygon_ok &&
         duckdb_present;
 
     json out = {
@@ -1558,7 +1566,14 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
             {"signature_match", canonical_ok && canonical_meta.source_signature == expected_sig},
             {"feature_count", canonical_meta.feature_count}
         }},
-        {"parcel_render_cache", binaryHeaderJson(render, expected_sig, 0)},
+        {"polygon_geometry_artifact", {
+            {"ok", polygon_ok},
+            {"path", polygon_path.string()},
+            {"file_size_bytes", fileSizeOrZero(polygon_path)},
+            {"source_signature", expected_sig},
+            {"signature_match", polygon_ok},
+            {"feature_count", polygon_feature_count}
+        }},
         {"duckdb", {
             {"present", duckdb_present},
             {"path", duckdb_path.string()},
@@ -1626,7 +1641,7 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
 
     const bool ok =
         meta_ok &&
-        meta.version == 2 &&
+        meta.version == 5 &&
         meta.endian_marker == 0x01020304u &&
         meta.feature_count == 1 &&
         meta.source_signature == sig &&
@@ -1646,6 +1661,553 @@ int runCanonicalParcelBinarySelftest(const fs::path& root) {
     };
     std::cout << out.dump(2) << '\n';
     return ok ? 0 : 1;
+}
+
+int runParcelPolygonIdentitySelftest() {
+    PolygonGeometryArtifact valid_artifact;
+    valid_artifact.header.version = kPolygonGeometryArtifactVersion;
+    valid_artifact.header.geometry_class = GeometryArtifactClass::Polygon;
+    valid_artifact.header.feature_count = 1;
+    valid_artifact.header.chunk_count = 1;
+    valid_artifact.header.source_signature = "parcel_polygon_identity_selftest_sig";
+    valid_artifact.vertices = {
+        ImVec2(-76.70f, 39.20f),
+        ImVec2(-76.69f, 39.20f),
+        ImVec2(-76.69f, 39.21f),
+        ImVec2(-76.70f, 39.21f)
+    };
+    valid_artifact.feature_refs = {0, 0, 0, 0};
+    valid_artifact.fill_indices = {0, 1, 2, 0, 2, 3};
+    valid_artifact.line_indices = {0, 1, 1, 2, 2, 3, 3, 0};
+    GeometryArtifactFeatureRecord valid_feature;
+    valid_feature.feature_idx = 0;
+    valid_feature.entity_id = "entity:parcel:test-1";
+    valid_feature.geometry_entity_id = "geometry:parcel:test-1";
+    valid_feature.source_feature_id = "parcel:test-1";
+    valid_feature.source_primary_key = "test-1";
+    valid_feature.vertex_offset = 0;
+    valid_feature.vertex_count = 4;
+    valid_feature.index_offset = 0;
+    valid_feature.index_count = 6;
+    valid_feature.aux_index_offset = 0;
+    valid_feature.aux_index_count = 8;
+    valid_feature.min_lon = -76.70f;
+    valid_feature.min_lat = 39.20f;
+    valid_feature.max_lon = -76.69f;
+    valid_feature.max_lat = 39.21f;
+    valid_artifact.features.push_back(valid_feature);
+    GeometryArtifactChunkRecord valid_chunk;
+    valid_chunk.chunk_idx = 0;
+    valid_chunk.feature_offset = 0;
+    valid_chunk.feature_count = 1;
+    valid_chunk.vertex_offset = 0;
+    valid_chunk.vertex_count = 4;
+    valid_chunk.index_offset = 0;
+    valid_chunk.index_count = 6;
+    valid_chunk.aux_index_offset = 0;
+    valid_chunk.aux_index_count = 8;
+    valid_chunk.min_lon = -76.70f;
+    valid_chunk.min_lat = 39.20f;
+    valid_chunk.max_lon = -76.69f;
+    valid_chunk.max_lat = 39.21f;
+    valid_artifact.chunks.push_back(valid_chunk);
+
+    ParcelRenderCacheBlob valid_blob;
+    std::string valid_error;
+    const bool valid_ok =
+        buildParcelRenderCacheBlobFromPolygonArtifact(valid_artifact, valid_blob, &valid_error) &&
+        valid_error.empty() &&
+        valid_blob.features.size() == 1 &&
+        valid_blob.features[0].entity_id == valid_feature.entity_id &&
+        valid_blob.features[0].geometry_entity_id == valid_feature.geometry_entity_id &&
+        valid_blob.features[0].source_feature_id == valid_feature.source_feature_id &&
+        valid_blob.features[0].source_primary_key == valid_feature.source_primary_key;
+
+    PolygonGeometryArtifact invalid_artifact = valid_artifact;
+    invalid_artifact.features[0].entity_id.clear();
+    ParcelRenderCacheBlob invalid_blob;
+    std::string invalid_error;
+    const bool invalid_rejected =
+        !buildParcelRenderCacheBlobFromPolygonArtifact(invalid_artifact, invalid_blob, &invalid_error) &&
+        invalid_blob.features.empty() &&
+        invalid_error.find("missing entity_id") != std::string::npos;
+
+    const bool ok = valid_ok && invalid_rejected;
+    json out = {
+        {"mode", "parcel-polygon-identity-selftest"},
+        {"ok", ok},
+        {"valid_ok", valid_ok},
+        {"valid_feature_count", valid_blob.features.size()},
+        {"invalid_rejected", invalid_rejected},
+        {"invalid_error", invalid_error}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runParcelSelectionUiHarness() {
+    IMGUI_CHECKVERSION();
+    ImGuiContext* imgui = ImGui::CreateContext();
+    if (!imgui) {
+        std::cout << json{
+            {"mode", "parcel-selection-ui-harness"},
+            {"ok", false},
+            {"error", "failed to create ImGui context"}
+        }.dump(2) << '\n';
+        return 1;
+    }
+
+    int exit_code = 1;
+    try {
+        ImGuiIO& io = ImGui::GetIO();
+        io.Fonts->AddFontDefault();
+        unsigned char* font_pixels = nullptr;
+        int font_width = 0;
+        int font_height = 0;
+        io.Fonts->GetTexDataAsRGBA32(&font_pixels, &font_width, &font_height);
+        io.DisplaySize = ImVec2(1024.0f, 768.0f);
+        ImGui::NewFrame();
+        ImDrawList* draw = ImGui::GetBackgroundDrawList();
+        if (!draw) {
+            std::cout << json{
+                {"mode", "parcel-selection-ui-harness"},
+                {"ok", false},
+                {"error", "failed to acquire ImGui background draw list"}
+            }.dump(2) << '\n';
+            ImGui::EndFrame();
+            ImGui::DestroyContext(imgui);
+            return 1;
+        }
+
+        std::vector<LayerDef> layers(2);
+        layers[0].file = "parcel.geojson";
+        layers[0].name = "Primary Parcels";
+        layers[0].enabled = true;
+        layers[1].file = "baltimore_county_parcels.geojson";
+        layers[1].name = "Baltimore County Parcels";
+        layers[1].enabled = true;
+
+        ParcelRenderCacheBlob parcel_blob;
+        parcel_blob.source_signature = "parcel_selection_ui_harness_sig";
+        parcel_blob.vertices = {
+            ImVec2(-76.7000f, 39.2000f),
+            ImVec2(-76.6990f, 39.2000f),
+            ImVec2(-76.6990f, 39.2010f),
+            ImVec2(-76.7000f, 39.2010f),
+            ImVec2(-76.6985f, 39.2000f),
+            ImVec2(-76.6975f, 39.2000f),
+            ImVec2(-76.6975f, 39.2010f),
+            ImVec2(-76.6985f, 39.2010f)
+        };
+        parcel_blob.indices = {
+            0, 1, 2, 0, 2, 3,
+            4, 5, 6, 4, 6, 7
+        };
+        parcel_blob.line_indices = {
+            0, 1, 1, 2, 2, 3, 3, 0,
+            4, 5, 5, 6, 6, 7, 7, 4
+        };
+        parcel_blob.features = {
+            ParcelRenderFeatureRecord{
+                0,
+                "entity:parcel:selection-primary",
+                "geometry:parcel:selection-primary:0",
+                "source:parcel:selection-primary:0",
+                "pk:parcel:selection-primary:0",
+                0, 4, 0, 6, 0, 8,
+                -76.7000f, 39.2000f, -76.6990f, 39.2010f
+            },
+            ParcelRenderFeatureRecord{
+                1,
+                "entity:parcel:selection-primary",
+                "geometry:parcel:selection-primary:1",
+                "source:parcel:selection-primary:1",
+                "pk:parcel:selection-primary:1",
+                4, 4, 6, 6, 8, 8,
+                -76.6985f, 39.2000f, -76.6975f, 39.2010f
+            }
+        };
+
+        PolygonGeometryArtifact county_artifact;
+        county_artifact.header.version = kPolygonGeometryArtifactVersion;
+        county_artifact.header.geometry_class = GeometryArtifactClass::Polygon;
+        county_artifact.header.feature_count = 2;
+        county_artifact.header.chunk_count = 1;
+        county_artifact.header.source_signature = "parcel_selection_ui_harness_sig";
+        county_artifact.vertices = {
+            ImVec2(-76.6960f, 39.2000f),
+            ImVec2(-76.6950f, 39.2000f),
+            ImVec2(-76.6950f, 39.2010f),
+            ImVec2(-76.6960f, 39.2010f),
+            ImVec2(-76.6945f, 39.2000f),
+            ImVec2(-76.6935f, 39.2000f),
+            ImVec2(-76.6935f, 39.2010f),
+            ImVec2(-76.6945f, 39.2010f)
+        };
+        county_artifact.fill_indices = {
+            0, 1, 2, 0, 2, 3,
+            4, 5, 6, 4, 6, 7
+        };
+        county_artifact.line_indices = {
+            0, 1, 1, 2, 2, 3, 3, 0,
+            4, 5, 5, 6, 6, 7, 7, 4
+        };
+        county_artifact.features = {
+            GeometryArtifactFeatureRecord{
+                0,
+                "entity:parcel:selection-county",
+                "geometry:parcel:selection-county:0",
+                "source:parcel:selection-county:0",
+                "pk:parcel:selection-county:0",
+                0, 4, 0, 6, 0, 8,
+                -76.6960f, 39.2000f, -76.6950f, 39.2010f
+            },
+            GeometryArtifactFeatureRecord{
+                1,
+                "entity:parcel:selection-county",
+                "geometry:parcel:selection-county:1",
+                "source:parcel:selection-county:1",
+                "pk:parcel:selection-county:1",
+                4, 4, 6, 6, 8, 8,
+                -76.6945f, 39.2000f, -76.6935f, 39.2010f
+            }
+        };
+        county_artifact.chunks = {
+            GeometryArtifactChunkRecord{
+                0, 0, 2, 0, 8, 0, 12, 0, 16,
+                -76.6960f, 39.2000f, -76.6935f, 39.2010f
+            }
+        };
+        std::unordered_map<size_t, PolygonGeometryArtifact> polygon_artifacts;
+        polygon_artifacts.emplace(1u, county_artifact);
+
+        ParcelSelectionState selection;
+        const auto identity_project = [](const ImVec2& world) { return world; };
+
+        MapSelectionRenderContext ctx;
+        ctx.draw = draw;
+        ctx.origin = ImVec2(0.0f, 0.0f);
+        ctx.size = ImVec2(1024.0f, 768.0f);
+        ctx.layers = &layers;
+        ctx.polygon_geometry_artifacts = &polygon_artifacts;
+        ctx.parcel_render_blob = &parcel_blob;
+        ctx.parcel_layer_idx = 0;
+        ctx.parcel_selection = &selection;
+        ctx.math_zoom = 16;
+        ctx.projection = nullptr;
+        ctx.project_world = identity_project;
+
+        const int baseline_vtx = draw->VtxBuffer.Size;
+        const int baseline_idx = draw->IdxBuffer.Size;
+        const bool primary_selected = selectParcel(selection, 0, "entity:parcel:selection-primary", false);
+        renderSelectedParcelOutlines(ctx);
+        const int primary_vtx = draw->VtxBuffer.Size - baseline_vtx;
+        const int primary_idx = draw->IdxBuffer.Size - baseline_idx;
+
+        clearParcelSelection(selection);
+        const int before_county_vtx = draw->VtxBuffer.Size;
+        const int before_county_idx = draw->IdxBuffer.Size;
+        const bool county_selected = selectParcel(selection, 1, "entity:parcel:selection-county", false);
+        renderSelectedParcelOutlines(ctx);
+        const int county_vtx = draw->VtxBuffer.Size - before_county_vtx;
+        const int county_idx = draw->IdxBuffer.Size - before_county_idx;
+
+        clearParcelSelection(selection);
+        const int before_missing_vtx = draw->VtxBuffer.Size;
+        const int before_missing_idx = draw->IdxBuffer.Size;
+        const bool missing_selected = selectParcel(selection, 1, "entity:parcel:missing", false);
+        renderSelectedParcelOutlines(ctx);
+        const int missing_vtx = draw->VtxBuffer.Size - before_missing_vtx;
+        const int missing_idx = draw->IdxBuffer.Size - before_missing_idx;
+
+        const bool primary_drew_both_geometries = primary_selected && primary_vtx >= 24 && primary_idx >= 72;
+        const bool county_drew_both_geometries = county_selected && county_vtx >= 24 && county_idx >= 72;
+        const bool missing_drew_nothing = missing_selected && missing_vtx == 0 && missing_idx == 0;
+        const bool ok = primary_drew_both_geometries && county_drew_both_geometries && missing_drew_nothing;
+
+        json out = {
+            {"mode", "parcel-selection-ui-harness"},
+            {"ok", ok},
+            {"primary_selected", primary_selected},
+            {"primary_vertices_drawn", primary_vtx},
+            {"primary_indices_drawn", primary_idx},
+            {"county_selected", county_selected},
+            {"county_vertices_drawn", county_vtx},
+            {"county_indices_drawn", county_idx},
+            {"missing_selected", missing_selected},
+            {"missing_vertices_drawn", missing_vtx},
+            {"missing_indices_drawn", missing_idx}
+        };
+        std::cout << out.dump(2) << '\n';
+        ImGui::EndFrame();
+        exit_code = ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        ImGui::EndFrame();
+        std::cout << json{
+            {"mode", "parcel-selection-ui-harness"},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        exit_code = 1;
+    }
+
+    ImGui::DestroyContext(imgui);
+    return exit_code;
+}
+
+int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
+    constexpr const char* kMode = "duckdb-parcel-semantic-snapshot-selftest";
+    const fs::path test_root = root / "data" / "cache" / "selftest" / "duckdb_parcel_semantic_snapshot";
+    std::error_code ec;
+    fs::remove_all(test_root, ec);
+    fs::create_directories(test_root / "data", ec);
+    const fs::path db_path = test_root / "data" / "worldsim.duckdb";
+
+    try {
+        duckdb::DuckDB db(db_path.string());
+        duckdb::Connection con(db);
+        auto exec = [&](const char* sql) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(res ? res->GetError() : "query failed");
+            }
+        };
+        exec("CREATE TABLE analytics_build_info(source_signature VARCHAR)");
+        exec("INSERT INTO analytics_build_info VALUES ('snapshot_sig_v1')");
+        exec(R"SQL(
+            CREATE TABLE layer_features (
+                layer_idx UBIGINT,
+                layer_name VARCHAR,
+                layer_file VARCHAR,
+                duckdb_role VARCHAR,
+                feature_idx UBIGINT,
+                entity_id VARCHAR,
+                scale VARCHAR,
+                category VARCHAR,
+                provenance_world VARCHAR,
+                provenance_nation_state VARCHAR,
+                provenance_state_region VARCHAR,
+                provenance_county_city VARCHAR,
+                min_lon DOUBLE,
+                min_lat DOUBLE,
+                max_lon DOUBLE,
+                max_lat DOUBLE,
+                blocklot VARCHAR,
+                owner VARCHAR,
+                address VARCHAR,
+                zipcode VARCHAR,
+                status VARCHAR,
+                zoning VARCHAR,
+                jurisdiction VARCHAR,
+                value_usd DOUBLE,
+                structure_area_sqft DOUBLE,
+                feature_name VARCHAR,
+                lga_name VARCHAR,
+                ward_name VARCHAR,
+                source_name VARCHAR,
+                event_date_text VARCHAR,
+                event_status_hint VARCHAR,
+                event_year_hint INTEGER,
+                amount_usd_hint DOUBLE
+            )
+        )SQL");
+        exec(R"SQL(
+            CREATE TABLE layer_feature_properties (
+                layer_idx UBIGINT,
+                layer_name VARCHAR,
+                layer_file VARCHAR,
+                duckdb_role VARCHAR,
+                feature_idx UBIGINT,
+                entity_id VARCHAR,
+                property_key VARCHAR,
+                property_value VARCHAR
+            )
+        )SQL");
+        exec(R"SQL(
+            CREATE TABLE unified_parcels (
+                parcel_layer_idx UBIGINT,
+                parcel_entity_id VARCHAR,
+                parcel_geometry_entity_id VARCHAR,
+                blocklot VARCHAR,
+                parcel_source_file VARCHAR,
+                property_source_file VARCHAR,
+                parcel_has_geometry BOOLEAN,
+                has_property_record BOOLEAN,
+                owner VARCHAR,
+                owner_display VARCHAR,
+                address VARCHAR,
+                address_search VARCHAR,
+                zipcode VARCHAR,
+                status VARCHAR,
+                current_land DOUBLE,
+                current_improvements DOUBLE,
+                structure_area_sqft DOUBLE,
+                tax_base DOUBLE,
+                sale_price DOUBLE,
+                current_value DOUBLE,
+                vacant_notice_count INTEGER,
+                vacant_rehab_count INTEGER,
+                tax_lien_count INTEGER,
+                tax_sale_count INTEGER,
+                tax_lien_amount DOUBLE,
+                tax_sale_amount DOUBLE,
+                min_lon DOUBLE,
+                min_lat DOUBLE,
+                max_lon DOUBLE,
+                max_lat DOUBLE
+            )
+        )SQL");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec(R"SQL(
+            INSERT INTO layer_features VALUES
+            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 0, 'entity:a', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BLK1', 'owner a', '1 Main', '21201', 'ACTIVE', '', '', 100000, 1200, '', '', '', '', '', '', 0, 0),
+            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 1, 'entity:b', 'parcel', 'Housing', '', '', '', '', -76.68, 39.20, -76.67, 39.21, 'BLK2', 'owner b', '2 Main', '21202', 'ACTIVE', '', '', 200000, 1500, '', '', '', '', '', '', 0, 0)
+        )SQL");
+        exec(R"SQL(
+            INSERT INTO unified_parcels VALUES
+            (9, 'entity:a', 'geom:a', 'BLK1', 'parcel.geojson', 'rp.geojson', TRUE, TRUE, 'owner a', 'Owner A', '1 Main', '1main', '21201', 'ACTIVE', 1000, 2000, 1200, 300000, 0, 300000, 2, 1, 3, 0, 4500, 0, -76.70, 39.20, -76.69, 39.21),
+            (9, 'entity:b', 'geom:b', 'BLK2', 'parcel.geojson', '', TRUE, FALSE, 'owner b', 'Owner B', '2 Main', '2main', '21202', 'ACTIVE', 0, 0, 1500, 200000, 0, 200000, 0, 0, 0, 1, 0, 1200, -76.68, 39.20, -76.67, 39.21)
+        )SQL");
+
+        DuckDbAnalytics analytics(test_root);
+        const bool cache_ok = analytics.validateExistingCache();
+        const DuckDbParcelSemanticSnapshot snapshot = analytics.loadParcelSemanticSnapshot(9);
+        const bool ok =
+            cache_ok &&
+            snapshot.ok &&
+            snapshot.source_signature == "snapshot_sig_v1" &&
+            snapshot.unified_parcels.size() == 2 &&
+            snapshot.parcel_blocklot_by_feature.size() == 2 &&
+            snapshot.parcel_blocklot_by_feature[0] == "BLK1" &&
+            snapshot.parcel_vac_notice_by_feature[0] == 2 &&
+            snapshot.parcel_tax_lien_by_feature[0] == 3 &&
+            snapshot.parcel_tax_sale_by_feature[1] == 1 &&
+            snapshot.parcel_tax_sale_amount_by_feature[1] == 1200.0 &&
+            snapshot.parcel_owner_search_by_feature[0] == "owner a" &&
+            snapshot.parcel_address_search_by_feature[1] == "2main" &&
+            snapshot.unified_parcels[0].parcel_geometry_entity_id == "geom:a" &&
+            snapshot.unified_parcels[0].has_property_record &&
+            snapshot.unified_parcels[1].blocklot == "BLK2";
+
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", ok},
+            {"cache_ok", cache_ok},
+            {"snapshot_ok", snapshot.ok},
+            {"source_signature", snapshot.source_signature},
+            {"feature_count", snapshot.unified_parcels.size()}
+        }.dump(2) << '\n';
+        return ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        return 1;
+    }
+}
+
+int runParcelHoverClickUiHarness(const fs::path& root) {
+    constexpr const char* kMode = "parcel-hover-click-ui-harness";
+    const fs::path test_root = root / "data" / "cache" / "selftest" / "parcel_hover_click";
+    std::error_code ec;
+    fs::remove_all(test_root, ec);
+    fs::create_directories(test_root / "data", ec);
+    const fs::path db_path = test_root / "data" / "worldsim.duckdb";
+
+    try {
+        duckdb::DuckDB db(db_path.string());
+        duckdb::Connection con(db);
+        auto exec = [&](const char* sql) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(res ? res->GetError() : "query failed");
+            }
+        };
+        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
+        exec("CREATE TABLE layer_feature_properties(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, property_key VARCHAR, property_value VARCHAR)");
+        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec(R"SQL(
+            INSERT INTO layer_features VALUES
+            (10, 'Baltimore County Parcels', 'baltimore_county_parcels.geojson', 'parcel_record', 1, 'ENTITYCOUNTY1', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', 0, 0)
+        )SQL");
+
+        DuckDbAnalytics analytics(test_root);
+        const bool cache_ok = analytics.validateExistingCache();
+
+        std::vector<LayerDef> layers(2);
+        layers[0].file = "parcel.geojson";
+        layers[0].enabled = true;
+        layers[1].file = "baltimore_county_parcels.geojson";
+        layers[1].enabled = true;
+        layers[1].features.resize(2);
+        layers[1].features[1].entity_id = "ENTITYCOUNTY1";
+        layers[1].features[1].geometry_entity_id = "geom:county:1";
+        layers[1].features[1].source_feature_id = "src:county:1";
+
+        MapHoverState hover_state;
+        hover_state.hovered_parcel_layer_idx = 1;
+        hover_state.hovered_parcel_idx = 1;
+        hover_state.hovered_parcel_entity_id = "ENTITYCOUNTY1";
+
+        ParcelSelectionState selection;
+        std::string opened_entity_id;
+        MapInspectionContext ctx;
+        ctx.map_hovered = true;
+        ctx.parcel_hover_active = true;
+        ctx.parcel_inspect_active = true;
+        ctx.parcel_layer_idx = 0;
+        ctx.layers = &layers;
+        ctx.unified_parcels = nullptr;
+        ctx.duckdb_analytics = &analytics;
+        ctx.parcel_selection = &selection;
+        ctx.open_parcel_element = [&](const std::string& entity_id) {
+            opened_entity_id = entity_id;
+        };
+        ctx.hover_state = &hover_state;
+
+        const ParcelHoverResolution hovered = resolveHoveredParcel(ctx);
+        const ParcelHoverDetail detail = resolveParcelHoverDetail(ctx, hovered);
+        const bool click_ok = applyParcelClickSelection(ctx, hovered, false);
+
+        const bool ok =
+            cache_ok &&
+            hovered.hit &&
+            hovered.layer_idx == 1 &&
+            hovered.feature_idx == 1 &&
+            !hovered.entity_id.empty() &&
+            detail.available &&
+            detail.blocklot == "BC-1" &&
+            detail.owner_display == "county owner" &&
+            detail.address == "10 County St" &&
+            detail.tax_lien_count == 0 &&
+            click_ok &&
+            selection.active_layer_idx == 1 &&
+            selection.active_entity_id == hovered.entity_id &&
+            opened_entity_id == hovered.entity_id;
+
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", ok},
+            {"cache_ok", cache_ok},
+            {"hover_hit", hovered.hit},
+            {"hover_entity_id", hovered.entity_id},
+            {"detail_available", detail.available},
+            {"detail_blocklot", detail.blocklot},
+            {"click_ok", click_ok},
+            {"selected_entity_id", selection.active_entity_id}
+        }.dump(2) << '\n';
+        return ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        return 1;
+    }
 }
 
 int inspectCanonicalParcelBinary(const fs::path& root, std::string file) {
@@ -1776,7 +2338,7 @@ int validateCanonicalParcelBinary(const fs::path& root, std::string file) {
 int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
     constexpr const char* kMode = "rebuild-duckdb-analytics";
     const auto started_at = std::chrono::steady_clock::now();
-    std::vector<LayerDef> layers = loadManifest(root, true);
+    std::vector<LayerDef> layers = loadManifest(root);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
     const unsigned int worker_count = std::max(1u, hw > (unsigned int)std::max(0, reserve_cores) ? hw - (unsigned int)std::max(0, reserve_cores) : 1u);
     emitCliProgress(
@@ -1826,10 +2388,13 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         return 0;
     }
 
+    const std::vector<size_t> parcel_input_indices = parcelConsolidationInputLayerIndices(detectWorldsimLayerIndices(root, layers));
     LocalLayerLoadSummary load_summary;
-    emitCliProgress(kMode, "load", "loading local materialized layers");
-    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary, true);
-    const bool load_any = load_summary.loaded_layer_count > 0;
+    emitCliProgress(
+        kMode,
+        "load",
+        "loading parcel-consolidation inputs only layer_count=" + std::to_string(parcel_input_indices.size()));
+    const bool load_ok = loadLocalLayersForCli(root, layers, true, load_summary, true, &parcel_input_indices);
     emitCliProgress(
         kMode,
         "load-complete",
@@ -1849,7 +2414,7 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         "ensuring analytics database artifact from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
     const DuckDbArtifactEnsureResult duckdb_result =
-        load_any ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
+        analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels);
     const bool reused_existing = duckdb_result.reused_existing;
     const bool rebuild_ok = duckdb_result.ok;
     const double elapsed_ms = std::chrono::duration<double, std::milli>(
@@ -1859,6 +2424,7 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         "complete",
         "ok=" + std::string(rebuild_ok ? "true" : "false") +
             " reused_existing=" + std::string(reused_existing ? "true" : "false") +
+            " incrementally_updated=" + std::string(duckdb_result.incrementally_updated ? "true" : "false") +
             " rebuilt=" + std::string(duckdb_result.rebuilt ? "true" : "false") +
             " invalidated=" + std::string(duckdb_result.invalidated ? "true" : "false") +
             " elapsed=" + formatElapsedMs(elapsed_ms) +
@@ -1883,6 +2449,7 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         {"unified_parcels", artifacts.unified_parcels.size()},
         {"duckdb", {
             {"reused_existing", reused_existing},
+            {"incrementally_updated", duckdb_result.incrementally_updated},
             {"rebuilt", duckdb_result.rebuilt},
             {"invalidated", duckdb_result.invalidated},
             {"available", analytics.status().available},
@@ -2016,7 +2583,7 @@ int runDuckDbParcelIngestSelftest(const fs::path& root, int reserve_cores) {
             FROM unified_parcels up
             JOIN layer_features lf
               ON lf.layer_idx = up.parcel_layer_idx
-             AND lf.feature_idx = up.parcel_feature_idx
+             AND lf.entity_id = up.parcel_entity_id
             WHERE NOT (
                 lf.layer_file = 'parcel.geojson' OR
                 lf.layer_file LIKE '%_county_parcels.geojson'
@@ -2382,166 +2949,6 @@ int reportDuckDbCoverageCli(const fs::path& root) {
     return 0;
 }
 
-json warmParcelRenderCacheOne(const fs::path& root, const std::string& file, int& exit_code) {
-    exit_code = 0;
-    if (deprecatedRegionalParcelsAlias(file)) {
-        exit_code = 2;
-        return deprecatedRegionalParcelsAliasError("warm-parcel-render-cache", file);
-    }
-    if (!isBareLayerFilename(file)) {
-        exit_code = 2;
-        return {
-            {"mode", "warm-parcel-render-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "requires a layer filename, not a path"}
-        };
-    }
-
-    const std::string storage_key = resolveLayerStorageKey(root, file);
-    const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
-        const fs::path render_path =
-            root / "data" / "cache" / "render" /
-            (layerArtifactBasenameForFile(storage_key) + ".parcel-render.bin");
-    std::string sig;
-    std::string sig_source_kind;
-    if (!resolveLayerSourceSignature(layer_path, sig, &sig_source_kind)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-parcel-render-cache"},
-            {"file", file},
-            {"ok", false},
-            {"error", "failed to resolve source signature"}
-        };
-    }
-
-    ParcelRenderCacheBlob cached_blob;
-    if (loadBinaryParcelRenderCache(render_path, sig, cached_blob)) {
-        return {
-            {"mode", "warm-parcel-render-cache"},
-            {"file", file},
-            {"ok", true},
-            {"reused_existing", true},
-            {"source_signature", sig},
-            {"source_signature_kind", sig_source_kind},
-            {"source", "cache"},
-            {"source_features", cached_blob.features.size()},
-            {"render_features", cached_blob.features.size()},
-            {"vertices", cached_blob.vertices.size()},
-            {"indices", cached_blob.indices.size()},
-            {"chunks", cached_blob.chunks.size()},
-            {"cache_path", render_path.string()}
-        };
-    }
-
-    std::vector<LayerDef::FeatureRecord> features;
-    std::string source_used;
-    std::string error;
-    if (!loadLocalLayerFeatures(root, storage_key, sig, features, nullptr, source_used, error)) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-parcel-render-cache"},
-            {"file", file},
-            {"ok", false},
-            {"source_signature", sig},
-            {"source_signature_kind", sig_source_kind},
-            {"error", error}
-        };
-    }
-
-    ParcelRenderCacheBlob blob;
-    const bool built = buildParcelRenderCacheBlob(features, sig, blob);
-    if (!built) {
-        exit_code = 1;
-        return {
-            {"mode", "warm-parcel-render-cache"},
-            {"file", file},
-            {"ok", false},
-            {"source_signature", sig},
-            {"source_features", features.size()},
-            {"error", "failed to build parcel render cache blob"}
-        };
-    }
-
-    saveBinaryParcelRenderCache(render_path, blob);
-    ParcelRenderCacheBlob verify;
-    const bool verify_ok = loadBinaryParcelRenderCache(render_path, sig, verify);
-    const bool ok =
-        verify_ok &&
-        verify.source_signature == sig &&
-        verify.vertices.size() == blob.vertices.size() &&
-        verify.indices.size() == blob.indices.size() &&
-        verify.features.size() == blob.features.size() &&
-        verify.chunks.size() == blob.chunks.size();
-    if (!ok) exit_code = 1;
-
-    return {
-        {"mode", "warm-parcel-render-cache"},
-        {"file", file},
-        {"ok", ok},
-        {"reused_existing", false},
-        {"source_signature", sig},
-        {"source_signature_kind", sig_source_kind},
-        {"source", source_used},
-        {"source_features", features.size()},
-        {"render_features", blob.features.size()},
-        {"vertices", blob.vertices.size()},
-        {"indices", blob.indices.size()},
-        {"chunks", blob.chunks.size()},
-        {"cache_path", render_path.string()}
-    };
-}
-
-int warmParcelRenderCache(const fs::path& root, const std::string& file) {
-    int exit_code = 0;
-    const json out = warmParcelRenderCacheOne(root, file, exit_code);
-    std::cout << out.dump(2) << '\n';
-    return exit_code;
-}
-
-int warmParcelRenderCacheAll(const fs::path& root) {
-    const fs::path layers_dir = root / "data" / "provenance" / "stored";
-    std::error_code ec;
-    if (!fs::exists(layers_dir, ec)) {
-        std::cerr << "layers directory missing: " << layers_dir << '\n';
-        return 2;
-    }
-
-    std::vector<std::string> candidates;
-    for (const auto& entry : fs::directory_iterator(layers_dir, ec)) {
-        if (ec) break;
-        if (!entry.is_regular_file()) continue;
-        const std::string name = entry.path().filename().string();
-        if (name.ends_with(".canonical.bin")) {
-            candidates.push_back(name.substr(0, name.size() - std::strlen(".canonical.bin")));
-        }
-    }
-    std::sort(candidates.begin(), candidates.end());
-    candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-
-    json results = json::array();
-    size_t ok_count = 0;
-    size_t failed_count = 0;
-    for (const std::string& file : candidates) {
-        int one_exit = 0;
-        json one = warmParcelRenderCacheOne(root, file, one_exit);
-        results.push_back(one);
-        if (one_exit == 0) ok_count += 1;
-        else failed_count += 1;
-    }
-
-    json out = {
-        {"mode", "warm-parcel-render-cache-all"},
-        {"ok", failed_count == 0},
-        {"candidate_count", candidates.size()},
-        {"ok_count", ok_count},
-        {"failed_count", failed_count},
-        {"results", std::move(results)}
-    };
-    std::cout << out.dump(2) << '\n';
-    return failed_count == 0 ? 0 : 1;
-}
-
 json buildGeometryArtifactForLoadedLayer(
     const fs::path& root,
     const LayerDef& layer,
@@ -2858,27 +3265,14 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
             " failed=" + std::to_string(geometry_failed_count) +
             " skipped=" + std::to_string(geometry_skipped_count));
 
-    bool parcel_render_attempted = false;
-    bool parcel_render_ok = true;
-    json parcel_render_output = json::object();
-    if (indices.parcel_layer_idx >= 0 &&
-        static_cast<size_t>(indices.parcel_layer_idx) < layers.size()) {
-        parcel_render_attempted = true;
-        const LayerDef& parcel_layer = layers[static_cast<size_t>(indices.parcel_layer_idx)];
-        emitCliProgress(
-            kMode,
-            "parcel-render",
-            "warming parcel render cache for " + parcel_layer.file);
-        int parcel_render_exit = 0;
-        parcel_render_output = warmParcelRenderCacheOne(root, parcel_layer.file, parcel_render_exit);
-        parcel_render_ok = (parcel_render_exit == 0);
-        if (!parcel_render_ok) geometry_failed_count += 1;
-        emitCliProgress(
-            kMode,
-            "parcel-render-complete",
-            "layer=" + parcel_layer.file +
-                " ok=" + std::string(parcel_render_ok ? "true" : "false"));
-    }
+    const std::vector<size_t> parcel_input_indices = parcelConsolidationInputLayerIndices(indices);
+    std::unordered_set<size_t> parcel_input_keep(parcel_input_indices.begin(), parcel_input_indices.end());
+    emitCliProgress(
+        kMode,
+        "memory",
+        "releasing non-parcel-consolidation feature bodies before DuckDB stage keep_layers=" +
+            std::to_string(parcel_input_keep.size()));
+    releaseLoadedLayerFeatures(layers, &parcel_input_keep);
 
     emitCliProgress(kMode, "duckdb", "building parcel consolidation artifacts");
     ParcelConsolidationArtifacts artifacts = buildParcelConsolidationArtifacts(root, layers, indices);
@@ -2888,9 +3282,8 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         "ensuring analytics database artifact from unified_parcels=" + std::to_string(artifacts.unified_parcels.size()));
 
     DuckDbAnalytics analytics(root);
-    const bool have_duckdb_source_layers = load_summary.loaded_layer_count > 0;
     const DuckDbArtifactEnsureResult duckdb_result =
-        have_duckdb_source_layers ? analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels) : DuckDbArtifactEnsureResult{};
+        analytics.ensureCurrentArtifact(layers, artifacts.unified_parcels);
     const bool duckdb_reused_existing = duckdb_result.reused_existing;
     const bool duckdb_ok = duckdb_result.ok;
     emitCliProgress(
@@ -2898,6 +3291,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
         "duckdb-complete",
         "ok=" + std::string(duckdb_ok ? "true" : "false") +
             " reused_existing=" + std::string(duckdb_reused_existing ? "true" : "false") +
+            " incrementally_updated=" + std::string(duckdb_result.incrementally_updated ? "true" : "false") +
             " rebuilt=" + std::string(duckdb_result.rebuilt ? "true" : "false") +
             " invalidated=" + std::string(duckdb_result.invalidated ? "true" : "false") +
             " db_path=" + analytics.status().db_path +
@@ -3015,12 +3409,6 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
                 ? std::string(geometry_result_by_file[layer.file].value("geometry_class", "unknown"))
                 : std::string("unknown")},
             {"geometry_output", geometry_result_by_file.contains(layer.file) ? geometry_result_by_file[layer.file] : json::object()},
-            {"parcel_render_output", (parcel_render_attempted &&
-                indices.parcel_layer_idx >= 0 &&
-                static_cast<size_t>(indices.parcel_layer_idx) < layers.size() &&
-                layer.file == layers[static_cast<size_t>(indices.parcel_layer_idx)].file)
-                ? parcel_render_output
-                : json::object()},
             {"duckdb_outputs", std::move(duckdb_outputs)}
         });
     }
@@ -3030,11 +3418,11 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     emitCliProgress(
         kMode,
         "complete",
-        "ok=" + std::string((have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok && parcel_render_ok) ? "true" : "false") +
+        "ok=" + std::string((load_ok && geometry_failed_count == 0 && duckdb_ok) ? "true" : "false") +
             " elapsed=" + formatElapsedMs(total_elapsed_ms));
 
     json source_load = {
-        {"ok", have_duckdb_source_layers},
+        {"ok", load_ok},
         {"local_layer_count", load_summary.local_layer_count},
         {"requested_layer_count", load_summary.requested_layer_count},
         {"loaded_layer_count", load_summary.loaded_layer_count},
@@ -3057,7 +3445,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
 
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
-        {"ok", have_duckdb_source_layers && geometry_failed_count == 0 && duckdb_ok && parcel_render_ok},
+        {"ok", load_ok && geometry_failed_count == 0 && duckdb_ok},
         {"worker_count", worker_count},
         {"source_load", std::move(source_load)},
         {"geometry", {
@@ -3066,14 +3454,10 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
             {"skipped_count", geometry_skipped_count},
             {"results", std::move(geometry_results)}
         }},
-        {"parcel_render", {
-            {"attempted", parcel_render_attempted},
-            {"ok", parcel_render_ok},
-            {"result", std::move(parcel_render_output)}
-        }},
         {"duckdb", {
             {"ok", duckdb_ok},
             {"reused_existing", duckdb_reused_existing},
+            {"incrementally_updated", duckdb_result.incrementally_updated},
             {"rebuilt", duckdb_result.rebuilt},
             {"invalidated", duckdb_result.invalidated},
             {"db_path", db_path.string()},
@@ -3144,7 +3528,7 @@ int compilePointGeometryArtifact(const fs::path& root, std::string file) {
     std::vector<LayerDef::FeatureRecord> features;
     std::string error;
     if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
-        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        !loadLocalLayerFeatures(root, *layer, features, nullptr, source_used, error)) {
         json out = {{"mode", "compile-point-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
         std::cout << out.dump(2) << '\n';
         return 1;
@@ -3322,7 +3706,7 @@ int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
     std::vector<LayerDef::FeatureRecord> features;
     std::string error;
     if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
-        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        !loadLocalLayerFeatures(root, *layer, features, nullptr, source_used, error)) {
         json out = {{"mode", "compile-polyline-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
         std::cout << out.dump(2) << '\n';
         return 1;
@@ -3495,7 +3879,7 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
     std::vector<LayerDef::FeatureRecord> features;
     std::string error;
     if (!resolveLayerSourceSignature(layer_path, sig, nullptr) ||
-        !loadLocalLayerFeatures(root, file, sig, features, nullptr, source_used, error)) {
+        !loadLocalLayerFeatures(root, *layer, features, nullptr, source_used, error)) {
         json out = {{"mode", "compile-polygon-geometry"}, {"file", file}, {"ok", false}, {"layer_path", canonicalLayerPathForFile(root, file).string()}, {"error", error.empty() ? "failed to load canonical layer features" : error}};
         std::cout << out.dump(2) << '\n';
         return 1;
@@ -3734,10 +4118,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_polygon_hole_selftest = true;
             continue;
         }
-        if (arg == "--parcel-render-cache-selftest") {
-            options.run_parcel_render_cache_selftest = true;
-            continue;
-        }
         if (arg == "--spatial-index-selftest") {
             options.run_spatial_index_selftest = true;
             continue;
@@ -3764,6 +4144,22 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--canonical-parcel-binary-selftest") {
             options.run_canonical_parcel_binary_selftest = true;
+            continue;
+        }
+        if (arg == "--parcel-polygon-identity-selftest") {
+            options.run_parcel_polygon_identity_selftest = true;
+            continue;
+        }
+        if (arg == "--parcel-selection-ui-harness") {
+            options.run_parcel_selection_ui_harness = true;
+            continue;
+        }
+        if (arg == "--parcel-hover-click-ui-harness") {
+            options.run_parcel_hover_click_ui_harness = true;
+            continue;
+        }
+        if (arg == "--duckdb-parcel-semantic-snapshot-selftest") {
+            options.run_duckdb_parcel_semantic_snapshot_selftest = true;
             continue;
         }
         if (arg == "--duckdb-parcel-ingest-selftest") {
@@ -3826,22 +4222,6 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--startup-preprocess") {
             options.run_startup_preprocess = true;
-            continue;
-        }
-        if (arg == "--warm-parcel-render-cache") {
-            if (i + 1 < argc && argv[i + 1][0] != '-') {
-                options.run_warm_parcel_render_cache = true;
-                options.warm_parcel_render_cache_file = argv[++i];
-            }
-            continue;
-        }
-        if (arg == "--warm-parcel-render-cache-all") {
-            options.run_warm_parcel_render_cache_all = true;
-            continue;
-        }
-        if (arg.rfind("--warm-parcel-render-cache=", 0) == 0) {
-            options.run_warm_parcel_render_cache = true;
-            options.warm_parcel_render_cache_file = arg.substr(std::strlen("--warm-parcel-render-cache="));
             continue;
         }
         if (arg.rfind("--inspect-canonical-parcel-binary=", 0) == 0) {
@@ -3986,8 +4366,6 @@ void printWorldsimUsage() {
         << "       worldsim3 --inspect-duckdb-geography-tables\n"
         << "       worldsim3 --report-duckdb-coverage\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
-        << "       worldsim3 --warm-parcel-render-cache LAYER_FILE\n"
-        << "       worldsim3 --warm-parcel-render-cache-all\n"
         << "       worldsim3 --canonical-parcel-binary-selftest\n"
         << "       worldsim3 --inspect-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --validate-canonical-parcel-binary [LAYER_FILE]\n"
@@ -4005,18 +4383,22 @@ void printWorldsimUsage() {
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
         << "       worldsim3 --polygon-hole-selftest\n"
-        << "       worldsim3 --parcel-render-cache-selftest\n"
         << "       worldsim3 --spatial-index-selftest\n"
         << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --layer-runtime-status-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
         << "       worldsim3 --render-policy-selftest\n"
         << "       worldsim3 --render-plan-selftest\n"
+        << "       worldsim3 --parcel-polygon-identity-selftest\n"
+        << "       worldsim3 --parcel-selection-ui-harness\n"
+        << "       worldsim3 --parcel-hover-click-ui-harness\n"
+        << "       worldsim3 --duckdb-parcel-semantic-snapshot-selftest\n"
         << "       worldsim3 --duckdb-parcel-ingest-selftest [--reserve-cores N]\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
 int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& options) {
+    applyDotEnvEnvironment(root);
     if (options.show_help) {
         printWorldsimUsage();
         return 0;
@@ -4035,9 +4417,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_polygon_hole_selftest) {
         return runPolygonHoleSelftest();
-    }
-    if (options.run_parcel_render_cache_selftest) {
-        return runParcelRenderCacheSelftest(root);
     }
     if (options.run_spatial_index_selftest) {
         return runSpatialIndexSelftest();
@@ -4059,6 +4438,18 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_canonical_parcel_binary_selftest) {
         return runCanonicalParcelBinarySelftest(root);
+    }
+    if (options.run_parcel_polygon_identity_selftest) {
+        return runParcelPolygonIdentitySelftest();
+    }
+    if (options.run_parcel_selection_ui_harness) {
+        return runParcelSelectionUiHarness();
+    }
+    if (options.run_parcel_hover_click_ui_harness) {
+        return runParcelHoverClickUiHarness(root);
+    }
+    if (options.run_duckdb_parcel_semantic_snapshot_selftest) {
+        return runDuckDbParcelSemanticSnapshotSelftest(root);
     }
     if (options.run_duckdb_parcel_ingest_selftest) {
         return runDuckDbParcelIngestSelftest(root, options.reserve_cores_set ? options.reserve_cores : 0);
@@ -4097,12 +4488,6 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
         const json out = buildGeometryDuckDbArtifacts(root, options.reserve_cores_set ? options.reserve_cores : 0);
         std::cout << out.dump(2) << '\n';
         return out.value("ok", false) ? 0 : 1;
-    }
-    if (options.run_warm_parcel_render_cache) {
-        return warmParcelRenderCache(root, options.warm_parcel_render_cache_file);
-    }
-    if (options.run_warm_parcel_render_cache_all) {
-        return warmParcelRenderCacheAll(root);
     }
     if (options.run_download_layers) {
         return runLayerDownloadCli(

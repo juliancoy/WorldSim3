@@ -14,11 +14,14 @@
 #include <unordered_map>
 #include <vector>
 
+class DuckDbAnalytics;
+
 struct DerivedLayerCachesContext {
     const std::filesystem::path* root = nullptr;
     std::vector<LayerDef>* layers = nullptr;
     const std::vector<LayerRuntimeState>* layer_states = nullptr;
     const AppSettings* app_settings = nullptr;
+    DuckDbAnalytics* duckdb_analytics = nullptr;
 
     int zoning_layer_idx = -1;
     int real_property_layer_idx = -1;

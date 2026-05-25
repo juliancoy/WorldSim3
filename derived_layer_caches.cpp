@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "cache_io.h"
+#include "duckdb_analytics.h"
 #include "feature_props.h"
 #include "parcel_consolidation.h"
 #include "vacancy_overlay.h"
@@ -73,6 +74,13 @@ std::string derivedLayerRefreshInputsSignature(const DerivedLayerCachesContext& 
     appendLayerInputsSignature(sig, layers, ctx.layer_states, ctx.tax_sale_layer_idx);
     sig += "|zsim:";
     sig += ctx.app_settings->zoning_use_simcity_colors ? "1" : "0";
+    sig += "|duckdb:";
+    if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) {
+        const std::string duckdb_sig = ctx.duckdb_analytics->buildSourceSignature();
+        sig += duckdb_sig.empty() ? "ready" : duckdb_sig;
+    } else {
+        sig += "unavailable";
+    }
     return sig;
 }
 
@@ -191,242 +199,138 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
             *ctx.owner_aggregates_dirty = true;
         }
     }
-    if (ctx.vacant_notice_layer_idx >= 0) {
-        const auto& layer = layers[(size_t)ctx.vacant_notice_layer_idx];
-        const auto& feats = layer.features;
-        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.vacant_notice_layer_idx);
-        if (feats.size() != *ctx.cached_vac_notice_size || sig != *ctx.cached_vac_notice_signature) {
-            ctx.vacant_notice_count_by_blocklot->clear();
-            for (size_t i = 0; i < feats.size(); ++i) {
-                std::string bl = normalizeJoinKey(getPropertyValue(layer, i, "BLOCKLOT"));
-                if (!bl.empty()) (*ctx.vacant_notice_count_by_blocklot)[bl] += 1;
-            }
-            *ctx.cached_vac_notice_size = feats.size();
-            *ctx.cached_vac_notice_signature = sig;
-            *ctx.vacancy_maps_generation += 1;
-        }
+    ctx.real_property_owner_search_by_feature->clear();
+    ctx.real_property_owner_search_by_feature->reserve(ctx.harmonized_real_property_features->size());
+    for (const LayerDef::FeatureRecord& fg : *ctx.harmonized_real_property_features) {
+        ctx.real_property_owner_search_by_feature->push_back(ownerSearchValueFor(fg));
     }
-    if (ctx.vacant_rehab_layer_idx >= 0) {
-        const auto& layer = layers[(size_t)ctx.vacant_rehab_layer_idx];
-        const auto& feats = layer.features;
-        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.vacant_rehab_layer_idx);
-        if (feats.size() != *ctx.cached_vac_rehab_size || sig != *ctx.cached_vac_rehab_signature) {
-            ctx.vacant_rehab_count_by_blocklot->clear();
-            for (size_t i = 0; i < feats.size(); ++i) {
-                std::string bl = normalizeJoinKey(getPropertyValue(layer, i, "BLOCKLOT"));
-                if (!bl.empty()) (*ctx.vacant_rehab_count_by_blocklot)[bl] += 1;
-            }
-            *ctx.cached_vac_rehab_size = feats.size();
-            *ctx.cached_vac_rehab_signature = sig;
-            *ctx.vacancy_maps_generation += 1;
-        }
-    }
-    if (ctx.tax_lien_layer_idx >= 0) {
-        const auto& layer = layers[(size_t)ctx.tax_lien_layer_idx];
-        const auto& feats = layer.features;
-        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.tax_lien_layer_idx);
-        if (feats.size() != *ctx.cached_tax_lien_size || sig != *ctx.cached_tax_lien_signature) {
-            ctx.tax_lien_count_by_blocklot->clear();
-            ctx.tax_lien_amount_by_blocklot->clear();
-            for (size_t i = 0; i < feats.size(); ++i) {
-                std::string bl = featureBlockLotJoinKey(layer, i);
-                if (bl.empty()) continue;
-                (*ctx.tax_lien_count_by_blocklot)[bl] += 1;
-                (*ctx.tax_lien_amount_by_blocklot)[bl] += parseNumericField(getPropertyValue(layer, i, "TOTAL_AMOUNT"));
-            }
-            *ctx.cached_tax_lien_size = feats.size();
-            *ctx.cached_tax_lien_signature = sig;
-            *ctx.tax_maps_generation += 1;
-        }
-    }
-    if (ctx.tax_sale_layer_idx >= 0) {
-        const auto& layer = layers[(size_t)ctx.tax_sale_layer_idx];
-        const auto& feats = layer.features;
-        const std::string sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.tax_sale_layer_idx);
-        if (feats.size() != *ctx.cached_tax_sale_size || sig != *ctx.cached_tax_sale_signature) {
-            ctx.tax_sale_count_by_blocklot->clear();
-            ctx.tax_sale_amount_by_blocklot->clear();
-            for (size_t i = 0; i < feats.size(); ++i) {
-                std::string bl = featureBlockLotJoinKey(layer, i);
-                if (bl.empty()) continue;
-                (*ctx.tax_sale_count_by_blocklot)[bl] += 1;
-                double amount = parseNumericField(getPropertyValue(layer, i, "total_lien"));
-                if (amount <= 0.0) amount = parseNumericField(getPropertyValue(layer, i, "total_3yea"));
-                if (amount <= 0.0) amount = parseNumericField(getPropertyValue(layer, i, "total_tax"));
-                (*ctx.tax_sale_amount_by_blocklot)[bl] += amount;
-            }
-            *ctx.cached_tax_sale_size = feats.size();
-            *ctx.cached_tax_sale_signature = sig;
-            *ctx.tax_maps_generation += 1;
-        }
-    }
+
     if (ctx.parcel_layer_idx >= 0) {
         const auto& pfeats = layers[(size_t)ctx.parcel_layer_idx].features;
         const std::string parcel_sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.parcel_layer_idx);
-        if (ctx.parcel_blocklot_by_feature->size() != pfeats.size() ||
-            *ctx.parcel_blocklot_cached_signature != parcel_sig) {
+        if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) {
             ctx.parcel_blocklot_by_feature->clear();
-            ctx.parcel_blocklot_by_feature->reserve(pfeats.size());
-            const auto& parcel_layer = layers[(size_t)ctx.parcel_layer_idx];
-            for (size_t i = 0; i < pfeats.size(); ++i) {
-                ctx.parcel_blocklot_by_feature->push_back(featureBlockLotJoinKey(parcel_layer, i));
-            }
-            *ctx.parcel_blocklot_cached_signature = parcel_sig;
+            ctx.parcel_vac_notice_by_feature->clear();
+            ctx.parcel_vac_rehab_by_feature->clear();
+            ctx.parcel_tax_lien_by_feature->clear();
+            ctx.parcel_tax_sale_by_feature->clear();
+            ctx.parcel_tax_lien_amount_by_feature->clear();
+            ctx.parcel_tax_sale_amount_by_feature->clear();
+            ctx.unified_parcels->clear();
+            ctx.parcel_owner_search_by_feature->clear();
+            ctx.parcel_address_search_by_feature->clear();
+            ctx.vacant_notice_rows_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_rehab_rows_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_with_geometry_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_triangulated_renderable_total->store(0, std::memory_order_relaxed);
+            return;
         }
-        if (ctx.parcel_vac_notice_by_feature->size() != pfeats.size() ||
-            ctx.parcel_vac_rehab_by_feature->size() != pfeats.size() ||
-            *ctx.parcel_vacancy_generation_applied != *ctx.vacancy_maps_generation) {
-            ctx.parcel_vac_notice_by_feature->assign(pfeats.size(), 0);
-            ctx.parcel_vac_rehab_by_feature->assign(pfeats.size(), 0);
-            size_t notice_rows_matched = 0;
-            size_t rehab_rows_matched = 0;
-            for (size_t i = 0; i < pfeats.size(); ++i) {
-                const std::string& bl = (*ctx.parcel_blocklot_by_feature)[i];
-                auto itn = ctx.vacant_notice_count_by_blocklot->find(bl);
-                if (itn != ctx.vacant_notice_count_by_blocklot->end()) {
-                    (*ctx.parcel_vac_notice_by_feature)[i] = itn->second;
-                    notice_rows_matched += (size_t)itn->second;
-                }
-                auto itr = ctx.vacant_rehab_count_by_blocklot->find(bl);
-                if (itr != ctx.vacant_rehab_count_by_blocklot->end()) {
-                    (*ctx.parcel_vac_rehab_by_feature)[i] = itr->second;
-                    rehab_rows_matched += (size_t)itr->second;
+
+        const DuckDbParcelSemanticSnapshot snapshot =
+            ctx.duckdb_analytics->loadParcelSemanticSnapshot((size_t)ctx.parcel_layer_idx);
+        const std::string parcel_semantic_sig = parcel_sig + "|" + snapshot.source_signature;
+        if (!snapshot.ok || snapshot.unified_parcels.size() != pfeats.size()) {
+            ctx.parcel_blocklot_by_feature->clear();
+            ctx.parcel_vac_notice_by_feature->clear();
+            ctx.parcel_vac_rehab_by_feature->clear();
+            ctx.parcel_tax_lien_by_feature->clear();
+            ctx.parcel_tax_sale_by_feature->clear();
+            ctx.parcel_tax_lien_amount_by_feature->clear();
+            ctx.parcel_tax_sale_amount_by_feature->clear();
+            ctx.unified_parcels->clear();
+            ctx.parcel_owner_search_by_feature->clear();
+            ctx.parcel_address_search_by_feature->clear();
+            ctx.vacant_notice_rows_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_rehab_rows_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_matched_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_with_geometry_total->store(0, std::memory_order_relaxed);
+            ctx.vacant_parcels_triangulated_renderable_total->store(0, std::memory_order_relaxed);
+            return;
+        }
+
+        if (*ctx.unified_parcel_cached_signature != parcel_semantic_sig ||
+            *ctx.unified_parcel_cached_size != snapshot.unified_parcels.size()) {
+            *ctx.parcel_blocklot_by_feature = snapshot.parcel_blocklot_by_feature;
+            *ctx.parcel_vac_notice_by_feature = snapshot.parcel_vac_notice_by_feature;
+            *ctx.parcel_vac_rehab_by_feature = snapshot.parcel_vac_rehab_by_feature;
+            *ctx.parcel_tax_lien_by_feature = snapshot.parcel_tax_lien_by_feature;
+            *ctx.parcel_tax_sale_by_feature = snapshot.parcel_tax_sale_by_feature;
+            *ctx.parcel_tax_lien_amount_by_feature = snapshot.parcel_tax_lien_amount_by_feature;
+            *ctx.parcel_tax_sale_amount_by_feature = snapshot.parcel_tax_sale_amount_by_feature;
+            *ctx.parcel_owner_search_by_feature = snapshot.parcel_owner_search_by_feature;
+            *ctx.parcel_address_search_by_feature = snapshot.parcel_address_search_by_feature;
+            *ctx.unified_parcels = snapshot.unified_parcels;
+
+            for (UnifiedParcelRecord& row : *ctx.unified_parcels) {
+                row.real_property_layer_idx = ctx.real_property_layer_idx;
+                row.real_property_local_feature_idx = (size_t)-1;
+                if (!row.blocklot.empty()) {
+                    auto it = ctx.real_property_by_blocklot->find(row.blocklot);
+                    if (it != ctx.real_property_by_blocklot->end()) {
+                        row.real_property_local_feature_idx = it->second;
+                        row.has_property_record = true;
+                        if (ctx.harmonized_real_property_source_files &&
+                            it->second < ctx.harmonized_real_property_source_files->size() &&
+                            row.property_source_file.empty()) {
+                            row.property_source_file = (*ctx.harmonized_real_property_source_files)[it->second];
+                        }
+                    }
                 }
             }
+
+            *ctx.cached_vac_notice_size = snapshot.unified_parcels.size();
+            *ctx.cached_vac_rehab_size = snapshot.unified_parcels.size();
+            *ctx.cached_tax_lien_size = snapshot.unified_parcels.size();
+            *ctx.cached_tax_sale_size = snapshot.unified_parcels.size();
+            *ctx.cached_vac_notice_signature = parcel_semantic_sig;
+            *ctx.cached_vac_rehab_signature = parcel_semantic_sig;
+            *ctx.cached_tax_lien_signature = parcel_semantic_sig;
+            *ctx.cached_tax_sale_signature = parcel_semantic_sig;
+            *ctx.parcel_blocklot_cached_signature = parcel_semantic_sig;
+            *ctx.unified_parcel_cached_size = snapshot.unified_parcels.size();
+            *ctx.unified_parcel_cached_signature = parcel_semantic_sig;
+            *ctx.unified_real_property_cached_size = ctx.harmonized_real_property_features->size();
+            *ctx.vacancy_maps_generation += 1;
+            *ctx.tax_maps_generation += 1;
             *ctx.parcel_vacancy_generation_applied = *ctx.vacancy_maps_generation;
-            ctx.vacant_notice_rows_matched_total->store(notice_rows_matched, std::memory_order_relaxed);
-            ctx.vacant_rehab_rows_matched_total->store(rehab_rows_matched, std::memory_order_relaxed);
-            const std::filesystem::path derived_path = *ctx.root / "data" / "cache" / "derived" / "parcel_vacancy_status.json";
-            saveDerivedVacancyStatus(
-                derived_path,
-                pfeats,
-                *ctx.parcel_vac_notice_by_feature,
-                *ctx.parcel_vac_rehab_by_feature,
-                (size_t)*ctx.cached_vac_notice_size,
-                (size_t)*ctx.cached_vac_rehab_size,
-                notice_rows_matched,
-                rehab_rows_matched,
-                ctx.parcel_blocklot_by_feature);
-            *ctx.owner_aggregates_dirty = true;
-        }
-        if (ctx.parcel_tax_lien_by_feature->size() != pfeats.size() ||
-            ctx.parcel_tax_sale_by_feature->size() != pfeats.size() ||
-            *ctx.parcel_tax_generation_applied != *ctx.tax_maps_generation) {
-            ctx.parcel_tax_lien_by_feature->assign(pfeats.size(), 0);
-            ctx.parcel_tax_sale_by_feature->assign(pfeats.size(), 0);
-            ctx.parcel_tax_lien_amount_by_feature->assign(pfeats.size(), 0.0);
-            ctx.parcel_tax_sale_amount_by_feature->assign(pfeats.size(), 0.0);
-            for (size_t i = 0; i < pfeats.size(); ++i) {
-                const std::string& bl = (*ctx.parcel_blocklot_by_feature)[i];
-                auto it_lien = ctx.tax_lien_count_by_blocklot->find(bl);
-                if (it_lien != ctx.tax_lien_count_by_blocklot->end()) {
-                    (*ctx.parcel_tax_lien_by_feature)[i] = it_lien->second;
-                    auto it_amt = ctx.tax_lien_amount_by_blocklot->find(bl);
-                    if (it_amt != ctx.tax_lien_amount_by_blocklot->end()) (*ctx.parcel_tax_lien_amount_by_feature)[i] = it_amt->second;
-                }
-                auto it_sale = ctx.tax_sale_count_by_blocklot->find(bl);
-                if (it_sale != ctx.tax_sale_count_by_blocklot->end()) {
-                    (*ctx.parcel_tax_sale_by_feature)[i] = it_sale->second;
-                    auto it_amt = ctx.tax_sale_amount_by_blocklot->find(bl);
-                    if (it_amt != ctx.tax_sale_amount_by_blocklot->end()) (*ctx.parcel_tax_sale_amount_by_feature)[i] = it_amt->second;
-                }
-            }
             *ctx.parcel_tax_generation_applied = *ctx.tax_maps_generation;
-            *ctx.owner_aggregates_dirty = true;
-        }
-        const size_t real_property_size_for_unified = ctx.harmonized_real_property_features->size();
-        if (*ctx.unified_parcel_cached_size != pfeats.size() ||
-            *ctx.unified_parcel_cached_signature != parcel_sig ||
-            *ctx.unified_real_property_cached_size != real_property_size_for_unified ||
-            *ctx.unified_vacancy_generation_applied != *ctx.parcel_vacancy_generation_applied ||
-            *ctx.unified_tax_generation_applied != *ctx.parcel_tax_generation_applied) {
-            *ctx.unified_parcels = buildUnifiedParcels(UnifiedParcelBuildRequest{
-                &layers,
-                ctx.parcel_render_blob,
-                ctx.parcel_layer_idx,
-                ctx.real_property_layer_idx,
-                ctx.harmonized_real_property_features,
-                ctx.harmonized_real_property_source_files,
-                ctx.real_property_by_blocklot,
-                ctx.parcel_vac_notice_by_feature,
-                ctx.parcel_vac_rehab_by_feature,
-                ctx.parcel_tax_lien_by_feature,
-                ctx.parcel_tax_sale_by_feature,
-                ctx.parcel_tax_lien_amount_by_feature,
-                ctx.parcel_tax_sale_amount_by_feature
-            });
-            *ctx.unified_parcel_cached_size = pfeats.size();
-            *ctx.unified_parcel_cached_signature = parcel_sig;
-            *ctx.unified_real_property_cached_size = real_property_size_for_unified;
             *ctx.unified_vacancy_generation_applied = *ctx.parcel_vacancy_generation_applied;
             *ctx.unified_tax_generation_applied = *ctx.parcel_tax_generation_applied;
             *ctx.owner_aggregates_dirty = true;
         }
-        const std::string real_property_sig =
-            (ctx.real_property_layer_idx >= 0 &&
-             (size_t)ctx.real_property_layer_idx < layers.size())
-                ? hydratedLayerSignature(layers, ctx.layer_states, ctx.real_property_layer_idx)
-                : "missing";
-        const std::filesystem::path owner_search_cache_path =
-            *ctx.root / "data" / "cache" / "derived" / "owner_search_cache.bin";
-        bool owner_search_cache_ok = loadBinaryOwnerSearchCache(
-            owner_search_cache_path,
-            parcel_sig,
-            real_property_sig,
-            *ctx.parcel_owner_search_by_feature,
-            *ctx.real_property_owner_search_by_feature);
-        if (!owner_search_cache_ok ||
-            ctx.parcel_owner_search_by_feature->size() != pfeats.size() ||
-            ctx.real_property_owner_search_by_feature->size() != ctx.harmonized_real_property_features->size()) {
-            ctx.parcel_owner_search_by_feature->clear();
-            ctx.real_property_owner_search_by_feature->clear();
-            ctx.parcel_owner_search_by_feature->reserve(ctx.unified_parcels->size());
-            for (const UnifiedParcelRecord& row : *ctx.unified_parcels) {
-                ctx.parcel_owner_search_by_feature->push_back(row.owner_search);
-            }
-            ctx.real_property_owner_search_by_feature->reserve(ctx.harmonized_real_property_features->size());
-            for (const LayerDef::FeatureRecord& fg : *ctx.harmonized_real_property_features) {
-                ctx.real_property_owner_search_by_feature->push_back(ownerSearchValueFor(fg));
-            }
-            saveBinaryOwnerSearchCache(
-                owner_search_cache_path,
-                parcel_sig,
-                real_property_sig,
-                *ctx.parcel_owner_search_by_feature,
-                *ctx.real_property_owner_search_by_feature);
-        }
-        const std::filesystem::path address_search_cache_path =
-            *ctx.root / "data" / "cache" / "derived" / "address_search_cache.bin";
-        const bool address_search_cache_ok = loadBinaryAddressSearchCache(
-            address_search_cache_path,
-            parcel_sig,
-            *ctx.parcel_address_search_by_feature);
-        if (!address_search_cache_ok ||
-            ctx.parcel_address_search_by_feature->size() != pfeats.size()) {
-            ctx.parcel_address_search_by_feature->clear();
-            ctx.parcel_address_search_by_feature->reserve(ctx.unified_parcels->size());
-            for (const UnifiedParcelRecord& row : *ctx.unified_parcels) {
-                ctx.parcel_address_search_by_feature->push_back(row.address_search);
-            }
-            saveBinaryAddressSearchCache(
-                address_search_cache_path,
-                parcel_sig,
-                *ctx.parcel_address_search_by_feature);
-        }
+
+        size_t notice_rows_matched = 0;
+        size_t rehab_rows_matched = 0;
         size_t matched_total = 0;
         size_t with_geometry_total = 0;
         size_t triangulated_renderable_total = 0;
         for (size_t i = 0; i < pfeats.size(); ++i) {
             const int vac_notice = (i < ctx.parcel_vac_notice_by_feature->size()) ? (*ctx.parcel_vac_notice_by_feature)[i] : 0;
             const int vac_rehab = (i < ctx.parcel_vac_rehab_by_feature->size()) ? (*ctx.parcel_vac_rehab_by_feature)[i] : 0;
+            notice_rows_matched += (size_t)std::max(vac_notice, 0);
+            rehab_rows_matched += (size_t)std::max(vac_rehab, 0);
             if ((vac_notice + vac_rehab) <= 0) continue;
             matched_total++;
             if (!pfeats[i].rings.empty()) with_geometry_total++;
             if (!pfeats[i].rings.empty() && !pfeats[i].triangles.empty()) triangulated_renderable_total++;
         }
+        ctx.vacant_notice_rows_matched_total->store(notice_rows_matched, std::memory_order_relaxed);
+        ctx.vacant_rehab_rows_matched_total->store(rehab_rows_matched, std::memory_order_relaxed);
         ctx.vacant_parcels_matched_total->store(matched_total, std::memory_order_relaxed);
         ctx.vacant_parcels_with_geometry_total->store(with_geometry_total, std::memory_order_relaxed);
         ctx.vacant_parcels_triangulated_renderable_total->store(triangulated_renderable_total, std::memory_order_relaxed);
+        const std::filesystem::path derived_path = *ctx.root / "data" / "cache" / "derived" / "parcel_vacancy_status.json";
+        saveDerivedVacancyStatus(
+            derived_path,
+            pfeats,
+            *ctx.parcel_vac_notice_by_feature,
+            *ctx.parcel_vac_rehab_by_feature,
+            ctx.parcel_vac_notice_by_feature->size(),
+            ctx.parcel_vac_rehab_by_feature->size(),
+            notice_rows_matched,
+            rehab_rows_matched,
+            ctx.parcel_blocklot_by_feature);
     } else {
         ctx.parcel_owner_search_by_feature->clear();
         ctx.real_property_owner_search_by_feature->clear();

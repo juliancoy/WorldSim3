@@ -3,6 +3,7 @@
 #include "cache_io.h"
 #include "imgui.h"
 #include "map_render_projection.h"
+#include "selection.h"
 #include "types.h"
 
 #include <cstddef>
@@ -17,7 +18,7 @@ struct MapSelectionRenderContext {
     const std::unordered_map<size_t, PolygonGeometryArtifact>* polygon_geometry_artifacts = nullptr;
     const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
     int parcel_layer_idx = -1;
-    const std::vector<size_t>* selected_parcel_indices = nullptr;
+    const ParcelSelectionState* parcel_selection = nullptr;
     int math_zoom = 0;
     MapProjectionCache* projection = nullptr;
     std::function<ImVec2(const ImVec2&)> project_world;

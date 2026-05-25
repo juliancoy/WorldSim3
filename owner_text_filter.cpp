@@ -149,11 +149,11 @@ void refreshOwnerTextFilterState(
         if (feature_idx >= ctx.parcel_owner_search_by_feature->size()) continue;
         const std::string& owner_search = (*ctx.parcel_owner_search_by_feature)[feature_idx];
         if (owner_search.empty() || owner_search.find(normalized_query) == std::string::npos) continue;
-        const UnifiedParcelRecord* row = unifiedParcelAt(*ctx.unified_parcels, feature_idx);
-        if (!row) continue;
-        state.result_set.features.insert(FeatureKey{row->parcel_layer_idx, row->parcel_feature_idx});
-        if (!row->blocklot.empty()) {
-            state.result_set.blocklots.insert(row->blocklot);
+        if (feature_idx >= ctx.unified_parcels->size()) continue;
+        const UnifiedParcelRecord& row = (*ctx.unified_parcels)[feature_idx];
+        state.result_set.features.insert(FeatureKey{row.parcel_layer_idx, row.parcel_local_feature_idx});
+        if (!row.blocklot.empty()) {
+            state.result_set.blocklots.insert(row.blocklot);
         }
     }
 }

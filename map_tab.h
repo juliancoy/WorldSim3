@@ -58,7 +58,7 @@ struct MapTabContext {
     std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
 
     ParcelSelectionState* parcel_selection = nullptr;
-    std::vector<size_t>* selected_parcel_indices = nullptr;
+    std::vector<std::string>* selected_parcel_ids = nullptr;
     bool* show_selected_zone_details = nullptr;
     size_t* selected_zone_idx = nullptr;
     ElementInfoUiState* element_info_state = nullptr;

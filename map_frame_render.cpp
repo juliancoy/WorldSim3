@@ -316,7 +316,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     render_tail_ctx.unified_parcels = ctx.unified_parcels;
     render_tail_ctx.layer_heatmap_percentile_clip = ctx.layer_heatmap_percentile_clip;
     render_tail_ctx.layer_normalize_mode = ctx.layer_normalize_mode;
-    render_tail_ctx.selected_parcel_indices = ctx.selected_parcel_indices;
+    render_tail_ctx.parcel_selection = ctx.parcel_selection;
     render_tail_ctx.projection = ctx.projection;
     render_tail_ctx.feature_passes_filters = ctx.feature_passes_filters;
     render_tail_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;

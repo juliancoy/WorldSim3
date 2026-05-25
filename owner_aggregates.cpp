@@ -126,8 +126,8 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
         for (const auto& parcel_record : *ctx.unified_parcels) {
             const LayerDef::FeatureRecord* pf =
                 parcel_record.parcel_layer_idx < ctx.layers->size() &&
-                    parcel_record.parcel_feature_idx < (*ctx.layers)[parcel_record.parcel_layer_idx].features.size()
-                ? &(*ctx.layers)[parcel_record.parcel_layer_idx].features[parcel_record.parcel_feature_idx]
+                    parcel_record.parcel_local_feature_idx < (*ctx.layers)[parcel_record.parcel_layer_idx].features.size()
+                ? &(*ctx.layers)[parcel_record.parcel_layer_idx].features[parcel_record.parcel_local_feature_idx]
                 : nullptr;
             std::string owner = parcel_record.owner;
             if (owner.empty()) continue;
@@ -138,7 +138,7 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
                 row.owner_class = oit != ctx.owner_class_overrides->end() ? oit->second : classifyOwner(owner);
             }
             row.property_count += 1;
-            row.area_m2 += parcelAreaSqM(ctx.parcel_render_blob, parcel_record.parcel_feature_idx, pf ? *pf : LayerDef::FeatureRecord{});
+            row.area_m2 += parcelAreaSqM(ctx.parcel_render_blob, parcel_record.parcel_local_feature_idx, pf ? *pf : LayerDef::FeatureRecord{});
             row.value_usd += parcel_record.current_value;
         }
         ctx.owner_aggregates->clear();

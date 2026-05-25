@@ -156,17 +156,15 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
     if (ctx.center_lon &&
         ctx.center_lat &&
         ctx.zoom &&
-        ctx.selected_parcel_idx &&
-        ctx.selected_parcel_indices) {
+        ctx.selected_parcel_entity_id &&
+        ctx.selected_parcel_entity_ids) {
         saveMapUiState(
             *ctx.root,
             *ctx.center_lon,
             *ctx.center_lat,
             *ctx.zoom,
-            *ctx.selected_parcel_idx,
-            *ctx.selected_parcel_indices,
-            ctx.selected_parcel_stable_id ? *ctx.selected_parcel_stable_id : std::string(),
-            ctx.selected_parcel_stable_ids ? *ctx.selected_parcel_stable_ids : std::vector<std::string>{});
+            *ctx.selected_parcel_entity_id,
+            *ctx.selected_parcel_entity_ids);
     }
     if (ctx.query_history) {
         saveQueryHistoryUiState(*ctx.root, *ctx.query_history);
@@ -174,14 +172,11 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
     ctx.app_settings->vulkan_validation_enabled = g_EnableValidationLayers;
     saveAppSettings(*ctx.root, *ctx.app_settings);
     ctx.hydration_stop->store(true, std::memory_order_relaxed);
-    if (ctx.parcel_render_stop) ctx.parcel_render_stop->store(true, std::memory_order_relaxed);
     if (ctx.time_cube_ui_worker->joinable()) ctx.time_cube_ui_worker->join();
     ctx.hydrate_req_cv->notify_all();
     ctx.spatial_cv->notify_all();
-    if (ctx.parcel_render_cv) ctx.parcel_render_cv->notify_all();
     for (auto& t : *ctx.hydration_workers) if (t.joinable()) t.join();
     if (ctx.spatial_index_worker->joinable()) ctx.spatial_index_worker->join();
-    if (ctx.parcel_render_worker && ctx.parcel_render_worker->joinable()) ctx.parcel_render_worker->join();
     if (ctx.status_api_worker->joinable()) ctx.status_api_worker->join();
     if (ctx.dataset_api_worker->joinable()) ctx.dataset_api_worker->join();
     if (ctx.lan_discovery_worker->joinable()) ctx.lan_discovery_worker->join();
