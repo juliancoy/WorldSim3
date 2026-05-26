@@ -92,6 +92,10 @@ extern std::unordered_map<size_t, ZoningGpuLayerState> g_ZoningGpuLayers;
 extern CrimePointGpuBuffers g_CrimePointGpuBuffers;
 extern CrimePointGpuDrawState g_CrimePointGpuDrawState;
 extern CrimePointGpuPipeline g_CrimePointGpuPipeline;
+extern float g_MapPolygonOutlineThickness;
+extern bool g_WideLinesEnabled;
+extern float g_MinSupportedLineWidth;
+extern float g_MaxSupportedLineWidth;
 extern std::atomic<bool> g_ParcelGpuUploadStop;
 extern std::mutex g_ParcelGpuUploadRequestMutex;
 extern std::condition_variable g_ParcelGpuUploadCv;
@@ -129,6 +133,9 @@ TileSample getTileSample(
     int x,
     int y,
     int max_native_tile_zoom = kMaxNativeTileZoom);
+TileTexture* getExactImageTexture(
+    const std::filesystem::path& image_path,
+    const std::string& cache_key = "");
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path& root);
 void recordZoningOutlineIndirectComputeDispatches(VkCommandBuffer cmd);
 uint64_t parcelDeviceLocalBytes(const ParcelGpuBuffers& buffers);

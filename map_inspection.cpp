@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -544,16 +545,21 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecor
 }
 }
 
-ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx) {
+namespace {
+ParcelHoverResolution resolveParcelHit(
+    const MapInspectionContext& ctx,
+    int layer_idx,
+    size_t feature_idx,
+    const std::string& entity_id_hint) {
     ParcelHoverResolution out;
     if (!ctx.hover_state || !ctx.layers) return out;
-    out.layer_idx = ctx.hover_state->hovered_parcel_layer_idx;
-    out.feature_idx = ctx.hover_state->hovered_parcel_idx;
+    out.layer_idx = layer_idx;
+    out.feature_idx = feature_idx;
     out.hit = out.feature_idx != (size_t)-1;
     if (!out.hit) return out;
     out.entity_id =
-        !ctx.hover_state->hovered_parcel_entity_id.empty()
-            ? ctx.hover_state->hovered_parcel_entity_id
+        !entity_id_hint.empty()
+            ? entity_id_hint
             : (out.layer_idx >= 0 &&
                (size_t)out.layer_idx < ctx.layers->size() &&
                out.feature_idx < (*ctx.layers)[(size_t)out.layer_idx].features.size())
@@ -567,6 +573,25 @@ ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx) {
             ? unifiedParcelAt(*ctx.unified_parcels, out.entity_id)
             : nullptr;
     return out;
+}
+}
+
+ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx) {
+    if (!ctx.hover_state) return {};
+    return resolveParcelHit(
+        ctx,
+        ctx.hover_state->hovered_parcel_layer_idx,
+        ctx.hover_state->hovered_parcel_idx,
+        ctx.hover_state->hovered_parcel_entity_id);
+}
+
+ParcelHoverResolution resolveInspectParcel(const MapInspectionContext& ctx) {
+    if (!ctx.hover_state) return {};
+    return resolveParcelHit(
+        ctx,
+        ctx.hover_state->inspect_parcel_layer_idx,
+        ctx.hover_state->inspect_parcel_idx,
+        ctx.hover_state->inspect_parcel_entity_id);
 }
 
 ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
@@ -627,13 +652,121 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
     return out;
 }
 
+const LayerDef::FeatureRecord* parcelFeatureForResolution(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
+    if (!ctx.layers || hovered.layer_idx < 0) return nullptr;
+    const size_t layer_idx = (size_t)hovered.layer_idx;
+    if (layer_idx >= ctx.layers->size()) return nullptr;
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    if (hovered.feature_idx >= layer.features.size()) return nullptr;
+    return &layer.features[hovered.feature_idx];
+}
+
+std::string parcelClickDebugProperty(
+    const LayerDef::FeatureRecord* feature,
+    std::initializer_list<const char*> keys,
+    const std::string& fallback = {}) {
+    if (!feature) return fallback;
+    const std::string value = trimDisplayValue(getFirstPropertyValue(*feature, keys));
+    return value.empty() ? fallback : value;
+}
+
+void logParcelClickDebug(
+    const MapInspectionContext& ctx,
+    const char* stage,
+    const ParcelHoverResolution& hovered,
+    bool ctrl_append,
+    bool selection_ok) {
+    const LayerDef::FeatureRecord* feature = parcelFeatureForResolution(ctx, hovered);
+    const LayerDef* layer =
+        (ctx.layers && hovered.layer_idx >= 0 && (size_t)hovered.layer_idx < ctx.layers->size())
+            ? &(*ctx.layers)[(size_t)hovered.layer_idx]
+            : nullptr;
+    const std::string blocklot = feature ? featureBlockLotJoinKey(*feature) : std::string();
+    const std::string source_pk = parcelClickDebugProperty(feature, {
+        "source_primary_key", "SOURCE_PRIMARY_KEY", "feature_id", "FEATURE_ID", "FeatureID",
+        "regional_parcel_id", "source_parcel_id", "account_id", "OBJECTID", "objectid", "ID", "id", "PIN", "pin"
+    });
+    const std::string address = parcelClickDebugProperty(feature, {
+        "FULLADDR", "PROPERTY_ADDRESS", "ADDRESS", "Address", "SITE_ADDR", "SITUSADDR"
+    });
+    const std::string geometry_entity =
+        (layer && feature && hovered.feature_idx != (size_t)-1)
+            ? featureGeometryEntityIdForLayerFeature(*layer, *feature, hovered.feature_idx)
+            : std::string();
+    const char* active_entity =
+        ctx.parcel_selection ? ctx.parcel_selection->active_entity_id.c_str() : "";
+    const size_t selected_count =
+        ctx.parcel_selection ? ctx.parcel_selection->refs.size() : 0;
+    std::fprintf(
+        stderr,
+        "[worldsim3][parcel-click] stage=%s ctrl=%d hit=%d layer=%d feature=%zu entity=%s geometry_entity=%s blocklot=%s source_pk=%s address=%s selection_ok=%d selected_count=%zu active_entity=%s layer_file=%s\n",
+        stage ? stage : "unknown",
+        ctrl_append ? 1 : 0,
+        hovered.hit ? 1 : 0,
+        hovered.layer_idx,
+        hovered.feature_idx,
+        hovered.entity_id.c_str(),
+        geometry_entity.c_str(),
+        blocklot.c_str(),
+        source_pk.c_str(),
+        address.c_str(),
+        selection_ok ? 1 : 0,
+        selected_count,
+        active_entity ? active_entity : "",
+        layer ? layer->file.c_str() : "");
+
+    if (hovered.unified_record) {
+        std::fprintf(
+            stderr,
+            "[worldsim3][parcel-click] unified entity=%s blocklot=%s owner=%s address=%s has_property=%d has_geometry=%d\n",
+            hovered.unified_record->parcel_entity_id.c_str(),
+            hovered.unified_record->blocklot.c_str(),
+            hovered.unified_record->owner_display.c_str(),
+            hovered.unified_record->address.c_str(),
+            hovered.unified_record->has_property_record ? 1 : 0,
+            hovered.unified_record->parcel_has_geometry ? 1 : 0);
+    } else {
+        std::fprintf(stderr, "[worldsim3][parcel-click] unified entity=%s missing\n", hovered.entity_id.c_str());
+    }
+
+    if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok && !hovered.entity_id.empty()) {
+        const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
+        std::string duckdb_blocklot;
+        if (detail.ok && !detail.rows.empty()) {
+            const auto& row = detail.rows.front();
+            for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
+                if (detail.columns[i] == "blocklot") {
+                    duckdb_blocklot = row[i];
+                    break;
+                }
+            }
+        }
+        std::fprintf(
+            stderr,
+            "[worldsim3][parcel-click] duckdb entity=%s ok=%d rows=%zu blocklot=%s message=%s\n",
+            hovered.entity_id.c_str(),
+            detail.ok ? 1 : 0,
+            detail.rows.size(),
+            duckdb_blocklot.c_str(),
+            detail.message.c_str());
+    } else {
+        std::fprintf(
+            stderr,
+            "[worldsim3][parcel-click] duckdb entity=%s unavailable rebuild_ok=%d\n",
+            hovered.entity_id.c_str(),
+            (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) ? 1 : 0);
+    }
+}
+
 bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append) {
     if (!ctx.parcel_selection || !hovered.hit || hovered.entity_id.empty()) return false;
-    if (!selectParcel(
+    const bool selected = selectParcel(
             *ctx.parcel_selection,
             hovered.layer_idx,
             hovered.entity_id,
-            ctrl_append)) {
+            ctrl_append);
+    logParcelClickDebug(ctx, "select", hovered, ctrl_append, selected);
+    if (!selected) {
         return false;
     }
     if (ctx.open_parcel_element) ctx.open_parcel_element(hovered.entity_id);
@@ -650,6 +783,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
 
     if (!ctx.hover_state || !ctx.layers || !ctx.parcel_selection) return;
     const ParcelHoverResolution hovered_parcel = resolveHoveredParcel(ctx);
+    const ParcelHoverResolution inspect_parcel = resolveInspectParcel(ctx);
     const int hovered_parcel_layer_idx = hovered_parcel.layer_idx;
     const size_t hovered_parcel_idx = hovered_parcel.feature_idx;
     const LayerDef::FeatureRecord* hovered_zone = ctx.hover_state->hovered_zone;
@@ -659,6 +793,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const LayerDef::FeatureRecord* inspect_point = ctx.hover_state->inspect_point;
     const int inspect_point_layer_idx = ctx.hover_state->inspect_point_layer_idx;
     const bool hovered_parcel_hit = hovered_parcel.hit;
+    const bool inspect_parcel_hit = inspect_parcel.hit;
     const UnifiedParcelRecord* hovered_unified = hovered_parcel.unified_record;
 
     const bool click_select =
@@ -694,9 +829,11 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         }
     }
 
-    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && hovered_parcel_hit) {
+    if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && inspect_parcel_hit) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
-        applyParcelClickSelection(ctx, hovered_parcel, ctrl);
+        applyParcelClickSelection(ctx, inspect_parcel, ctrl);
+    } else if (ctx.map_hovered && ctx.parcel_inspect_active && click_select) {
+        logParcelClickDebug(ctx, "miss", inspect_parcel, ImGui::GetIO().KeyCtrl, false);
     } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && hovered_zone != nullptr) {
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = true;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = hovered_zone_idx;

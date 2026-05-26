@@ -14,10 +14,14 @@ struct WorldsimCliOptions {
     bool run_layer_profile_selftest = false;
     bool run_layer_runtime_status_selftest = false;
     bool run_parcel_gpu_cpu_bypass_selftest = false;
+    bool run_render_routing_selftest = false;
+    bool run_render_tile_cache_selftest = false;
+    bool run_render_polygon_tile_runtime_policy_selftest = false;
     bool run_render_policy_selftest = false;
     bool run_render_plan_selftest = false;
     bool run_canonical_parcel_binary_selftest = false;
     bool run_parcel_polygon_identity_selftest = false;
+    bool run_polygon_artifact_resilience_selftest = false;
     bool run_parcel_selection_ui_harness = false;
     bool run_parcel_hover_click_ui_harness = false;
     bool run_duckdb_parcel_semantic_snapshot_selftest = false;
@@ -32,8 +36,10 @@ struct WorldsimCliOptions {
     bool run_compile_polygon_geometry = false;
     bool run_compile_parcel_polygon_geometry_artifacts = false;
     bool run_validate_polygon_geometry = false;
+    bool run_render_polygon_tile = false;
     bool run_build_geometry_duckdb_artifacts = false;
     bool run_startup_preprocess = false;
+    bool rebuild_all_artifacts_from_scratch = false;
     bool run_download_layers = false;
     bool run_generate_canonical_files = false;
     bool run_rebuild_duckdb_analytics = false;
@@ -51,6 +57,10 @@ struct WorldsimCliOptions {
     std::string point_geometry_file;
     std::string polyline_geometry_file;
     std::string polygon_geometry_file;
+    std::string render_polygon_tile_file;
+    int render_tile_z = -1;
+    int render_tile_x = -1;
+    int render_tile_y = -1;
     std::string color_editor_session_file;
 };
 

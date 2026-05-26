@@ -1,6 +1,7 @@
 #include "point_layer_runtime_service.h"
 
 #include "app_utils.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 #include "imgui.h"
@@ -83,7 +84,11 @@ void syncPointGpuLayers(const PointLayerRuntimeSyncInput& input, PointLayerRunti
         }
 
         const std::filesystem::path artifact_path =
-            geometryArtifactCachePathForLayerFile(*input.root, layer.file, GeometryArtifactClass::Point);
+            geometryArtifactCachePathForLayerFile(
+                *input.root,
+                layer.file,
+                GeometryArtifactClass::Point,
+                layerRenderRouteArtifactName(LayerRenderRoute::PointGpu));
         layer_state.geometry_artifact_class = GeometryArtifactClass::Point;
         layer_state.geometry_artifact_path = artifact_path.string();
         const std::string& sig = layer_state.hydration_source_signature;

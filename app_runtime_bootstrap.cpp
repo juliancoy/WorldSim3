@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "cache_io.h"
+#include "render_routing.h"
 
 #include <array>
 
@@ -77,7 +78,12 @@ void initializeLayerStateFromPersistedArtifacts(
     }
     const bool is_primary_parcel_layer = static_cast<int>(idx) == parcel_layer_idx;
     const GeometryArtifactClass cls = startupGeometryClassForLayer(layers[idx], is_primary_parcel_layer);
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layers[idx].file, cls);
+    const LayerRenderRoute render_route = classifyLayerRenderRoute(idx, layers[idx], parcel_layer_idx);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        root,
+        layers[idx].file,
+        cls,
+        layerRenderRouteArtifactName(render_route));
 
     bool artifact_ok = false;
     size_t artifact_features = 0;

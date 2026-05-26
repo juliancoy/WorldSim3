@@ -29,6 +29,7 @@ static const char* kGpuPickPointFragShaderPath = nullptr;
 #endif
 
 struct GpuPickPushConstants {
+    float center_lonlat[2];
     float center_world[2];
     float viewport_origin[2];
     float viewport_size[2];
@@ -630,6 +631,8 @@ static bool ensureGpuPickPointBuffers(
 }
 
 static void fillGpuPickPushConstants(const GpuPickRequest& request, GpuPickPushConstants& push) {
+    push.center_lonlat[0] = request.center_lonlat.x;
+    push.center_lonlat[1] = request.center_lonlat.y;
     push.center_world[0] = request.center_world.x;
     push.center_world[1] = request.center_world.y;
     push.viewport_origin[0] = request.viewport_origin.x;

@@ -3,6 +3,7 @@
 #include "types.h"
 
 #include <filesystem>
+#include <string_view>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@ struct GeometryArtifactHeader {
 constexpr uint32_t kCanonicalFeatureBinaryVersion = 5;
 constexpr uint32_t kPointGeometryArtifactVersion = 3;
 constexpr uint32_t kPolylineGeometryArtifactVersion = 3;
-constexpr uint32_t kPolygonGeometryArtifactVersion = 4;
+constexpr uint32_t kPolygonGeometryArtifactVersion = 6;
 
 struct GeometryArtifactFeatureRecord {
     uint32_t feature_idx = 0;
@@ -140,6 +141,11 @@ std::filesystem::path geometryArtifactCachePathForLayerFile(
     const std::filesystem::path& root,
     const std::string& layer_file,
     GeometryArtifactClass cls);
+std::filesystem::path geometryArtifactCachePathForLayerFile(
+    const std::filesystem::path& root,
+    const std::string& layer_file,
+    GeometryArtifactClass cls,
+    std::string_view render_path);
 bool buildPointGeometryArtifact(
     const LayerDef& layer,
     const std::vector<LayerDef::FeatureRecord>& features,

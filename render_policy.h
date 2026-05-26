@@ -2,6 +2,7 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "heatmap_render.h"
+#include "render_routing.h"
 #include "types.h"
 
 #include <vector>
@@ -49,6 +50,23 @@ struct LayerDisplayPolicy {
     bool value_parcel_layer = false;
 };
 
+enum class PolygonRasterTileMode {
+    VectorOnly,
+    RasterOnly,
+    RasterBaseVectorOutline
+};
+
+struct PolygonRasterTilePolicyContext {
+    const LayerDef* layer = nullptr;
+    LayerRenderRoute render_route = LayerRenderRoute::GenericPolygonGpu;
+    int zoom = 0;
+    bool layer_uses_heatmap_aggregate = false;
+    bool layer_uses_lod_geometry = false;
+    bool fill_enabled = true;
+    bool filter_state_active = false;
+    bool query_state_active = false;
+};
+
 int resolveLayerAggregateAlgo(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 LayerDisplayPolicy resolveLayerDisplayPolicy(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 int resolveLayerParcelDetailMinZoom(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
@@ -57,3 +75,4 @@ bool layerUsesHeatmapAggregate(const HeatmapLayerPolicyContext& ctx, size_t laye
 bool layerUsesLodGeometry(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 bool layerUsesPointClustering(const HeatmapLayerPolicyContext& ctx, size_t layer_idx);
 void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer_idx, HeatSample& hs);
+PolygonRasterTileMode resolvePolygonRasterTileMode(const PolygonRasterTilePolicyContext& ctx);

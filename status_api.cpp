@@ -6,6 +6,7 @@
 #include "memory_utils.h"
 #include "net_http_utils.h"
 #include "repeatable_filters.h"
+#include "render_routing.h"
 #include "thread_utils.h"
 #include "worldsim_app.h"
 
@@ -442,6 +443,120 @@ int currentProcessId() {
     return getpid();
 #endif
 }
+
+GeometryArtifactClass geometryClassForLayer(const LayerDef& layer) {
+    if (layerUsesPointGeometry(layer)) return GeometryArtifactClass::Point;
+    if (layerUsesPolylineGeometry(layer)) return GeometryArtifactClass::Polyline;
+    return GeometryArtifactClass::Polygon;
+}
+
+std::string renderPathForLayer(
+    size_t layer_idx,
+    const LayerDef& layer,
+    const LayerRuntimeState& state,
+    int parcel_layer_idx) {
+    const LayerRenderRoute route = classifyLayerRenderRoute(layer_idx, layer, parcel_layer_idx);
+    const bool gpu_resident = route == LayerRenderRoute::ParcelGpu
+        ? getParcelGpuResidencyStatus().resident
+        : state.geometry_gpu_resident;
+    return layerRenderRouteName(route, gpu_resident);
+}
+
+std::string renderPathReasonForLayer(
+    size_t layer_idx,
+    const LayerDef& layer,
+    int parcel_layer_idx) {
+    const LayerRenderRoute route = classifyLayerRenderRoute(layer_idx, layer, parcel_layer_idx);
+    return layerRenderRouteReason(route);
+}
+
+json pathDebugJson(const fs::path& p) {
+    std::error_code ec;
+    const bool exists = fs::exists(p, ec) && !ec;
+    uintmax_t size = 0;
+    if (exists) {
+        ec.clear();
+        size = fs::file_size(p, ec);
+        if (ec) size = 0;
+    }
+    return {
+        {"path", p.string()},
+        {"exists", exists},
+        {"bytes", size}
+    };
+}
+
+json parcelLayerDebugJson(
+    const fs::path& root,
+    const std::vector<LayerDef>& layers,
+    const std::vector<LayerRuntimeState>& states,
+    const std::vector<bool>& fill_enabled,
+    int parcel_layer_idx,
+    size_t layer_idx) {
+    if (layer_idx >= layers.size()) return json::object();
+    const LayerDef& layer = layers[layer_idx];
+    const LayerRuntimeState st = layer_idx < states.size() ? states[layer_idx] : LayerRuntimeState{};
+    const LayerRenderRoute render_route = classifyLayerRenderRoute(layer_idx, layer, parcel_layer_idx);
+    const bool route_gpu_resident = render_route == LayerRenderRoute::ParcelGpu
+        ? getParcelGpuResidencyStatus().resident
+        : st.geometry_gpu_resident;
+    const fs::path stored_path = resolveStoredLayerPath(root, layer);
+    const fs::path canonical_path = canonicalLayerPathForFile(root, layer.file);
+    const fs::path artifact_path =
+        geometryArtifactCachePathForLayerFile(
+            root,
+            layer.file,
+            GeometryArtifactClass::Polygon,
+            layerRenderRouteArtifactName(render_route));
+    std::string live_signature;
+    std::string live_source_kind;
+    const bool live_signature_ok = resolveLayerSourceSignature(stored_path, live_signature, &live_source_kind);
+    std::error_code ec;
+    const bool canonical_exists = fs::exists(canonical_path, ec) && !ec;
+    const fs::path effective_read_path = canonical_exists ? canonical_path : stored_path;
+    return {
+        {"index", layer_idx},
+        {"name", layer.name},
+        {"file", layer.file},
+        {"logical_id", layer.logical_id},
+        {"county_city", layer.provenance_county_city},
+        {"state_region", layer.provenance_state_region},
+        {"scale", layer.scale},
+        {"duckdb_role", layer.duckdb_role},
+        {"enabled", layer.enabled},
+        {"fill_enabled", layer_idx < fill_enabled.size() ? fill_enabled[layer_idx] : true},
+        {"operational_parcel_layer", isOperationalParcelRenderLayer(layer)},
+        {"active_parcel_layer", static_cast<int>(layer_idx) == parcel_layer_idx},
+        {"render_path", renderPathForLayer(layer_idx, layer, st, parcel_layer_idx)},
+        {"render_path_reason", renderPathReasonForLayer(layer_idx, layer, parcel_layer_idx)},
+        {"expected_operational_parcel_render_path", isOperationalParcelRenderLayer(layer) ? "parcel_gpu" : ""},
+        {"geometry_class", geometryArtifactClassName(geometryClassForLayer(layer))},
+        {"effective_live_read_path", effective_read_path.string()},
+        {"stored_layer_path", pathDebugJson(stored_path)},
+        {"canonical_layer_path", pathDebugJson(canonical_path)},
+        {"polygon_artifact_path", pathDebugJson(artifact_path)},
+        {"materialized", layerRuntimeSourceMaterializedForFile(root, layer.file)},
+        {"runtime", {
+            {"status", statusToString(st.status)},
+            {"display_status", layerRuntimeDisplayStatus(st, layer.file)},
+            {"features", st.feature_count},
+            {"hydration_source_kind", st.hydration_source_kind},
+            {"hydration_source_signature", st.hydration_source_signature},
+            {"hydration_loaded_from_cache", st.hydration_loaded_from_cache},
+            {"geometry_artifact_path", st.geometry_artifact_path},
+            {"geometry_source_signature", st.geometry_source_signature},
+            {"geometry_loaded_from_artifact", st.geometry_loaded_from_artifact},
+            {"geometry_gpu_resident", route_gpu_resident},
+            {"geometry_gpu_pick_ready", st.geometry_gpu_pick_ready},
+            {"error", st.error}
+        }},
+        {"live_source_signature", {
+            {"ok", live_signature_ok},
+            {"source_kind", live_source_kind},
+            {"signature", live_signature}
+        }}
+    };
+}
 }
 
 std::thread startStatusApiWorker(StatusApiContext ctx) {
@@ -522,6 +637,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         const int kProtocolVersion = ctx.protocol_version;
         const size_t kMaxTileCache = ctx.tile_cache_max;
         const fs::path root = ctx.root ? *ctx.root : fs::current_path();
+        const int parcel_layer_idx = ctx.parcel_layer_idx;
 
         if (!initNetworkSockets()) return;
         NetSocket server_fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -847,6 +963,45 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/parcel_debug") {
+                std::vector<LayerRuntimeState> states_copy;
+                {
+                    std::lock_guard<std::mutex> lk(status_mutex);
+                    states_copy = layer_states;
+                }
+                std::vector<bool> fill_copy;
+                {
+                    std::lock_guard<std::mutex> lk(layer_fill_mutex);
+                    fill_copy = layer_fill_enabled;
+                }
+                json parcel_layers = json::array();
+                for (size_t i = 0; i < layers.size(); ++i) {
+                    if (!isOperationalParcelRenderLayer(layers[i])) continue;
+                    parcel_layers.push_back(parcelLayerDebugJson(
+                        root,
+                        layers,
+                        states_copy,
+                        fill_copy,
+                        parcel_layer_idx,
+                        i));
+                }
+                json active = json::object();
+                if (parcel_layer_idx >= 0 && static_cast<size_t>(parcel_layer_idx) < layers.size()) {
+                    active = parcelLayerDebugJson(
+                        root,
+                        layers,
+                        states_copy,
+                        fill_copy,
+                        parcel_layer_idx,
+                        static_cast<size_t>(parcel_layer_idx));
+                }
+                send_json(200, "OK", {
+                    {"ok", true},
+                    {"active_parcel_layer_idx", parcel_layer_idx},
+                    {"active_parcel_layer", std::move(active)},
+                    {"parcel_gpu", buildParcelGpuStatusJson()},
+                    {"parcel_layers", std::move(parcel_layers)}
+                });
             } else if (path == "/status") {
                 std::vector<LayerRuntimeState> states_copy;
                 {
@@ -921,6 +1076,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"bad_indices_last_frame", render_fill_bad_indices_last_frame.load(std::memory_order_relaxed)}
                 };
                 out["parcel_gpu"] = buildParcelGpuStatusJson();
+                out["active_parcel_layer_idx"] = parcel_layer_idx;
+                if (parcel_layer_idx >= 0 && static_cast<size_t>(parcel_layer_idx) < layers.size()) {
+                    out["active_parcel_layer"] = parcelLayerDebugJson(
+                        root,
+                        layers,
+                        states_copy,
+                        fill_copy,
+                        parcel_layer_idx,
+                        static_cast<size_t>(parcel_layer_idx));
+                } else {
+                    out["active_parcel_layer"] = nullptr;
+                }
                 json status_counts = json::object();
                 size_t enabled_layers_total = 0;
                 size_t enabled_layers_hydrated = 0;
@@ -944,12 +1111,16 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         if (hydrated) ++enabled_layers_hydrated;
                         if (triangulated) ++enabled_layers_ready;
                     }
-                    out["layers"].push_back({
+                    json layer_out = {
                         {"index", i},
                         {"name", i < layers.size() ? layers[i].name : std::string()},
                         {"file", i < layers.size() ? layers[i].file : std::string()},
                         {"enabled", enabled},
                         {"fill_enabled", i < fill_copy.size() ? fill_copy[i] : true},
+                        {"render_path", i < layers.size() ? renderPathForLayer(i, layers[i], st, parcel_layer_idx) : std::string()},
+                        {"render_path_reason", i < layers.size() ? renderPathReasonForLayer(i, layers[i], parcel_layer_idx) : std::string()},
+                        {"operational_parcel_layer", i < layers.size() ? isOperationalParcelRenderLayer(layers[i]) : false},
+                        {"active_parcel_layer", static_cast<int>(i) == parcel_layer_idx},
                         {"status", s},
                         {"display_status", display_status},
                         {"features", st.feature_count},
@@ -970,7 +1141,17 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         {"ready", triangulated},
                         {"spatial_indexed", i < layers.size() && i < states_copy.size() && st.spatial_index_phase == "ready"},
                         {"error", st.error}
-                    });
+                    };
+                    if (i < layers.size() && isOperationalParcelRenderLayer(layers[i])) {
+                        layer_out["parcel_debug"] = parcelLayerDebugJson(
+                            root,
+                            layers,
+                            states_copy,
+                            fill_copy,
+                            parcel_layer_idx,
+                            i);
+                    }
+                    out["layers"].push_back(std::move(layer_out));
                 }
                 out["enabled_layers_total"] = enabled_layers_total;
                 out["enabled_layers_hydrated"] = enabled_layers_hydrated;

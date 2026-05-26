@@ -198,6 +198,8 @@ add_executable(worldsim3
   heatmap_key_builder.cpp
   heatmap_runtime.cpp
   cpu_zoning_fallback.cpp
+  render_routing.cpp
+  render_tile_cache.cpp
   render_layer_pass.cpp
   render_tail_pass.cpp
   render_policy.cpp
@@ -474,14 +476,52 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_layer_profile_selftest --layer-profile-selftest)
   add_worldsim_cli_test(worldsim3_layer_runtime_status_selftest --layer-runtime-status-selftest)
   add_worldsim_cli_test(worldsim3_parcel_gpu_cpu_bypass_selftest --parcel-gpu-cpu-bypass-selftest)
+  add_worldsim_cli_test(worldsim3_render_routing_selftest --render-routing-selftest)
+  add_worldsim_cli_test(worldsim3_render_tile_cache_selftest --render-tile-cache-selftest)
+  add_test(
+    NAME worldsim3_render_polygon_tile_contract
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_render_polygon_tile_contract.sh)
+  set_tests_properties(worldsim3_render_polygon_tile_contract PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120
+    LABELS "integration;render;tiles")
+  add_test(
+    NAME worldsim3_render_polygon_tile_provenance
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_render_polygon_tile_provenance.sh)
+  set_tests_properties(worldsim3_render_polygon_tile_provenance PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120
+    LABELS "integration;render;tiles;provenance")
+  add_test(
+    NAME worldsim3_render_polygon_tile_runtime_policy
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_render_polygon_tile_runtime_policy.sh)
+  set_tests_properties(worldsim3_render_polygon_tile_runtime_policy PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120
+    LABELS "integration;render;tiles;runtime")
   add_worldsim_cli_test(worldsim3_render_policy_selftest --render-policy-selftest)
   add_worldsim_cli_test(worldsim3_render_plan_selftest --render-plan-selftest)
   add_worldsim_cli_test(worldsim3_canonical_parcel_binary_selftest --canonical-parcel-binary-selftest)
   add_worldsim_cli_test(worldsim3_parcel_polygon_identity_selftest --parcel-polygon-identity-selftest)
+  add_worldsim_cli_test(worldsim3_polygon_artifact_resilience_selftest --polygon-artifact-resilience-selftest)
   add_worldsim_cli_test(worldsim3_parcel_selection_ui_harness --parcel-selection-ui-harness)
   add_worldsim_cli_test(worldsim3_parcel_hover_click_ui_harness --parcel-hover-click-ui-harness)
   add_worldsim_cli_test(worldsim3_duckdb_parcel_semantic_snapshot_selftest --duckdb-parcel-semantic-snapshot-selftest)
   add_worldsim_cli_test(worldsim3_vacancy_selftest --vacancy-selftest)
+  add_test(
+    NAME worldsim3_baltimore_region_parcel_artifact_matrix
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_baltimore_region_generated_data.sh parcels-required)
+  set_tests_properties(worldsim3_baltimore_region_parcel_artifact_matrix PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 300
+    LABELS "integration;artifacts;parcels;regional")
+  add_test(
+    NAME worldsim3_baltimore_region_zoning_artifact_matrix
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_baltimore_region_generated_data.sh zoning-required)
+  set_tests_properties(worldsim3_baltimore_region_zoning_artifact_matrix PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 300
+    LABELS "integration;artifacts;zoning;regional")
   add_worldsim_integration_test(worldsim3_duckdb_parcel_ingest_selftest --duckdb-parcel-ingest-selftest)
 
   add_test(NAME arkavo_connectivity_help COMMAND $<TARGET_FILE:arkavo_connectivity_test> --help)

@@ -3,6 +3,7 @@
 #include "app_utils.h"
 #include "choropleth_histogram.h"
 #include "map_render_utils.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 #include "imgui.h"
@@ -113,8 +114,16 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
     }
 
     const std::string& sig = parcel_state.hydration_source_signature;
+    const LayerRenderRoute render_route = classifyLayerRenderRoute(
+        static_cast<size_t>(input.parcel_layer_idx),
+        parcel_layer,
+        input.parcel_layer_idx);
     const std::filesystem::path artifact_path =
-        geometryArtifactCachePathForLayerFile(*input.root, parcel_layer.file, GeometryArtifactClass::Polygon);
+        geometryArtifactCachePathForLayerFile(
+            *input.root,
+            parcel_layer.file,
+            GeometryArtifactClass::Polygon,
+            layerRenderRouteArtifactName(render_route));
     const bool parcel_geometry_refresh_allowed =
         state.geometry_locked_signature.empty() || sig == state.geometry_locked_signature;
     if (!parcel_geometry_refresh_allowed) {

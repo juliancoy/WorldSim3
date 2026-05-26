@@ -1,6 +1,7 @@
 #include "polyline_layer_runtime_service.h"
 
 #include "app_utils.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 #include "imgui.h"
@@ -56,7 +57,11 @@ void syncPolylineGpuLayers(const PolylineLayerRuntimeSyncInput& input, PolylineL
         }
 
         const std::filesystem::path artifact_path =
-            geometryArtifactCachePathForLayerFile(*input.root, layer.file, GeometryArtifactClass::Polyline);
+            geometryArtifactCachePathForLayerFile(
+                *input.root,
+                layer.file,
+                GeometryArtifactClass::Polyline,
+                layerRenderRouteArtifactName(LayerRenderRoute::PolylineGpu));
         layer_state.geometry_artifact_class = GeometryArtifactClass::Polyline;
         layer_state.geometry_artifact_path = artifact_path.string();
         const std::string& sig = layer_state.hydration_source_signature;

@@ -73,6 +73,7 @@ struct ParcelHoverDetail {
 };
 
 ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx);
+ParcelHoverResolution resolveInspectParcel(const MapInspectionContext& ctx);
 ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered);
 bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append);
 void handleMapInspection(const MapInspectionContext& ctx);

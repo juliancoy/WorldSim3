@@ -1,6 +1,7 @@
 #include "crime_point_runtime_service.h"
 
 #include "app_utils.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 #include "imgui.h"
@@ -61,7 +62,11 @@ void syncCrimePointGpuLayer(const CrimePointRuntimeSyncInput& input, CrimePointR
     const LayerDef& crime_layer = (*input.layers)[layer_idx];
     LayerRuntimeState& crime_state = (*input.layer_states)[layer_idx];
     const std::filesystem::path crime_artifact_path =
-        geometryArtifactCachePathForLayerFile(*input.root, crime_layer.file, GeometryArtifactClass::Point);
+        geometryArtifactCachePathForLayerFile(
+            *input.root,
+            crime_layer.file,
+            GeometryArtifactClass::Point,
+            layerRenderRouteArtifactName(LayerRenderRoute::PointGpu));
     crime_state.geometry_artifact_class = GeometryArtifactClass::Point;
     crime_state.geometry_artifact_path = crime_artifact_path.string();
 

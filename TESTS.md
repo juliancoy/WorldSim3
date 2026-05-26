@@ -141,3 +141,136 @@ Current additional verification:
 - The same build now verifies the asynchronous parcel GPU upload worker wiring compiles and links, including worker-owned Vulkan upload context creation, stale-result discard, payload adoption, and shutdown/join handling.
 - The same build now verifies generation-tracked parcel GPU retirement wiring compiles and links, including retire-after-frame tracking, per-frame drain hooks, and forced shutdown drain.
 - The same build now verifies the session-static parcel geometry residency policy compiles and links: startup upload remains supported, while later in-process parcel source signature changes are handled as restart-required instead of live geometry replacement.
+
+## Baltimore Region Generated Data Checks
+
+```bash
+./scripts/check_baltimore_region_generated_data.sh parcels-required
+./scripts/check_baltimore_region_generated_data.sh zoning-audit
+./scripts/check_baltimore_region_generated_data.sh zoning-required
+```
+
+Purpose:
+
+- Verifies high-profile Baltimore-region parcel and zoning artifact matrices that are important for visible county-scale regression coverage.
+- Provides a non-gating audit mode when an operator wants a full zoning report without failing a larger run.
+
+Expected pass signal:
+
+- `parcels-required` exits `0`.
+- `zoning-required` exits `0`.
+- `zoning-audit` reports pass/fail by layer and exits `0`.
+
+Current ctest coverage:
+
+- `ctest -R worldsim3_baltimore_region_parcel_artifact_matrix --output-on-failure`
+- `ctest -R worldsim3_baltimore_region_zoning_artifact_matrix --output-on-failure`
+
+Notes:
+
+- The parcel and zoning matrices are intentionally narrow: they enforce the visible Baltimore-region layers that have already proven to be high-value regression targets.
+- `zoning-audit` remains useful when you want the same report shape without failing a broader operator run.
+
+## Raster Tile Contract Check
+
+```bash
+./build/worldsim3 --render-polygon-tile parcel.geojson 14 4821 6140
+ctest -R worldsim3_render_polygon_tile_contract --output-on-failure
+ctest -R worldsim3_render_polygon_tile_provenance --output-on-failure
+ctest -R worldsim3_render_polygon_tile_runtime_policy --output-on-failure
+```
+
+Purpose:
+
+- Verifies the offline raster tile product described in `professional render.md` is emitted as a derived cache artifact rather than an alternate source of truth.
+- Verifies the command exposes the render-route and cache-key provenance needed for professional debugability.
+- Verifies the runtime zoom policy is conservative and explicit:
+  zoomed out raster, mid zoom raster base plus vector outline, high zoom vector only.
+
+Expected pass signal:
+
+- The command exits `0` and writes a PPM tile under `data/cache/render_tiles/...`.
+- The contract test verifies the JSON output includes:
+- The runtime policy test verifies:
+  - generic polygon `z10 -> raster_only`
+  - generic polygon `z12 -> raster_base_vector_outline`
+  - generic polygon `z14 -> vector_only`
+  - heatmap, zoning, filtered, and query-driven polygon states stay `vector_only`
+  - active parcel GPU stays `vector_only`
+  - county parcel polygon fallback can use `raster_only`
+  - `render_path`
+  - `source_signature`
+  - `style_key`
+  - `tile_path`
+  - a cache-keyed output path matching the requested `z/x/y`
+- The provenance test verifies the tile is explicitly reported as a derived cache artifact, tied to the validated artifact/source signature, and can be deleted and regenerated at the same cache-keyed path.
+
+Notes:
+
+- This is a contract test for provenance and cache-key shape, not yet a full vector/raster equivalence test.
+
+## Generated Data Coverage Matrix
+
+This section describes how strong current test coverage is for generated data paths, not just whether individual commands exist.
+
+Coverage labels:
+
+- `Well covered`: exercised by dedicated self-tests plus artifact or semantic verification.
+- `Partially covered`: some validation exists, but it is uneven, indirect, or limited to headers/artifacts/buildability.
+- `Effectively untested`: little or no repeatable verification beyond ad hoc manual inspection.
+
+### Well Covered
+
+- `Primary parcel canonical + geometry + DuckDB ingest path`
+  Commands: `--validate-canonical-parcel-binary`, `--parcel-artifact-health`, `--compile-polygon-geometry`, `--validate-polygon-geometry`, `--duckdb-parcel-semantic-snapshot-selftest`, `--duckdb-parcel-ingest-selftest`, `--parcel-polygon-identity-selftest`.
+  Why: this is the strongest generated-data path in the repo. It has artifact validation, semantic verification, ingest verification, and UI harness coverage.
+
+- `Parcel interaction data derived from generated artifacts`
+  Commands: `--parcel-selection-ui-harness`, `--parcel-hover-click-ui-harness`.
+  Why: these tests verify that generated parcel artifacts remain usable for selection, hover, identity resolution, and county fallback behavior.
+
+- `Parcel vacancy/tax overlay assumptions on generated parcel joins`
+  Commands: `--vacancy-selftest`, `--duckdb-parcel-semantic-snapshot-selftest`.
+  Why: these do not fully cover rebuild freshness, but they do exercise the generated parcel join assumptions that downstream overlays depend on.
+
+### Partially Covered
+
+- `Generic polygon geometry artifacts, including zoning-style layers`
+  Commands: `--compile-polygon-geometry <layer>`, `--validate-polygon-geometry <layer>`, build verification.
+  Why: the repo can compile and validate polygon artifacts, but coverage is layer-by-layer and not enforced as a complete required set. Recent manual verification showed multiple zoning layers with missing or stale compiled polygon artifacts.
+
+- `Point and polyline generated geometry artifacts`
+  Commands: `--compile-point-geometry`, `--validate-point-geometry`, `--compile-polyline-geometry`, `--validate-polyline-geometry`.
+  Why: the command surface exists, but there is no comparable end-to-end matrix showing that all intended generated point and polyline layers are routinely materialized, validated, and renderable.
+
+- `Startup preprocess generated outputs`
+  Commands: `--build-geometry-duckdb-artifacts`, `--startup-preprocess`.
+  Why: these can generate required runtime artifacts, but the repo does not yet document a dedicated self-test that proves startup preprocess deterministically produces the full required artifact set without runtime surprises.
+
+- `Runtime GPU renderability of generated artifacts`
+  Commands: build verification, parcel UI harnesses, manual status/screenshot API checks.
+  Why: some generated data paths are proven renderable in practice, especially parcels, but most layer families are not covered by a repeatable automated render regression suite.
+
+### Effectively Untested
+
+- `Whole-repo generated data completeness as a single deterministic contract`
+  Gap: there is no one-command test that materializes the expected generated data set, validates every required artifact, and fails on any missing/stale member.
+
+- `Generated data isolation and reproducibility under concurrent workflows`
+  Gap: tests and runtime currently share mutable state such as `data/worldsim.duckdb` and cached artifacts. Operationally this means a long-running test or app instance can affect another run.
+
+- `Visual regression coverage for all generated layer families`
+  Gap: parcel-region screenshot sweeps are feasible and were run manually, but there is no checked-in automated visual regression suite for parcels, zoning, point layers, and polylines together.
+
+- `Semantic fixture-based validation for most non-parcel generated layers`
+  Gap: outside the parcel pipeline, most generated data paths do not yet have fixture-driven correctness assertions that verify expected counts, identities, joins, or styling behavior.
+
+## Current Professional Assessment
+
+Generated-data testing is:
+
+- `Robust` for the core parcel pipeline.
+- `Moderate` for generated artifacts in general.
+- `Not yet robust` across all generated data classes and render paths.
+
+The biggest current gap is not the absence of commands. The gap is that coverage is uneven across layer families, especially outside parcels, and the repo does not yet enforce one repeatable generated-data contract for the full Baltimore-region target set.

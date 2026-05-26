@@ -1,5 +1,6 @@
 #include "worldsim_cli.h"
 
+#include "app_settings.h"
 #include "app_utils.h"
 #include "cache_io.h"
 #include "duckdb_analytics.h"
@@ -7,6 +8,7 @@
 #include "feature_props.h"
 #include "layer_import.h"
 #include "layer_geometry.h"
+#include "layer_registry.h"
 #include "layer_state_io.h"
 #include "layer_pipeline_drain.h"
 #include "map_inspection.h"
@@ -18,6 +20,8 @@
 #include "render_layer_pass.h"
 #include "render_plan_builder.h"
 #include "render_policy.h"
+#include "render_routing.h"
+#include "render_tile_cache.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
 #include "parcel_matched_layers.h"
@@ -26,6 +30,7 @@
 #include <duckdb.hpp>
 #include <imgui_internal.h>
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
@@ -112,6 +117,61 @@ bool isPrimaryParcelGeometryFileForCli(const std::string& file) {
             file.ends_with("_county_parcels.geojson"));
 }
 
+json resetRebuildableArtifacts(const fs::path& root) {
+    const std::vector<fs::path> targets = {
+        root / "data" / "cache" / "geometry",
+        root / "data" / "cache" / "render",
+        root / "data" / "cache" / "render_tiles",
+        root / "data" / "worldsim.duckdb",
+        root / "data" / "worldsim.duckdb.wal",
+        root / "data" / "worldsim.duckdb.source_signature"
+    };
+
+    json removed = json::array();
+    json missing = json::array();
+    json errors = json::array();
+    bool ok = true;
+
+    for (const fs::path& target : targets) {
+        std::error_code ec;
+        const bool exists = fs::exists(target, ec);
+        if (ec) {
+            ok = false;
+            errors.push_back({
+                {"path", target.string()},
+                {"error", ec.message()}
+            });
+            continue;
+        }
+        if (!exists) {
+            missing.push_back(target.string());
+            continue;
+        }
+        const uintmax_t removed_count = fs::is_directory(target, ec)
+            ? fs::remove_all(target, ec)
+            : (fs::remove(target, ec) ? 1u : 0u);
+        if (ec) {
+            ok = false;
+            errors.push_back({
+                {"path", target.string()},
+                {"error", ec.message()}
+            });
+            continue;
+        }
+        removed.push_back({
+            {"path", target.string()},
+            {"entries_removed", removed_count}
+        });
+    }
+
+    return {
+        {"ok", ok},
+        {"removed", std::move(removed)},
+        {"missing", std::move(missing)},
+        {"errors", std::move(errors)}
+    };
+}
+
 std::unordered_map<std::string, std::vector<std::string>> readDuckDbColumnsByTable(
     const fs::path& db_path,
     const std::vector<std::string>& table_names);
@@ -121,13 +181,56 @@ std::unordered_map<std::string, uint64_t> readDuckDbCountsByLayerFile(
     const std::string& layer_column,
     const std::string& count_expr);
 
+LayerRenderRoute cliRenderRouteForLayer(
+    const fs::path& root,
+    const std::vector<LayerDef>& layers,
+    const LayerDef& layer) {
+    int layer_idx = -1;
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (&layers[i] == &layer || layers[i].file == layer.file) {
+            layer_idx = static_cast<int>(i);
+            break;
+        }
+    }
+    LayerRegistry registry;
+    registry.refresh(root, layers);
+    return classifyLayerRenderRoute(
+        layer_idx >= 0 ? static_cast<size_t>(layer_idx) : 0,
+        layer,
+        registry.indices().parcel_layer_idx);
+}
+
+std::vector<const char*> cliGeometryArtifactRouteNamesForLayer(
+    const fs::path& root,
+    const std::vector<LayerDef>& layers,
+    const LayerDef& layer,
+    GeometryArtifactClass cls) {
+    if (cls == GeometryArtifactClass::Point) {
+        return {layerRenderRouteArtifactName(LayerRenderRoute::PointGpu)};
+    }
+    if (cls == GeometryArtifactClass::Polyline) {
+        return {layerRenderRouteArtifactName(LayerRenderRoute::PolylineGpu)};
+    }
+    if (cls == GeometryArtifactClass::Polygon && isOperationalParcelRenderLayer(layer)) {
+        return {
+            layerRenderRouteArtifactName(LayerRenderRoute::ParcelGpu),
+            layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu)
+        };
+    }
+    const LayerRenderRoute route = cliRenderRouteForLayer(root, layers, layer);
+    return {layerRenderRouteArtifactName(route)};
+}
+
 bool loadExistingGeometryArtifactForLayer(
     const fs::path& root,
     const std::string& file,
     GeometryArtifactClass cls,
     const std::string& sig,
-    json& stats_out) {
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, cls);
+    json& stats_out,
+    std::string_view render_path = {}) {
+    const fs::path artifact_path = render_path.empty()
+        ? geometryArtifactCachePathForLayerFile(root, file, cls)
+        : geometryArtifactCachePathForLayerFile(root, file, cls, render_path);
     switch (cls) {
         case GeometryArtifactClass::Point: {
             PointGeometryArtifact artifact;
@@ -992,13 +1095,34 @@ int runPolygonHoleSelftest() {
     layer.file = "polygon_hole_selftest.geojson";
     PolygonGeometryArtifact artifact;
     const bool artifact_ok = buildPolygonGeometryArtifact(layer, {feature}, "polygon_hole_selftest_sig", artifact, 64);
+    bool artifact_centroids_valid = artifact_ok;
+    size_t artifact_triangle_count = 0;
+    for (size_t ti = 0; ti + 2 < artifact.fill_indices.size(); ti += 3) {
+        const uint32_t ia = artifact.fill_indices[ti + 0];
+        const uint32_t ib = artifact.fill_indices[ti + 1];
+        const uint32_t ic = artifact.fill_indices[ti + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) {
+            artifact_centroids_valid = false;
+            break;
+        }
+        const ImVec2& a = artifact.vertices[ia];
+        const ImVec2& b = artifact.vertices[ib];
+        const ImVec2& c = artifact.vertices[ic];
+        const float cx = (a.x + b.x + c.x) / 3.0f;
+        const float cy = (a.y + b.y + c.y) / 3.0f;
+        if (pointInRing(feature.rings[1], cx, cy) || !pointInFeature(feature, cx, cy)) {
+            artifact_centroids_valid = false;
+            break;
+        }
+        ++artifact_triangle_count;
+    }
     const bool artifact_shape_ok =
         artifact_ok &&
         artifact.vertices.size() == flattened.size() &&
-        artifact.fill_indices.size() == feature.triangles.size() &&
         artifact.line_indices.size() == 16 &&
         artifact.features.size() == 1 &&
-        artifact.chunks.size() == 1;
+        artifact.chunks.size() == 1 &&
+        artifact_centroids_valid;
 
     json out = {
         {"mode", "polygon-hole-selftest"},
@@ -1009,6 +1133,8 @@ int runPolygonHoleSelftest() {
         {"triangle_index_count", feature.triangles.size()},
         {"triangle_count", centroid_count},
         {"centroids_valid", centroids_valid},
+        {"polygon_artifact_triangle_count", artifact_triangle_count},
+        {"polygon_artifact_centroids_valid", artifact_centroids_valid},
         {"polygon_artifact_ok", artifact_shape_ok}
     };
     std::cout << out.dump(2) << '\n';
@@ -1283,6 +1409,91 @@ int runRenderPolicySelftest() {
     return ok ? 0 : 1;
 }
 
+int runRenderPolygonTileRuntimePolicySelftest() {
+    LayerDef generic_polygon;
+    generic_polygon.enabled = true;
+    generic_polygon.file = "generic.geojson";
+
+    LayerDef heatmap_polygon = generic_polygon;
+    heatmap_polygon.file = "heat.geojson";
+    heatmap_polygon.heatmap_field = "value";
+
+    LayerDef zoning_polygon = generic_polygon;
+    zoning_polygon.file = "zoning.geojson";
+    zoning_polygon.subcategory = "zoning";
+
+    LayerDef active_parcel = generic_polygon;
+    active_parcel.file = "parcel.geojson";
+    active_parcel.scale = "parcel";
+    active_parcel.duckdb_role = "parcel_record";
+
+    auto mode_name = [](const LayerDef& layer,
+                        LayerRenderRoute route,
+                        int zoom,
+                        bool filter_state_active,
+                        bool query_state_active) {
+        PolygonRasterTilePolicyContext ctx;
+        ctx.layer = &layer;
+        ctx.render_route = route;
+        ctx.zoom = zoom;
+        ctx.fill_enabled = true;
+        ctx.filter_state_active = filter_state_active;
+        ctx.query_state_active = query_state_active;
+        switch (resolvePolygonRasterTileMode(ctx)) {
+            case PolygonRasterTileMode::VectorOnly: return std::string("vector_only");
+            case PolygonRasterTileMode::RasterOnly: return std::string("raster_only");
+            case PolygonRasterTileMode::RasterBaseVectorOutline: return std::string("raster_base_vector_outline");
+        }
+        return std::string("vector_only");
+    };
+
+    const std::string generic_polygon_zoom_10 =
+        mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 10, false, false);
+    const std::string generic_polygon_zoom_12 =
+        mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 12, false, false);
+    const std::string generic_polygon_zoom_14 =
+        mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 14, false, false);
+    const std::string heatmap_polygon_zoom_10 =
+        mode_name(heatmap_polygon, LayerRenderRoute::GenericPolygonGpu, 10, false, false);
+    const std::string zoning_polygon_zoom_10 =
+        mode_name(zoning_polygon, LayerRenderRoute::GenericPolygonGpu, 10, false, false);
+    const std::string filtered_polygon_zoom_10 =
+        mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 10, true, false);
+    const std::string query_polygon_zoom_10 =
+        mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 10, false, true);
+    const std::string active_parcel_zoom_10 =
+        mode_name(active_parcel, LayerRenderRoute::ParcelGpu, 10, false, false);
+    const std::string county_parcel_zoom_10 =
+        mode_name(active_parcel, LayerRenderRoute::ParcelPolygonGpu, 10, false, false);
+
+    const bool ok =
+        generic_polygon_zoom_10 == "raster_only" &&
+        generic_polygon_zoom_12 == "raster_base_vector_outline" &&
+        generic_polygon_zoom_14 == "vector_only" &&
+        heatmap_polygon_zoom_10 == "vector_only" &&
+        zoning_polygon_zoom_10 == "vector_only" &&
+        filtered_polygon_zoom_10 == "vector_only" &&
+        query_polygon_zoom_10 == "vector_only" &&
+        active_parcel_zoom_10 == "vector_only" &&
+        county_parcel_zoom_10 == "raster_only";
+
+    json out = {
+        {"mode", "render-polygon-tile-runtime-policy-selftest"},
+        {"ok", ok},
+        {"generic_polygon_zoom_10", generic_polygon_zoom_10},
+        {"generic_polygon_zoom_12", generic_polygon_zoom_12},
+        {"generic_polygon_zoom_14", generic_polygon_zoom_14},
+        {"heatmap_polygon_zoom_10", heatmap_polygon_zoom_10},
+        {"zoning_polygon_zoom_10", zoning_polygon_zoom_10},
+        {"filtered_polygon_zoom_10", filtered_polygon_zoom_10},
+        {"query_polygon_zoom_10", query_polygon_zoom_10},
+        {"active_parcel_zoom_10", active_parcel_zoom_10},
+        {"county_parcel_zoom_10", county_parcel_zoom_10}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 int runRenderPlanSelftest() {
     std::vector<LayerDef> layers(4);
     layers[0].file = "basemap_context.geojson";
@@ -1509,7 +1720,22 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     const std::string storage_key = resolveLayerStorageKey(root, file);
     const fs::path layer_path = resolveStoredLayerPathForFile(root, storage_key);
     const fs::path canonical_path = canonicalLayerPathForFile(root, storage_key);
-    const fs::path polygon_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
+    std::vector<LayerDef> manifest_layers = loadManifest(root);
+    const LayerDef* manifest_layer = nullptr;
+    for (const auto& candidate : manifest_layers) {
+        if (candidate.file == storage_key) {
+            manifest_layer = &candidate;
+            break;
+        }
+    }
+    const char* polygon_render_path = manifest_layer
+        ? layerRenderRouteArtifactName(cliRenderRouteForLayer(root, manifest_layers, *manifest_layer))
+        : layerRenderRouteArtifactName(LayerRenderRoute::ParcelGpu);
+    const fs::path polygon_path = geometryArtifactCachePathForLayerFile(
+        root,
+        file,
+        GeometryArtifactClass::Polygon,
+        polygon_render_path);
     const fs::path duckdb_path = root / "data" / "worldsim.duckdb";
 
     std::string resolved_sig;
@@ -1583,6 +1809,363 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     };
     std::cout << out.dump(2) << '\n';
     return ok ? 0 : 1;
+}
+
+int runRenderRoutingSelftest(const fs::path& root) {
+    LayerDef city_parcel;
+    city_parcel.file = "parcel.geojson";
+    city_parcel.scale = "parcel";
+    city_parcel.duckdb_role = "parcel_record";
+
+    LayerDef county_parcel;
+    county_parcel.file = "baltimore_county_parcels.geojson";
+    county_parcel.scale = "parcel";
+    county_parcel.duckdb_role = "parcel_record";
+
+    LayerDef point_layer;
+    point_layer.file = "points.geojson";
+    point_layer.import_lon_field = "lon";
+    point_layer.import_lat_field = "lat";
+
+    LayerDef polyline_layer;
+    polyline_layer.file = "roads.geojson";
+    polyline_layer.import_type = "polyline";
+
+    LayerDef polygon_layer;
+    polygon_layer.file = "chap_district.geojson";
+
+    struct Case {
+        const char* label = "";
+        size_t layer_idx = 0;
+        int active_parcel_idx = -1;
+        LayerDef layer;
+        LayerRenderRoute expected_route = LayerRenderRoute::GenericPolygonGpu;
+        GeometryArtifactClass artifact_class = GeometryArtifactClass::Polygon;
+        const char* expected_artifact_token = "";
+    };
+
+    std::vector<Case> cases = {
+        {"active_parcel", 0, 0, city_parcel, LayerRenderRoute::ParcelGpu, GeometryArtifactClass::Polygon, ".parcel_gpu.polygon.bin"},
+        {"county_parcel_fallback", 1, 0, county_parcel, LayerRenderRoute::ParcelPolygonGpu, GeometryArtifactClass::Polygon, ".parcel_polygon_gpu.polygon.bin"},
+        {"point", 2, 0, point_layer, LayerRenderRoute::PointGpu, GeometryArtifactClass::Point, ".point_gpu.point.bin"},
+        {"polyline", 3, 0, polyline_layer, LayerRenderRoute::PolylineGpu, GeometryArtifactClass::Polyline, ".polyline_gpu.polyline.bin"},
+        {"generic_polygon", 4, 0, polygon_layer, LayerRenderRoute::GenericPolygonGpu, GeometryArtifactClass::Polygon, ".generic_polygon_gpu.polygon.bin"}
+    };
+
+    json rows = json::array();
+    bool ok = true;
+    for (const Case& c : cases) {
+        const LayerRenderRoute actual_route =
+            classifyLayerRenderRoute(c.layer_idx, c.layer, c.active_parcel_idx);
+        const char* route_artifact_name = layerRenderRouteArtifactName(actual_route);
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+            root,
+            c.layer.file,
+            c.artifact_class,
+            route_artifact_name);
+        const bool route_ok = actual_route == c.expected_route;
+        const bool filename_ok =
+            artifact_path.filename().string().find(c.expected_artifact_token) != std::string::npos;
+        ok = ok && route_ok && filename_ok;
+        rows.push_back({
+            {"case", c.label},
+            {"ok", route_ok && filename_ok},
+            {"route", layerRenderRouteArtifactName(actual_route)},
+            {"route_display_ready", layerRenderRouteName(actual_route, true)},
+            {"reason", layerRenderRouteReason(actual_route)},
+            {"artifact_path", artifact_path.string()},
+            {"route_ok", route_ok},
+            {"filename_ok", filename_ok}
+        });
+    }
+
+    json out = {
+        {"mode", "render-routing-selftest"},
+        {"ok", ok},
+        {"cases", std::move(rows)}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+struct TilePoint {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+double clampWebMercatorLat(double lat) {
+    return std::clamp(lat, -85.05112878, 85.05112878);
+}
+
+TilePoint lonLatToTilePixel(double lon, double lat, int z, int x, int y, int tile_size) {
+    constexpr double kPi = 3.14159265358979323846;
+    const double n = std::ldexp(1.0, z);
+    const double lat_rad = clampWebMercatorLat(lat) * kPi / 180.0;
+    const double tile_x = (lon + 180.0) / 360.0 * n;
+    const double tile_y =
+        (1.0 - std::log(std::tan(lat_rad) + 1.0 / std::cos(lat_rad)) / kPi) / 2.0 * n;
+    return {
+        static_cast<float>((tile_x - static_cast<double>(x)) * tile_size),
+        static_cast<float>((tile_y - static_cast<double>(y)) * tile_size)
+    };
+}
+
+float tileEdge(const TilePoint& a, const TilePoint& b, const TilePoint& p) {
+    return (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x);
+}
+
+uint8_t layerColorByte(float value, uint8_t fallback) {
+    if (!std::isfinite(value) || value <= 0.0f) return fallback;
+    return static_cast<uint8_t>(std::clamp<int>(static_cast<int>(std::lround(value * 255.0f)), 0, 255));
+}
+
+struct RasterTileStats {
+    size_t triangles_considered = 0;
+    size_t triangles_drawn = 0;
+    size_t pixels_written = 0;
+};
+
+void fillRasterTriangle(
+    std::vector<uint8_t>& rgb,
+    int tile_size,
+    const TilePoint& a,
+    const TilePoint& b,
+    const TilePoint& c,
+    const std::array<uint8_t, 3>& fill,
+    float alpha,
+    RasterTileStats& stats) {
+    const float area = tileEdge(a, b, c);
+    if (std::fabs(area) < 0.00001f) return;
+
+    const float min_x_f = std::min({a.x, b.x, c.x});
+    const float max_x_f = std::max({a.x, b.x, c.x});
+    const float min_y_f = std::min({a.y, b.y, c.y});
+    const float max_y_f = std::max({a.y, b.y, c.y});
+    if (max_x_f < 0.0f || max_y_f < 0.0f ||
+        min_x_f >= static_cast<float>(tile_size) ||
+        min_y_f >= static_cast<float>(tile_size)) {
+        return;
+    }
+
+    const int min_x = std::clamp(static_cast<int>(std::floor(min_x_f)), 0, tile_size - 1);
+    const int max_x = std::clamp(static_cast<int>(std::ceil(max_x_f)), 0, tile_size - 1);
+    const int min_y = std::clamp(static_cast<int>(std::floor(min_y_f)), 0, tile_size - 1);
+    const int max_y = std::clamp(static_cast<int>(std::ceil(max_y_f)), 0, tile_size - 1);
+    size_t pixels = 0;
+
+    for (int py = min_y; py <= max_y; ++py) {
+        for (int px = min_x; px <= max_x; ++px) {
+            const TilePoint p{static_cast<float>(px) + 0.5f, static_cast<float>(py) + 0.5f};
+            const float e0 = tileEdge(a, b, p);
+            const float e1 = tileEdge(b, c, p);
+            const float e2 = tileEdge(c, a, p);
+            const bool inside = area > 0.0f
+                ? (e0 >= 0.0f && e1 >= 0.0f && e2 >= 0.0f)
+                : (e0 <= 0.0f && e1 <= 0.0f && e2 <= 0.0f);
+            if (!inside) continue;
+
+            const size_t offset = static_cast<size_t>((py * tile_size + px) * 3);
+            for (int channel = 0; channel < 3; ++channel) {
+                const float blended = static_cast<float>(fill[(size_t)channel]) * alpha +
+                                      static_cast<float>(rgb[offset + (size_t)channel]) * (1.0f - alpha);
+                rgb[offset + (size_t)channel] =
+                    static_cast<uint8_t>(std::clamp<int>(static_cast<int>(std::lround(blended)), 0, 255));
+            }
+            pixels += 1;
+        }
+    }
+
+    if (pixels > 0) {
+        stats.triangles_drawn += 1;
+        stats.pixels_written += pixels;
+    }
+}
+
+bool writePpmImage(const fs::path& path, int width, int height, const std::vector<uint8_t>& rgb) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    if (ec) return false;
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+    out << "P6\n" << width << ' ' << height << "\n255\n";
+    out.write(reinterpret_cast<const char*>(rgb.data()), static_cast<std::streamsize>(rgb.size()));
+    return static_cast<bool>(out);
+}
+
+int runRenderTileCacheSelftest(const fs::path& root) {
+    RenderTileCacheKey key;
+    key.layer_file = "baltimore county/parcels.geojson";
+    key.render_route = layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu);
+    key.source_signature = "123 / stale?";
+    key.style_key = "parcel fill:v1";
+    key.z = 15;
+    key.x = 9409;
+    key.y = 12505;
+    const fs::path path = renderTileCachePath(root, key);
+    const std::string s = path.string();
+    const bool ok =
+        s.find("render_tiles") != std::string::npos &&
+        s.find("baltimore_county_parcels.geojson") != std::string::npos &&
+        s.find("parcel_polygon_gpu") != std::string::npos &&
+        s.find("source_123___stale_") != std::string::npos &&
+        s.find("style_parcel_fill_v1") != std::string::npos &&
+        s.find("/z15/9409_12505.ppm") != std::string::npos;
+    json out = {
+        {"mode", "render-tile-cache-selftest"},
+        {"ok", ok},
+        {"path", path.string()}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int renderPolygonTile(const fs::path& root, const WorldsimCliOptions& options) {
+    const std::string& file = options.render_polygon_tile_file;
+    if (file.empty() || !isBareLayerFilename(file)) {
+        json out = {
+            {"mode", "render-polygon-tile"},
+            {"ok", false},
+            {"error", file.empty() ? "missing layer file" : "expected bare layer filename"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (options.render_tile_z < 0 || options.render_tile_x < 0 || options.render_tile_y < 0 ||
+        options.render_tile_z > 30) {
+        json out = {
+            {"mode", "render-polygon-tile"},
+            {"file", file},
+            {"ok", false},
+            {"error", "expected non-negative z/x/y with z <= 30"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const std::vector<LayerDef> layers = loadManifest(root);
+    const LayerDef* layer = nullptr;
+    for (const LayerDef& candidate : layers) {
+        if (candidate.file == file) {
+            layer = &candidate;
+            break;
+        }
+    }
+    if (!layer) {
+        json out = {{"mode", "render-polygon-tile"}, {"file", file}, {"ok", false}, {"error", "layer file not found in manifest"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    if (layerUsesPointGeometry(*layer) || layerUsesPolylineGeometry(*layer)) {
+        json out = {{"mode", "render-polygon-tile"}, {"file", file}, {"ok", false}, {"error", "layer is not polygon geometry"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const fs::path layer_path = resolveStoredLayerPath(root, *layer);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr)) {
+        json out = {{"mode", "render-polygon-tile"}, {"file", file}, {"ok", false}, {"layer_path", layer_path.string()}, {"error", "failed to resolve layer source signature"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    const LayerRenderRoute route = cliRenderRouteForLayer(root, layers, *layer);
+    const char* route_name = layerRenderRouteArtifactName(route);
+    const fs::path artifact_path =
+        geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon, route_name);
+    PolygonGeometryArtifact artifact;
+    if (!loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact)) {
+        json out = {
+            {"mode", "render-polygon-tile"},
+            {"file", file},
+            {"ok", false},
+            {"layer_path", layer_path.string()},
+            {"artifact_path", artifact_path.string()},
+            {"render_path", route_name},
+            {"source_signature", sig},
+            {"error", "compiled route-aware polygon artifact missing, stale, or invalid"}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    constexpr int kTileSize = 256;
+    std::vector<uint8_t> rgb(static_cast<size_t>(kTileSize * kTileSize * 3), 255);
+    const AppSettings app_settings = loadAppSettings(root, AppSettings{});
+    const std::array<uint8_t, 3> fill = {
+        layerColorByte(layer->color.x, 110),
+        layerColorByte(layer->color.y, 168),
+        layerColorByte(layer->color.z, 104)
+    };
+    const float alpha = std::clamp(
+        (layer->color.w > 0.0f ? layer->color.w : 0.58f) * std::clamp(app_settings.map_polygon_fill_opacity, 0.0f, 1.0f),
+        0.05f,
+        1.0f);
+    RasterTileStats stats;
+
+    for (size_t i = 0; i + 2 < artifact.fill_indices.size(); i += 3) {
+        stats.triangles_considered += 1;
+        const uint32_t ia = artifact.fill_indices[i + 0];
+        const uint32_t ib = artifact.fill_indices[i + 1];
+        const uint32_t ic = artifact.fill_indices[i + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) {
+            continue;
+        }
+        const ImVec2& va = artifact.vertices[ia];
+        const ImVec2& vb = artifact.vertices[ib];
+        const ImVec2& vc = artifact.vertices[ic];
+        const TilePoint a = lonLatToTilePixel(va.x, va.y, options.render_tile_z, options.render_tile_x, options.render_tile_y, kTileSize);
+        const TilePoint b = lonLatToTilePixel(vb.x, vb.y, options.render_tile_z, options.render_tile_x, options.render_tile_y, kTileSize);
+        const TilePoint c = lonLatToTilePixel(vc.x, vc.y, options.render_tile_z, options.render_tile_x, options.render_tile_y, kTileSize);
+        fillRasterTriangle(rgb, kTileSize, a, b, c, fill, alpha, stats);
+    }
+
+    const std::string style_key = renderPolygonFillStyleKey(*layer, app_settings.map_polygon_fill_opacity);
+    RenderTileCacheKey key;
+    key.layer_file = file;
+    key.render_route = route_name;
+    key.source_signature = sig;
+    key.style_key = style_key;
+    key.z = options.render_tile_z;
+    key.x = options.render_tile_x;
+    key.y = options.render_tile_y;
+    key.extension = "ppm";
+    const fs::path output_path = renderTileCachePath(root, key);
+    const bool written = writePpmImage(output_path, kTileSize, kTileSize, rgb);
+    json out = {
+        {"mode", "render-polygon-tile"},
+        {"file", file},
+        {"ok", written},
+        {"derived_cache", true},
+        {"artifact_validated", true},
+        {"layer_path", layer_path.string()},
+        {"artifact_path", artifact_path.string()},
+        {"artifact_source_signature", sig},
+        {"output_path", output_path.string()},
+        {"tile_path", output_path.string()},
+        {"render_path", route_name},
+        {"source_signature", sig},
+        {"style_key", style_key},
+        {"cache_key", {
+            {"layer_file", key.layer_file},
+            {"render_route", key.render_route},
+            {"source_signature", key.source_signature},
+            {"style_key", key.style_key},
+            {"z", key.z},
+            {"x", key.x},
+            {"y", key.y},
+            {"extension", key.extension}
+        }},
+        {"tile", {{"z", options.render_tile_z}, {"x", options.render_tile_x}, {"y", options.render_tile_y}}},
+        {"vertices", artifact.vertices.size()},
+        {"fill_indices", artifact.fill_indices.size()},
+        {"triangles_considered", stats.triangles_considered},
+        {"triangles_drawn", stats.triangles_drawn},
+        {"pixels_written", stats.pixels_written}
+    };
+    if (!written) out["error"] = "failed to write render tile";
+    std::cout << out.dump(2) << '\n';
+    return written ? 0 : 1;
 }
 
 int runCanonicalParcelBinarySelftest(const fs::path& root) {
@@ -1742,6 +2325,80 @@ int runParcelPolygonIdentitySelftest() {
         {"invalid_error", invalid_error}
     };
     std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runPolygonArtifactResilienceSelftest() {
+    std::error_code ec;
+    const fs::path test_root = fs::temp_directory_path(ec) / "worldsim3_polygon_artifact_resilience_selftest";
+    fs::create_directories(test_root / "data" / "cache" / "geometry", ec);
+
+    LayerDef layer;
+    layer.file = "polygon_artifact_resilience.geojson";
+    layer.logical_id = "polygon_artifact_resilience";
+
+    LayerDef::FeatureRecord feature;
+    feature.extent.min_lon = -76.7000f;
+    feature.extent.min_lat = 39.2000f;
+    feature.extent.max_lon = -76.6990f;
+    feature.extent.max_lat = 39.2010f;
+    feature.rings = {{
+        ImVec2(-76.7000f, 39.2000f),
+        ImVec2(-76.6990f, 39.2000f),
+        ImVec2(-76.6990f, 39.2010f),
+        ImVec2(-76.7000f, 39.2010f),
+        ImVec2(-76.7000f, 39.2000f)
+    }};
+    feature.triangles = {0, 1, 2, 0, 2, 2};
+    layer.features.push_back(feature);
+
+    const std::string sig = "polygon_artifact_resilience_selftest_sig";
+    PolygonGeometryArtifact rebuilt_artifact;
+    const bool build_ok = buildPolygonGeometryArtifact(layer, layer.features, sig, rebuilt_artifact, 64);
+    bool rebuilt_indices_in_range = true;
+    for (uint32_t idx : rebuilt_artifact.fill_indices) {
+        if (idx >= 4) {
+            rebuilt_indices_in_range = false;
+            break;
+        }
+    }
+    const bool triangles_rebuilt =
+        build_ok &&
+        rebuilt_artifact.fill_indices.size() == 6 &&
+        rebuilt_indices_in_range &&
+        rebuilt_artifact.fill_indices != layer.features[0].triangles;
+
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        test_root,
+        layer.file,
+        GeometryArtifactClass::Polygon,
+        layerRenderRouteArtifactName(LayerRenderRoute::GenericPolygonGpu));
+    saveBinaryPolygonGeometryArtifact(artifact_path, rebuilt_artifact);
+
+    PolygonGeometryArtifact loaded_artifact;
+    const bool roundtrip_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, loaded_artifact);
+
+    PolygonGeometryArtifact invalid_artifact = rebuilt_artifact;
+    invalid_artifact.features[0].vertex_count = 99;
+    saveBinaryPolygonGeometryArtifact(artifact_path, invalid_artifact);
+    PolygonGeometryArtifact invalid_loaded_artifact;
+    const bool invalid_rejected = !loadBinaryPolygonGeometryArtifact(artifact_path, sig, invalid_loaded_artifact);
+
+    fs::remove(artifact_path, ec);
+    fs::remove(test_root / "data" / "cache" / "geometry", ec);
+    fs::remove(test_root / "data" / "cache", ec);
+    fs::remove(test_root / "data", ec);
+    fs::remove(test_root, ec);
+
+    const bool ok = build_ok && triangles_rebuilt && roundtrip_ok && invalid_rejected;
+    std::cout << json{
+        {"mode", "polygon-artifact-resilience-selftest"},
+        {"ok", ok},
+        {"build_ok", build_ok},
+        {"triangles_rebuilt", triangles_rebuilt},
+        {"roundtrip_ok", roundtrip_ok},
+        {"invalid_rejected", invalid_rejected}
+    }.dump(2) << '\n';
     return ok ? 0 : 1;
 }
 
@@ -2985,8 +3642,11 @@ json buildGeometryArtifactForLoadedLayer(
     }
 
     const GeometryArtifactClass detected_class = detectGeometryArtifactClass(layer, features);
+    const std::vector<const char*> render_paths =
+        cliGeometryArtifactRouteNamesForLayer(root, loadManifest(root), layer, detected_class);
     json existing_stats;
-    if (loadExistingGeometryArtifactForLayer(root, layer.file, detected_class, sig, existing_stats)) {
+    if (render_paths.size() == 1 &&
+        loadExistingGeometryArtifactForLayer(root, layer.file, detected_class, sig, existing_stats, render_paths.front())) {
         return {
             {"layer_file", layer.file},
             {"layer_name", layer.name},
@@ -3021,7 +3681,11 @@ json buildGeometryArtifactForLoadedLayer(
                 {"source_signature_kind", sig_source_kind}
             };
         }
-        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Point);
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+            root,
+            layer.file,
+            GeometryArtifactClass::Point,
+            render_paths.front());
         saveBinaryPointGeometryArtifact(artifact_path, artifact);
         PointGeometryArtifact verify;
         const bool ok = loadBinaryPointGeometryArtifact(artifact_path, sig, verify);
@@ -3058,7 +3722,11 @@ json buildGeometryArtifactForLoadedLayer(
                 {"source_signature_kind", sig_source_kind}
             };
         }
-        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polyline);
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+            root,
+            layer.file,
+            GeometryArtifactClass::Polyline,
+            render_paths.front());
         saveBinaryPolylineGeometryArtifact(artifact_path, artifact);
         PolylineGeometryArtifact verify;
         const bool ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, verify);
@@ -3095,10 +3763,20 @@ json buildGeometryArtifactForLoadedLayer(
             {"source_signature_kind", sig_source_kind}
         };
     }
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, layer.file, GeometryArtifactClass::Polygon);
-    saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
-    PolygonGeometryArtifact verify;
-    const bool ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, verify);
+    json created_files = json::array();
+    bool ok = true;
+    for (const char* render_path : render_paths) {
+        const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+            root,
+            layer.file,
+            GeometryArtifactClass::Polygon,
+            render_path);
+        saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
+        PolygonGeometryArtifact verify;
+        const bool one_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, verify);
+        ok = ok && one_ok;
+        created_files.push_back(artifact_path.string());
+    }
     if (!ok) exit_code = 1;
     return {
         {"layer_file", layer.file},
@@ -3109,7 +3787,7 @@ json buildGeometryArtifactForLoadedLayer(
         {"source_path", layer_path.string()},
         {"source_signature", sig},
         {"source_signature_kind", sig_source_kind},
-        {"created_files", json::array({artifact_path.string()})},
+        {"created_files", std::move(created_files)},
         {"feature_count", artifact.features.size()},
         {"vertex_count", artifact.vertices.size()},
         {"fill_index_count", artifact.fill_indices.size()},
@@ -3200,9 +3878,30 @@ std::unordered_map<std::string, std::unordered_map<std::string, uint64_t>> readU
     return out;
 }
 
-json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
+json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores, bool rebuild_all_artifacts_from_scratch) {
     constexpr const char* kMode = "build-geometry-duckdb-artifacts";
     const auto started_at = std::chrono::steady_clock::now();
+    json reset_result = json::object();
+    if (rebuild_all_artifacts_from_scratch) {
+        emitCliProgress(kMode, "reset", "deleting rebuildable geometry and duckdb artifacts before full rebuild");
+        reset_result = resetRebuildableArtifacts(root);
+        emitCliProgress(
+            kMode,
+            "reset-complete",
+            "ok=" + std::string(reset_result.value("ok", false) ? "true" : "false") +
+                " removed=" + std::to_string(reset_result.value("removed", json::array()).size()) +
+                " missing=" + std::to_string(reset_result.value("missing", json::array()).size()) +
+                " errors=" + std::to_string(reset_result.value("errors", json::array()).size()));
+        if (!reset_result.value("ok", false)) {
+            return {
+                {"mode", kMode},
+                {"ok", false},
+                {"from_scratch", true},
+                {"reset", std::move(reset_result)},
+                {"error", "failed to delete one or more rebuildable artifacts"}
+            };
+        }
+    }
     std::vector<LayerDef> layers = loadManifest(root);
     const WorldsimLayerIndices indices = detectWorldsimLayerIndices(root, layers);
     const unsigned int hw = std::max(1u, std::thread::hardware_concurrency());
@@ -3446,6 +4145,8 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores) {
     return {
         {"mode", "build-geometry-duckdb-artifacts"},
         {"ok", load_ok && geometry_failed_count == 0 && duckdb_ok},
+        {"from_scratch", rebuild_all_artifacts_from_scratch},
+        {"reset", std::move(reset_result)},
         {"worker_count", worker_count},
         {"source_load", std::move(source_load)},
         {"geometry", {
@@ -3538,8 +4239,9 @@ int compilePointGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    const char* render_path = layerRenderRouteArtifactName(LayerRenderRoute::PointGpu);
     json existing_stats;
-    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Point, sig, existing_stats)) {
+    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Point, sig, existing_stats, render_path)) {
         json out = {
             {"mode", "compile-point-geometry"},
             {"file", file},
@@ -3569,7 +4271,8 @@ int compilePointGeometryArtifact(const fs::path& root, std::string file) {
         return 1;
     }
 
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point);
+    const fs::path artifact_path =
+        geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point, render_path);
     saveBinaryPointGeometryArtifact(artifact_path, artifact);
     PointGeometryArtifact loaded;
     const bool roundtrip_ok = loadBinaryPointGeometryArtifact(artifact_path, sig, loaded);
@@ -3648,7 +4351,11 @@ int validatePointGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Point);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        root,
+        file,
+        GeometryArtifactClass::Point,
+        layerRenderRouteArtifactName(LayerRenderRoute::PointGpu));
     PointGeometryArtifact artifact;
     const bool ok = loadBinaryPointGeometryArtifact(artifact_path, sig, artifact);
 
@@ -3716,8 +4423,9 @@ int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    const char* render_path = layerRenderRouteArtifactName(LayerRenderRoute::PolylineGpu);
     json existing_stats;
-    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polyline, sig, existing_stats)) {
+    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polyline, sig, existing_stats, render_path)) {
         json out = {
             {"mode", "compile-polyline-geometry"},
             {"file", file},
@@ -3742,7 +4450,8 @@ int compilePolylineGeometryArtifact(const fs::path& root, std::string file) {
         return 1;
     }
 
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline);
+    const fs::path artifact_path =
+        geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline, render_path);
     saveBinaryPolylineGeometryArtifact(artifact_path, artifact);
     PolylineGeometryArtifact loaded;
     const bool roundtrip_ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, loaded);
@@ -3802,7 +4511,11 @@ int validatePolylineGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polyline);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        root,
+        file,
+        GeometryArtifactClass::Polyline,
+        layerRenderRouteArtifactName(LayerRenderRoute::PolylineGpu));
     PolylineGeometryArtifact artifact;
     const bool ok = loadBinaryPolylineGeometryArtifact(artifact_path, sig, artifact);
     json out = {
@@ -3889,8 +4602,11 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
+    const std::vector<const char*> render_paths =
+        cliGeometryArtifactRouteNamesForLayer(root, layers, *layer, GeometryArtifactClass::Polygon);
     json existing_stats;
-    if (loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polygon, sig, existing_stats)) {
+    if (render_paths.size() == 1 &&
+        loadExistingGeometryArtifactForLayer(root, file, GeometryArtifactClass::Polygon, sig, existing_stats, render_paths.front())) {
         json out = {
             {"mode", "compile-polygon-geometry"},
             {"file", file},
@@ -3922,10 +4638,17 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
         return 1;
     }
 
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
-    saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
-    PolygonGeometryArtifact loaded;
-    const bool roundtrip_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, loaded);
+    json created_files = json::array();
+    bool roundtrip_ok = true;
+    for (const char* render_path : render_paths) {
+        const fs::path artifact_path =
+            geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon, render_path);
+        saveBinaryPolygonGeometryArtifact(artifact_path, artifact);
+        PolygonGeometryArtifact loaded;
+        const bool one_ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, loaded);
+        roundtrip_ok = roundtrip_ok && one_ok;
+        created_files.push_back(artifact_path.string());
+    }
 
     json out = {
         {"mode", "compile-polygon-geometry"},
@@ -3933,7 +4656,8 @@ int compilePolygonGeometryArtifact(const fs::path& root, std::string file) {
         {"ok", roundtrip_ok},
         {"reused_existing", false},
         {"layer_path", layer_path.string()},
-        {"artifact_path", artifact_path.string()},
+        {"artifact_path", created_files.empty() ? std::string() : created_files.front().get<std::string>()},
+        {"artifact_paths", created_files},
         {"source_signature", sig},
         {"features", artifact.features.size()},
         {"vertices", artifact.vertices.size()},
@@ -4070,7 +4794,12 @@ int validatePolygonGeometryArtifact(const fs::path& root, std::string file) {
         std::cout << out.dump(2) << '\n';
         return 1;
     }
-    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(root, file, GeometryArtifactClass::Polygon);
+    const LayerRenderRoute render_route = cliRenderRouteForLayer(root, layers, *layer);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        root,
+        file,
+        GeometryArtifactClass::Polygon,
+        layerRenderRouteArtifactName(render_route));
     PolygonGeometryArtifact artifact;
     const bool ok = loadBinaryPolygonGeometryArtifact(artifact_path, sig, artifact);
 
@@ -4134,6 +4863,18 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_parcel_gpu_cpu_bypass_selftest = true;
             continue;
         }
+        if (arg == "--render-routing-selftest") {
+            options.run_render_routing_selftest = true;
+            continue;
+        }
+        if (arg == "--render-tile-cache-selftest") {
+            options.run_render_tile_cache_selftest = true;
+            continue;
+        }
+        if (arg == "--render-polygon-tile-runtime-policy-selftest") {
+            options.run_render_polygon_tile_runtime_policy_selftest = true;
+            continue;
+        }
         if (arg == "--render-policy-selftest") {
             options.run_render_policy_selftest = true;
             continue;
@@ -4148,6 +4889,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--parcel-polygon-identity-selftest") {
             options.run_parcel_polygon_identity_selftest = true;
+            continue;
+        }
+        if (arg == "--polygon-artifact-resilience-selftest") {
+            options.run_polygon_artifact_resilience_selftest = true;
             continue;
         }
         if (arg == "--parcel-selection-ui-harness") {
@@ -4216,12 +4961,26 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             if (i + 1 < argc && argv[i + 1][0] != '-') options.polygon_geometry_file = argv[++i];
             continue;
         }
+        if (arg == "--render-polygon-tile") {
+            options.run_render_polygon_tile = true;
+            if (i + 4 < argc) {
+                options.render_polygon_tile_file = argv[++i];
+                options.render_tile_z = std::atoi(argv[++i]);
+                options.render_tile_x = std::atoi(argv[++i]);
+                options.render_tile_y = std::atoi(argv[++i]);
+            }
+            continue;
+        }
         if (arg == "--build-geometry-duckdb-artifacts") {
             options.run_build_geometry_duckdb_artifacts = true;
             continue;
         }
         if (arg == "--startup-preprocess") {
             options.run_startup_preprocess = true;
+            continue;
+        }
+        if (arg == "--from-scratch" || arg == "--rebuild-all-artifacts-from-scratch") {
+            options.rebuild_all_artifacts_from_scratch = true;
             continue;
         }
         if (arg.rfind("--inspect-canonical-parcel-binary=", 0) == 0) {
@@ -4267,6 +5026,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--validate-polygon-geometry=", 0) == 0) {
             options.run_validate_polygon_geometry = true;
             options.polygon_geometry_file = arg.substr(std::strlen("--validate-polygon-geometry="));
+            continue;
+        }
+        if (arg.rfind("--render-polygon-tile=", 0) == 0) {
+            options.run_render_polygon_tile = true;
+            options.render_polygon_tile_file = arg.substr(std::strlen("--render-polygon-tile="));
             continue;
         }
         if (arg == "--download-layers") {
@@ -4377,8 +5141,9 @@ void printWorldsimUsage() {
         << "       worldsim3 --compile-polygon-geometry LAYER_FILE\n"
         << "       worldsim3 --compile-parcel-polygon-geometry-artifacts\n"
         << "       worldsim3 --validate-polygon-geometry LAYER_FILE\n"
-        << "       worldsim3 --build-geometry-duckdb-artifacts [--reserve-cores N]\n"
-        << "       worldsim3 --startup-preprocess [--reserve-cores N]\n"
+        << "       worldsim3 --render-polygon-tile LAYER_FILE Z X Y\n"
+        << "       worldsim3 --build-geometry-duckdb-artifacts [--from-scratch] [--reserve-cores N]\n"
+        << "       worldsim3 --startup-preprocess [--from-scratch] [--reserve-cores N]\n"
         << "       worldsim3 --projection-cache-selftest\n"
         << "       worldsim3 --projection-fill-cache-selftest\n"
         << "       worldsim3 --projection-color-cache-selftest\n"
@@ -4387,9 +5152,13 @@ void printWorldsimUsage() {
         << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --layer-runtime-status-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
+        << "       worldsim3 --render-routing-selftest\n"
+        << "       worldsim3 --render-tile-cache-selftest\n"
+        << "       worldsim3 --render-polygon-tile-runtime-policy-selftest\n"
         << "       worldsim3 --render-policy-selftest\n"
         << "       worldsim3 --render-plan-selftest\n"
         << "       worldsim3 --parcel-polygon-identity-selftest\n"
+        << "       worldsim3 --polygon-artifact-resilience-selftest\n"
         << "       worldsim3 --parcel-selection-ui-harness\n"
         << "       worldsim3 --parcel-hover-click-ui-harness\n"
         << "       worldsim3 --duckdb-parcel-semantic-snapshot-selftest\n"
@@ -4430,6 +5199,15 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_parcel_gpu_cpu_bypass_selftest) {
         return runParcelGpuCpuBypassSelftest();
     }
+    if (options.run_render_routing_selftest) {
+        return runRenderRoutingSelftest(root);
+    }
+    if (options.run_render_tile_cache_selftest) {
+        return runRenderTileCacheSelftest(root);
+    }
+    if (options.run_render_polygon_tile_runtime_policy_selftest) {
+        return runRenderPolygonTileRuntimePolicySelftest();
+    }
     if (options.run_render_policy_selftest) {
         return runRenderPolicySelftest();
     }
@@ -4441,6 +5219,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_parcel_polygon_identity_selftest) {
         return runParcelPolygonIdentitySelftest();
+    }
+    if (options.run_polygon_artifact_resilience_selftest) {
+        return runPolygonArtifactResilienceSelftest();
     }
     if (options.run_parcel_selection_ui_harness) {
         return runParcelSelectionUiHarness();
@@ -4484,8 +5265,14 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_validate_polygon_geometry) {
         return validatePolygonGeometryArtifact(root, options.polygon_geometry_file);
     }
+    if (options.run_render_polygon_tile) {
+        return renderPolygonTile(root, options);
+    }
     if (options.run_build_geometry_duckdb_artifacts) {
-        const json out = buildGeometryDuckDbArtifacts(root, options.reserve_cores_set ? options.reserve_cores : 0);
+        const json out = buildGeometryDuckDbArtifacts(
+            root,
+            options.reserve_cores_set ? options.reserve_cores : 0,
+            options.rebuild_all_artifacts_from_scratch);
         std::cout << out.dump(2) << '\n';
         return out.value("ok", false) ? 0 : 1;
     }

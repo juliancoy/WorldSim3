@@ -364,6 +364,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 parcel_draw_cfg.active = true;
                 parcel_draw_cfg.math_zoom = map_canvas_session.math_zoom;
                 parcel_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                parcel_draw_cfg.center_lonlat = ImVec2(
+                    ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
+                    ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
                 parcel_draw_cfg.center_world = map_canvas_session.center_world;
                 parcel_draw_cfg.viewport_origin =
                     ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
@@ -392,6 +395,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                     zoning_draw_cfg.active = true;
                     zoning_draw_cfg.math_zoom = map_canvas_session.math_zoom;
                     zoning_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                    zoning_draw_cfg.center_lonlat = ImVec2(
+                        ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
+                        ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
                     zoning_draw_cfg.center_world = map_canvas_session.center_world;
                     zoning_draw_cfg.viewport_origin =
                         ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);
@@ -414,6 +420,9 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                     point_draw_cfg.active = true;
                     point_draw_cfg.math_zoom = map_canvas_session.math_zoom;
                     point_draw_cfg.zoom_scale = (float)(map_canvas_session.zoom_scale * std::max(1.0f, fb_scale.x));
+                    point_draw_cfg.center_lonlat = ImVec2(
+                        ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
+                        ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
                     point_draw_cfg.center_world = map_canvas_session.center_world;
                     point_draw_cfg.viewport_origin =
                         ImVec2(map_canvas_session.origin.x * fb_scale.x, map_canvas_session.origin.y * fb_scale.y);

@@ -5,6 +5,7 @@
 #include "heatmap_render.h"
 #include "imgui.h"
 #include "layer_runtime.h"
+#include "filters.h"
 #include "cache_io.h"
 #include "map_render_hover.h"
 #include "map_render_projection.h"
@@ -14,10 +15,12 @@
 #include "worldsim_app_internal.h"
 
 #include <functional>
+#include <filesystem>
 #include <unordered_map>
 #include <vector>
 
 struct RenderLayerPassContext {
+    const std::filesystem::path* root = nullptr;
     ImDrawList* draw = nullptr;
     ImVec2 origin = ImVec2(0.0f, 0.0f);
     ImVec2 size = ImVec2(0.0f, 0.0f);
@@ -66,6 +69,7 @@ struct RenderLayerPassContext {
     const HeatmapLayerPolicyContext* heatmap_policy = nullptr;
     HeatmapRuntimeState* heatmap_runtime = nullptr;
     const RenderPlan* render_plan = nullptr;
+    const std::vector<QueryMapLayer>* query_layers = nullptr;
     RawSourceLayerPolicy raw_source_layer_policy;
     std::vector<HeatSample>* heat_samples = nullptr;
     MapProjectionCache* projection = nullptr;
@@ -75,6 +79,12 @@ struct RenderLayerPassContext {
     std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&, ImU32&)> query_map_color;
     std::function<bool(size_t)> should_fill_layer_polygon;
     std::function<ImVec2(const ImVec2&)> project_world;
+    const char* filter_blocklot = "";
+    const char* filter_status = "";
+    const char* filter_address = "";
+    const char* filter_owner = "";
+    const char* filter_zip = "";
+    bool filter_enabled = false;
     size_t* prof_features_considered_frame = nullptr;
     size_t* prof_features_drawn_frame = nullptr;
 };

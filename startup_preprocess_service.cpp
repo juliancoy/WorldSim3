@@ -10,6 +10,7 @@
 #include "layer_registry.h"
 #include "layer_runtime.h"
 #include "layer_state_io.h"
+#include "render_routing.h"
 #include "ui_fonts.h"
 #include "ui_theme.h"
 
@@ -136,10 +137,23 @@ std::vector<StartupPreprocessCommandStep> buildStartupPreprocessCommands(
     const fs::path& root,
     const StartupPreprocessPlan& plan,
     int reserve_cores,
-    const char* argv0) {
+    const char* argv0,
+    bool rebuild_all_artifacts_from_scratch) {
     std::vector<StartupPreprocessCommandStep> steps;
     std::vector<LayerDef> layers = loadManifest(root);
     const std::string exe = currentExecutablePath(argv0);
+
+    if (rebuild_all_artifacts_from_scratch) {
+        std::string command = shellQuote(exe) + " --build-geometry-duckdb-artifacts --from-scratch";
+        if (reserve_cores > 0) command += " --reserve-cores " + std::to_string(reserve_cores);
+        command += " 2>&1";
+        steps.push_back(StartupPreprocessCommandStep{
+            "rebuild",
+            "all",
+            command
+        });
+        return steps;
+    }
 
     auto geometry_command_for_layer = [&](const std::string& layer_file) -> std::string {
         const LayerDef* layer = nullptr;
@@ -251,11 +265,19 @@ void applyPersistedLayerEnabledStateForPreflight(const fs::path& root, std::vect
 bool persistedGeometryArtifactReady(
     const fs::path& root,
     const LayerDef& layer,
-    bool is_primary_parcel_layer,
+    size_t layer_idx,
+    int primary_parcel_idx,
     const std::string& sig,
     fs::path& out_path) {
-    const GeometryArtifactClass cls = startupGeometryClassForLayer(layer, false);
-    out_path = geometryArtifactCachePathForLayerFile(root, layer.file, cls);
+    const bool is_primary_parcel_layer =
+        primary_parcel_idx >= 0 && static_cast<int>(layer_idx) == primary_parcel_idx;
+    const GeometryArtifactClass cls = startupGeometryClassForLayer(layer, is_primary_parcel_layer);
+    const LayerRenderRoute render_route = classifyLayerRenderRoute(layer_idx, layer, primary_parcel_idx);
+    out_path = geometryArtifactCachePathForLayerFile(
+        root,
+        layer.file,
+        cls,
+        layerRenderRouteArtifactName(render_route));
     if (cls == GeometryArtifactClass::Point) {
         return validateBinaryPointGeometryArtifactHeader(out_path, sig);
     }
@@ -335,7 +357,7 @@ StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
             continue;
         }
         fs::path artifact_path;
-        if (!persistedGeometryArtifactReady(root, layer, primary_parcel_idx >= 0 && (int)i == primary_parcel_idx, sig, artifact_path)) {
+        if (!persistedGeometryArtifactReady(root, layer, i, primary_parcel_idx, sig, artifact_path)) {
             plan.required = true;
             plan.issues.push_back(StartupPreprocessIssue{
                 "geometry",
@@ -417,7 +439,12 @@ int runStartupPreprocessWindow(
     fs::path preprocess_log_path = startupPreprocessLogPath(root);
     const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
     const std::vector<StartupPreprocessCommandStep> steps =
-        buildStartupPreprocessCommands(root, initial_plan, reserve_cores, argv0);
+        buildStartupPreprocessCommands(
+            root,
+            initial_plan,
+            reserve_cores,
+            argv0,
+            cli_options.rebuild_all_artifacts_from_scratch);
 
     std::thread worker([&] {
         StartupPreprocessSequenceResult result = runStartupPreprocessCommandSequence(
@@ -518,7 +545,7 @@ int runStartupPreprocessCli(
     const WorldsimCliOptions& cli_options,
     const char* argv0) {
     printStartupPreprocessPlan(plan, std::cerr);
-    if (!plan.required) {
+    if (!plan.required && !cli_options.rebuild_all_artifacts_from_scratch) {
         std::cout << json{
             {"mode", "startup-preprocess"},
             {"ok", true},
@@ -530,12 +557,18 @@ int runStartupPreprocessCli(
 
     const int reserve_cores = cli_options.reserve_cores_set ? cli_options.reserve_cores : app_settings.reserve_cpu_cores;
     const std::vector<StartupPreprocessCommandStep> steps =
-        buildStartupPreprocessCommands(root, plan, reserve_cores, argv0);
+        buildStartupPreprocessCommands(
+            root,
+            plan,
+            reserve_cores,
+            argv0,
+            cli_options.rebuild_all_artifacts_from_scratch);
     StartupPreprocessSequenceResult result = runStartupPreprocessCommandSequence(root, steps);
     std::cout << json{
         {"mode", "startup-preprocess"},
         {"ok", result.exit_code == 0},
-        {"required", true},
+        {"required", plan.required || cli_options.rebuild_all_artifacts_from_scratch},
+        {"forced_rebuild_from_scratch", cli_options.rebuild_all_artifacts_from_scratch},
         {"exit_code", result.exit_code},
         {"log_path", result.log_path.string()},
         {"step_count", steps.size()}

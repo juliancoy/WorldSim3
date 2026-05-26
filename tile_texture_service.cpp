@@ -417,6 +417,20 @@ TileSample getTileSample(
     return {};
 }
 
+TileTexture* getExactImageTexture(const fs::path& image_path, const std::string& cache_key) {
+    const std::string key = cache_key.empty() ? image_path.string() : cache_key;
+    auto it = g_TileCache.find(key);
+    if (it != g_TileCache.end()) {
+        touchLRU(key);
+        return &it->second.tex;
+    }
+    std::error_code ec;
+    if (!fs::exists(image_path, ec) || ec) return nullptr;
+    if (!loadTileTexture(image_path, key)) return nullptr;
+    auto loaded = g_TileCache.find(key);
+    return loaded == g_TileCache.end() ? nullptr : &loaded->second.tex;
+}
+
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const fs::path& root) {
     const fs::path p = root / "data" / "tiles_topo_vector.geojson";
     std::error_code ec;

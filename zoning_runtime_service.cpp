@@ -2,6 +2,7 @@
 
 #include "app_utils.h"
 #include "feature_props.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 #include "imgui.h"
@@ -123,11 +124,14 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
     for (size_t li = 0; li < input.layers->size() && li < input.layer_states->size(); ++li) {
         const LayerDef& layer = (*input.layers)[li];
         LayerRuntimeState& layer_state = (*input.layer_states)[li];
+        const LayerRenderRoute render_route =
+            classifyLayerRenderRoute(li, layer, input.parcel_layer_idx);
+        const bool polygon_gpu_route =
+            render_route == LayerRenderRoute::GenericPolygonGpu ||
+            render_route == LayerRenderRoute::ParcelPolygonGpu;
         const bool polygon_gpu_ready =
             layer.enabled &&
-            !layerUsesPointGeometry(layer) &&
-            !layerUsesPolylineGeometry(layer) &&
-            static_cast<int>(li) != input.parcel_layer_idx &&
+            polygon_gpu_route &&
             layer_state.status == LayerPipelineStatus::Ready &&
             !layer_state.hydration_source_signature.empty();
         if (!polygon_gpu_ready) {
@@ -149,7 +153,11 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
         if (state.uploaded_signatures[li] != zoning_signature) {
             ParcelRenderCacheBlob blob;
             const std::filesystem::path artifact_path =
-                geometryArtifactCachePathForLayerFile(*input.root, layer.file, GeometryArtifactClass::Polygon);
+                geometryArtifactCachePathForLayerFile(
+                    *input.root,
+                    layer.file,
+                    GeometryArtifactClass::Polygon,
+                    layerRenderRouteArtifactName(render_route));
             PolygonGeometryArtifact artifact;
             if (!loadBinaryPolygonGeometryArtifact(artifact_path, layer_state.hydration_source_signature, artifact) ||
                 (!layer.features.empty() && artifact.features.size() != layer.features.size()) ||

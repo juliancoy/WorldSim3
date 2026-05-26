@@ -46,16 +46,26 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
     indices_ = {};
     const bool regional_real_property_available =
         layerRuntimeSourceMaterializedForFile(root, "regional_real_property.geojson");
+    int first_enabled_materialized_parcel_idx = -1;
+    int first_materialized_parcel_idx = -1;
+    int first_enabled_city_parcel_idx = -1;
+    int first_city_parcel_idx = -1;
     int best_zoning_match = 0;
     for (size_t i = 0; i < layers.size(); ++i) {
-        if (indices_.parcel_layer_idx < 0 &&
-            isDirectOperationalParcelLayer(layers[i]) &&
+        if (isDirectOperationalParcelLayer(layers[i]) &&
             layerFileMaterialized(root, layers[i].file)) {
-            indices_.parcel_layer_idx = (int)i;
-        } else if (layers[i].file == "parcel.geojson" && indices_.parcel_layer_idx < 0) {
-            indices_.parcel_layer_idx = (int)i;
+            if (first_materialized_parcel_idx < 0) first_materialized_parcel_idx = (int)i;
+            if (layers[i].enabled && first_enabled_materialized_parcel_idx < 0) {
+                first_enabled_materialized_parcel_idx = (int)i;
+            }
         }
-        else if (layers[i].file == "regional_real_property.geojson" && regional_real_property_available) indices_.real_property_layer_idx = (int)i;
+        if (layers[i].file == "parcel.geojson") {
+            if (first_city_parcel_idx < 0) first_city_parcel_idx = (int)i;
+            if (layers[i].enabled && first_enabled_city_parcel_idx < 0) {
+                first_enabled_city_parcel_idx = (int)i;
+            }
+        }
+        if (layers[i].file == "regional_real_property.geojson" && regional_real_property_available) indices_.real_property_layer_idx = (int)i;
         else if (layers[i].file == "real_property_information.geojson" && indices_.real_property_layer_idx < 0) indices_.real_property_layer_idx = (int)i;
         else if (layers[i].file == "vacant_building_notices.geojson") indices_.vacant_notice_layer_idx = (int)i;
         else if (layers[i].file == "vacant_building_rehabs.geojson") indices_.vacant_rehab_layer_idx = (int)i;
@@ -67,6 +77,15 @@ void LayerRegistry::refresh(const fs::path& root, const std::vector<LayerDef>& l
             best_zoning_match = zoning_match;
             indices_.zoning_layer_idx = (int)i;
         }
+    }
+    if (first_enabled_materialized_parcel_idx >= 0) {
+        indices_.parcel_layer_idx = first_enabled_materialized_parcel_idx;
+    } else if (first_enabled_city_parcel_idx >= 0) {
+        indices_.parcel_layer_idx = first_enabled_city_parcel_idx;
+    } else if (first_materialized_parcel_idx >= 0) {
+        indices_.parcel_layer_idx = first_materialized_parcel_idx;
+    } else if (first_city_parcel_idx >= 0) {
+        indices_.parcel_layer_idx = first_city_parcel_idx;
     }
 }
 

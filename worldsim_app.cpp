@@ -98,6 +98,10 @@ ParcelGpuPipeline g_ParcelGpuPipeline;
 static ParcelGpuPipeline g_ZoningGpuPipeline;
 static ZoningOutlineIndirectComputePipeline g_ZoningOutlineIndirectComputePipeline;
 std::unordered_map<size_t, ZoningGpuLayerState> g_ZoningGpuLayers;
+float g_MapPolygonOutlineThickness = 2.0f;
+bool g_WideLinesEnabled = false;
+float g_MinSupportedLineWidth = 1.0f;
+float g_MaxSupportedLineWidth = 1.0f;
 VkCommandBuffer g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
 VkRenderPass g_CurrentFrameRenderPass = VK_NULL_HANDLE;
 uint32_t g_CurrentFrameRenderIndex = 0;
@@ -225,6 +229,7 @@ static const char* kZoningOutlineIndirectShaderPath = nullptr;
 #endif
 
 struct ParcelGpuPushConstants {
+    float center_lonlat[2];
     float center_world[2];
     float viewport_origin[2];
     float viewport_size[2];
@@ -247,6 +252,12 @@ void check_vk_result(VkResult err) {
     if (err == 0) return;
     std::fprintf(stderr, "[vulkan] VkResult=%d\n", err);
     if (err < 0) std::abort();
+}
+
+static float resolvedMapPolygonOutlineThickness() {
+    const float requested = std::clamp(g_MapPolygonOutlineThickness, 1.0f, 8.0f);
+    if (!g_WideLinesEnabled) return 1.0f;
+    return std::clamp(requested, g_MinSupportedLineWidth, g_MaxSupportedLineWidth);
 }
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL DebugUtilsCallback(
@@ -1167,7 +1178,11 @@ static bool ensureParcelGpuPipeline(VkRenderPass render_pass, std::string* error
     blend.attachmentCount = 1;
     blend.pAttachments = &blend_attachment;
 
-    const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    const VkDynamicState dynamic_states[] = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_LINE_WIDTH
+    };
     VkPipelineDynamicStateCreateInfo dynamic{};
     dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamic.dynamicStateCount = (uint32_t)IM_ARRAYSIZE(dynamic_states);
@@ -1234,6 +1249,7 @@ bool configureParcelGpuDrawState(const ParcelGpuDrawConfig& config, std::string*
     g_ParcelGpuDrawState.active = true;
     g_ParcelGpuDrawState.math_zoom = config.math_zoom;
     g_ParcelGpuDrawState.zoom_scale = config.zoom_scale;
+    g_ParcelGpuDrawState.center_lonlat = config.center_lonlat;
     g_ParcelGpuDrawState.center_world = config.center_world;
     g_ParcelGpuDrawState.viewport_origin = config.viewport_origin;
     g_ParcelGpuDrawState.viewport_size = config.viewport_size;
@@ -1260,11 +1276,12 @@ bool configureParcelGpuDrawState(const ParcelGpuDrawConfig& config, std::string*
                 config.view_max_lat + lat_pad)) {
             continue;
         }
-        if (chunk.index_count == 0) continue;
-        g_ParcelGpuDrawState.visible_chunks.push_back(ParcelGpuDrawChunk{
-            chunk.index_offset,
-            chunk.index_count
-        });
+        if (chunk.index_count > 0) {
+            g_ParcelGpuDrawState.visible_chunks.push_back(ParcelGpuDrawChunk{
+                chunk.index_offset,
+                chunk.index_count
+            });
+        }
         if (chunk.line_index_count > 0) {
             g_ParcelGpuDrawState.visible_line_chunks.push_back(ParcelGpuLineDrawChunk{
                 chunk.line_index_offset,
@@ -1304,6 +1321,8 @@ static void renderParcelGpuDrawCallback(const ImDrawList*, const ImDrawCmd*) {
     }
 
     ParcelGpuPushConstants push{};
+    push.center_lonlat[0] = g_ParcelGpuDrawState.center_lonlat.x;
+    push.center_lonlat[1] = g_ParcelGpuDrawState.center_lonlat.y;
     push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
     push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
     push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
@@ -1388,6 +1407,8 @@ static void renderParcelGpuOverlayDrawCallback(const ImDrawList*, const ImDrawCm
     }
 
     ParcelGpuPushConstants push{};
+    push.center_lonlat[0] = g_ParcelGpuDrawState.center_lonlat.x;
+    push.center_lonlat[1] = g_ParcelGpuDrawState.center_lonlat.y;
     push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
     push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
     push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
@@ -1454,7 +1475,14 @@ void enqueueParcelGpuOverlayDraw(ImDrawList* draw_list) {
 }
 
 bool parcelGpuOutlineDrawActive() {
-    if (!parcelGpuDrawActive() || !g_ParcelGpuBuffers.outline_colors.mapped || g_ParcelGpuDrawState.visible_line_chunks.empty()) return false;
+    if (!g_ParcelGpuDrawState.active ||
+        !g_ParcelGpuBuffers.positions.buffer ||
+        !g_ParcelGpuBuffers.line_indices.buffer ||
+        !g_ParcelGpuBuffers.vertex_feature_refs.buffer ||
+        !g_ParcelGpuBuffers.outline_colors.mapped ||
+        g_ParcelGpuDrawState.visible_line_chunks.empty()) {
+        return false;
+    }
     return g_ParcelGpuOutlineHasVisibleColors;
 }
 
@@ -1472,6 +1500,8 @@ static void renderParcelGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
     }
 
     ParcelGpuPushConstants push{};
+    push.center_lonlat[0] = g_ParcelGpuDrawState.center_lonlat.x;
+    push.center_lonlat[1] = g_ParcelGpuDrawState.center_lonlat.y;
     push.center_world[0] = g_ParcelGpuDrawState.center_world.x;
     push.center_world[1] = g_ParcelGpuDrawState.center_world.y;
     push.viewport_origin[0] = g_ParcelGpuDrawState.viewport_origin.x;
@@ -1501,6 +1531,7 @@ static void renderParcelGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
     scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(g_ParcelGpuDrawState.viewport_size.y)), max_height);
     if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
     vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+    vkCmdSetLineWidth(g_CurrentFrameRenderCommandBuffer, resolvedMapPolygonOutlineThickness());
 
     const VkBuffer vertex_buffers[] = {
         g_ParcelGpuBuffers.positions.buffer,
@@ -1827,7 +1858,11 @@ static bool ensureZoningGpuPipeline(VkRenderPass render_pass, std::string* error
     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     blend.attachmentCount = 1;
     blend.pAttachments = &blend_attachment;
-    const VkDynamicState dynamic_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    const VkDynamicState dynamic_states[] = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_LINE_WIDTH
+    };
     VkPipelineDynamicStateCreateInfo dynamic{};
     dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamic.dynamicStateCount = (uint32_t)IM_ARRAYSIZE(dynamic_states);
@@ -2290,6 +2325,7 @@ bool configureZoningGpuDrawState(size_t layer_idx, const ParcelGpuDrawConfig& co
     layer_state->draw_state.active = true;
     layer_state->draw_state.math_zoom = config.math_zoom;
     layer_state->draw_state.zoom_scale = config.zoom_scale;
+    layer_state->draw_state.center_lonlat = config.center_lonlat;
     layer_state->draw_state.center_world = config.center_world;
     layer_state->draw_state.viewport_origin = config.viewport_origin;
     layer_state->draw_state.viewport_size = config.viewport_size;
@@ -2349,6 +2385,8 @@ static void renderZoningGpuDrawCallback(const ImDrawList*, const ImDrawCmd* cmd)
     if (!ensureZoningGpuDescriptorSet(layer_idx, *layer_state, &pipeline_error, &descriptor_sets)) return;
     if (!ensureZoningGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) return;
     ParcelGpuPushConstants push{};
+    push.center_lonlat[0] = layer_state->draw_state.center_lonlat.x;
+    push.center_lonlat[1] = layer_state->draw_state.center_lonlat.y;
     push.center_world[0] = layer_state->draw_state.center_world.x;
     push.center_world[1] = layer_state->draw_state.center_world.y;
     push.viewport_origin[0] = layer_state->draw_state.viewport_origin.x;
@@ -2420,6 +2458,8 @@ static void renderZoningGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
     if (!ensureZoningGpuDescriptorSet(layer_idx, *layer_state, &pipeline_error, &descriptor_sets)) return;
     if (!ensureZoningGpuPipeline(g_CurrentFrameRenderPass, &pipeline_error)) return;
     ParcelGpuPushConstants push{};
+    push.center_lonlat[0] = layer_state->draw_state.center_lonlat.x;
+    push.center_lonlat[1] = layer_state->draw_state.center_lonlat.y;
     push.center_world[0] = layer_state->draw_state.center_world.x;
     push.center_world[1] = layer_state->draw_state.center_world.y;
     push.viewport_origin[0] = layer_state->draw_state.viewport_origin.x;
@@ -2441,6 +2481,7 @@ static void renderZoningGpuOutlineDrawCallback(const ImDrawList*, const ImDrawCm
     scissor.extent.height = std::min((uint32_t)std::max(0.0f, std::ceil(layer_state->draw_state.viewport_size.y)), max_height);
     if (scissor.extent.width == 0 || scissor.extent.height == 0) return;
     vkCmdSetScissor(g_CurrentFrameRenderCommandBuffer, 0, 1, &scissor);
+    vkCmdSetLineWidth(g_CurrentFrameRenderCommandBuffer, resolvedMapPolygonOutlineThickness());
     const VkBuffer vertex_buffers[] = {layer_state->buffers.positions.buffer, layer_state->buffers.vertex_feature_refs.buffer};
     const VkDeviceSize offsets[] = {0, 0};
     vkCmdBindPipeline(g_CurrentFrameRenderCommandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, g_ZoningGpuPipeline.line_pipeline);
@@ -2537,7 +2578,9 @@ void SetupVulkan(const char** extensions, uint32_t extensions_count) {
     VkPhysicalDeviceFeatures enabled_features{};
     enabled_features.samplerAnisotropy = available_features.samplerAnisotropy;
     enabled_features.multiDrawIndirect = available_features.multiDrawIndirect;
+    enabled_features.wideLines = available_features.wideLines;
     g_MultiDrawIndirectEnabled = available_features.multiDrawIndirect == VK_TRUE;
+    g_WideLinesEnabled = available_features.wideLines == VK_TRUE;
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.queueCreateInfoCount = 1;
@@ -2577,6 +2620,8 @@ void SetupVulkan(const char** extensions, uint32_t extensions_count) {
     VkPhysicalDeviceProperties props{};
     vkGetPhysicalDeviceProperties(g_PhysicalDevice, &props);
     g_MaxDrawIndirectCount = props.limits.maxDrawIndirectCount;
+    g_MinSupportedLineWidth = props.limits.lineWidthRange[0];
+    g_MaxSupportedLineWidth = props.limits.lineWidthRange[1];
     sampler.anisotropyEnable = available_features.samplerAnisotropy ? VK_TRUE : VK_FALSE;
     sampler.maxAnisotropy = available_features.samplerAnisotropy ? std::min(8.0f, props.limits.maxSamplerAnisotropy) : 1.0f;
     check_vk_result(vkCreateSampler(g_Device, &sampler, g_Allocator, &g_TileSampler));

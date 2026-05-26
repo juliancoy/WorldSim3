@@ -119,6 +119,9 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     hover_query.layer_hover_enabled = ctx.layer_hover_enabled;
     hover_query.layer_inspect_enabled = ctx.layer_inspect_enabled;
     hover_query.mouse_ll = map_viewport.mouse_ll;
+    hover_query.center_lonlat = ImVec2(
+        ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
+        ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
     const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 fb_scale = io.DisplayFramebufferScale;
     hover_query.mouse_screen = ImVec2(io.MousePos.x * fb_scale.x, io.MousePos.y * fb_scale.y);

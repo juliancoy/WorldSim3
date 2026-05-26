@@ -38,6 +38,7 @@
 #include "map_overlay_panels.h"
 #include "map_render_layers.h"
 #include "render_plan_builder.h"
+#include "render_routing.h"
 #include "render_layer_pass.h"
 #include "render_tail_pass.h"
 #include "map_render_overlays.h"
@@ -287,6 +288,32 @@ int runWorldSim3App(int argc, char** argv) {
     const int tax_sale_layer_idx = layer_indices.tax_sale_layer_idx;
     int zoning_layer_idx = layer_indices.zoning_layer_idx;
     const int crime_nibrs_layer_idx = layer_indices.crime_nibrs_layer_idx;
+    if (parcel_layer_idx >= 0 && static_cast<size_t>(parcel_layer_idx) < layers.size()) {
+        const LayerDef& parcel_layer = layers[static_cast<size_t>(parcel_layer_idx)];
+        const std::filesystem::path stored_path = resolveStoredLayerPath(root, parcel_layer);
+        const std::filesystem::path canonical_path = canonicalLayerPathForFile(root, parcel_layer.file);
+        const LayerRenderRoute render_route = classifyLayerRenderRoute(
+            static_cast<size_t>(parcel_layer_idx),
+            parcel_layer,
+            parcel_layer_idx);
+        const std::filesystem::path artifact_path =
+            geometryArtifactCachePathForLayerFile(
+                root,
+                parcel_layer.file,
+                GeometryArtifactClass::Polygon,
+                layerRenderRouteArtifactName(render_route));
+        std::fprintf(
+            stderr,
+            "[worldsim3] active parcel render path idx=%d file=%s county=%s renderer=parcel_gpu stored=%s canonical=%s artifact=%s\n",
+            parcel_layer_idx,
+            parcel_layer.file.c_str(),
+            parcel_layer.provenance_county_city.c_str(),
+            stored_path.string().c_str(),
+            canonical_path.string().c_str(),
+            artifact_path.string().c_str());
+    } else {
+        std::fprintf(stderr, "[worldsim3] active parcel render path unavailable: no parcel layer selected\n");
+    }
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
     std::vector<LayerDef::FeatureRecord> harmonized_real_property_features;
     std::vector<std::string> harmonized_real_property_source_files;
@@ -606,6 +633,7 @@ int runWorldSim3App(int argc, char** argv) {
             .root = &root,
             .stop = &hydration_stop,
             .layers = &layers,
+            .parcel_layer_idx = parcel_layer_idx,
             .duckdb_analytics = &duckdb_analytics,
             .unified_parcels = &unified_parcels,
             .map_filter_state = &map_filter_state,
@@ -1435,6 +1463,7 @@ int runWorldSim3App(int argc, char** argv) {
     };
 
     while (!glfwWindowShouldClose(window)) {
+        g_MapPolygonOutlineThickness = app_settings.map_polygon_outline_thickness;
         glfwPollEvents();
         const bool color_editor_alive = color_editor_process_alive();
         ColorEditorCommand color_editor_command;

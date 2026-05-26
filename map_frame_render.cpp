@@ -174,6 +174,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     const RenderPlan render_plan = buildRenderPlan(render_plan_ctx);
 
     RenderLayerPassContext layer_pass_ctx;
+    layer_pass_ctx.root = ctx.root;
     layer_pass_ctx.draw = ctx.draw;
     layer_pass_ctx.origin = ctx.origin;
     layer_pass_ctx.size = ctx.size;
@@ -222,6 +223,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.heatmap_policy = &heatmap_policy;
     layer_pass_ctx.heatmap_runtime = ctx.heatmap_runtime;
     layer_pass_ctx.render_plan = &render_plan;
+    layer_pass_ctx.query_layers = ctx.query_layers;
     layer_pass_ctx.raw_source_layer_policy = raw_source_layer_policy;
     layer_pass_ctx.heat_samples = &heat_samples;
     layer_pass_ctx.projection = ctx.projection;
@@ -231,6 +233,12 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     layer_pass_ctx.query_map_color = ctx.query_map_color;
     layer_pass_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;
     layer_pass_ctx.project_world = ctx.project_world;
+    layer_pass_ctx.filter_blocklot = ctx.filter_blocklot;
+    layer_pass_ctx.filter_status = ctx.filter_status;
+    layer_pass_ctx.filter_address = ctx.filter_address;
+    layer_pass_ctx.filter_owner = ctx.filter_owner;
+    layer_pass_ctx.filter_zip = ctx.filter_zip;
+    layer_pass_ctx.filter_enabled = ctx.filter_enabled;
     layer_pass_ctx.prof_features_considered_frame = ctx.prof_features_considered_frame;
     layer_pass_ctx.prof_features_drawn_frame = ctx.prof_features_drawn_frame;
     runRenderLayerPass(layer_pass_ctx);

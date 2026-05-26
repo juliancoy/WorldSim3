@@ -2,9 +2,21 @@
 
 #include "aggregate_visualization_strategies.h"
 #include "app_utils.h"
-#include "worldsim_app_internal.h"
 
 #include <algorithm>
+
+namespace {
+
+bool isZoningPolygonLayerForPolicy(const LayerDef& layer) {
+    if (layerUsesPointGeometry(layer)) return false;
+    if (layer.category == LayerDef::Category::Zoning) return true;
+    const std::string file_lower = toLowerAscii(layer.file);
+    const std::string name_lower = toLowerAscii(layer.name);
+    return file_lower.find("zoning") != std::string::npos ||
+           name_lower.find("zoning") != std::string::npos;
+}
+
+}
 
 int resolveLayerAggregateAlgo(const HeatmapLayerPolicyContext& ctx, size_t layer_idx) {
     return (ctx.layer_heatmap_algo &&
@@ -118,4 +130,27 @@ void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer
         0.0f,
         1.0f);
     hs.allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
+}
+
+PolygonRasterTileMode resolvePolygonRasterTileMode(const PolygonRasterTilePolicyContext& ctx) {
+    if (!ctx.layer || !ctx.layer->enabled) return PolygonRasterTileMode::VectorOnly;
+    if (ctx.render_route != LayerRenderRoute::GenericPolygonGpu &&
+        ctx.render_route != LayerRenderRoute::ParcelPolygonGpu) {
+        return PolygonRasterTileMode::VectorOnly;
+    }
+    if (layerUsesPointGeometry(*ctx.layer) || layerUsesPolylineGeometry(*ctx.layer)) {
+        return PolygonRasterTileMode::VectorOnly;
+    }
+    if (!ctx.fill_enabled ||
+        ctx.layer_uses_heatmap_aggregate ||
+        ctx.layer_uses_lod_geometry ||
+        !ctx.layer->heatmap_field.empty() ||
+        isZoningPolygonLayerForPolicy(*ctx.layer) ||
+        ctx.filter_state_active ||
+        ctx.query_state_active) {
+        return PolygonRasterTileMode::VectorOnly;
+    }
+    if (ctx.zoom <= 11) return PolygonRasterTileMode::RasterOnly;
+    if (ctx.zoom <= 13) return PolygonRasterTileMode::RasterBaseVectorOutline;
+    return PolygonRasterTileMode::VectorOnly;
 }

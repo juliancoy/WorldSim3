@@ -1,6 +1,7 @@
 #include "polygon_artifact_runtime_service.h"
 
 #include "app_utils.h"
+#include "render_routing.h"
 #include "worldsim_app.h"
 
 void syncPolygonGeometryArtifacts(
@@ -13,16 +14,20 @@ void syncPolygonGeometryArtifacts(
     for (size_t li = 0; li < input.layers->size() && li < input.layer_states->size(); ++li) {
         const LayerDef& layer = (*input.layers)[li];
         LayerRuntimeState& layer_state = (*input.layer_states)[li];
-        const bool parcel_layer = static_cast<int>(li) == input.parcel_layer_idx;
-        if (layerUsesPointGeometry(layer) ||
-            layerUsesPolylineGeometry(layer) ||
+        const LayerRenderRoute render_route =
+            classifyLayerRenderRoute(li, layer, input.parcel_layer_idx);
+        const bool parcel_routed_layer =
+            render_route == LayerRenderRoute::ParcelGpu;
+        const bool polygon_gpu_route =
+            render_route == LayerRenderRoute::GenericPolygonGpu ||
+            render_route == LayerRenderRoute::ParcelPolygonGpu;
+        if (!polygon_gpu_route ||
             !layer.enabled ||
             layer_state.status != LayerPipelineStatus::Ready ||
-            layer_state.hydration_source_signature.empty() ||
-            parcel_layer) {
+            layer_state.hydration_source_signature.empty()) {
             state.geometry_artifacts.erase(li);
             state.artifact_signatures.erase(li);
-            if (layer_state.geometry_artifact_class == GeometryArtifactClass::Polygon && !parcel_layer) {
+            if (layer_state.geometry_artifact_class == GeometryArtifactClass::Polygon && !parcel_routed_layer) {
                 layer_state.geometry_source_signature.clear();
                 layer_state.geometry_phase.clear();
                 layer_state.geometry_loaded_from_artifact = false;
@@ -32,7 +37,11 @@ void syncPolygonGeometryArtifacts(
         }
 
         const std::filesystem::path artifact_path =
-            geometryArtifactCachePathForLayerFile(*input.root, layer.file, GeometryArtifactClass::Polygon);
+            geometryArtifactCachePathForLayerFile(
+                *input.root,
+                layer.file,
+                GeometryArtifactClass::Polygon,
+                layerRenderRouteArtifactName(render_route));
         layer_state.geometry_artifact_class = GeometryArtifactClass::Polygon;
         layer_state.geometry_artifact_path = artifact_path.string();
         const std::string& sig = layer_state.hydration_source_signature;

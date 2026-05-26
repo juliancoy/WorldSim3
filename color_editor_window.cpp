@@ -165,6 +165,30 @@ bool emitCommand(
     return saveColorEditorCommand(snapshot.command_path, command);
 }
 
+void applyLiveOutlineColorChange(
+    ColorEditorSnapshot& snapshot,
+    DraftColorEditorState& draft,
+    uint64_t& next_seq,
+    const ImVec4& color) {
+    if (!emitCommand(snapshot, next_seq, "outline_color", -1, "", color, 0, 100.0f, 1.0f)) return;
+    snapshot.outline_color = color;
+    snapshot.revision += 1;
+    draft.outline_color = color;
+    draft.revision = snapshot.revision;
+}
+
+void applyLiveFillColorChange(
+    ColorEditorSnapshot& snapshot,
+    DraftColorEditorState& draft,
+    uint64_t& next_seq,
+    const ImVec4& color) {
+    if (!emitCommand(snapshot, next_seq, "fill_color", -1, "", color, 0, 100.0f, 1.0f)) return;
+    snapshot.fill_color = color;
+    snapshot.revision += 1;
+    draft.fill_color = color;
+    draft.revision = snapshot.revision;
+}
+
 bool draftIsDirty(const ColorEditorSnapshot& snapshot, const DraftColorEditorState& draft) {
     if (!draft.initialized) return false;
     if (snapshot.outline_target != draft.outline_target) return true;
@@ -269,7 +293,9 @@ void drawColorEditorWindow(ColorEditorSnapshot& snapshot, uint64_t& next_seq) {
             draft.outline_color.w
         };
         if (ImGui::ColorPicker4("Outline color", rgba, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_NoSidePreview)) {
-            draft.outline_color = ImVec4(rgba[0], rgba[1], rgba[2], rgba[3]);
+            const ImVec4 next_color(rgba[0], rgba[1], rgba[2], rgba[3]);
+            draft.outline_color = next_color;
+            applyLiveOutlineColorChange(snapshot, draft, next_seq, next_color);
         }
         const bool dirty = draftIsDirty(snapshot, draft);
         ImGui::Separator();
@@ -289,7 +315,9 @@ void drawColorEditorWindow(ColorEditorSnapshot& snapshot, uint64_t& next_seq) {
         draft.fill_color.w
     };
     if (ImGui::ColorPicker4("Static color", rgba, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_NoSidePreview)) {
-        draft.fill_color = ImVec4(rgba[0], rgba[1], rgba[2], rgba[3]);
+        const ImVec4 next_color(rgba[0], rgba[1], rgba[2], rgba[3]);
+        draft.fill_color = next_color;
+        applyLiveFillColorChange(snapshot, draft, next_seq, next_color);
     }
 
     if (snapshot.supports_continuous && !snapshot.options.empty()) {

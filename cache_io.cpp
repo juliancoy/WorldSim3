@@ -1,6 +1,7 @@
 #include "cache_io.h"
 
 #include "app_utils.h"
+#include "earcut.hpp"
 #include "feature_props.h"
 #include "layer_geometry.h"
 #include "memory_utils.h"
@@ -364,6 +365,111 @@ struct FlattenedParcelFeature {
     std::vector<uint32_t> line_indices;
 };
 
+bool validatePolygonGeometryArtifactRecords(const PolygonGeometryArtifact& artifact, std::string* error) {
+    if (artifact.features.empty()) {
+        if (error) *error = "polygon artifact has no features";
+        return false;
+    }
+    if (artifact.chunks.empty()) {
+        if (error) *error = "polygon artifact has no chunks";
+        return false;
+    }
+    for (size_t i = 0; i < artifact.features.size(); ++i) {
+        const GeometryArtifactFeatureRecord& rec = artifact.features[i];
+        const uint64_t vertex_end = uint64_t(rec.vertex_offset) + uint64_t(rec.vertex_count);
+        const uint64_t fill_end = uint64_t(rec.index_offset) + uint64_t(rec.index_count);
+        const uint64_t line_end = uint64_t(rec.aux_index_offset) + uint64_t(rec.aux_index_count);
+        if (vertex_end > artifact.vertices.size()) {
+            if (error) *error = "polygon artifact feature vertex range is out of bounds";
+            return false;
+        }
+        if (fill_end > artifact.fill_indices.size()) {
+            if (error) *error = "polygon artifact feature fill index range is out of bounds";
+            return false;
+        }
+        if (line_end > artifact.line_indices.size()) {
+            if (error) *error = "polygon artifact feature line index range is out of bounds";
+            return false;
+        }
+        if (rec.entity_id.empty()) {
+            if (error) *error = "polygon artifact feature is missing entity_id";
+            return false;
+        }
+        for (uint32_t v = rec.vertex_offset; v < vertex_end; ++v) {
+            if (artifact.feature_refs[v] != i) {
+                if (error) *error = "polygon artifact feature refs do not match feature ownership";
+                return false;
+            }
+        }
+    }
+    for (size_t i = 0; i < artifact.chunks.size(); ++i) {
+        const GeometryArtifactChunkRecord& rec = artifact.chunks[i];
+        const uint64_t feature_end = uint64_t(rec.feature_offset) + uint64_t(rec.feature_count);
+        const uint64_t vertex_end = uint64_t(rec.vertex_offset) + uint64_t(rec.vertex_count);
+        const uint64_t fill_end = uint64_t(rec.index_offset) + uint64_t(rec.index_count);
+        const uint64_t line_end = uint64_t(rec.aux_index_offset) + uint64_t(rec.aux_index_count);
+        if (rec.chunk_idx != i) {
+            if (error) *error = "polygon artifact chunk index ordering is invalid";
+            return false;
+        }
+        if (feature_end > artifact.features.size()) {
+            if (error) *error = "polygon artifact chunk feature range is out of bounds";
+            return false;
+        }
+        if (vertex_end > artifact.vertices.size()) {
+            if (error) *error = "polygon artifact chunk vertex range is out of bounds";
+            return false;
+        }
+        if (fill_end > artifact.fill_indices.size()) {
+            if (error) *error = "polygon artifact chunk fill index range is out of bounds";
+            return false;
+        }
+        if (line_end > artifact.line_indices.size()) {
+            if (error) *error = "polygon artifact chunk line index range is out of bounds";
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<uint32_t> triangulateFeatureRingsForRender(const LayerDef::FeatureRecord& fg) {
+    using EarcutPoint = std::array<double, 2>;
+    std::vector<std::vector<EarcutPoint>> polygon;
+    std::vector<uint32_t> ring_vertex_index_map;
+    polygon.reserve(fg.rings.size());
+    size_t ring_vertex_offset = 0;
+    for (const auto& ring : fg.rings) {
+        std::vector<EarcutPoint> out_ring;
+        std::vector<uint32_t> out_ring_index_map;
+        out_ring.reserve(ring.size());
+        out_ring_index_map.reserve(ring.size());
+        for (size_t i = 0; i < ring.size(); ++i) {
+            const ImVec2& p = ring[i];
+            out_ring.push_back({static_cast<double>(p.x), static_cast<double>(p.y)});
+            out_ring_index_map.push_back(static_cast<uint32_t>(ring_vertex_offset + i));
+        }
+        if (out_ring.size() >= 2 && out_ring.front() == out_ring.back()) {
+            out_ring.pop_back();
+            out_ring_index_map.pop_back();
+        }
+        if (out_ring.size() >= 3) {
+            ring_vertex_index_map.insert(
+                ring_vertex_index_map.end(),
+                out_ring_index_map.begin(),
+                out_ring_index_map.end());
+            polygon.push_back(std::move(out_ring));
+        }
+        ring_vertex_offset += ring.size();
+    }
+    if (polygon.empty()) return {};
+    std::vector<uint32_t> triangulated = mapbox::earcut<uint32_t>(polygon);
+    for (uint32_t& idx : triangulated) {
+        if (idx >= ring_vertex_index_map.size()) return {};
+        idx = ring_vertex_index_map[idx];
+    }
+    return triangulated;
+}
+
 bool flattenParcelFeatureForRender(const LayerDef::FeatureRecord& fg, FlattenedParcelFeature& out) {
     out.vertices.clear();
     out.indices.clear();
@@ -387,11 +493,12 @@ bool flattenParcelFeatureForRender(const LayerDef::FeatureRecord& fg, FlattenedP
         }
         ring_vertex_offset += ring.size();
     }
-    out.indices.reserve(fg.triangles.size());
-    for (size_t ti = 0; ti + 2 < fg.triangles.size(); ti += 3) {
-        const uint32_t a = fg.triangles[ti + 0];
-        const uint32_t b = fg.triangles[ti + 1];
-        const uint32_t c = fg.triangles[ti + 2];
+    std::vector<uint32_t> triangulated = triangulateFeatureRingsForRender(fg);
+    out.indices.reserve(triangulated.size());
+    for (size_t ti = 0; ti + 2 < triangulated.size(); ti += 3) {
+        const uint32_t a = triangulated[ti + 0];
+        const uint32_t b = triangulated[ti + 1];
+        const uint32_t c = triangulated[ti + 2];
         if (a >= out.vertices.size() || b >= out.vertices.size() || c >= out.vertices.size()) continue;
         out.indices.push_back(a);
         out.indices.push_back(b);
@@ -421,12 +528,54 @@ const char* geometryArtifactFileSuffix(GeometryArtifactClass cls) {
     return ".unknown.bin";
 }
 
+const char* defaultGeometryArtifactRenderPathName(GeometryArtifactClass cls) {
+    switch (cls) {
+        case GeometryArtifactClass::Point: return "point_gpu";
+        case GeometryArtifactClass::Polyline: return "polyline_gpu";
+        case GeometryArtifactClass::Polygon: return "generic_polygon_gpu";
+        case GeometryArtifactClass::Unknown: break;
+    }
+    return "unknown";
+}
+
+std::string sanitizeGeometryArtifactRouteName(std::string_view route) {
+    std::string out;
+    out.reserve(route.size());
+    for (char ch : route) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if ((c >= 'a' && c <= 'z') ||
+            (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') ||
+            c == '_' ||
+            c == '-') {
+            out.push_back(static_cast<char>(c));
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out.empty() ? "unknown" : out;
+}
+
 std::filesystem::path geometryArtifactCachePathForLayerFile(
     const fs::path& root,
     const std::string& layer_file,
     GeometryArtifactClass cls) {
+    return geometryArtifactCachePathForLayerFile(
+        root,
+        layer_file,
+        cls,
+        defaultGeometryArtifactRenderPathName(cls));
+}
+
+std::filesystem::path geometryArtifactCachePathForLayerFile(
+    const fs::path& root,
+    const std::string& layer_file,
+    GeometryArtifactClass cls,
+    std::string_view render_path) {
     return root / "data" / "cache" / "geometry" /
-           (layerArtifactBasenameForFile(layer_file) + geometryArtifactFileSuffix(cls));
+           (layerArtifactBasenameForFile(layer_file) + "." +
+            sanitizeGeometryArtifactRouteName(render_path) +
+            geometryArtifactFileSuffix(cls));
 }
 
 bool buildPointGeometryArtifact(
@@ -926,11 +1075,14 @@ bool loadBinaryPolygonGeometryArtifact(
             !readFloat(in, rec.max_lon) ||
             !readFloat(in, rec.max_lat)) return false;
     }
-    return !out.vertices.empty() &&
-           !out.feature_refs.empty() &&
-           !out.fill_indices.empty() &&
-           !out.line_indices.empty() &&
-           !out.features.empty();
+    if (out.vertices.empty() ||
+        out.feature_refs.empty() ||
+        out.fill_indices.empty() ||
+        out.line_indices.empty() ||
+        out.features.empty()) {
+        return false;
+    }
+    return validatePolygonGeometryArtifactRecords(out, nullptr);
 }
 
 bool validateBinaryPolygonGeometryArtifactHeader(

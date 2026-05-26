@@ -8,6 +8,7 @@ StatusApiContext makeStatusApiContext(const StatusApiContextFactoryInput& input)
     ctx.root = input.root;
     ctx.stop = input.stop;
     ctx.layers = input.layers;
+    ctx.parcel_layer_idx = input.parcel_layer_idx;
     ctx.duckdb_analytics = input.duckdb_analytics;
     ctx.unified_parcels = input.unified_parcels;
     ctx.map_filter_state = input.map_filter_state;

@@ -67,6 +67,7 @@ struct ParcelGpuDrawState {
     bool active = false;
     int math_zoom = 0;
     float zoom_scale = 1.0f;
+    ImVec2 center_lonlat = ImVec2(0.0f, 0.0f);
     ImVec2 center_world = ImVec2(0.0f, 0.0f);
     ImVec2 viewport_origin = ImVec2(0.0f, 0.0f);
     ImVec2 viewport_size = ImVec2(0.0f, 0.0f);

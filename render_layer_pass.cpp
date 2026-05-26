@@ -7,11 +7,14 @@
 #include "layer_geometry.h"
 #include "map_render_hover.h"
 #include "map_render_utils.h"
+#include "render_routing.h"
+#include "render_tile_cache.h"
 #include "worldsim_app.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -22,6 +25,7 @@ constexpr float kPointMarkerRadiusPx = 5.0f;
 constexpr float kPointMarkerOutlinePx = 1.6f;
 constexpr float kPointClusterCellPx = 28.0f;
 constexpr float kPointClusterRadiusPx = 12.0f;
+constexpr int kRenderTileSizePx = 256;
 
 enum class PointMarkerGlyph {
     Circle,
@@ -68,6 +72,124 @@ struct DeferredPointRenderJob {
     ImU32 color = 0;
     uint64_t order_key = 0;
 };
+
+struct RuntimeRasterTileRequest {
+    int tx = 0;
+    int ty = 0;
+    int wrapped_x = 0;
+    std::filesystem::path path;
+};
+
+const PolygonGeometryArtifact* polygonArtifactForLayer(const RenderLayerPassContext& ctx, size_t layer_idx);
+
+int wrapTileX(int x, int period) {
+    if (period <= 0) return x;
+    x %= period;
+    if (x < 0) x += period;
+    return x;
+}
+
+bool filterStateActive(const RenderLayerPassContext& ctx) {
+    return ctx.filter_enabled ||
+           (ctx.filter_blocklot && ctx.filter_blocklot[0] != '\0') ||
+           (ctx.filter_status && ctx.filter_status[0] != '\0') ||
+           (ctx.filter_address && ctx.filter_address[0] != '\0') ||
+           (ctx.filter_owner && ctx.filter_owner[0] != '\0') ||
+           (ctx.filter_zip && ctx.filter_zip[0] != '\0');
+}
+
+bool queryStateActive(const RenderLayerPassContext& ctx) {
+    return ctx.query_layers && !ctx.query_layers->empty();
+}
+
+bool layerFillEnabledForRuntime(const RenderLayerPassContext& ctx, size_t layer_idx) {
+    const bool layer_fill_enabled =
+        ctx.layer_fill_enabled && layer_idx < ctx.layer_fill_enabled->size()
+            ? (*ctx.layer_fill_enabled)[layer_idx]
+            : true;
+    const bool layer_polygon_fill_allowed =
+        ctx.should_fill_layer_polygon ? ctx.should_fill_layer_polygon(layer_idx) : true;
+    return layer_fill_enabled && layer_polygon_fill_allowed;
+}
+
+bool tryDrawPolygonRasterTileBase(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    const LayerDef& layer,
+    LayerRenderRoute render_route,
+    PolygonRasterTileMode raster_mode) {
+    if (raster_mode == PolygonRasterTileMode::VectorOnly) return false;
+    if (!ctx.root || !ctx.draw || !ctx.center_lon || !ctx.center_lat || ctx.zoom_scale <= 0.0f) return false;
+    const PolygonGeometryArtifact* artifact = polygonArtifactForLayer(ctx, layer_idx);
+    if (!artifact || artifact->header.source_signature.empty()) return false;
+
+    const std::string style_key = renderPolygonFillStyleKey(layer, ctx.map_polygon_fill_opacity);
+    const int period = 1 << ctx.math_zoom;
+    const int max_tile = period - 1;
+    const ImVec2 center_world = lonLatToWorldPx(static_cast<float>(*ctx.center_lon), static_cast<float>(*ctx.center_lat), ctx.math_zoom);
+    const double half_w_world = (ctx.size.x * 0.5) / ctx.zoom_scale;
+    const double half_h_world = (ctx.size.y * 0.5) / ctx.zoom_scale;
+    const double epsilon = 1e-9;
+    const int min_x = static_cast<int>(std::floor((center_world.x - half_w_world) / double(kRenderTileSizePx)));
+    const int max_x = static_cast<int>(std::floor((center_world.x + half_w_world - epsilon) / double(kRenderTileSizePx)));
+    const int min_y = static_cast<int>(std::floor((center_world.y - half_h_world) / double(kRenderTileSizePx)));
+    const int max_y = static_cast<int>(std::floor((center_world.y + half_h_world - epsilon) / double(kRenderTileSizePx)));
+
+    std::vector<RuntimeRasterTileRequest> requests;
+    requests.reserve(std::max(0, (max_x - min_x + 1) * (max_y - min_y + 1)));
+    for (int ty = min_y; ty <= max_y; ++ty) {
+        if (ty < 0 || ty > max_tile) continue;
+        for (int tx = min_x; tx <= max_x; ++tx) {
+            const int wrapped_x = wrapTileX(tx, period);
+            RenderTileCacheKey key;
+            key.layer_file = layer.file;
+            key.render_route = layerRenderRouteArtifactName(render_route);
+            key.source_signature = artifact->header.source_signature;
+            key.style_key = style_key;
+            key.z = ctx.math_zoom;
+            key.x = wrapped_x;
+            key.y = ty;
+            key.extension = "ppm";
+            RuntimeRasterTileRequest request;
+            request.tx = tx;
+            request.ty = ty;
+            request.wrapped_x = wrapped_x;
+            request.path = renderTileCachePath(*ctx.root, key);
+            requests.push_back(std::move(request));
+        }
+    }
+    if (requests.empty()) return false;
+
+    for (const RuntimeRasterTileRequest& request : requests) {
+        std::error_code ec;
+        if (!std::filesystem::exists(request.path, ec) || ec) return false;
+    }
+
+    for (const RuntimeRasterTileRequest& request : requests) {
+        TileTexture* texture = getExactImageTexture(request.path);
+        if (!texture || !texture->descriptor) return false;
+    }
+
+    for (const RuntimeRasterTileRequest& request : requests) {
+        TileTexture* texture = getExactImageTexture(request.path);
+        if (!texture || !texture->descriptor) return false;
+        const ImVec2 tile_world(
+            static_cast<float>(request.tx * kRenderTileSizePx),
+            static_cast<float>(request.ty * kRenderTileSizePx));
+        const ImVec2 p0 = ctx.project_world(tile_world);
+        const ImVec2 p1(
+            p0.x + static_cast<float>(kRenderTileSizePx * ctx.zoom_scale),
+            p0.y + static_cast<float>(kRenderTileSizePx * ctx.zoom_scale));
+        ctx.draw->AddImage(
+            reinterpret_cast<ImTextureID>(texture->descriptor),
+            p0,
+            p1,
+            ImVec2(0.0f, 0.0f),
+            ImVec2(1.0f, 1.0f),
+            IM_COL32(255, 255, 255, 255));
+    }
+    return true;
+}
 
 ImVec2 pointWorldPosition(
     const RenderLayerPassContext& ctx,
@@ -514,16 +636,23 @@ bool layerHasPrimaryGpuDraw(
     const LayerDef& layer,
     bool layer_uses_heatmap_for_cache,
     bool layer_uses_lod_for_draw) {
-    if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) return true;
+    const LayerRenderRoute render_route =
+        classifyLayerRenderRoute(layer_idx, layer, ctx.parcel_layer_idx);
+    if (render_route == LayerRenderRoute::ParcelGpu && parcelGpuDrawActive()) return true;
     if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) return true;
-    if (layerUsesPointGeometry(layer)) {
+    if (render_route == LayerRenderRoute::PointGpu) {
         if (layer_uses_heatmap_for_cache || layer_uses_lod_for_draw) return false;
         if (ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx)) return false;
         return pointLayerGpuDrawActive(layer_idx);
     }
-    if (layerUsesPolylineGeometry(layer)) return polylineLayerGpuDrawActive(layer_idx);
-    if ((int)layer_idx != ctx.parcel_layer_idx &&
-        (zoningGpuDrawActive(layer_idx) || zoningGpuOutlineDrawActive(layer_idx))) return true;
+    if (render_route == LayerRenderRoute::PolylineGpu) return polylineLayerGpuDrawActive(layer_idx);
+    const bool polygon_gpu_route =
+        render_route == LayerRenderRoute::GenericPolygonGpu ||
+        render_route == LayerRenderRoute::ParcelPolygonGpu;
+    if (polygon_gpu_route &&
+        (zoningGpuDrawActive(layer_idx) || zoningGpuOutlineDrawActive(layer_idx))) {
+        return true;
+    }
     return false;
 }
 
@@ -532,8 +661,12 @@ void enqueuePrimaryGpuDrawForLayer(
     size_t layer_idx,
     const LayerDef& layer,
     bool layer_uses_heatmap_for_cache,
-    bool layer_uses_lod_for_draw) {
-    if ((int)layer_idx == ctx.parcel_layer_idx && parcelGpuDrawActive()) {
+    bool layer_uses_lod_for_draw,
+    bool allow_polygon_fill,
+    bool allow_polygon_outline) {
+    const LayerRenderRoute render_route =
+        classifyLayerRenderRoute(layer_idx, layer, ctx.parcel_layer_idx);
+    if (render_route == LayerRenderRoute::ParcelGpu && parcelGpuDrawActive()) {
         enqueueParcelGpuDraw(ctx.draw);
         return;
     }
@@ -541,7 +674,7 @@ void enqueuePrimaryGpuDrawForLayer(
         enqueueCrimePointGpuDraw(ctx.draw);
         return;
     }
-    if (layerUsesPointGeometry(layer)) {
+    if (render_route == LayerRenderRoute::PointGpu) {
         if (layer_uses_heatmap_for_cache || layer_uses_lod_for_draw) return;
         if (ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx)) return;
         if (pointLayerGpuDrawActive(layer_idx)) {
@@ -549,16 +682,20 @@ void enqueuePrimaryGpuDrawForLayer(
         }
         return;
     }
-    if (layerUsesPolylineGeometry(layer)) {
+    if (render_route == LayerRenderRoute::PolylineGpu) {
         if (polylineLayerGpuDrawActive(layer_idx)) {
             enqueuePolylineLayerGpuDraw(ctx.draw, layer_idx);
         }
         return;
     }
-    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuDrawActive(layer_idx)) {
+    const bool polygon_gpu_route =
+        render_route == LayerRenderRoute::GenericPolygonGpu ||
+        render_route == LayerRenderRoute::ParcelPolygonGpu;
+    if (!polygon_gpu_route) return;
+    if (allow_polygon_fill && zoningGpuDrawActive(layer_idx)) {
         enqueueZoningGpuDraw(ctx.draw, layer_idx);
     }
-    if ((int)layer_idx != ctx.parcel_layer_idx && zoningGpuOutlineDrawActive(layer_idx)) {
+    if (allow_polygon_outline && zoningGpuOutlineDrawActive(layer_idx)) {
         enqueueZoningGpuOutlineDraw(ctx.draw, layer_idx);
     }
 }
@@ -983,7 +1120,36 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         const bool layer_uses_heatmap_for_cache = layerUsesHeatmapAggregate(*ctx.heatmap_policy, layer_idx);
         const bool layer_uses_lod_for_draw = layerUsesLodGeometry(*ctx.heatmap_policy, layer_idx);
         const bool is_zoning_layer = isZoningPolygonLayer(l);
-        enqueuePrimaryGpuDrawForLayer(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw);
+        const LayerRenderRoute render_route =
+            classifyLayerRenderRoute(layer_idx, l, ctx.parcel_layer_idx);
+        const PolygonRasterTilePolicyContext raster_policy_ctx{
+            &l,
+            render_route,
+            ctx.math_zoom,
+            layer_uses_heatmap_for_cache,
+            layer_uses_lod_for_draw,
+            layerFillEnabledForRuntime(ctx, layer_idx),
+            filterStateActive(ctx),
+            queryStateActive(ctx)
+        };
+        const PolygonRasterTileMode raster_mode = resolvePolygonRasterTileMode(raster_policy_ctx);
+        const bool raster_tile_base_drawn =
+            tryDrawPolygonRasterTileBase(ctx, layer_idx, l, render_route, raster_mode);
+        const bool allow_polygon_fill = !raster_tile_base_drawn;
+        const bool allow_polygon_outline =
+            !raster_tile_base_drawn ||
+            raster_mode == PolygonRasterTileMode::RasterBaseVectorOutline;
+        enqueuePrimaryGpuDrawForLayer(
+            ctx,
+            layer_idx,
+            l,
+            layer_uses_heatmap_for_cache,
+            layer_uses_lod_for_draw,
+            allow_polygon_fill,
+            allow_polygon_outline);
+        if (raster_tile_base_drawn) {
+            continue;
+        }
         if (layerHasPrimaryGpuDraw(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw)) {
             continue;
         }

@@ -10,6 +10,7 @@ struct StatusApiContextFactoryInput {
 
     std::atomic<bool>* stop = nullptr;
     std::vector<LayerDef>* layers = nullptr;
+    int parcel_layer_idx = -1;
     DuckDbAnalytics* duckdb_analytics = nullptr;
     std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     MapFilterState* map_filter_state = nullptr;
