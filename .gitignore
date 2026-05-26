@@ -23,3 +23,6 @@ sources/world/**/*.pdf
 *.geojson
 screenshot
 *.part
+
+# Local output artifacts (do not commit binary/image outputs)
+artifacts/
