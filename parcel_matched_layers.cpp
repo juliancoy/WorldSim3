@@ -1,6 +1,8 @@
 #include "parcel_matched_layers.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
+#include "layer_geometry.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -113,6 +115,62 @@ std::string safeSummaryFieldName(std::string field) {
     return field;
 }
 
+json featureRecordGeometryJson(const LayerDef::FeatureRecord& feature) {
+    if (!feature.rings.empty()) {
+        json rings = json::array();
+        for (const auto& ring : feature.rings) {
+            json coords = json::array();
+            for (const ImVec2& p : ring) coords.push_back({p.x, p.y});
+            rings.push_back(std::move(coords));
+        }
+        return {{"type", "Polygon"}, {"coordinates", std::move(rings)}};
+    }
+    if (!feature.paths.empty()) {
+        json paths = json::array();
+        for (const auto& path : feature.paths) {
+            json coords = json::array();
+            for (const ImVec2& p : path) coords.push_back({p.x, p.y});
+            paths.push_back(std::move(coords));
+        }
+        return {{"type", feature.paths.size() == 1 ? "LineString" : "MultiLineString"}, {"coordinates", feature.paths.size() == 1 ? paths.front() : paths}};
+    }
+    return {{"type", "Point"}, {"coordinates", {feature.extent.min_lon, feature.extent.min_lat}}};
+}
+
+bool readCanonicalFeatureCollectionFallback(const fs::path& path, json& out, std::ostream* log) {
+    const fs::path canonical_path = path.parent_path() / (path.filename().string() + ".canonical.bin");
+    CanonicalFeatureCollectionMetadata meta;
+    if (!loadBinaryCanonicalMetadata(canonical_path, meta) || meta.source_signature.empty()) return false;
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> feature_properties;
+    if (!loadBinaryCanonicalFeatureCollection(canonical_path, meta.source_signature, features, &feature_properties)) {
+        return false;
+    }
+
+    json out_features = json::array();
+    for (size_t i = 0; i < features.size(); ++i) {
+        json props = json::object();
+        if (i < feature_properties.size()) {
+            for (const auto& kv : feature_properties[i].values) props[kv.first] = kv.second;
+        }
+        out_features.push_back({
+            {"type", "Feature"},
+            {"properties", std::move(props)},
+            {"geometry", featureRecordGeometryJson(features[i])}
+        });
+    }
+    out = {
+        {"type", "FeatureCollection"},
+        {"source", canonical_path.string()},
+        {"features", std::move(out_features)}
+    };
+    if (log) {
+        *log << "[parcel-match] loaded canonical fallback " << canonical_path.string()
+             << " features=" << features.size() << "\n";
+    }
+    return true;
+}
+
 json mergeEvents(const json& parcel_feature, const std::vector<const json*>& events, const MatchSpec& spec) {
     json out_props = objectOrEmpty(parcel_feature, "properties");
     out_props["matched_layer"] = spec.source;
@@ -194,6 +252,7 @@ json mergeEvents(const json& parcel_feature, const std::vector<const json*>& eve
 bool readJsonFile(const fs::path& path, json& out, std::ostream* log) {
     std::ifstream in(path);
     if (!in) {
+        if (readCanonicalFeatureCollectionFallback(path, out, log)) return true;
         if (log) *log << "[parcel-match] missing " << path.string() << "\n";
         return false;
     }
@@ -209,6 +268,7 @@ bool readJsonFile(const fs::path& path, json& out, std::ostream* log) {
 bool readJsonFile(const fs::path& path, json& out, std::ostream* log, bool log_missing) {
     std::ifstream in(path);
     if (!in) {
+        if (readCanonicalFeatureCollectionFallback(path, out, log)) return true;
         if (log && log_missing) *log << "[parcel-match] missing " << path.string() << "\n";
         return false;
     }
@@ -221,16 +281,43 @@ bool readJsonFile(const fs::path& path, json& out, std::ostream* log, bool log_m
     return true;
 }
 
-bool outputIsFresh(const fs::path& output, const fs::path& parcel, const fs::path& source) {
+bool layerArtifactWriteTime(const fs::path& path, fs::file_time_type& out) {
     std::error_code ec;
-    if (!fs::exists(output, ec)) return false;
-    const auto out_time = fs::last_write_time(output, ec);
-    if (ec) return false;
-    const auto parcel_time = fs::last_write_time(parcel, ec);
-    if (ec) return false;
-    const auto source_time = fs::last_write_time(source, ec);
-    if (ec) return false;
+    if (fs::exists(path, ec)) {
+        out = fs::last_write_time(path, ec);
+        return !ec;
+    }
+    const fs::path canonical_path = fs::path(path.string() + ".canonical.bin");
+    ec.clear();
+    if (fs::exists(canonical_path, ec)) {
+        out = fs::last_write_time(canonical_path, ec);
+        return !ec;
+    }
+    return false;
+}
+
+bool outputIsFresh(const fs::path& output, const fs::path& parcel, const fs::path& source) {
+    fs::file_time_type out_time;
+    fs::file_time_type parcel_time;
+    fs::file_time_type source_time;
+    if (!layerArtifactWriteTime(output, out_time)) return false;
+    if (!layerArtifactWriteTime(parcel, parcel_time)) return false;
+    if (!layerArtifactWriteTime(source, source_time)) return false;
     return out_time >= parcel_time && out_time >= source_time;
+}
+
+bool writeCanonicalCompanion(const fs::path& geojson_path, std::ostream* log) {
+    std::vector<LayerDef::FeatureProperties> feature_properties;
+    std::vector<LayerDef::FeatureRecord> features = loadLayerPointsFromFile(geojson_path, &feature_properties);
+    if (features.empty()) return false;
+    ensureFeatureIdentityForLayerFile(geojson_path.filename().string(), features);
+    const fs::path canonical_path = fs::path(geojson_path.string() + ".canonical.bin");
+    saveBinaryCanonicalFeatureCollection(canonical_path, fileSignature(geojson_path), features, &feature_properties);
+    if (log) {
+        *log << "[parcel-match] canonical " << canonical_path.string()
+             << ": features=" << features.size() << "\n";
+    }
+    return true;
 }
 
 } // namespace
@@ -331,6 +418,8 @@ std::vector<ParcelMatchedLayerBuildStat> ensureParcelMatchedEventLayers(
             continue;
         }
         out << collection.dump();
+        out.close();
+        writeCanonicalCompanion(out_path, log);
         stat.written = true;
         if (log) {
             *log << "[parcel-match] " << out_path.string()

@@ -924,6 +924,7 @@ DuckDbAnalytics::DuckDbAnalytics(std::filesystem::path root)
     status_.db_path = (root_ / "data" / "worldsim.duckdb").string();
     status_.available = true;
     status_.message = "DuckDB analytics cache not built yet.";
+    validateExistingCache();
 }
 
 bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {

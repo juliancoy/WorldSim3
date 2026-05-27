@@ -100,8 +100,7 @@ void shutdownWorldSimApp(AppShutdownContext& ctx) {
         ctx.heatmap_percentile_clip,
         ctx.heatmap_zoom_adaptive_bandwidth,
         ctx.heatmap_multires_enabled,
-        ctx.heatmap_multires_blend,
-        ctx.heatmap_allow_cpu_fallback);
+        ctx.heatmap_multires_blend);
     if (ctx.filter_enabled &&
         ctx.filter_use_date &&
         ctx.filter_year_min &&

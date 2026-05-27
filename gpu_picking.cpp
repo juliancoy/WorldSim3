@@ -3,6 +3,8 @@
 #include "app_utils.h"
 #include "worldsim_app.h"
 
+#include <algorithm>
+
 namespace {
 GpuPickRequest makePickRequest(const MapHoverQuery& query) {
     GpuPickRequest request;
@@ -22,6 +24,131 @@ bool isParcelInteractionLayer(const LayerDef& layer) {
     return layer.scale == "parcel" &&
            !layerUsesPointGeometry(layer) &&
            !layerUsesPolylineGeometry(layer);
+}
+
+bool pointInTriangleLonLat(float px, float py, const ImVec2& a, const ImVec2& b, const ImVec2& c) {
+    auto cross = [](const ImVec2& u, const ImVec2& v, float x, float y) {
+        return (v.x - u.x) * (y - u.y) - (v.y - u.y) * (x - u.x);
+    };
+    const float c1 = cross(a, b, px, py);
+    const float c2 = cross(b, c, px, py);
+    const float c3 = cross(c, a, px, py);
+    const bool has_neg = c1 < 0.0f || c2 < 0.0f || c3 < 0.0f;
+    const bool has_pos = c1 > 0.0f || c2 > 0.0f || c3 > 0.0f;
+    return !(has_neg && has_pos);
+}
+
+const ParcelRenderFeatureRecord* parcelRenderFeatureForFeatureIdx(
+    const ParcelRenderCacheBlob& blob,
+    size_t feature_idx) {
+    if (feature_idx < blob.features.size() && blob.features[feature_idx].feature_idx == feature_idx) {
+        return &blob.features[feature_idx];
+    }
+    for (const ParcelRenderFeatureRecord& rec : blob.features) {
+        if (rec.feature_idx == feature_idx) return &rec;
+    }
+    return nullptr;
+}
+
+bool pointInParcelRenderFeature(
+    const ParcelRenderCacheBlob& blob,
+    const ParcelRenderFeatureRecord& rec,
+    float lon,
+    float lat) {
+    if (lon < rec.min_lon || lon > rec.max_lon || lat < rec.min_lat || lat > rec.max_lat) return false;
+    const uint32_t end = rec.index_offset + rec.index_count;
+    if (end > blob.indices.size()) return false;
+    for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
+        const uint32_t ia = blob.indices[i + 0];
+        const uint32_t ib = blob.indices[i + 1];
+        const uint32_t ic = blob.indices[i + 2];
+        if (ia >= blob.vertices.size() || ib >= blob.vertices.size() || ic >= blob.vertices.size()) continue;
+        if (pointInTriangleLonLat(lon, lat, blob.vertices[ia], blob.vertices[ib], blob.vertices[ic])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool pointInPolygonArtifactFeature(
+    const PolygonGeometryArtifact& artifact,
+    size_t feature_idx,
+    float lon,
+    float lat) {
+    if (feature_idx >= artifact.features.size()) return false;
+    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
+    if (lon < rec.min_lon || lon > rec.max_lon || lat < rec.min_lat || lat > rec.max_lat) return false;
+    const uint32_t end = rec.index_offset + rec.index_count;
+    if (end > artifact.fill_indices.size()) return false;
+    for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
+        const uint32_t ia = artifact.fill_indices[i + 0];
+        const uint32_t ib = artifact.fill_indices[i + 1];
+        const uint32_t ic = artifact.fill_indices[i + 2];
+        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
+        if (pointInTriangleLonLat(lon, lat, artifact.vertices[ia], artifact.vertices[ib], artifact.vertices[ic])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool queryParcelSpatialCandidates(
+    const MapHoverQuery& query,
+    size_t layer_idx,
+    std::vector<uint32_t>& candidates) {
+    if (!query.layer_spatial || layer_idx >= query.layer_spatial->size()) return false;
+    constexpr float kPickEpsilonDeg = 0.0000005f;
+    return queryLayerSpatialIndex(
+        (*query.layer_spatial)[layer_idx],
+        query.mouse_ll.x - kPickEpsilonDeg,
+        query.mouse_ll.y - kPickEpsilonDeg,
+        query.mouse_ll.x + kPickEpsilonDeg,
+        query.mouse_ll.y + kPickEpsilonDeg,
+        candidates);
+}
+
+bool tryPickParcelCpuFallbackForLayer(
+    const MapHoverQuery& query,
+    size_t layer_idx,
+    size_t* out_feature_idx,
+    std::string* out_entity_id) {
+    if (!query.layers || layer_idx >= query.layers->size() || !out_feature_idx || !out_entity_id) return false;
+    const LayerDef& layer = (*query.layers)[layer_idx];
+    std::vector<uint32_t> candidates;
+    if (!queryParcelSpatialCandidates(query, layer_idx, candidates) || candidates.empty()) return false;
+
+    if ((int)layer_idx == query.parcel_layer_idx && query.parcel_render_blob) {
+        for (uint32_t candidate : candidates) {
+            if ((size_t)candidate >= layer.features.size()) continue;
+            const ParcelRenderFeatureRecord* rec =
+                parcelRenderFeatureForFeatureIdx(*query.parcel_render_blob, (size_t)candidate);
+            if (!rec) continue;
+            if (!pointInParcelRenderFeature(*query.parcel_render_blob, *rec, query.mouse_ll.x, query.mouse_ll.y)) {
+                continue;
+            }
+            *out_feature_idx = (size_t)candidate;
+            *out_entity_id = !rec->entity_id.empty()
+                ? rec->entity_id
+                : featureEntityIdForLayerFeature(layer, layer.features[(size_t)candidate], (size_t)candidate);
+            return true;
+        }
+        return false;
+    }
+
+    if (!query.polygon_geometry_artifacts) return false;
+    auto artifact_it = query.polygon_geometry_artifacts->find(layer_idx);
+    if (artifact_it == query.polygon_geometry_artifacts->end()) return false;
+    const PolygonGeometryArtifact& artifact = artifact_it->second;
+    for (uint32_t candidate : candidates) {
+        if ((size_t)candidate >= layer.features.size()) continue;
+        if (!pointInPolygonArtifactFeature(artifact, (size_t)candidate, query.mouse_ll.x, query.mouse_ll.y)) {
+            continue;
+        }
+        *out_feature_idx = (size_t)candidate;
+        *out_entity_id = featureEntityIdForLayerFeature(layer, layer.features[(size_t)candidate], (size_t)candidate);
+        return true;
+    }
+    return false;
 }
 
 void tryPickPointForLayer(
@@ -101,11 +228,21 @@ void tryPickParcel(
         std::string pick_error;
         if ((int)layer_idx == query.parcel_layer_idx) {
             if (!gpuPickParcelFeature(request, &feature_idx, &entity_id, &pick_error)) {
+                if (!tryPickParcelCpuFallbackForLayer(query, layer_idx, &feature_idx, &entity_id)) {
+                    continue;
+                }
+            } else if (feature_idx == (size_t)-1 &&
+                       !tryPickParcelCpuFallbackForLayer(query, layer_idx, &feature_idx, &entity_id)) {
                 continue;
             }
             if (query.parcel_render_blob && feature_idx >= query.parcel_render_blob->features.size()) continue;
         } else {
             if (!gpuPickZoningFeature(layer_idx, request, &feature_idx, &entity_id, &pick_error)) {
+                if (!tryPickParcelCpuFallbackForLayer(query, layer_idx, &feature_idx, &entity_id)) {
+                    continue;
+                }
+            } else if (feature_idx == (size_t)-1 &&
+                       !tryPickParcelCpuFallbackForLayer(query, layer_idx, &feature_idx, &entity_id)) {
                 continue;
             }
         }

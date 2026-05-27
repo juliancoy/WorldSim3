@@ -38,7 +38,6 @@ struct AppShutdownContextFactoryInput {
     bool* heatmap_zoom_adaptive_bandwidth = nullptr;
     bool* heatmap_multires_enabled = nullptr;
     float* heatmap_multires_blend = nullptr;
-    bool* heatmap_allow_cpu_fallback = nullptr;
     bool* filter_enabled = nullptr;
     bool* filter_use_date = nullptr;
     int* filter_year_min = nullptr;

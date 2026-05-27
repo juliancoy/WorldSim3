@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct CrimePointRuntimeState {
@@ -28,3 +29,9 @@ struct CrimePointRuntimeSyncInput {
 };
 
 void syncCrimePointGpuLayer(const CrimePointRuntimeSyncInput& input, CrimePointRuntimeState& state);
+
+void publishCrimePointArtifactForAggregateSampling(
+    int crime_nibrs_layer_idx,
+    const CrimePointRuntimeState& crime_state,
+    std::unordered_map<size_t, PointGeometryArtifact>& point_geometry_artifacts,
+    std::unordered_map<size_t, std::string>* point_artifact_signatures = nullptr);

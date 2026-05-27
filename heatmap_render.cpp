@@ -1,11 +1,13 @@
 #include "heatmap_render.h"
 
+#include "aggregate_debug.h"
 #include "aggregate_visualization_strategies.h"
 #include "heatmap_gpu_aggregate.h"
 #include "heatmap_strategy_ops.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <cctype>
 #include <cstring>
@@ -16,10 +18,29 @@
 ImVec4 defaultHeatColor(float t);
 
 namespace {
-constexpr char kHeatmapRasterCacheMagic[8] = {'W', 'S', '3', 'A', 'G', 'G', '1', '\0'};
+constexpr char kHeatmapRasterCacheMagic[8] = {'W', 'S', '3', 'A', 'G', 'G', '2', '\0'};
+
+void hashBytes(uint64_t& h, const void* data, size_t size) {
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (size_t i = 0; i < size; ++i) {
+        h ^= (uint64_t)bytes[i];
+        h *= 1099511628211ULL;
+    }
+}
+
+template <typename T>
+void hashValue(uint64_t& h, const T& value) {
+    hashBytes(h, &value, sizeof(value));
+}
 
 bool isGpuSplatFamilyAlgo(int algo) {
     return algo == kAggregateGpuSplatBlur || algo == kAggregateGpuSplatHue;
+}
+
+bool validHeatmapSampleLonLat(const HeatSample& sample) {
+    if (!std::isfinite(sample.lon) || !std::isfinite(sample.lat)) return false;
+    if (sample.lon < -180.0f || sample.lon > 180.0f || sample.lat < -90.0f || sample.lat > 90.0f) return false;
+    return !(std::fabs(sample.lon) < 1.0e-5f && std::fabs(sample.lat) < 1.0e-5f);
 }
 
 ImVec4 hueSplatColor(const ImVec4& base, float t) {
@@ -48,6 +69,20 @@ ImVec4 hueSplatColor(const ImVec4& base, float t) {
 }
 }
 
+uint64_t heatmapRasterShotHash(const HeatmapRaster& raster) {
+    uint64_t h = 1469598103934665603ULL;
+    hashValue(h, raster.w);
+    hashValue(h, raster.h);
+    hashValue(h, raster.min_lon);
+    hashValue(h, raster.min_lat);
+    hashValue(h, raster.max_lon);
+    hashValue(h, raster.max_lat);
+    const uint64_t rgba_size = (uint64_t)raster.rgba.size();
+    hashValue(h, rgba_size);
+    if (!raster.rgba.empty()) hashBytes(h, raster.rgba.data(), raster.rgba.size());
+    return h;
+}
+
 bool loadHeatmapRasterCache(
     const std::filesystem::path& cache_path,
     uint64_t key,
@@ -56,10 +91,12 @@ bool loadHeatmapRasterCache(
     if (!in) return false;
     char magic[8]{};
     uint64_t file_key = 0;
+    uint64_t stored_shot_hash = 0;
     HeatmapRaster raster;
     uint64_t rgba_size = 0;
     in.read(magic, sizeof(magic));
     in.read(reinterpret_cast<char*>(&file_key), sizeof(file_key));
+    in.read(reinterpret_cast<char*>(&stored_shot_hash), sizeof(stored_shot_hash));
     in.read(reinterpret_cast<char*>(&raster.w), sizeof(raster.w));
     in.read(reinterpret_cast<char*>(&raster.h), sizeof(raster.h));
     in.read(reinterpret_cast<char*>(&raster.min_lon), sizeof(raster.min_lon));
@@ -78,6 +115,8 @@ bool loadHeatmapRasterCache(
     raster.rgba.resize((size_t)rgba_size);
     in.read(reinterpret_cast<char*>(raster.rgba.data()), (std::streamsize)raster.rgba.size());
     if (!in) return false;
+    raster.shot_hash = heatmapRasterShotHash(raster);
+    if (raster.shot_hash != stored_shot_hash) return false;
     out = std::move(raster);
     return true;
 }
@@ -89,11 +128,14 @@ void saveHeatmapRasterCache(
     if (raster.w <= 0 || raster.h <= 0 || raster.rgba.size() != (size_t)raster.w * (size_t)raster.h * 4ULL) return;
     std::error_code ec;
     std::filesystem::create_directories(cache_path.parent_path(), ec);
-    std::ofstream out(cache_path, std::ios::binary);
+    const std::filesystem::path tmp_path = cache_path.string() + ".tmp";
+    std::ofstream out(tmp_path, std::ios::binary);
     if (!out) return;
     const uint64_t rgba_size = (uint64_t)raster.rgba.size();
+    const uint64_t shot_hash = heatmapRasterShotHash(raster);
     out.write(kHeatmapRasterCacheMagic, sizeof(kHeatmapRasterCacheMagic));
     out.write(reinterpret_cast<const char*>(&key), sizeof(key));
+    out.write(reinterpret_cast<const char*>(&shot_hash), sizeof(shot_hash));
     out.write(reinterpret_cast<const char*>(&raster.w), sizeof(raster.w));
     out.write(reinterpret_cast<const char*>(&raster.h), sizeof(raster.h));
     out.write(reinterpret_cast<const char*>(&raster.min_lon), sizeof(raster.min_lon));
@@ -102,6 +144,18 @@ void saveHeatmapRasterCache(
     out.write(reinterpret_cast<const char*>(&raster.max_lat), sizeof(raster.max_lat));
     out.write(reinterpret_cast<const char*>(&rgba_size), sizeof(rgba_size));
     out.write(reinterpret_cast<const char*>(raster.rgba.data()), (std::streamsize)raster.rgba.size());
+    out.close();
+    if (!out) {
+        std::filesystem::remove(tmp_path, ec);
+        return;
+    }
+    std::filesystem::rename(tmp_path, cache_path, ec);
+    if (ec) {
+        std::filesystem::remove(cache_path, ec);
+        ec.clear();
+        std::filesystem::rename(tmp_path, cache_path, ec);
+        if (ec) std::filesystem::remove(tmp_path, ec);
+    }
 }
 
 std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
@@ -119,6 +173,12 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
     int max_zoom,
     int raster_base_px,
     int raster_max_px) {
+                samples.erase(
+                    std::remove_if(
+                        samples.begin(),
+                        samples.end(),
+                        [](const HeatSample& sample) { return !validHeatmapSampleLonLat(sample); }),
+                    samples.end());
                 struct Bin {
                     double d = 0.0, w = 0.0, r = 0.0, g = 0.0, b = 0.0;
                     int gv = 0, sv = 0;
@@ -314,43 +374,6 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                 auto build_raster_group = [&](const std::vector<HeatSample>& group) {
                     if (group.empty()) return;
                     const HeatSample& settings = group.front();
-                    if (isGpuSplatFamilyAlgo(settings.algo)) {
-                        std::string gpu_err;
-                        TileTexture gpu_texture;
-                        const float zf = settings.zoom_adaptive_bandwidth
-                            ? std::clamp(1.0f + 0.12f * (float)(max_zoom - zoom), 1.0f, 3.0f)
-                            : 1.0f;
-                        float sigma = std::max(1.0f, settings.bandwidth_px * zf);
-                        sigma = std::sqrt(sigma * sigma + settings.blur_sigma_px * settings.blur_sigma_px);
-                        if (buildGpuSplatAggregateTexture(
-                                group,
-                                rw,
-                                rh,
-                                raster_min_lon,
-                                raster_min_lat,
-                                raster_max_lon,
-                                raster_max_lat,
-                                sigma,
-                                settings.percentile_clip,
-                                gpu_texture,
-                                &gpu_err)) {
-                            out.has_raster = true;
-                            HeatmapRasterLayer raster_layer;
-                            raster_layer.raster = {
-                                rw,
-                                rh,
-                                raster_min_lon,
-                                raster_min_lat,
-                                raster_max_lon,
-                                raster_max_lat,
-                                {}
-                            };
-                            raster_layer.gpu_texture = std::move(gpu_texture);
-                            raster_layer.has_gpu_texture = true;
-                            out.raster_layers.push_back(std::move(raster_layer));
-                            return;
-                        }
-                    }
                     const float sx = (float)rw / std::max(0.0001f, raster_max_lon - raster_min_lon);
                     const float sy = (float)rh / std::max(0.0001f, raster_max_lat - raster_min_lat);
                     const bool preserved_gpu_splat =
@@ -380,6 +403,23 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                     bool gpu_ok = false;
                     if (isGpuSplatFamilyAlgo(settings.algo)) {
                         std::string gpu_err;
+                        if (worldsimGpuAggregateDebugEnabled()) {
+                            std::fprintf(
+                                stderr,
+                                "[worldsim3][gpu-aggregate] attempt key=%llu layer=%d samples=%zu raster=%dx%d bounds=(%.6f,%.6f)-(%.6f,%.6f) sigma=%.3f clip=%.1f algo=%d\n",
+                                (unsigned long long)key,
+                                settings.layer,
+                                group.size(),
+                                rw,
+                                rh,
+                                raster_min_lon,
+                                raster_min_lat,
+                                raster_max_lon,
+                                raster_max_lat,
+                                sigma_r,
+                                settings.percentile_clip,
+                                settings.algo);
+                        }
                         gpu_ok = buildGpuSplatAggregate(
                             group,
                             rw,
@@ -397,6 +437,18 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             gv,
                             sv,
                             &gpu_err);
+                        if (worldsimGpuAggregateDebugEnabled()) {
+                            std::fprintf(
+                                stderr,
+                                "[worldsim3][gpu-aggregate] %s key=%llu layer=%d raster=%dx%d shot=cpu-visible%s%s\n",
+                                gpu_ok ? "success" : "failed",
+                                (unsigned long long)key,
+                                settings.layer,
+                                rw,
+                                rh,
+                                gpu_ok ? "" : " error=",
+                                gpu_ok ? "" : (gpu_err.empty() ? "unknown" : gpu_err.c_str()));
+                        }
                     }
 
                     auto build_blur_kernel = [&](float sigma) {
@@ -486,6 +538,7 @@ std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(
                             blend_rgba(x, y, src);
                         }
                     }
+                    out.raster.shot_hash = heatmapRasterShotHash(out.raster);
                     out.has_raster = true;
                 };
                 for (const auto& kv : by_layer) {

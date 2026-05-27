@@ -14,6 +14,7 @@ struct WorldsimCliOptions {
     bool run_layer_profile_selftest = false;
     bool run_layer_runtime_status_selftest = false;
     bool run_parcel_gpu_cpu_bypass_selftest = false;
+    bool run_vulkan_device_loss_selftest = false;
     bool run_render_routing_selftest = false;
     bool run_render_tile_cache_selftest = false;
     bool run_render_polygon_tile_runtime_policy_selftest = false;
@@ -26,6 +27,8 @@ struct WorldsimCliOptions {
     bool run_parcel_hover_click_ui_harness = false;
     bool run_duckdb_parcel_semantic_snapshot_selftest = false;
     bool run_duckdb_parcel_ingest_selftest = false;
+    bool run_population_metrics_selftest = false;
+    bool run_beps_screening_selftest = false;
     bool run_inspect_canonical_parcel_binary = false;
     bool run_validate_canonical_parcel_binary = false;
     bool run_parcel_artifact_health = false;
@@ -46,8 +49,11 @@ struct WorldsimCliOptions {
     bool run_inspect_duckdb_geography_tables = false;
     bool run_report_duckdb_coverage = false;
     bool run_build_parcel_matched_layers = false;
+    bool run_build_population_metrics = false;
+    bool run_build_beps_candidates = false;
     bool force_build_parcel_matched_layers = false;
     bool run_color_editor = false;
+    bool debug_gpu_aggregate = false;
     bool include_large_downloads = false;
     int reserve_cores = 0;
     bool reserve_cores_set = false;

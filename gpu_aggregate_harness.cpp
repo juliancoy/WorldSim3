@@ -1,4 +1,6 @@
 #include "heatmap_gpu_aggregate.h"
+
+#include "aggregate_debug.h"
 #include "worldsim_app_internal.h"
 
 #include <algorithm>
@@ -49,8 +51,22 @@ void FramePresent(ImGui_ImplVulkanH_Window*) {}
 void FrameRenderSecondary(ImGui_ImplVulkanH_Window*, ImDrawData*, bool&) {}
 void FramePresentSecondary(ImGui_ImplVulkanH_Window*, bool&) {}
 void drainRetiredTextures(bool) {}
-void destroyTileTexture(TileTexture&) {}
-void destroyTileTextureNow(TileTexture&) {}
+void destroyTileTextureNow(TileTexture& tex) {
+    if (tex.descriptor) tex.descriptor = VK_NULL_HANDLE;
+    if (tex.view) {
+        vkDestroyImageView(g_Device, tex.view, g_Allocator);
+        tex.view = VK_NULL_HANDLE;
+    }
+    if (tex.image) {
+        vkDestroyImage(g_Device, tex.image, g_Allocator);
+        tex.image = VK_NULL_HANDLE;
+    }
+    if (tex.memory) {
+        vkFreeMemory(g_Device, tex.memory, g_Allocator);
+        tex.memory = VK_NULL_HANDLE;
+    }
+}
+void destroyTileTexture(TileTexture& tex) { destroyTileTextureNow(tex); }
 bool uploadRgbaTexture(const unsigned char*, uint32_t, uint32_t, TileTexture&) { return false; }
 TileSample getTileSample(const std::filesystem::path&, const std::string&, int, int, int, int) { return {}; }
 const std::vector<std::vector<ImVec2>>& getTopoVectorLines(const std::filesystem::path&) {
@@ -117,6 +133,8 @@ struct BenchConfig {
     int repeats = 5;
     float sigma_r = 6.0f;
     bool include_cpu_blur = true;
+    bool texture_path = false;
+    bool reject_null_island = false;
 };
 
 struct Bounds {
@@ -176,6 +194,12 @@ static void expand_bounds(Bounds& b, float lon, float lat) {
     b.valid = true;
 }
 
+static bool valid_aggregate_lonlat(float lon, float lat) {
+    if (!std::isfinite(lon) || !std::isfinite(lat)) return false;
+    if (lon < -180.0f || lon > 180.0f || lat < -90.0f || lat > 90.0f) return false;
+    return !(std::fabs(lon) < 1.0e-5f && std::fabs(lat) < 1.0e-5f);
+}
+
 static void scan_coords(const json& coords, Bounds& b) {
     if (!coords.is_array() || coords.empty()) return;
     if (coords.size() >= 2 && coords[0].is_number() && coords[1].is_number()) {
@@ -209,6 +233,9 @@ static std::vector<HeatSample> load_howard_samples(const BenchConfig& cfg, Bound
         Bounds fb;
         scan_coords(geom["coordinates"], fb);
         if (!fb.valid) continue;
+        const float sample_lon = (fb.min_lon + fb.max_lon) * 0.5f;
+        const float sample_lat = (fb.min_lat + fb.max_lat) * 0.5f;
+        if (cfg.reject_null_island && !valid_aggregate_lonlat(sample_lon, sample_lat)) continue;
         expand_bounds(out_bounds, fb.min_lon, fb.min_lat);
         expand_bounds(out_bounds, fb.max_lon, fb.max_lat);
 
@@ -223,8 +250,8 @@ static std::vector<HeatSample> load_howard_samples(const BenchConfig& cfg, Bound
         }
 
         HeatSample s;
-        s.lon = (fb.min_lon + fb.max_lon) * 0.5f;
-        s.lat = (fb.min_lat + fb.max_lat) * 0.5f;
+        s.lon = sample_lon;
+        s.lat = sample_lat;
         s.has_value = has_value;
         s.value = value;
         s.prefer_gradient = true;
@@ -238,6 +265,84 @@ static std::vector<HeatSample> load_howard_samples(const BenchConfig& cfg, Bound
         s.color = ImVec4(0.15f + 0.85f * t, 0.25f + 0.45f * (1.0f - t), 0.95f - 0.65f * t, 1.0f);
     }
     return samples;
+}
+
+static int run_nibrs_crime_aggregate_selftest() {
+    BenchConfig cfg;
+    cfg.input = "sources/world/earth/nation_state/us/state_region/md/county_city/baltimore_city/layers/crime_nibrs_group_a_2022_present.geojson";
+    cfg.jurisdiction.clear();
+    cfg.raster_w = 512;
+    cfg.raster_h = 512;
+    cfg.sigma_r = 6.0f;
+    cfg.reject_null_island = true;
+
+    Bounds bounds;
+    const double load_begin = now_ms();
+    std::vector<HeatSample> samples;
+    try {
+        samples = load_howard_samples(cfg, bounds);
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[harness][nibrs] load failed: %s\n", e.what());
+        return 2;
+    }
+    const double load_ms = now_ms() - load_begin;
+    const bool bounds_are_baltimore =
+        bounds.valid &&
+        bounds.min_lon < -76.0f &&
+        bounds.max_lon < -76.0f &&
+        bounds.min_lat > 39.0f &&
+        bounds.max_lat > 39.0f;
+    if (samples.empty() || !bounds_are_baltimore) {
+        std::fprintf(
+            stderr,
+            "[harness][nibrs] invalid aggregate input samples=%zu bounds=(%.8f,%.8f)-(%.8f,%.8f)\n",
+            samples.size(),
+            bounds.min_lon,
+            bounds.min_lat,
+            bounds.max_lon,
+            bounds.max_lat);
+        return 3;
+    }
+
+    setup_vulkan_minimal();
+    TileTexture texture;
+    std::string err;
+    const double gpu_begin = now_ms();
+    const bool texture_ok = buildGpuSplatAggregateTexture(
+        samples,
+        cfg.raster_w,
+        cfg.raster_h,
+        bounds.min_lon,
+        bounds.min_lat,
+        bounds.max_lon,
+        bounds.max_lat,
+        cfg.sigma_r,
+        95.0f,
+        texture,
+        &err);
+    const double gpu_ms = now_ms() - gpu_begin;
+    const bool handles_valid = texture.image && texture.view && texture.memory;
+    if (!texture_ok || !handles_valid) {
+        std::fprintf(stderr, "[harness][nibrs] GPU aggregate texture failed: %s\n", err.c_str());
+        destroyTileTextureNow(texture);
+        CleanupVulkan();
+        return 4;
+    }
+    destroyTileTextureNow(texture);
+    CleanupVulkan();
+
+    std::printf("{\n");
+    std::printf("  \"mode\": \"nibrs-crime-aggregate-selftest\",\n");
+    std::printf("  \"ok\": true,\n");
+    std::printf("  \"input\": \"%s\",\n", cfg.input.string().c_str());
+    std::printf("  \"samples\": %zu,\n", samples.size());
+    std::printf("  \"bounds\": {\"min_lon\": %.8f, \"min_lat\": %.8f, \"max_lon\": %.8f, \"max_lat\": %.8f},\n",
+                bounds.min_lon, bounds.min_lat, bounds.max_lon, bounds.max_lat);
+    std::printf("  \"raster\": {\"w\": %d, \"h\": %d},\n", cfg.raster_w, cfg.raster_h);
+    std::printf("  \"load_ms\": %.3f,\n", load_ms);
+    std::printf("  \"gpu_texture_ms\": %.3f\n", gpu_ms);
+    std::printf("}\n");
+    return 0;
 }
 
 static void blur_field(std::vector<float>& src, int w, int h, float sigma, bool horizontal) {
@@ -331,6 +436,39 @@ static int run_howard_bench(const BenchConfig& cfg) {
         }
     }
 
+    bool texture_ok = false;
+    if (cfg.texture_path) {
+        TileTexture texture;
+        std::string texture_err;
+        const double texture_begin = now_ms();
+        texture_ok = buildGpuSplatAggregateTexture(
+            samples,
+            cfg.raster_w,
+            cfg.raster_h,
+            bounds.min_lon,
+            bounds.min_lat,
+            bounds.max_lon,
+            bounds.max_lat,
+            cfg.sigma_r,
+            95.0f,
+            texture,
+            &texture_err);
+        const double texture_ms = now_ms() - texture_begin;
+        if (!texture_ok) {
+            std::fprintf(stderr, "[harness] GPU aggregate texture FAILED: %s\n", texture_err.c_str());
+            CleanupVulkan();
+            return 4;
+        }
+        std::fprintf(
+            stderr,
+            "[harness] GPU aggregate texture OK image=%p view=%p memory=%p ms=%.3f\n",
+            (void*)texture.image,
+            (void*)texture.view,
+            (void*)texture.memory,
+            texture_ms);
+        destroyTileTextureNow(texture);
+    }
+
     auto avg = [](const std::vector<double>& xs) {
         double sum = 0.0;
         for (double x : xs) sum += x;
@@ -356,6 +494,9 @@ static int run_howard_bench(const BenchConfig& cfg) {
     std::printf("  \"cpu_blur_ms\": {\"avg\": %.3f, \"min\": %.3f, \"max\": %.3f},\n", avg(blur_ms), minv(blur_ms), maxv(blur_ms));
     std::printf("  \"total_aggregate_ms\": {\"avg\": %.3f},\n", avg(gpu_ms) + avg(blur_ms));
     std::printf("  \"last_density\": {\"sum\": %.3f, \"max\": %.3f}\n", last_sum_density, last_max_density);
+    if (cfg.texture_path) {
+        std::printf("  ,\"texture_path_ok\": %s\n", texture_ok ? "true" : "false");
+    }
     std::printf("}\n");
 
     CleanupVulkan();
@@ -390,8 +531,14 @@ static BenchConfig parse_args(int argc, char** argv) {
             cfg.sigma_r = std::max(0.1f, std::stof(need("--sigma")));
         } else if (arg == "--no-cpu-blur") {
             cfg.include_cpu_blur = false;
+        } else if (arg == "--texture") {
+            cfg.texture_path = true;
+        } else if (arg == "--reject-null-island") {
+            cfg.reject_null_island = true;
+        } else if (arg == "--debug-gpu-aggregate") {
+            setWorldsimGpuAggregateDebug(true);
         } else if (arg == "--help" || arg == "-h") {
-            std::printf("Usage: worldsim3_gpu_aggregate_harness [--howard] [--input PATH] [--jurisdiction NAME] [--raster N] [--repeats N] [--sigma N] [--no-cpu-blur]\n");
+            std::printf("Usage: worldsim3_gpu_aggregate_harness [--nibrs-crime-aggregate-selftest] [--howard] [--input PATH] [--jurisdiction NAME] [--raster N] [--repeats N] [--sigma N] [--no-cpu-blur] [--texture] [--reject-null-island] [--debug-gpu-aggregate]\n");
             std::exit(0);
         } else {
             std::fprintf(stderr, "unknown argument: %s\n", arg.c_str());
@@ -420,6 +567,16 @@ int main(int argc, char** argv) {
 #if defined(__linux__)
     setenv("WS3_ENABLE_EXPERIMENTAL_GPU_AGGREGATE", "1", 1);
 #endif
+
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--debug-gpu-aggregate") == 0) {
+            setWorldsimGpuAggregateDebug(true);
+            continue;
+        }
+        if (std::strcmp(argv[i], "--nibrs-crime-aggregate-selftest") == 0) {
+            return run_nibrs_crime_aggregate_selftest();
+        }
+    }
 
     if (argc > 1) {
         return run_howard_bench(parse_args(argc, argv));

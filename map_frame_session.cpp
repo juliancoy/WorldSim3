@@ -148,7 +148,6 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
     render_frame_ctx.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
     render_frame_ctx.heatmap_multires_blend = ctx.heatmap_multires_blend;
-    render_frame_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
     render_frame_ctx.heatmap_controls_active = ctx.heatmap_controls_active;
     render_frame_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
     render_frame_ctx.map_polygon_fill_opacity = ctx.map_polygon_fill_opacity;

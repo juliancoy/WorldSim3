@@ -1,5 +1,6 @@
 #include "render_layer_pass.h"
 
+#include "aggregate_debug.h"
 #include "aggregate_visualization_strategies.h"
 #include "app_utils.h"
 #include "feature_props.h"
@@ -608,6 +609,12 @@ bool pointInsideCircle(const ImVec2& p, const ImVec2& center, float radius) {
     return dx * dx + dy * dy <= radius * radius;
 }
 
+bool validAggregateLonLat(float lon, float lat) {
+    if (!std::isfinite(lon) || !std::isfinite(lat)) return false;
+    if (lon < -180.0f || lon > 180.0f || lat < -90.0f || lat > 90.0f) return false;
+    return !(std::fabs(lon) < 1.0e-5f && std::fabs(lat) < 1.0e-5f);
+}
+
 bool isZoningPolygonLayer(const LayerDef& layer) {
     ensureRenderClassificationCache(layer);
     return layer.zoning_polygon_layer_cache;
@@ -639,7 +646,14 @@ bool layerHasPrimaryGpuDraw(
     const LayerRenderRoute render_route =
         classifyLayerRenderRoute(layer_idx, layer, ctx.parcel_layer_idx);
     if (render_route == LayerRenderRoute::ParcelGpu && parcelGpuDrawActive()) return true;
-    if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) return true;
+    if ((int)layer_idx == ctx.crime_nibrs_layer_idx &&
+        shouldUseCrimePointPrimaryGpuDraw(
+            crimePointGpuDrawActive(),
+            layer_uses_heatmap_for_cache,
+            layer_uses_lod_for_draw,
+            ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx))) {
+        return true;
+    }
     if (render_route == LayerRenderRoute::PointGpu) {
         if (layer_uses_heatmap_for_cache || layer_uses_lod_for_draw) return false;
         if (ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx)) return false;
@@ -670,7 +684,12 @@ void enqueuePrimaryGpuDrawForLayer(
         enqueueParcelGpuDraw(ctx.draw);
         return;
     }
-    if ((int)layer_idx == ctx.crime_nibrs_layer_idx && crimePointGpuDrawActive()) {
+    if ((int)layer_idx == ctx.crime_nibrs_layer_idx &&
+        shouldUseCrimePointPrimaryGpuDraw(
+            crimePointGpuDrawActive(),
+            layer_uses_heatmap_for_cache,
+            layer_uses_lod_for_draw,
+            ctx.heatmap_policy && layerUsesPointClustering(*ctx.heatmap_policy, layer_idx))) {
         enqueueCrimePointGpuDraw(ctx.draw);
         return;
     }
@@ -907,8 +926,15 @@ void addHeatSamplesForFeature(
     float feature_sample_value,
     bool feature_heat_value_valid) {
     HeatSample base;
-    base.lon = (fg.extent.min_lon + fg.extent.max_lon) * 0.5f;
-    base.lat = (fg.extent.min_lat + fg.extent.max_lat) * 0.5f;
+    if (!aggregateSampleAnchorLonLatForFeature(
+            ctx,
+            sample_layer_idx,
+            feature_idx,
+            fg,
+            base.lon,
+            base.lat)) {
+        return;
+    }
     base.color = ImGui::ColorConvertU32ToFloat4(feature_c);
     base.value = feature_sample_value;
     base.has_value = feature_heat_value_valid;
@@ -953,9 +979,88 @@ void addHeatSamplesForFeature(
     }
 
     HeatSample hs = base;
-    hs.x = (p0w.x + p1w.x) * 0.5f;
-    hs.y = (p0w.y + p1w.y) * 0.5f;
+    if (featureHasPointGeometry(ctx, sample_layer_idx, feature_idx, fg)) {
+        const ImVec2 anchor_world = lonLatToWorldPx(base.lon, base.lat, ctx.math_zoom);
+        hs.x = anchor_world.x;
+        hs.y = anchor_world.y;
+    } else {
+        hs.x = (p0w.x + p1w.x) * 0.5f;
+        hs.y = (p0w.y + p1w.y) * 0.5f;
+    }
     ctx.heat_samples->push_back(hs);
+}
+
+size_t addHeatSamplesForPointArtifact(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    const LayerDef& layer,
+    ImU32 base_color,
+    bool is_heat_layer,
+    bool is_zoning_layer,
+    const HeatNormalizationState& heat_normalization,
+    const std::function<std::string(const LayerDef::FeatureRecord&)>& normalization_group_key) {
+    if (!ctx.point_geometry_artifacts || !ctx.heat_samples || !ctx.heatmap_policy) return 0;
+    auto artifact_it = ctx.point_geometry_artifacts->find(layer_idx);
+    if (artifact_it == ctx.point_geometry_artifacts->end()) return 0;
+    const PointGeometryArtifact& artifact = artifact_it->second;
+    if (artifact.positions.empty()) return 0;
+
+    const size_t before = ctx.heat_samples->size();
+    for (size_t point_idx = 0; point_idx < artifact.positions.size(); ++point_idx) {
+        const ImVec2 pos = artifact.positions[point_idx];
+        if (!validAggregateLonLat(pos.x, pos.y)) continue;
+
+        size_t feature_idx = point_idx;
+        if (point_idx < artifact.feature_refs.size()) {
+            const uint32_t feature_ref = artifact.feature_refs[point_idx];
+            if (feature_ref < artifact.features.size()) {
+                feature_idx = artifact.features[feature_ref].feature_idx;
+            }
+        }
+
+        ImU32 feature_c = base_color;
+        float feature_heat_value = 0.0f;
+        float feature_normalized_value = 0.0f;
+        bool feature_heat_value_valid = false;
+        if (feature_idx < layer.features.size()) {
+            const LayerDef::FeatureRecord& fg = layer.features[feature_idx];
+            if (!resolveFeatureRenderStyle(
+                    ctx,
+                    layer_idx,
+                    feature_idx,
+                    layer,
+                    fg,
+                    base_color,
+                    is_heat_layer,
+                    is_zoning_layer,
+                    heat_normalization,
+                    normalization_group_key,
+                    feature_c,
+                    feature_heat_value,
+                    feature_normalized_value,
+                    feature_heat_value_valid)) {
+                continue;
+            }
+        }
+
+        HeatSample hs;
+        hs.layer = static_cast<int>(layer_idx);
+        hs.lon = pos.x;
+        hs.lat = pos.y;
+        const ImVec2 world = lonLatToWorldPx(pos.x, pos.y, ctx.math_zoom);
+        hs.x = world.x;
+        hs.y = world.y;
+        hs.color = ImGui::ColorConvertU32ToFloat4(feature_c);
+        hs.value = heat_normalization.normalize_mode == 0 ? feature_heat_value : feature_normalized_value;
+        hs.has_value = feature_heat_value_valid;
+        hs.prefer_gradient =
+            ctx.layer_heatmap_use_gradient && layer_idx < ctx.layer_heatmap_use_gradient->size()
+                ? (*ctx.layer_heatmap_use_gradient)[layer_idx]
+                : true;
+        resolveLayerHeatSettings(*ctx.heatmap_policy, layer_idx, hs);
+        ctx.heat_samples->push_back(hs);
+    }
+    return ctx.heat_samples->size() - before;
 }
 
 void drawFeatureRecordetry(
@@ -1099,6 +1204,34 @@ void renderFeature(
 
 } // namespace
 
+bool aggregateSampleAnchorLonLatForFeature(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureRecord& fg,
+    float& out_lon,
+    float& out_lat) {
+    if (ctx.point_geometry_artifacts) {
+        auto point_it = ctx.point_geometry_artifacts->find(layer_idx);
+        if (point_it != ctx.point_geometry_artifacts->end() &&
+            feature_idx < point_it->second.positions.size()) {
+            const ImVec2 pos = point_it->second.positions[feature_idx];
+            if (validAggregateLonLat(pos.x, pos.y)) {
+                out_lon = pos.x;
+                out_lat = pos.y;
+                return true;
+            }
+        }
+    }
+
+    const float lon = (fg.extent.min_lon + fg.extent.max_lon) * 0.5f;
+    const float lat = (fg.extent.min_lat + fg.extent.max_lat) * 0.5f;
+    if (!validAggregateLonLat(lon, lat)) return false;
+    out_lon = lon;
+    out_lat = lat;
+    return true;
+}
+
 bool shouldBypassCpuParcelFeaturePass(
     bool parcel_gpu_draw_active,
     bool layer_uses_heatmap_for_cache,
@@ -1107,6 +1240,18 @@ bool shouldBypassCpuParcelFeaturePass(
     if (!parcel_gpu_draw_active) return false;
     if (layer_uses_lod_for_draw) return false;
     if (layer_uses_heatmap_for_cache && should_recompute_heatmap) return false;
+    return true;
+}
+
+bool shouldUseCrimePointPrimaryGpuDraw(
+    bool crime_gpu_draw_active,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw,
+    bool layer_uses_point_clustering) {
+    if (!crime_gpu_draw_active) return false;
+    if (layer_uses_heatmap_for_cache) return false;
+    if (layer_uses_lod_for_draw) return false;
+    if (layer_uses_point_clustering) return false;
     return true;
 }
 
@@ -1225,6 +1370,31 @@ void runRenderLayerPass(const RenderLayerPassContext& ctx) {
         ImU32 base_color = ImGui::ColorConvertFloat4ToU32(l.color);
         const bool should_cluster_point_layer =
             shouldClusterPointLayer(ctx, layer_idx, l, layer_uses_heatmap_for_cache, layer_uses_lod_for_draw);
+        if (ctx.should_recompute_heatmap &&
+            layer_uses_heatmap_for_cache &&
+            layerUsesPointGeometry(l)) {
+            const size_t added = addHeatSamplesForPointArtifact(
+                ctx,
+                layer_idx,
+                l,
+                base_color,
+                is_heat_layer,
+                is_zoning_layer,
+                heat_normalization,
+                normalization_group_key);
+            if (added > 0) {
+                if (worldsimGpuAggregateDebugEnabled()) {
+                    std::fprintf(
+                        stderr,
+                        "[worldsim3][gpu-aggregate] point-artifact-samples layer=%zu file=%s samples=%zu features=%zu\n",
+                        layer_idx,
+                        l.file.c_str(),
+                        added,
+                        l.features.size());
+                }
+                continue;
+            }
+        }
         bool have_candidates = !ctx.should_recompute_heatmap || !layer_uses_heatmap_for_cache;
         if (ctx.high_quality_gpu_aggregate && ctx.should_recompute_heatmap && layer_uses_heatmap_for_cache) {
             have_candidates = false;

@@ -24,7 +24,6 @@ uint64_t buildHeatmapKey(const HeatmapKeyBuilderContext& ctx, bool include_view_
     hashCombineU64(key, ctx.heatmap_zoom_adaptive_bandwidth ? 1ULL : 0ULL);
     hashCombineU64(key, ctx.heatmap_multires_enabled ? 1ULL : 0ULL);
     hashCombineFloat(key, ctx.heatmap_multires_blend);
-    hashCombineU64(key, ctx.heatmap_allow_cpu_fallback ? 1ULL : 0ULL);
     hashCombineU64(key, ctx.filter_enabled ? 1ULL : 0ULL);
     for (const char* p = ctx.filter_blocklot; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
     for (const char* p = ctx.filter_status; *p; ++p) hashCombineU64(key, (uint64_t)(unsigned char)(*p));
@@ -89,4 +88,8 @@ uint64_t buildHeatmapKey(const HeatmapKeyBuilderContext& ctx, bool include_view_
         }
     }
     return key;
+}
+
+uint64_t selectHeatmapAggregateKey(uint64_t heatmap_view_key, uint64_t heatmap_data_key, bool stable_image_aggregate) {
+    return stable_image_aggregate ? heatmap_data_key : heatmap_view_key;
 }

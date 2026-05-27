@@ -37,7 +37,6 @@ AppShutdownContext makeAppShutdownContext(const AppShutdownContextFactoryInput& 
     ctx.heatmap_zoom_adaptive_bandwidth = input.heatmap_zoom_adaptive_bandwidth;
     ctx.heatmap_multires_enabled = input.heatmap_multires_enabled;
     ctx.heatmap_multires_blend = input.heatmap_multires_blend;
-    ctx.heatmap_allow_cpu_fallback = input.heatmap_allow_cpu_fallback;
     ctx.filter_enabled = input.filter_enabled;
     ctx.filter_use_date = input.filter_use_date;
     ctx.filter_year_min = input.filter_year_min;

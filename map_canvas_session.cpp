@@ -75,6 +75,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.view_min_lat = map_viewport.view_min_lat;
     session.view_max_lat = map_viewport.view_max_lat;
     session.project_world = [map_viewport](const ImVec2& wp) { return map_viewport.projectWorld(wp); };
+    session.mouse_ll = map_viewport.mouse_ll;
 
     session.parcel_hover_active =
         anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled);
@@ -86,58 +87,6 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.zoning_inspect_active =
         activeLayerMatches(ctx.active_click_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
-    const bool hover_points_enabled =
-        ctx.active_hover_layer_idx >= 0 &&
-        ctx.active_hover_layer_idx != ctx.parcel_layer_idx &&
-        ctx.active_hover_layer_idx != ctx.zoning_layer_idx &&
-        layerToggleEnabled(ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
-    const bool inspect_points_enabled =
-        ctx.active_click_layer_idx >= 0 &&
-        ctx.active_click_layer_idx != ctx.parcel_layer_idx &&
-        ctx.active_click_layer_idx != ctx.zoning_layer_idx &&
-        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
-
-    const bool suppress_hover_lookup =
-        session.map_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
-    MapHoverQuery hover_query;
-    hover_query.map_hovered = session.map_hovered && !suppress_hover_lookup;
-    hover_query.parcel_hover_active = session.parcel_hover_active;
-    hover_query.parcel_inspect_active = session.parcel_inspect_active;
-    hover_query.zoning_hover_active = session.zoning_hover_active;
-    hover_query.zoning_inspect_active = session.zoning_inspect_active;
-    hover_query.point_hover_active = hover_points_enabled;
-    hover_query.point_inspect_active = inspect_points_enabled;
-    hover_query.active_hover_layer_idx = ctx.active_hover_layer_idx;
-    hover_query.active_click_layer_idx = ctx.active_click_layer_idx;
-    hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
-    hover_query.zoning_layer_idx = ctx.zoning_layer_idx;
-    hover_query.layers = ctx.layers;
-    hover_query.point_geometry_artifacts = ctx.point_geometry_artifacts;
-    hover_query.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
-    hover_query.parcel_render_blob = ctx.parcel_render_blob;
-    hover_query.layer_spatial = ctx.layer_spatial;
-    hover_query.layer_hover_enabled = ctx.layer_hover_enabled;
-    hover_query.layer_inspect_enabled = ctx.layer_inspect_enabled;
-    hover_query.mouse_ll = map_viewport.mouse_ll;
-    hover_query.center_lonlat = ImVec2(
-        ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
-        ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
-    const ImGuiIO& io = ImGui::GetIO();
-    const ImVec2 fb_scale = io.DisplayFramebufferScale;
-    hover_query.mouse_screen = ImVec2(io.MousePos.x * fb_scale.x, io.MousePos.y * fb_scale.y);
-    hover_query.center_world = session.center_world;
-    hover_query.viewport_origin = ImVec2(session.origin.x * fb_scale.x, session.origin.y * fb_scale.y);
-    hover_query.viewport_size = ImVec2(session.size.x * fb_scale.x, session.size.y * fb_scale.y);
-    hover_query.framebuffer_size = ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
-    hover_query.view_min_lon = session.view_min_lon;
-    hover_query.view_max_lon = session.view_max_lon;
-    hover_query.view_min_lat = session.view_min_lat;
-    hover_query.view_max_lat = session.view_max_lat;
-    hover_query.math_zoom = session.math_zoom;
-    hover_query.zoom_scale = (float)(session.zoom_scale * std::max(1.0f, fb_scale.x));
-    hover_query.project_world = session.project_world;
-    session.hover_state = findMapHoverTargets(hover_query);
-    session.mouse_ll = map_viewport.mouse_ll;
 
     const auto tile_prof_begin = std::chrono::steady_clock::now();
     const MapBasemapRenderResult basemap_result = renderMapBasemap(MapBasemapRenderContext{
@@ -210,4 +159,74 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     ctx.prof_projection_cache_generation->store(*ctx.persistent_projection_generation, std::memory_order_relaxed);
     session.projection_cache = ctx.persistent_projection_cache->get();
     return session;
+}
+
+void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessionContext& ctx) {
+    if (!ctx.center_lon || !ctx.center_lat || !ctx.zoom || !ctx.layers ||
+        !ctx.layer_spatial || !ctx.layer_hover_enabled || !ctx.layer_inspect_enabled) {
+        session.hover_state = MapHoverState{};
+        return;
+    }
+
+    session.parcel_hover_active =
+        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled);
+    session.parcel_inspect_active =
+        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled);
+    session.zoning_hover_active =
+        activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
+        layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
+    session.zoning_inspect_active =
+        activeLayerMatches(ctx.active_click_layer_idx, ctx.zoning_layer_idx) &&
+        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
+    const bool hover_points_enabled =
+        ctx.active_hover_layer_idx >= 0 &&
+        ctx.active_hover_layer_idx != ctx.parcel_layer_idx &&
+        ctx.active_hover_layer_idx != ctx.zoning_layer_idx &&
+        layerToggleEnabled(ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
+    const bool inspect_points_enabled =
+        ctx.active_click_layer_idx >= 0 &&
+        ctx.active_click_layer_idx != ctx.parcel_layer_idx &&
+        ctx.active_click_layer_idx != ctx.zoning_layer_idx &&
+        layerToggleEnabled(ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
+
+    const bool suppress_hover_lookup =
+        session.map_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
+    MapHoverQuery hover_query;
+    hover_query.map_hovered = session.map_hovered && !suppress_hover_lookup;
+    hover_query.parcel_hover_active = session.parcel_hover_active;
+    hover_query.parcel_inspect_active = session.parcel_inspect_active;
+    hover_query.zoning_hover_active = session.zoning_hover_active;
+    hover_query.zoning_inspect_active = session.zoning_inspect_active;
+    hover_query.point_hover_active = hover_points_enabled;
+    hover_query.point_inspect_active = inspect_points_enabled;
+    hover_query.active_hover_layer_idx = ctx.active_hover_layer_idx;
+    hover_query.active_click_layer_idx = ctx.active_click_layer_idx;
+    hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
+    hover_query.zoning_layer_idx = ctx.zoning_layer_idx;
+    hover_query.layers = ctx.layers;
+    hover_query.point_geometry_artifacts = ctx.point_geometry_artifacts;
+    hover_query.polygon_geometry_artifacts = ctx.polygon_geometry_artifacts;
+    hover_query.parcel_render_blob = ctx.parcel_render_blob;
+    hover_query.layer_spatial = ctx.layer_spatial;
+    hover_query.layer_hover_enabled = ctx.layer_hover_enabled;
+    hover_query.layer_inspect_enabled = ctx.layer_inspect_enabled;
+    hover_query.mouse_ll = session.mouse_ll;
+    hover_query.center_lonlat = ImVec2(
+        ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
+        ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
+    const ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 fb_scale = io.DisplayFramebufferScale;
+    hover_query.mouse_screen = ImVec2(io.MousePos.x * fb_scale.x, io.MousePos.y * fb_scale.y);
+    hover_query.center_world = session.center_world;
+    hover_query.viewport_origin = ImVec2(session.origin.x * fb_scale.x, session.origin.y * fb_scale.y);
+    hover_query.viewport_size = ImVec2(session.size.x * fb_scale.x, session.size.y * fb_scale.y);
+    hover_query.framebuffer_size = ImVec2(io.DisplaySize.x * fb_scale.x, io.DisplaySize.y * fb_scale.y);
+    hover_query.view_min_lon = session.view_min_lon;
+    hover_query.view_max_lon = session.view_max_lon;
+    hover_query.view_min_lat = session.view_min_lat;
+    hover_query.view_max_lat = session.view_max_lat;
+    hover_query.math_zoom = session.math_zoom;
+    hover_query.zoom_scale = (float)(session.zoom_scale * std::max(1.0f, fb_scale.x));
+    hover_query.project_world = session.project_world;
+    session.hover_state = findMapHoverTargets(hover_query);
 }

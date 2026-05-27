@@ -28,6 +28,12 @@ struct TopoVectorCache {
 
 TopoVectorCache g_TopoVectorCache;
 
+bool canRemoveImGuiVulkanTexture() {
+    if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) return false;
+    if (ImGui::GetCurrentContext() == nullptr) return false;
+    return ImGui::GetIO().BackendRendererUserData != nullptr;
+}
+
 uint32_t textureFindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties mem_properties{};
     vkGetPhysicalDeviceMemoryProperties(g_PhysicalDevice, &mem_properties);
@@ -312,7 +318,9 @@ TileTexture* getTileTexture(const fs::path& root, const std::string& tile_root_d
 }  // namespace
 
 void destroyTileTextureNow(TileTexture& tex) {
-    if (tex.descriptor) ImGui_ImplVulkan_RemoveTexture(tex.descriptor);
+    if (tex.descriptor && canRemoveImGuiVulkanTexture()) {
+        ImGui_ImplVulkan_RemoveTexture(tex.descriptor);
+    }
     if (tex.view) vkDestroyImageView(g_Device, tex.view, g_Allocator);
     if (tex.image) vkDestroyImage(g_Device, tex.image, g_Allocator);
     if (tex.memory) vkFreeMemory(g_Device, tex.memory, g_Allocator);
@@ -335,7 +343,9 @@ bool finalizeTileTextureDescriptor(TileTexture& tex) {
 
 void drainRetiredTextures(bool force) {
     if (force) {
-        if (g_Device != VK_NULL_HANDLE) check_vk_result(vkDeviceWaitIdle(g_Device));
+        if (g_Device != VK_NULL_HANDLE && !g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
+            check_vk_result(vkDeviceWaitIdle(g_Device));
+        }
         for (auto& tex : g_RetiredTextures) destroyTileTextureNow(tex);
         g_RetiredTextures.clear();
         g_TextureRetireFrames = 0;

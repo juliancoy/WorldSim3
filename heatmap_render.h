@@ -25,8 +25,11 @@ struct HeatmapRaster {
     float min_lat = 0.0f;
     float max_lon = 0.0f;
     float max_lat = 0.0f;
+    uint64_t shot_hash = 0;
     std::vector<unsigned char> rgba;
 };
+
+uint64_t heatmapRasterShotHash(const HeatmapRaster& raster);
 
 struct HeatmapRasterLayer {
     HeatmapRaster raster;
@@ -61,7 +64,6 @@ struct HeatSample {
     bool zoom_adaptive_bandwidth = true;
     bool multires_enabled = true;
     float multires_blend = 0.5f;
-    bool allow_cpu_fallback = false;
 };
 
 std::pair<uint64_t, HeatmapRenderData> buildHeatmapRenderData(

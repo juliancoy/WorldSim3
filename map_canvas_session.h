@@ -96,3 +96,4 @@ struct MapCanvasSession {
 };
 
 MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx);
+void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessionContext& ctx);

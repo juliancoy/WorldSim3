@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <future>
 #include <functional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -36,7 +37,6 @@ struct HeatmapRuntimeState {
     bool heatmap_zoom_adaptive_bandwidth = true;
     bool heatmap_multires_enabled = true;
     float heatmap_multires_blend = 0.5f;
-    bool heatmap_allow_cpu_fallback = false;
 
     std::vector<CachedHeatCell> cached_cells;
     TileTexture raster_texture;
@@ -90,6 +90,7 @@ struct HeatmapFramePassContext {
     uint64_t heatmap_key = 0;
     int smooth_heat_raster_base_px = 0;
     int smooth_heat_raster_max_px = 0;
+    std::string aggregate_generation_label;
     const CachedAggregateTexture* cached_aggregate_for_key = nullptr;
     std::function<ImVec2(const ImVec2&)> project_world;
     std::atomic<bool>* prof_heatmap_gpu_splat_active = nullptr;
@@ -109,4 +110,5 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
     bool any_active_heatmap,
     bool smooth_only_heatmap,
     uint64_t heatmap_key);
+std::string aggregateGenerationStatusLabel(const std::vector<std::string>& layer_names);
 void runHeatmapFramePass(const HeatmapFramePassContext& ctx);

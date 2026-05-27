@@ -43,6 +43,37 @@ void hashF32(uint64_t& h, float value) {
 
 } // namespace
 
+void publishCrimePointArtifactForAggregateSampling(
+    int crime_nibrs_layer_idx,
+    const CrimePointRuntimeState& crime_state,
+    std::unordered_map<size_t, PointGeometryArtifact>& point_geometry_artifacts,
+    std::unordered_map<size_t, std::string>* point_artifact_signatures) {
+    if (crime_nibrs_layer_idx < 0) return;
+    const size_t layer_idx = static_cast<size_t>(crime_nibrs_layer_idx);
+    const bool artifact_ready =
+        !crime_state.uploaded_signature.empty() &&
+        !crime_state.artifact.positions.empty() &&
+        crime_state.artifact.positions.size() == crime_state.artifact.features.size();
+    if (!artifact_ready) {
+        point_geometry_artifacts.erase(layer_idx);
+        if (point_artifact_signatures) point_artifact_signatures->erase(layer_idx);
+        return;
+    }
+    if (point_artifact_signatures) {
+        const auto signature_it = point_artifact_signatures->find(layer_idx);
+        const auto artifact_it = point_geometry_artifacts.find(layer_idx);
+        if (signature_it != point_artifact_signatures->end() &&
+            artifact_it != point_geometry_artifacts.end() &&
+            signature_it->second == crime_state.uploaded_signature) {
+            return;
+        }
+    }
+    point_geometry_artifacts[layer_idx] = crime_state.artifact;
+    if (point_artifact_signatures) {
+        (*point_artifact_signatures)[layer_idx] = crime_state.uploaded_signature;
+    }
+}
+
 void syncCrimePointGpuLayer(const CrimePointRuntimeSyncInput& input, CrimePointRuntimeState& state) {
     if (!input.root || !input.layers || !input.layer_states || !input.map_filter_state || !input.query_layers) {
         return;

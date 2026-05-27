@@ -121,6 +121,7 @@ add_executable(worldsim3
   worldsim_dataset_bootstrap.cpp
   worldsim_bootstrap.cpp
   aggregate_visualization_strategies.cpp
+  beps_screening.cpp
   app_lifecycle.cpp
   app_settings.cpp
   color_editor_ipc.cpp
@@ -132,6 +133,7 @@ add_executable(worldsim3
   zoning.cpp
   parcel_matched_layers.cpp
   parcel_metrics.cpp
+  population_metrics.cpp
   vacancy_overlay.cpp
   dataset_library.cpp
   duckdb_analytics.cpp
@@ -476,6 +478,7 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_layer_profile_selftest --layer-profile-selftest)
   add_worldsim_cli_test(worldsim3_layer_runtime_status_selftest --layer-runtime-status-selftest)
   add_worldsim_cli_test(worldsim3_parcel_gpu_cpu_bypass_selftest --parcel-gpu-cpu-bypass-selftest)
+  add_worldsim_cli_test(worldsim3_vulkan_device_loss_selftest --vulkan-device-loss-selftest)
   add_worldsim_cli_test(worldsim3_render_routing_selftest --render-routing-selftest)
   add_worldsim_cli_test(worldsim3_render_tile_cache_selftest --render-tile-cache-selftest)
   add_test(
@@ -507,6 +510,22 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_parcel_selection_ui_harness --parcel-selection-ui-harness)
   add_worldsim_cli_test(worldsim3_parcel_hover_click_ui_harness --parcel-hover-click-ui-harness)
   add_worldsim_cli_test(worldsim3_duckdb_parcel_semantic_snapshot_selftest --duckdb-parcel-semantic-snapshot-selftest)
+  add_worldsim_cli_test(worldsim3_population_metrics_selftest --population-metrics-selftest)
+  add_worldsim_cli_test(worldsim3_beps_screening_selftest --beps-screening-selftest)
+  add_test(
+    NAME worldsim3_nibrs_crime_gpu_aggregate_selftest
+    COMMAND $<TARGET_FILE:worldsim3_gpu_aggregate_harness> --nibrs-crime-aggregate-selftest)
+  set_tests_properties(worldsim3_nibrs_crime_gpu_aggregate_selftest PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120
+    LABELS "render;gpu;aggregate;selftest")
+  add_test(
+    NAME worldsim3_nibrs_crime_aggregate_contact_sheet
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/render_nibrs_aggregate_contact_sheet.py)
+  set_tests_properties(worldsim3_nibrs_crime_aggregate_contact_sheet PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120
+    LABELS "render;aggregate;visual")
   add_worldsim_cli_test(worldsim3_vacancy_selftest --vacancy-selftest)
   add_test(
     NAME worldsim3_baltimore_region_parcel_artifact_matrix

@@ -42,14 +42,15 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     heatmap_policy.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
     heatmap_policy.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
     heatmap_policy.heatmap_multires_blend = ctx.heatmap_multires_blend;
-    heatmap_policy.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
 
     bool smooth_only_heatmap = true;
     bool any_active_heatmap = false;
     bool any_active_gpu_splat = false;
+    std::vector<std::string> active_heatmap_layer_names;
     for (size_t i = 0; i < ctx.layers->size(); ++i) {
         if (!layerUsesHeatmapAggregate(heatmap_policy, i)) continue;
         any_active_heatmap = true;
+        active_heatmap_layer_names.push_back((*ctx.layers)[i].name.empty() ? (*ctx.layers)[i].file : (*ctx.layers)[i].name);
         const int aggregate_algo = resolveLayerAggregateAlgo(heatmap_policy, i);
         if (aggregate_algo == kAggregateGpuSplatBlur || aggregate_algo == kAggregateGpuSplatHue) any_active_gpu_splat = true;
         if (!isSmoothHeatmapAggregateMethod(aggregate_algo)) smooth_only_heatmap = false;
@@ -58,10 +59,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
 
     const int requested_heatmap_quality_preset = std::clamp(ctx.heatmap_quality_preset, 0, 2);
     const int effective_heatmap_quality_preset =
-        any_active_gpu_splat && !ctx.heatmap_allow_cpu_fallback ? 2 : requested_heatmap_quality_preset;
-    const bool high_quality_gpu_aggregate =
-        any_active_gpu_splat &&
-        !ctx.heatmap_allow_cpu_fallback;
+        any_active_gpu_splat ? 2 : requested_heatmap_quality_preset;
+    const bool high_quality_gpu_aggregate = any_active_gpu_splat;
     const int smooth_heat_raster_base_px =
         effective_heatmap_quality_preset == 0 ? 1024 :
         effective_heatmap_quality_preset == 1 ? kSmoothHeatRasterBasePx :
@@ -103,7 +102,6 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     heatmap_key_ctx.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
     heatmap_key_ctx.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
     heatmap_key_ctx.heatmap_multires_blend = ctx.heatmap_multires_blend;
-    heatmap_key_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
     heatmap_key_ctx.filter_enabled = ctx.filter_enabled;
     heatmap_key_ctx.filter_blocklot = ctx.filter_blocklot;
     heatmap_key_ctx.filter_status = ctx.filter_status;
@@ -128,7 +126,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
 
     const uint64_t heatmap_view_key = buildHeatmapKey(heatmap_key_ctx, true);
     const uint64_t heatmap_data_key = buildHeatmapKey(heatmap_key_ctx, false);
-    const uint64_t heatmap_key = high_quality_gpu_aggregate ? heatmap_data_key : heatmap_view_key;
+    const bool stable_image_aggregate = smooth_only_heatmap;
+    const uint64_t heatmap_key = selectHeatmapAggregateKey(heatmap_view_key, heatmap_data_key, stable_image_aggregate);
 
     const auto heat_prof_begin = std::chrono::steady_clock::now();
     const HeatmapCacheLookup heatmap_cache_lookup = prepareHeatmapAggregateCache(
@@ -249,47 +248,6 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
         ctx.prof_heat_samples_last->store(heat_samples.size(), std::memory_order_relaxed);
     }
 
-    HeatmapFramePassContext heatmap_frame_ctx;
-    heatmap_frame_ctx.root = ctx.root;
-    heatmap_frame_ctx.runtime = ctx.heatmap_runtime;
-    heatmap_frame_ctx.heat_samples = &heat_samples;
-    heatmap_frame_ctx.draw = ctx.draw;
-    heatmap_frame_ctx.origin = ctx.origin;
-    heatmap_frame_ctx.size = ctx.size;
-    heatmap_frame_ctx.view_min_lon = ctx.view_min_lon;
-    heatmap_frame_ctx.view_min_lat = ctx.view_min_lat;
-    heatmap_frame_ctx.view_max_lon = ctx.view_max_lon;
-    heatmap_frame_ctx.view_max_lat = ctx.view_max_lat;
-    heatmap_frame_ctx.zoom = ctx.zoom;
-    heatmap_frame_ctx.math_zoom = ctx.math_zoom;
-    heatmap_frame_ctx.heatmap_algo = ctx.heatmap_algo;
-    heatmap_frame_ctx.global_heat_cell = global_heat_cell;
-    heatmap_frame_ctx.heatmap_bandwidth_px = ctx.heatmap_bandwidth_px;
-    heatmap_frame_ctx.heatmap_blur_sigma_px = ctx.heatmap_blur_sigma_px;
-    heatmap_frame_ctx.heatmap_percentile_clip = ctx.heatmap_percentile_clip;
-    heatmap_frame_ctx.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
-    heatmap_frame_ctx.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
-    heatmap_frame_ctx.heatmap_multires_blend = ctx.heatmap_multires_blend;
-    heatmap_frame_ctx.should_recompute_heatmap = should_recompute_heatmap;
-    heatmap_frame_ctx.any_active_heatmap = any_active_heatmap;
-    heatmap_frame_ctx.any_active_gpu_splat = any_active_gpu_splat;
-    heatmap_frame_ctx.smooth_only_heatmap = smooth_only_heatmap;
-    heatmap_frame_ctx.can_use_cached_heatmap = can_use_cached_heatmap;
-    heatmap_frame_ctx.high_quality_gpu_aggregate = high_quality_gpu_aggregate;
-    heatmap_frame_ctx.heatmap_key = heatmap_key;
-    heatmap_frame_ctx.smooth_heat_raster_base_px = smooth_heat_raster_base_px;
-    heatmap_frame_ctx.smooth_heat_raster_max_px = smooth_heat_raster_max_px;
-    heatmap_frame_ctx.cached_aggregate_for_key = cached_aggregate_for_key;
-    heatmap_frame_ctx.project_world = ctx.project_world;
-    heatmap_frame_ctx.prof_heatmap_gpu_splat_active = ctx.prof_heatmap_gpu_splat_active;
-    heatmap_frame_ctx.prof_heatmap_high_quality = ctx.prof_heatmap_high_quality;
-    heatmap_frame_ctx.prof_heatmap_cache_valid = ctx.prof_heatmap_cache_valid;
-    heatmap_frame_ctx.prof_heatmap_texture_resident = ctx.prof_heatmap_texture_resident;
-    heatmap_frame_ctx.prof_heatmap_async_inflight = ctx.prof_heatmap_async_inflight;
-    heatmap_frame_ctx.prof_heatmap_cache_key = ctx.prof_heatmap_cache_key;
-    heatmap_frame_ctx.prof_heatmap_texture_cache_entries = ctx.prof_heatmap_texture_cache_entries;
-    runHeatmapFramePass(heatmap_frame_ctx);
-
     const auto overlay_prof_begin = std::chrono::steady_clock::now();
     RenderTailPassContext render_tail_ctx;
     render_tail_ctx.draw = ctx.draw;
@@ -349,4 +307,46 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     if (ctx.render_fill_bad_indices_last_frame) {
         ctx.render_fill_bad_indices_last_frame->store(render_tail_result.fill_stats.bad_indices, std::memory_order_relaxed);
     }
+
+    HeatmapFramePassContext heatmap_frame_ctx;
+    heatmap_frame_ctx.root = ctx.root;
+    heatmap_frame_ctx.runtime = ctx.heatmap_runtime;
+    heatmap_frame_ctx.heat_samples = &heat_samples;
+    heatmap_frame_ctx.draw = ctx.draw;
+    heatmap_frame_ctx.origin = ctx.origin;
+    heatmap_frame_ctx.size = ctx.size;
+    heatmap_frame_ctx.view_min_lon = ctx.view_min_lon;
+    heatmap_frame_ctx.view_min_lat = ctx.view_min_lat;
+    heatmap_frame_ctx.view_max_lon = ctx.view_max_lon;
+    heatmap_frame_ctx.view_max_lat = ctx.view_max_lat;
+    heatmap_frame_ctx.zoom = ctx.zoom;
+    heatmap_frame_ctx.math_zoom = ctx.math_zoom;
+    heatmap_frame_ctx.heatmap_algo = ctx.heatmap_algo;
+    heatmap_frame_ctx.global_heat_cell = global_heat_cell;
+    heatmap_frame_ctx.heatmap_bandwidth_px = ctx.heatmap_bandwidth_px;
+    heatmap_frame_ctx.heatmap_blur_sigma_px = ctx.heatmap_blur_sigma_px;
+    heatmap_frame_ctx.heatmap_percentile_clip = ctx.heatmap_percentile_clip;
+    heatmap_frame_ctx.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
+    heatmap_frame_ctx.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
+    heatmap_frame_ctx.heatmap_multires_blend = ctx.heatmap_multires_blend;
+    heatmap_frame_ctx.should_recompute_heatmap = should_recompute_heatmap;
+    heatmap_frame_ctx.any_active_heatmap = any_active_heatmap;
+    heatmap_frame_ctx.any_active_gpu_splat = any_active_gpu_splat;
+    heatmap_frame_ctx.smooth_only_heatmap = smooth_only_heatmap;
+    heatmap_frame_ctx.can_use_cached_heatmap = can_use_cached_heatmap;
+    heatmap_frame_ctx.high_quality_gpu_aggregate = high_quality_gpu_aggregate;
+    heatmap_frame_ctx.heatmap_key = heatmap_key;
+    heatmap_frame_ctx.smooth_heat_raster_base_px = smooth_heat_raster_base_px;
+    heatmap_frame_ctx.smooth_heat_raster_max_px = smooth_heat_raster_max_px;
+    heatmap_frame_ctx.aggregate_generation_label = aggregateGenerationStatusLabel(active_heatmap_layer_names);
+    heatmap_frame_ctx.cached_aggregate_for_key = cached_aggregate_for_key;
+    heatmap_frame_ctx.project_world = ctx.project_world;
+    heatmap_frame_ctx.prof_heatmap_gpu_splat_active = ctx.prof_heatmap_gpu_splat_active;
+    heatmap_frame_ctx.prof_heatmap_high_quality = ctx.prof_heatmap_high_quality;
+    heatmap_frame_ctx.prof_heatmap_cache_valid = ctx.prof_heatmap_cache_valid;
+    heatmap_frame_ctx.prof_heatmap_texture_resident = ctx.prof_heatmap_texture_resident;
+    heatmap_frame_ctx.prof_heatmap_async_inflight = ctx.prof_heatmap_async_inflight;
+    heatmap_frame_ctx.prof_heatmap_cache_key = ctx.prof_heatmap_cache_key;
+    heatmap_frame_ctx.prof_heatmap_texture_cache_entries = ctx.prof_heatmap_texture_cache_entries;
+    runHeatmapFramePass(heatmap_frame_ctx);
 }

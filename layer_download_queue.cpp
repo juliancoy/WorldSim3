@@ -261,9 +261,9 @@ void tickLayerDownloadQueue(LayerDownloadQueueContext& ctx) {
                     ctx.item_failed->insert(idx);
                 }
             }
-            persistLayerDownloadQueue(ctx);
         }
         ctx.active_tasks->erase(ctx.active_tasks->begin() + (std::ptrdiff_t)i);
+        persistLayerDownloadQueue(ctx);
     }
     *ctx.inflight = !ctx.active_tasks->empty();
     if (!ctx.active_tasks->empty()) {

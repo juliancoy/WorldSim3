@@ -18,7 +18,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         !ctx.global_heat_cell_px || !ctx.heatmap_bandwidth_px || !ctx.heatmap_blur_sigma_px ||
         !ctx.heatmap_percentile_clip || !ctx.heatmap_zoom_adaptive_bandwidth ||
         !ctx.heatmap_multires_enabled || !ctx.heatmap_multires_blend ||
-        !ctx.heatmap_allow_cpu_fallback || !ctx.filter_blocklot || !ctx.filter_status ||
+        !ctx.filter_blocklot || !ctx.filter_status ||
         !ctx.filter_owner || !ctx.filter_address || !ctx.filter_zip || !ctx.owner_search_query ||
         !ctx.selected_owners || !ctx.event_sector_enabled) {
         return result;
@@ -114,8 +114,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         ctx.heatmap_percentile_clip,
         ctx.heatmap_zoom_adaptive_bandwidth,
         ctx.heatmap_multires_enabled,
-        ctx.heatmap_multires_blend,
-        ctx.heatmap_allow_cpu_fallback);
+        ctx.heatmap_multires_blend);
 
     saveFilterUiState(
         *ctx.root,

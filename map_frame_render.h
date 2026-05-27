@@ -61,7 +61,6 @@ struct RenderFrameOrchestrationContext {
     bool heatmap_zoom_adaptive_bandwidth = true;
     bool heatmap_multires_enabled = true;
     float heatmap_multires_blend = 0.5f;
-    bool heatmap_allow_cpu_fallback = false;
     bool heatmap_controls_active = false;
 
     int parcel_parameter_mode = 0;

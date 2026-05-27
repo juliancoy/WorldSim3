@@ -159,7 +159,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
         ctx.layer_heatmap_blur_sigma_px && ctx.layer_heatmap_percentile_clip &&
         ctx.layer_heatmap_multires_blend && ctx.layer_heatmap_zoom_adaptive_bandwidth &&
         ctx.layer_heatmap_multires_enabled && ctx.layer_heatmap_use_gradient &&
-        ctx.heatmap_allow_cpu_fallback && ctx.layer_fill_mutex &&
+        ctx.layer_fill_mutex &&
         ctx.layer_fill_state_changed && ctx.layer_hover_state_changed &&
         ctx.layer_inspect_state_changed && ctx.layer_heatmap_state_changed &&
         ctx.heatmap_controls_active && ctx.crime_filter_enabled && ctx.crime_filter_use_year &&
@@ -460,7 +460,6 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.layer_heatmap_multires_enabled = ctx.layer_heatmap_multires_enabled;
     layer_ui_input.layer_heatmap_use_gradient = ctx.layer_heatmap_use_gradient;
     layer_ui_input.heatmap_algo = ctx.heatmap_algo;
-    layer_ui_input.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
     layer_ui_input.layer_fill_mutex = ctx.layer_fill_mutex;
     layer_ui_input.layer_fill_state_changed = ctx.layer_fill_state_changed;
     layer_ui_input.layer_hover_state_changed = ctx.layer_hover_state_changed;

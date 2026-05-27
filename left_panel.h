@@ -79,7 +79,6 @@ struct LeftPanelContext {
     std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
     std::vector<bool>* layer_heatmap_use_gradient = nullptr;
     int heatmap_algo = 0;
-    bool* heatmap_allow_cpu_fallback = nullptr;
     std::mutex* layer_fill_mutex = nullptr;
     bool* layer_fill_state_changed = nullptr;
     bool* layer_hover_state_changed = nullptr;

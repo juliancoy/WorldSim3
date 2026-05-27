@@ -374,8 +374,7 @@ void loadLayerUiState(
     float* heatmap_percentile_clip,
     bool* heatmap_zoom_adaptive_bandwidth,
     bool* heatmap_multires_enabled,
-    float* heatmap_multires_blend,
-    bool* heatmap_allow_cpu_fallback) {
+    float* heatmap_multires_blend) {
     std::ifstream in(root / "data" / "layer_ui_state.json");
     if (!in) return;
     json j;
@@ -471,7 +470,6 @@ void loadLayerUiState(
         if (heatmap_zoom_adaptive_bandwidth && hs.contains("zoom_adaptive_bandwidth") && hs["zoom_adaptive_bandwidth"].is_boolean()) *heatmap_zoom_adaptive_bandwidth = hs["zoom_adaptive_bandwidth"].get<bool>();
         if (heatmap_multires_enabled && hs.contains("multires_enabled") && hs["multires_enabled"].is_boolean()) *heatmap_multires_enabled = hs["multires_enabled"].get<bool>();
         if (heatmap_multires_blend && hs.contains("multires_blend") && hs["multires_blend"].is_number()) *heatmap_multires_blend = hs["multires_blend"].get<float>();
-        if (heatmap_allow_cpu_fallback && hs.contains("allow_cpu_fallback") && hs["allow_cpu_fallback"].is_boolean()) *heatmap_allow_cpu_fallback = hs["allow_cpu_fallback"].get<bool>();
     }
 
     if (active_hover_layer_idx) {
@@ -526,8 +524,7 @@ void saveLayerUiState(
     const float* heatmap_percentile_clip,
     const bool* heatmap_zoom_adaptive_bandwidth,
     const bool* heatmap_multires_enabled,
-    const float* heatmap_multires_blend,
-    const bool* heatmap_allow_cpu_fallback) {
+    const float* heatmap_multires_blend) {
     fs::create_directories(root / "data");
     json j;
     j["hover_inspector_enabled"] = hover_inspector_enabled;
@@ -590,7 +587,6 @@ void saveLayerUiState(
         if (heatmap_zoom_adaptive_bandwidth) hs["zoom_adaptive_bandwidth"] = *heatmap_zoom_adaptive_bandwidth;
         if (heatmap_multires_enabled) hs["multires_enabled"] = *heatmap_multires_enabled;
         if (heatmap_multires_blend) hs["multires_blend"] = *heatmap_multires_blend;
-        if (heatmap_allow_cpu_fallback) hs["allow_cpu_fallback"] = *heatmap_allow_cpu_fallback;
         j["heatmap_settings"] = std::move(hs);
     }
     std::ofstream out(root / "data" / "layer_ui_state.json");

@@ -370,7 +370,9 @@ StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
 
     DuckDbAnalytics analytics(root);
     const bool duckdb_stale = analytics.needsRebuild(layers);
-    const bool duckdb_valid = !duckdb_stale && analytics.validateExistingCache();
+    const bool duckdb_valid =
+        !duckdb_stale &&
+        (analytics.status().last_rebuild_ok || analytics.validateExistingCache());
     if (!duckdb_valid) {
         plan.required = true;
         plan.duckdb_required = true;

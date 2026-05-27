@@ -91,8 +91,22 @@ struct RenderLayerPassContext {
 
 void runRenderLayerPass(const RenderLayerPassContext& ctx);
 
+bool aggregateSampleAnchorLonLatForFeature(
+    const RenderLayerPassContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureRecord& fg,
+    float& out_lon,
+    float& out_lat);
+
 bool shouldBypassCpuParcelFeaturePass(
     bool parcel_gpu_draw_active,
     bool layer_uses_heatmap_for_cache,
     bool layer_uses_lod_for_draw,
     bool should_recompute_heatmap);
+
+bool shouldUseCrimePointPrimaryGpuDraw(
+    bool crime_gpu_draw_active,
+    bool layer_uses_heatmap_for_cache,
+    bool layer_uses_lod_for_draw,
+    bool layer_uses_point_clustering);

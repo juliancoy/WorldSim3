@@ -36,7 +36,6 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.layer_heatmap_multires_enabled = input.layer_heatmap_multires_enabled;
     ctx.layer_heatmap_use_gradient = input.layer_heatmap_use_gradient;
     ctx.heatmap_algo = input.heatmap_algo;
-    ctx.heatmap_allow_cpu_fallback = input.heatmap_allow_cpu_fallback;
     ctx.layer_fill_mutex = input.layer_fill_mutex;
     ctx.layer_fill_state_changed = input.layer_fill_state_changed;
     ctx.layer_hover_state_changed = input.layer_hover_state_changed;

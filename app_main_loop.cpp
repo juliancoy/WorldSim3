@@ -485,7 +485,6 @@ int runWorldSim3App(int argc, char** argv) {
     auto& heatmap_zoom_adaptive_bandwidth = heatmap_runtime.heatmap_zoom_adaptive_bandwidth;
     auto& heatmap_multires_enabled = heatmap_runtime.heatmap_multires_enabled;
     auto& heatmap_multires_blend = heatmap_runtime.heatmap_multires_blend;
-    auto& heatmap_allow_cpu_fallback = heatmap_runtime.heatmap_allow_cpu_fallback;
     int active_hover_layer_idx = -1;
     int active_click_layer_idx = -1;
     bool hover_inspector_enabled = true;
@@ -522,9 +521,7 @@ int runWorldSim3App(int argc, char** argv) {
         &heatmap_percentile_clip,
         &heatmap_zoom_adaptive_bandwidth,
         &heatmap_multires_enabled,
-        &heatmap_multires_blend,
-        &heatmap_allow_cpu_fallback);
-    heatmap_allow_cpu_fallback = false;
+        &heatmap_multires_blend);
     heatmap_algo = kAggregateNone;
     heatmap_quality_preset = std::clamp(heatmap_quality_preset, 0, 2);
     if (parcel_layer_idx >= 0) {
@@ -1463,6 +1460,11 @@ int runWorldSim3App(int argc, char** argv) {
     };
 
     while (!glfwWindowShouldClose(window)) {
+        if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
+            std::fprintf(stderr, "[worldsim3] Vulkan device lost; closing application cleanly\n");
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            break;
+        }
         g_MapPolygonOutlineThickness = app_settings.map_polygon_outline_thickness;
         glfwPollEvents();
         const bool color_editor_alive = color_editor_process_alive();
@@ -1482,11 +1484,15 @@ int runWorldSim3App(int argc, char** argv) {
             g_SwapChainRebuild = true;
         }
 
-        if (g_SwapChainRebuild) {
+        if (g_SwapChainRebuild && !g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
             glfwGetFramebufferSize(window, &w, &h);
             if (w > 0 && h > 0) {
                 std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-                check_vk_result(vkDeviceWaitIdle(g_Device));
+                if (!check_vk_result_allow_device_loss(vkDeviceWaitIdle(g_Device))) {
+                    std::fprintf(stderr, "[worldsim3] Vulkan device lost during swapchain rebuild\n");
+                    glfwSetWindowShouldClose(window, GLFW_TRUE);
+                    break;
+                }
                 ImGui_ImplVulkan_SetMinImageCount(g_MinImageCount);
                 ImGui_ImplVulkanH_CreateOrResizeWindow(g_Instance, g_PhysicalDevice, g_Device, &g_MainWindowData, g_QueueFamily, g_Allocator, w, h, g_MinImageCount);
                 g_MainWindowData.FrameIndex = 0;
@@ -1672,7 +1678,6 @@ int runWorldSim3App(int argc, char** argv) {
                 &layer_heatmap_multires_enabled,
                 &layer_heatmap_use_gradient,
                 heatmap_algo,
-                &heatmap_allow_cpu_fallback,
                 &layer_fill_mutex,
                 &layer_fill_state_changed,
                 &layer_hover_state_changed,
@@ -1944,7 +1949,6 @@ int runWorldSim3App(int argc, char** argv) {
             &heatmap_zoom_adaptive_bandwidth,
             &heatmap_multires_enabled,
             &heatmap_multires_blend,
-            &heatmap_allow_cpu_fallback,
             filter_use_date,
             filter_year_min,
             filter_year_max,
@@ -2246,6 +2250,11 @@ int runWorldSim3App(int argc, char** argv) {
                 },
             },
             crime_point_runtime_state);
+        publishCrimePointArtifactForAggregateSampling(
+            crime_nibrs_layer_idx,
+            crime_point_runtime_state,
+            point_layer_runtime_state.geometry_artifacts,
+            &point_layer_runtime_state.artifact_signatures);
 
         syncPointGpuLayers(
             PointLayerRuntimeSyncInput{
@@ -2478,7 +2487,6 @@ int runWorldSim3App(int argc, char** argv) {
             heatmap_zoom_adaptive_bandwidth,
             heatmap_multires_enabled,
             heatmap_multires_blend,
-            heatmap_allow_cpu_fallback,
             heatmap_controls_active,
             &heatmap_runtime,
             active_hover_layer_idx,
@@ -2590,6 +2598,11 @@ int runWorldSim3App(int argc, char** argv) {
             &profile_sample_count,
             app_settings.dark_mode
         });
+        if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
+            std::fprintf(stderr, "[worldsim3] Vulkan device lost during frame present; exiting main loop\n");
+            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            continue;
+        }
 
         renderSecondaryDownloadQueueWindow(SecondaryDownloadQueueWindowContext{
             download_queue_window,
@@ -2618,7 +2631,9 @@ int runWorldSim3App(int argc, char** argv) {
         waitpid(color_editor_pid, nullptr, 0);
         color_editor_pid = -1;
     }
-    vkDeviceWaitIdle(g_Device);
+    if (!g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
+        vkDeviceWaitIdle(g_Device);
+    }
     if (download_queue_imgui_context) {
         ImGui::SetCurrentContext(download_queue_imgui_context);
         ImGui_ImplVulkan_Shutdown();
@@ -2669,7 +2684,6 @@ int runWorldSim3App(int argc, char** argv) {
     shutdown_input.heatmap_zoom_adaptive_bandwidth = &heatmap_zoom_adaptive_bandwidth;
     shutdown_input.heatmap_multires_enabled = &heatmap_multires_enabled;
     shutdown_input.heatmap_multires_blend = &heatmap_multires_blend;
-    shutdown_input.heatmap_allow_cpu_fallback = &heatmap_allow_cpu_fallback;
     shutdown_input.filter_enabled = &filter_enabled;
     shutdown_input.filter_use_date = &filter_use_date;
     shutdown_input.filter_year_min = &filter_year_min;

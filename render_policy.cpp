@@ -129,7 +129,6 @@ void resolveLayerHeatSettings(const HeatmapLayerPolicyContext& ctx, size_t layer
             : ctx.heatmap_multires_blend,
         0.0f,
         1.0f);
-    hs.allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
 }
 
 PolygonRasterTileMode resolvePolygonRasterTileMode(const PolygonRasterTilePolicyContext& ctx) {

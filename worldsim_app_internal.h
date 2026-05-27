@@ -83,6 +83,7 @@ extern std::unordered_map<std::string, TileCacheEntry> g_TileCache;
 extern std::list<std::string> g_TileLRU;
 extern bool g_EnableValidationLayers;
 extern std::vector<TileTexture> g_RetiredTextures;
+extern std::atomic<bool> g_VulkanDeviceLost;
 extern ParcelGpuBuffers g_ParcelGpuBuffers;
 extern bool g_ParcelGpuOverlayHasVisibleColors;
 extern bool g_ParcelGpuOutlineHasVisibleColors;
@@ -113,6 +114,7 @@ extern std::deque<GpuProfilerEvent> g_GpuProfilerEvents;
 extern GpuPickResources g_GpuPickResources;
 
 void check_vk_result(VkResult err);
+bool check_vk_result_allow_device_loss(VkResult err);
 void SetupVulkan(const char** extensions, uint32_t extensions_count);
 void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int width, int height);
 void CleanupVulkanWindow();

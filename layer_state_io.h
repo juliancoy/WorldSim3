@@ -45,8 +45,7 @@ void loadLayerUiState(
     float* heatmap_percentile_clip = nullptr,
     bool* heatmap_zoom_adaptive_bandwidth = nullptr,
     bool* heatmap_multires_enabled = nullptr,
-    float* heatmap_multires_blend = nullptr,
-    bool* heatmap_allow_cpu_fallback = nullptr);
+    float* heatmap_multires_blend = nullptr);
 
 void saveLayerUiState(
     const std::filesystem::path& root,
@@ -81,8 +80,7 @@ void saveLayerUiState(
     const float* heatmap_percentile_clip = nullptr,
     const bool* heatmap_zoom_adaptive_bandwidth = nullptr,
     const bool* heatmap_multires_enabled = nullptr,
-    const float* heatmap_multires_blend = nullptr,
-    const bool* heatmap_allow_cpu_fallback = nullptr);
+    const float* heatmap_multires_blend = nullptr);
 
 void loadFilterUiState(
     const std::filesystem::path& root,

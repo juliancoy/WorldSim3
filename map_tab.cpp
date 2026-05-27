@@ -285,7 +285,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
     ImGui::SetNextWindowPos(ImVec2(ctx.map_x, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.map_w, ctx.main_panel_h), ImGuiCond_Always);
     ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    MapCanvasSession map_canvas_session = beginMapCanvasSession(MapCanvasSessionContext{
+    MapCanvasSessionContext map_canvas_ctx{
                 ctx.center_lon,
                 ctx.center_lat,
                 ctx.zoom,
@@ -324,34 +324,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.prof_projection_world_ring_cache_entries,
                 ctx.prof_projection_world_extent_cache_entries,
                 ctx.prof_projection_cache_generation
-            });
-            if (ctx.hover_debug_state) {
-                std::lock_guard<std::mutex> lk(ctx.hover_debug_state->mutex);
-                ctx.hover_debug_state->map_hovered = map_canvas_session.map_hovered;
-                ctx.hover_debug_state->mouse_screen_x = ImGui::GetIO().MousePos.x;
-                ctx.hover_debug_state->mouse_screen_y = ImGui::GetIO().MousePos.y;
-                ctx.hover_debug_state->mouse_lon = map_canvas_session.mouse_ll.x;
-                ctx.hover_debug_state->mouse_lat = map_canvas_session.mouse_ll.y;
-                ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel_idx != (size_t)-1;
-                ctx.hover_debug_state->hovered_parcel_idx = map_canvas_session.hover_state.hovered_parcel_idx;
-                ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
-                ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
-                ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
-                ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
-                ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
-                ctx.hover_debug_state->selected_parcel =
-                    ctx.parcel_selection && !ctx.parcel_selection->active_entity_id.empty();
-                ctx.hover_debug_state->selected_parcel_idx =
-                    (ctx.parcel_selection &&
-                     ctx.parcel_selection->active_layer_idx >= 0 &&
-                     (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
-                        ? featureIndexForEntityId(
-                            (*ctx.layers)[(size_t)ctx.parcel_selection->active_layer_idx],
-                            ctx.parcel_selection->active_entity_id)
-                        : (size_t)-1;
-                ctx.hover_debug_state->selected_parcel_count =
-                    ctx.parcel_selection ? ctx.parcel_selection->entity_ids.size() : 0;
-            }
+            };
+            MapCanvasSession map_canvas_session = beginMapCanvasSession(map_canvas_ctx);
             const MapCornerControlState map_corner_controls = hitTestMapCornerControls(ctx, map_canvas_session);
             drawMapFpsOverlay(map_canvas_session);
 
@@ -493,6 +467,36 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 clearCrimePointGpuDrawState();
             }
 
+            map_canvas_session.map_hovered = map_canvas_session.map_hovered && !map_corner_controls.hovered;
+            refreshMapCanvasHoverState(map_canvas_session, map_canvas_ctx);
+            if (ctx.hover_debug_state) {
+                std::lock_guard<std::mutex> lk(ctx.hover_debug_state->mutex);
+                ctx.hover_debug_state->map_hovered = map_canvas_session.map_hovered;
+                ctx.hover_debug_state->mouse_screen_x = ImGui::GetIO().MousePos.x;
+                ctx.hover_debug_state->mouse_screen_y = ImGui::GetIO().MousePos.y;
+                ctx.hover_debug_state->mouse_lon = map_canvas_session.mouse_ll.x;
+                ctx.hover_debug_state->mouse_lat = map_canvas_session.mouse_ll.y;
+                ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel_idx != (size_t)-1;
+                ctx.hover_debug_state->hovered_parcel_idx = map_canvas_session.hover_state.hovered_parcel_idx;
+                ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
+                ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
+                ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
+                ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
+                ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
+                ctx.hover_debug_state->selected_parcel =
+                    ctx.parcel_selection && !ctx.parcel_selection->active_entity_id.empty();
+                ctx.hover_debug_state->selected_parcel_idx =
+                    (ctx.parcel_selection &&
+                     ctx.parcel_selection->active_layer_idx >= 0 &&
+                     (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
+                        ? featureIndexForEntityId(
+                            (*ctx.layers)[(size_t)ctx.parcel_selection->active_layer_idx],
+                            ctx.parcel_selection->active_entity_id)
+                        : (size_t)-1;
+                ctx.hover_debug_state->selected_parcel_count =
+                    ctx.parcel_selection ? ctx.parcel_selection->entity_ids.size() : 0;
+            }
+
             MapFrameSessionContext map_frame_session_ctx;
             map_frame_session_ctx.root = ctx.root;
             map_frame_session_ctx.duckdb_analytics = ctx.duckdb_analytics;
@@ -532,12 +536,11 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.heatmap_zoom_adaptive_bandwidth = ctx.heatmap_zoom_adaptive_bandwidth;
             map_frame_session_ctx.heatmap_multires_enabled = ctx.heatmap_multires_enabled;
             map_frame_session_ctx.heatmap_multires_blend = ctx.heatmap_multires_blend;
-            map_frame_session_ctx.heatmap_allow_cpu_fallback = ctx.heatmap_allow_cpu_fallback;
             map_frame_session_ctx.heatmap_controls_active = ctx.heatmap_controls_active;
             map_frame_session_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
             map_frame_session_ctx.map_polygon_fill_opacity =
                 ctx.app_settings ? ctx.app_settings->map_polygon_fill_opacity : 170.0f / 255.0f;
-            map_frame_session_ctx.map_hovered = map_canvas_session.map_hovered && !map_corner_controls.hovered;
+            map_frame_session_ctx.map_hovered = map_canvas_session.map_hovered;
             map_frame_session_ctx.parcel_hover_active = map_canvas_session.parcel_hover_active;
             map_frame_session_ctx.parcel_inspect_active = map_canvas_session.parcel_inspect_active;
             map_frame_session_ctx.zoning_hover_active = map_canvas_session.zoning_hover_active;

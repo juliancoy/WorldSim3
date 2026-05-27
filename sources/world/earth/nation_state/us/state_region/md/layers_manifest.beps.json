@@ -1,0 +1,34 @@
+[
+  {
+    "id": "maryland_beps_covered_buildings",
+    "name": "Maryland BEPS Covered Buildings",
+    "file": "maryland_beps_covered_buildings.geojson",
+    "color": "#ff8c42",
+    "description": "Official Maryland Department of the Environment BEPS covered-building screening layer from MD iMAP. Contains building polygons, UBID, address, county, primary use type, and estimated gross floor space.",
+    "download": false,
+    "reason": "Generated from the official MD iMAP ArcGIS FeatureServer so canonical and geometry artifacts stay reproducible.",
+    "reference_url": "https://mdgeodata.md.gov/imap/rest/services/Environment/MD_BEPSCoveredBuildings/FeatureServer/0",
+    "category": "housing",
+    "subcategory": "Building Energy Performance Standards",
+    "region": "Maryland",
+    "scale": "building",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "beps_covered_building",
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/Environment/MD_BEPSCoveredBuildings/FeatureServer/0",
+      "https://mdgeodata.md.gov/imap/rest/services/Environment/MD_BEPSCoveredBuildings/FeatureServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://mdgeodata.md.gov/imap/rest/services/Environment/MD_BEPSCoveredBuildings/FeatureServer/0",
+      "where": "1=1"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md"
+    }
+  }
+]

@@ -247,11 +247,21 @@ std::unordered_map<std::string, TileCacheEntry> g_TileCache;
 std::list<std::string> g_TileLRU;
 bool g_EnableValidationLayers = false;
 std::vector<TileTexture> g_RetiredTextures;
+std::atomic<bool> g_VulkanDeviceLost{false};
+
+bool check_vk_result_allow_device_loss(VkResult err) {
+    if (err == 0) return true;
+    std::fprintf(stderr, "[vulkan] VkResult=%d\n", err);
+    if (err == VK_ERROR_DEVICE_LOST) {
+        g_VulkanDeviceLost.store(true, std::memory_order_relaxed);
+        return false;
+    }
+    if (err < 0) std::abort();
+    return true;
+}
 
 void check_vk_result(VkResult err) {
-    if (err == 0) return;
-    std::fprintf(stderr, "[vulkan] VkResult=%d\n", err);
-    if (err < 0) std::abort();
+    (void)check_vk_result_allow_device_loss(err);
 }
 
 static float resolvedMapPolygonOutlineThickness() {
@@ -2675,7 +2685,9 @@ void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface, int w
 }
 
 static void CleanupTileCache() {
-    if (g_Device != VK_NULL_HANDLE) check_vk_result(vkDeviceWaitIdle(g_Device));
+    if (g_Device != VK_NULL_HANDLE && !g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
+        check_vk_result(vkDeviceWaitIdle(g_Device));
+    }
     for (auto& kv : g_TileCache) destroyTileTextureNow(kv.second.tex);
     g_TileCache.clear();
     g_TileLRU.clear();

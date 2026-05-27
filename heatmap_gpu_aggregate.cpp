@@ -1,5 +1,6 @@
 #include "heatmap_gpu_aggregate.h"
 
+#include "aggregate_debug.h"
 #include "aggregate_visualization_strategies.h"
 #include "worldsim_app_internal.h"
 
@@ -125,6 +126,10 @@ struct GpuLayerResources {
     VkBuffer texture_stats_device_buf = VK_NULL_HANDLE;
     VkDeviceMemory texture_stats_device_mem = VK_NULL_HANDLE;
     VkDeviceSize texture_stats_device_capacity = 0;
+    VkBuffer texture_stats_readback_buf = VK_NULL_HANDLE;
+    VkDeviceMemory texture_stats_readback_mem = VK_NULL_HANDLE;
+    void* texture_stats_readback_mapped = nullptr;
+    VkDeviceSize texture_stats_readback_capacity = 0;
     VkBuffer texture_histogram_buf = VK_NULL_HANDLE;
     VkDeviceMemory texture_histogram_mem = VK_NULL_HANDLE;
     VkDeviceSize texture_histogram_capacity = 0;
@@ -608,6 +613,10 @@ void destroyLayerResources(GpuLayerResources& res) {
     destroyBufferAndMemory(res.texture_sample_device_buf, res.texture_sample_device_mem);
     destroyBufferAndMemory(res.texture_accum_device_buf, res.texture_accum_device_mem);
     destroyBufferAndMemory(res.texture_stats_device_buf, res.texture_stats_device_mem);
+    if (res.texture_stats_readback_mapped && res.texture_stats_readback_mem) {
+        vkUnmapMemory(g_Device, res.texture_stats_readback_mem);
+    }
+    destroyBufferAndMemory(res.texture_stats_readback_buf, res.texture_stats_readback_mem);
     destroyBufferAndMemory(res.texture_histogram_buf, res.texture_histogram_mem);
     if (res.fence) vkDestroyFence(g_Device, res.fence, g_Allocator);
     res.layer_id = -1;
@@ -627,6 +636,8 @@ void destroyLayerResources(GpuLayerResources& res) {
     res.texture_sample_device_capacity = 0;
     res.texture_accum_device_capacity = 0;
     res.texture_stats_device_capacity = 0;
+    res.texture_stats_readback_mapped = nullptr;
+    res.texture_stats_readback_capacity = 0;
     res.texture_histogram_capacity = 0;
 }
 
@@ -857,7 +868,7 @@ bool initCtx(std::string* error) {
         shutdownCtx();
         return false;
     }
-    stage.module = histogram_shader;
+    cpi.stage.module = histogram_shader;
     if (vkCreateComputePipelines(g_Device, VK_NULL_HANDLE, 1, &cpi, g_Allocator, &g_ctx.histogram_pipeline) != VK_SUCCESS) {
         vkDestroyShaderModule(g_Device, bin_shader, g_Allocator);
         vkDestroyShaderModule(g_Device, histogram_shader, g_Allocator);
@@ -867,7 +878,7 @@ bool initCtx(std::string* error) {
         shutdownCtx();
         return false;
     }
-    stage.module = histogram_reduce_shader;
+    cpi.stage.module = histogram_reduce_shader;
     if (vkCreateComputePipelines(g_Device, VK_NULL_HANDLE, 1, &cpi, g_Allocator, &g_ctx.histogram_reduce_pipeline) != VK_SUCCESS) {
         vkDestroyShaderModule(g_Device, bin_shader, g_Allocator);
         vkDestroyShaderModule(g_Device, histogram_shader, g_Allocator);
@@ -877,7 +888,7 @@ bool initCtx(std::string* error) {
         shutdownCtx();
         return false;
     }
-    stage.module = resolve_shader;
+    cpi.stage.module = resolve_shader;
     if (vkCreateComputePipelines(g_Device, VK_NULL_HANDLE, 1, &cpi, g_Allocator, &g_ctx.resolve_pipeline) != VK_SUCCESS) {
         vkDestroyShaderModule(g_Device, bin_shader, g_Allocator);
         vkDestroyShaderModule(g_Device, histogram_shader, g_Allocator);
@@ -1102,9 +1113,10 @@ bool buildGpuSplatAggregate(
     push.sample_count = (uint32_t)packed.size();
     push.width = (uint32_t)rw;
     push.height = (uint32_t)rh;
-    // Keep the compute dispatch bounded. The render builder applies the
-    // Gaussian blur as a separable pass after this GPU binning step.
-    push.radius = 0;
+    // Keep the per-sample dispatch bounded. A full sigma-radius scatter is not
+    // scalable for dense layers; this capped footprint makes the GPU texture
+    // visibly aggregate until the planned separable blur pass is available.
+    push.radius = (uint32_t)std::clamp((int)std::ceil(push.sigma_r), 1, 12);
     push.min_lon = raster_min_lon;
     push.min_lat = raster_min_lat;
     push.max_lon = raster_max_lon;
@@ -1280,6 +1292,15 @@ bool buildGpuSplatAggregateTexture(
             res->texture_stats_device_capacity,
             "texture stats device",
             error) ||
+        !ensurePersistentBuffer(
+            stats_bytes,
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            res->texture_stats_readback_buf,
+            res->texture_stats_readback_mem,
+            res->texture_stats_readback_mapped,
+            res->texture_stats_readback_capacity,
+            "texture stats readback",
+            error) ||
         !ensurePersistentDeviceLocalBuffer(
             sizeof(uint32_t) * 256,
             VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
@@ -1432,7 +1453,10 @@ bool buildGpuSplatAggregateTexture(
     bin_push.sample_count = (uint32_t)packed.size();
     bin_push.width = (uint32_t)rw;
     bin_push.height = (uint32_t)rh;
-    bin_push.radius = 0;
+    // Keep the per-sample dispatch bounded. A full sigma-radius scatter is not
+    // scalable for dense layers; this capped footprint makes the GPU texture
+    // visibly aggregate until the planned separable blur pass is available.
+    bin_push.radius = (uint32_t)std::clamp((int)std::ceil(bin_push.sigma_r), 1, 12);
     bin_push.min_lon = raster_min_lon;
     bin_push.min_lat = raster_min_lat;
     bin_push.max_lon = raster_max_lon;
@@ -1547,6 +1571,31 @@ bool buildGpuSplatAggregateTexture(
     vkCmdPushConstants(res->cmd, g_ctx.pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ResolvePush), &resolve_push);
     vkCmdDispatch(res->cmd, ((uint32_t)rw + 7u) / 8u, ((uint32_t)rh + 7u) / 8u, 1);
 
+    VkBufferMemoryBarrier stats_copy_barrier{};
+    stats_copy_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+    stats_copy_barrier.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    stats_copy_barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    stats_copy_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    stats_copy_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    stats_copy_barrier.buffer = res->texture_stats_device_buf;
+    stats_copy_barrier.offset = 0;
+    stats_copy_barrier.size = stats_bytes;
+    vkCmdPipelineBarrier(
+        res->cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0,
+        0,
+        nullptr,
+        1,
+        &stats_copy_barrier,
+        0,
+        nullptr);
+
+    VkBufferCopy stats_copy{};
+    stats_copy.size = stats_bytes;
+    vkCmdCopyBuffer(res->cmd, res->texture_stats_device_buf, res->texture_stats_readback_buf, 1, &stats_copy);
+
     transitionImage(
         res->cmd,
         tex.image,
@@ -1577,6 +1626,30 @@ bool buildGpuSplatAggregateTexture(
         if (error) *error = "GPU aggregate texture submit failed";
         destroyTileTextureNow(tex);
         g_ctx.available = false;
+        release_res();
+        return false;
+    }
+
+    uint32_t texture_stats[2] = {0, 0};
+    if (res->texture_stats_readback_mapped) {
+        std::memcpy(texture_stats, res->texture_stats_readback_mapped, sizeof(texture_stats));
+    }
+    const uint32_t splat_radius = bin_push.radius;
+    if (worldsimGpuAggregateDebugEnabled()) {
+        std::fprintf(
+            stderr,
+            "[worldsim3][gpu-aggregate] texture-stats layer=%d samples=%zu raster=%dx%d radius=%u max_density=%u density_cap=%u\n",
+            layer_id,
+            group.size(),
+            rw,
+            rh,
+            splat_radius,
+            texture_stats[0],
+            texture_stats[1]);
+    }
+    if (texture_stats[0] == 0 || texture_stats[1] == 0) {
+        if (error) *error = "GPU aggregate texture produced empty density stats";
+        destroyTileTextureNow(tex);
         release_res();
         return false;
     }

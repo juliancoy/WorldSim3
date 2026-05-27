@@ -1,11 +1,17 @@
 #include "worldsim_cli.h"
 
+#include "aggregate_debug.h"
+
 #include "app_settings.h"
 #include "app_utils.h"
+#include "beps_screening.h"
 #include "cache_io.h"
+#include "crime_point_runtime_service.h"
 #include "duckdb_analytics.h"
 #include "env_config.h"
 #include "feature_props.h"
+#include "heatmap_key_builder.h"
+#include "heatmap_runtime.h"
 #include "layer_import.h"
 #include "layer_geometry.h"
 #include "layer_registry.h"
@@ -15,6 +21,7 @@
 #include "map_render_selection.h"
 #include "map_render_projection.h"
 #include "parcel_consolidation.h"
+#include "population_metrics.h"
 #include "selection.h"
 #include "profiling_layer_snapshot.h"
 #include "render_layer_pass.h"
@@ -31,6 +38,7 @@
 #include <imgui_internal.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
@@ -869,6 +877,644 @@ int generateCanonicalFilesCli(const fs::path& root, const std::string& phase, bo
     return failed == 0 ? 0 : 1;
 }
 
+LayerDef::FeatureRecord makePopulationSelftestSquare(float min_lon, float min_lat, float max_lon, float max_lat) {
+    LayerDef::FeatureRecord feature;
+    feature.extent.min_lon = min_lon;
+    feature.extent.min_lat = min_lat;
+    feature.extent.max_lon = max_lon;
+    feature.extent.max_lat = max_lat;
+    feature.rings.push_back({
+        ImVec2(min_lon, min_lat),
+        ImVec2(max_lon, min_lat),
+        ImVec2(max_lon, max_lat),
+        ImVec2(min_lon, max_lat),
+        ImVec2(min_lon, min_lat)
+    });
+    return feature;
+}
+
+LayerDef::FeatureRecord makePopulationSelftestPoint(float lon, float lat) {
+    LayerDef::FeatureRecord feature;
+    feature.extent.min_lon = lon;
+    feature.extent.max_lon = lon;
+    feature.extent.min_lat = lat;
+    feature.extent.max_lat = lat;
+    return feature;
+}
+
+int runPopulationMetricsSelftest() {
+    LayerDef tracts;
+    tracts.name = "Population Tracts Selftest";
+    tracts.file = "population_tracts_selftest.geojson";
+    tracts.features = {
+        makePopulationSelftestSquare(0.0f, 0.0f, 1.0f, 1.0f),
+        makePopulationSelftestSquare(1.0f, 0.0f, 2.0f, 1.0f)
+    };
+    tracts.feature_properties = {
+        {{{"total_population", "1,000"}}},
+        {{{"B01003_001E", "500"}}}
+    };
+
+    LayerDef crimes;
+    crimes.name = "Crime Points Selftest";
+    crimes.file = "crime_points_selftest.geojson";
+    crimes.features = {
+        makePopulationSelftestPoint(0.25f, 0.25f),
+        makePopulationSelftestPoint(0.75f, 0.75f),
+        makePopulationSelftestPoint(1.50f, 0.50f),
+        makePopulationSelftestPoint(3.00f, 3.00f)
+    };
+
+    PopulationMetricsSummary summary;
+    std::vector<PopulationTractMetric> metrics =
+        buildTractPopulationCrimeMetrics(tracts, crimes, &summary);
+    applyPopulationMetricsToLayer(tracts, metrics);
+
+    const bool counts_ok =
+        metrics.size() == 2 &&
+        metrics[0].crime_count == 2 &&
+        metrics[1].crime_count == 1 &&
+        summary.assigned_crime_points == 3 &&
+        summary.total_crimes == 4 &&
+        summary.valid_population_tracts == 2;
+    const bool rates_ok =
+        std::fabs(metrics[0].crime_per_1000_residents - 2.0) <= 0.00001 &&
+        std::fabs(metrics[1].crime_per_1000_residents - 2.0) <= 0.00001 &&
+        metrics[0].population_density_per_sq_km > 0.0 &&
+        metrics[1].population_density_per_sq_km > 0.0;
+    const bool properties_ok =
+        getPropertyValue(tracts, 0, "population_algorithm") == "tract_population_density_and_crime_rate" &&
+        getPropertyValue(tracts, 0, "crime_count") == "2" &&
+        getPropertyValue(tracts, 1, "crime_count") == "1";
+
+    json out = {
+        {"mode", "population-metrics-selftest"},
+        {"ok", counts_ok && rates_ok && properties_ok},
+        {"tract_count", summary.tract_count},
+        {"valid_population_tracts", summary.valid_population_tracts},
+        {"crime_point_count", summary.crime_point_count},
+        {"assigned_crime_points", summary.assigned_crime_points},
+        {"total_population", summary.total_population},
+        {"total_crimes", summary.total_crimes},
+        {"tract_0_crime_per_1000", metrics.empty() ? 0.0 : metrics[0].crime_per_1000_residents},
+        {"tract_1_crime_per_1000", metrics.size() < 2 ? 0.0 : metrics[1].crime_per_1000_residents},
+        {"counts_ok", counts_ok},
+        {"rates_ok", rates_ok},
+        {"properties_ok", properties_ok}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+json featurePropertiesToJson(const LayerDef::FeatureProperties& properties) {
+    json out = json::object();
+    for (const auto& kv : properties.values) out[kv.first] = kv.second;
+    return out;
+}
+
+json polygonFeatureGeometryToJson(const LayerDef::FeatureRecord& feature) {
+    json rings = json::array();
+    for (const auto& ring : feature.rings) {
+        json coords = json::array();
+        for (const ImVec2& p : ring) coords.push_back({p.x, p.y});
+        rings.push_back(std::move(coords));
+    }
+    return {
+        {"type", "Polygon"},
+        {"coordinates", std::move(rings)}
+    };
+}
+
+json featureGeometryToJson(const LayerDef::FeatureRecord& feature) {
+    if (!feature.rings.empty()) return polygonFeatureGeometryToJson(feature);
+    return {
+        {"type", "Point"},
+        {"coordinates", {feature.extent.min_lon, feature.extent.min_lat}}
+    };
+}
+
+LayerDef::FeatureProperties makeProperties(std::initializer_list<std::pair<std::string, std::string>> values) {
+    LayerDef::FeatureProperties props;
+    props.values.assign(values.begin(), values.end());
+    return props;
+}
+
+double parseNumberForCli(std::string value) {
+    value.erase(std::remove(value.begin(), value.end(), ','), value.end());
+    value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) {
+        return std::isspace(c);
+    }), value.end());
+    if (value.empty()) return 0.0;
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    if (end == value.c_str() || !std::isfinite(parsed)) return 0.0;
+    return parsed;
+}
+
+bool loadLatestSnapshotGeoJsonLayer(
+    const fs::path& root,
+    const std::string& file,
+    std::vector<LayerDef::FeatureRecord>& features,
+    std::vector<LayerDef::FeatureProperties>& feature_properties,
+    std::string& source_used,
+    std::string& error) {
+    const fs::path snapshot_dir = root / "data" / "versions" / "snapshots" / file;
+    std::error_code ec;
+    if (!fs::exists(snapshot_dir, ec) || ec) {
+        error = "snapshot directory not found";
+        return false;
+    }
+    fs::path latest;
+    for (const auto& entry : fs::directory_iterator(snapshot_dir, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file(ec) || ec) {
+            ec.clear();
+            continue;
+        }
+        const fs::path path = entry.path();
+        if (path.extension() != ".geojson") continue;
+        if (latest.empty() || path.filename().string() > latest.filename().string()) latest = path;
+    }
+    if (latest.empty()) {
+        error = "no snapshot geojson found";
+        return false;
+    }
+    try {
+        features = loadLayerPointsFromFile(latest, &feature_properties);
+        source_used = "snapshot_geojson:" + latest.filename().string();
+        return !features.empty();
+    } catch (const std::exception& e) {
+        error = e.what();
+        return false;
+    }
+}
+
+int runBepsScreeningSelftest() {
+    LayerDef properties;
+    properties.name = "BEPS Property Selftest";
+    properties.file = "beps_properties_selftest.geojson";
+    properties.features = {
+        makePopulationSelftestPoint(-76.61f, 39.29f),
+        makePopulationSelftestPoint(-76.62f, 39.30f),
+        makePopulationSelftestPoint(-76.63f, 39.31f),
+        makePopulationSelftestPoint(-76.64f, 39.32f)
+    };
+    properties.feature_properties = {
+        makeProperties({{"BLOCKLOT", "0001 001"}, {"FULLADDR", "1 MARKET ST"}, {"OWNER_1", "MARKET LLC"}, {"USEGROUP", "C"}, {"STRUCTAREA", "40000"}, {"DWELUNIT", "0"}}),
+        makeProperties({{"BLOCKLOT", "0001 002"}, {"FULLADDR", "2 APARTMENT ST"}, {"OWNER_1", "APARTMENTS LLC"}, {"USEGROUP", "R"}, {"STRUCTAREA", "50000"}, {"DWELUNIT", "24"}}),
+        makeProperties({{"BLOCKLOT", "0001 003"}, {"FULLADDR", "3 SMALL ST"}, {"OWNER_1", "SMALL LLC"}, {"USEGROUP", "C"}, {"STRUCTAREA", "34000"}, {"DWELUNIT", "0"}}),
+        makeProperties({{"BLOCKLOT", "0001 004"}, {"FULLADDR", "4 FEDERAL ST"}, {"OWNER_1", "UNITED STATES OF AMERICA"}, {"USEGROUP", "C"}, {"STRUCTAREA", "90000"}, {"DWELUNIT", "0"}})
+    };
+
+    LayerDef parcels;
+    parcels.name = "BEPS Parcel Selftest";
+    parcels.file = "beps_parcels_selftest.geojson";
+    parcels.features = {
+        makePopulationSelftestSquare(-76.611f, 39.289f, -76.609f, 39.291f),
+        makePopulationSelftestSquare(-76.621f, 39.299f, -76.619f, 39.301f)
+    };
+    parcels.feature_properties = {
+        makeProperties({{"BLOCKLOT", "0001 001"}}),
+        makeProperties({{"BLOCKLOT", "0001 002"}})
+    };
+
+    BepsScreeningSummary summary;
+    std::vector<BepsCandidate> candidates = screenMarylandBepsCandidates(properties, &parcels, &summary);
+    LayerDef output;
+    output.features.resize(candidates.size());
+    applyBepsCandidateProperties(output, candidates);
+
+    const bool count_ok =
+        candidates.size() == 2 &&
+        summary.candidate_count == 2 &&
+        summary.matched_parcel_count == 2 &&
+        summary.high_confidence_count == 2;
+    const bool candidate_ok =
+        candidates[0].commercial_like &&
+        candidates[1].multifamily_like &&
+        candidates[0].gross_floor_area_sqft == 40000.0 &&
+        candidates[1].dwelling_units == 24;
+    const bool exclusions_ok =
+        std::none_of(candidates.begin(), candidates.end(), [](const BepsCandidate& candidate) {
+            return candidate.address == "3 SMALL ST" || candidate.address == "4 FEDERAL ST";
+        });
+    const bool properties_ok =
+        output.feature_properties.size() == 2 &&
+        getPropertyValue(output, 0, "beps_might_be_covered") == "true" &&
+        getPropertyValue(output, 1, "beps_confidence") == "high";
+
+    json out = {
+        {"mode", "beps-screening-selftest"},
+        {"ok", count_ok && candidate_ok && exclusions_ok && properties_ok},
+        {"candidate_count", summary.candidate_count},
+        {"matched_parcel_count", summary.matched_parcel_count},
+        {"high_confidence_count", summary.high_confidence_count},
+        {"count_ok", count_ok},
+        {"candidate_ok", candidate_ok},
+        {"exclusions_ok", exclusions_ok},
+        {"properties_ok", properties_ok}
+    };
+    std::cout << out.dump(2) << '\n';
+    return out["ok"].get<bool>() ? 0 : 1;
+}
+
+int runBuildPopulationMetricsCli(const fs::path& root) {
+    constexpr const char* kPopulationLayerFile = "cdc_places_total_population_baltimore_tracts.geojson";
+    constexpr const char* kCrimeLayerFile = "crime_nibrs_group_a_2022_present.geojson";
+
+    std::vector<LayerDef> manifest_layers = loadManifest(root);
+    const LayerDef* population_manifest_layer = findManifestLayerByIdentifier(manifest_layers, kPopulationLayerFile);
+    const LayerDef* crime_manifest_layer = findManifestLayerByIdentifier(manifest_layers, kCrimeLayerFile);
+    if (!population_manifest_layer || !crime_manifest_layer) {
+        json out = {
+            {"mode", "build-population-metrics"},
+            {"ok", false},
+            {"error", "required population or crime layer is missing from manifest"},
+            {"population_layer", kPopulationLayerFile},
+            {"crime_layer", kCrimeLayerFile}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    LayerDef population_layer = *population_manifest_layer;
+    LayerDef crime_layer = *crime_manifest_layer;
+    std::string population_source;
+    std::string crime_source;
+    std::string population_error;
+    std::string crime_error;
+    if (!loadLocalLayerFeatures(
+            root,
+            population_layer,
+            population_layer.features,
+            &population_layer.feature_properties,
+            population_source,
+            population_error) ||
+        !loadLocalLayerFeatures(
+            root,
+            crime_layer,
+            crime_layer.features,
+            &crime_layer.feature_properties,
+            crime_source,
+            crime_error)) {
+        json out = {
+            {"mode", "build-population-metrics"},
+            {"ok", false},
+            {"population_source", population_source},
+            {"crime_source", crime_source},
+            {"population_error", population_error},
+            {"crime_error", crime_error}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    PopulationMetricsSummary summary;
+    std::vector<PopulationTractMetric> metrics =
+        buildTractPopulationCrimeMetrics(population_layer, crime_layer, &summary);
+    applyPopulationMetricsToLayer(population_layer, metrics);
+
+    json features = json::array();
+    for (size_t i = 0; i < population_layer.features.size(); ++i) {
+        if (population_layer.features[i].rings.empty()) continue;
+        features.push_back({
+            {"type", "Feature"},
+            {"properties", i < population_layer.feature_properties.size()
+                ? featurePropertiesToJson(population_layer.feature_properties[i])
+                : json::object()},
+            {"geometry", polygonFeatureGeometryToJson(population_layer.features[i])}
+        });
+    }
+
+    json collection = {
+        {"type", "FeatureCollection"},
+        {"name", "population_metrics_baltimore_tracts"},
+        {"properties", {
+            {"algorithm", "tract_population_density_and_crime_rate"},
+            {"population_layer", kPopulationLayerFile},
+            {"crime_layer", kCrimeLayerFile},
+            {"population_source", population_source},
+            {"crime_source", crime_source},
+            {"tract_count", summary.tract_count},
+            {"valid_population_tracts", summary.valid_population_tracts},
+            {"crime_point_count", summary.crime_point_count},
+            {"assigned_crime_points", summary.assigned_crime_points},
+            {"total_population", summary.total_population},
+            {"total_crimes", summary.total_crimes}
+        }},
+        {"features", std::move(features)}
+    };
+
+    const fs::path output_path = root / "data" / "derived" / "population_metrics_baltimore_tracts.geojson";
+    std::error_code ec;
+    fs::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+        json out = {
+            {"mode", "build-population-metrics"},
+            {"ok", false},
+            {"error", ec.message()},
+            {"output_path", output_path.string()}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    std::ofstream out_file(output_path);
+    if (!out_file) {
+        json out = {
+            {"mode", "build-population-metrics"},
+            {"ok", false},
+            {"error", "failed to open output file"},
+            {"output_path", output_path.string()}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    out_file << collection.dump(2) << '\n';
+
+    json out = {
+        {"mode", "build-population-metrics"},
+        {"ok", true},
+        {"output_path", output_path.string()},
+        {"population_source", population_source},
+        {"crime_source", crime_source},
+        {"tract_count", summary.tract_count},
+        {"valid_population_tracts", summary.valid_population_tracts},
+        {"crime_point_count", summary.crime_point_count},
+        {"assigned_crime_points", summary.assigned_crime_points},
+        {"total_population", summary.total_population},
+        {"total_crimes", summary.total_crimes}
+    };
+    std::cout << out.dump(2) << '\n';
+    return 0;
+}
+
+int runBuildBepsCandidatesCli(const fs::path& root) {
+    constexpr const char* kOfficialBepsLayerFile = "maryland_beps_covered_buildings.geojson";
+    constexpr const char* kPropertyLayerFile = "real_property_information.geojson";
+    constexpr const char* kParcelLayerFile = "parcel.geojson";
+
+    std::vector<LayerDef> manifest_layers = loadManifest(root);
+    const LayerDef* official_manifest_layer = findManifestLayerByIdentifier(manifest_layers, kOfficialBepsLayerFile);
+    if (official_manifest_layer) {
+        LayerDef official_layer = *official_manifest_layer;
+        std::string official_source;
+        std::string official_error;
+        if (loadLocalLayerFeatures(
+                root,
+                official_layer,
+                official_layer.features,
+                &official_layer.feature_properties,
+                official_source,
+                official_error)) {
+            json features = json::array();
+            size_t area_threshold_count = 0;
+            for (size_t i = 0; i < official_layer.features.size(); ++i) {
+                json props = i < official_layer.feature_properties.size()
+                    ? featurePropertiesToJson(official_layer.feature_properties[i])
+                    : json::object();
+                const double mde_sf = parseNumberForCli(props.value("MDE_SF", std::string()));
+                if (mde_sf >= 35000.0) area_threshold_count += 1;
+                props["beps_source"] = "official_mde_imap";
+                props["beps_might_be_covered"] = "true";
+                props["beps_confidence"] = "official_source";
+                props["gross_floor_area_sqft"] = mde_sf;
+                props["address"] = props.value("FIRST_ADDR", std::string());
+                props["city"] = props.value("FIRST_CITY", std::string());
+                props["county"] = props.value("JURSCODE", std::string());
+                props["zip_code"] = props.value("FIRST_ZIPC", std::string());
+                props["primary_use_type"] = props.value("ESPM_Prope", std::string());
+                props["ubid"] = props.value("UBID_Combi", std::string());
+                features.push_back({
+                    {"type", "Feature"},
+                    {"properties", std::move(props)},
+                    {"geometry", featureGeometryToJson(official_layer.features[i])}
+                });
+            }
+
+            json collection = {
+                {"type", "FeatureCollection"},
+                {"name", "maryland_beps_candidate_parcels"},
+                {"properties", {
+                    {"algorithm", "official_mde_beps_covered_buildings"},
+                    {"source_layer", kOfficialBepsLayerFile},
+                    {"source", official_source},
+                    {"candidate_count", official_layer.features.size()},
+                    {"area_threshold_count", area_threshold_count},
+                    {"fallback_used", false},
+                    {"disclaimer", "Official MDE/MD iMAP BEPS covered-buildings screening layer; confirm final obligations against COMAR and MDE reporting guidance."}
+                }},
+                {"features", std::move(features)}
+            };
+
+            const fs::path output_path = root / "data" / "derived" / "maryland_beps_candidate_parcels.geojson";
+            std::error_code ec;
+            fs::create_directories(output_path.parent_path(), ec);
+            if (ec) {
+                json out = {{"mode", "build-beps-candidates"}, {"ok", false}, {"error", ec.message()}};
+                std::cout << out.dump(2) << '\n';
+                return 1;
+            }
+            std::ofstream out_file(output_path);
+            if (!out_file) {
+                json out = {{"mode", "build-beps-candidates"}, {"ok", false}, {"error", "failed to open output file"}};
+                std::cout << out.dump(2) << '\n';
+                return 1;
+            }
+            out_file << collection.dump(2) << '\n';
+
+            json out = {
+                {"mode", "build-beps-candidates"},
+                {"ok", true},
+                {"source", "official_mde_imap"},
+                {"source_layer", kOfficialBepsLayerFile},
+                {"source_used", official_source},
+                {"output_path", output_path.string()},
+                {"candidate_count", official_layer.features.size()},
+                {"area_threshold_count", area_threshold_count},
+                {"fallback_used", false}
+            };
+            std::cout << out.dump(2) << '\n';
+            return 0;
+        }
+    }
+
+    const LayerDef* property_manifest_layer = findManifestLayerByIdentifier(manifest_layers, kPropertyLayerFile);
+    const LayerDef* parcel_manifest_layer = findManifestLayerByIdentifier(manifest_layers, kParcelLayerFile);
+    if (!property_manifest_layer) {
+        json out = {
+            {"mode", "build-beps-candidates"},
+            {"ok", false},
+            {"error", "required property layer is missing from manifest"},
+            {"property_layer", kPropertyLayerFile}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+
+    LayerDef property_layer = *property_manifest_layer;
+    LayerDef parcel_layer = parcel_manifest_layer ? *parcel_manifest_layer : LayerDef{};
+    std::string property_source;
+    std::string parcel_source;
+    std::string property_error;
+    std::string parcel_error;
+    if (!loadLocalLayerFeatures(
+            root,
+            property_layer,
+            property_layer.features,
+            &property_layer.feature_properties,
+            property_source,
+            property_error)) {
+        json out = {
+            {"mode", "build-beps-candidates"},
+            {"ok", false},
+            {"property_source", property_source},
+            {"property_error", property_error}
+        };
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    {
+        std::vector<LayerDef::FeatureRecord> snapshot_features;
+        std::vector<LayerDef::FeatureProperties> snapshot_properties;
+        std::string snapshot_source;
+        std::string snapshot_error;
+        if (loadLatestSnapshotGeoJsonLayer(
+                root,
+                kPropertyLayerFile,
+                snapshot_features,
+                snapshot_properties,
+                snapshot_source,
+                snapshot_error)) {
+            property_layer.features = std::move(snapshot_features);
+            property_layer.feature_properties = std::move(snapshot_properties);
+            property_source = snapshot_source;
+        }
+    }
+
+    LayerDef* parcel_layer_ptr = nullptr;
+    if (parcel_manifest_layer &&
+        loadLocalLayerFeatures(root, parcel_layer, parcel_layer.features, &parcel_layer.feature_properties, parcel_source, parcel_error)) {
+        parcel_layer_ptr = &parcel_layer;
+    }
+
+    BepsScreeningSummary summary;
+    std::vector<BepsCandidate> candidates =
+        screenMarylandBepsCandidates(property_layer, parcel_layer_ptr, &summary);
+    if (candidates.empty()) {
+        std::vector<LayerDef::FeatureRecord> snapshot_features;
+        std::vector<LayerDef::FeatureProperties> snapshot_properties;
+        std::string snapshot_source;
+        std::string snapshot_error;
+        if (loadLatestSnapshotGeoJsonLayer(
+                root,
+                kPropertyLayerFile,
+                snapshot_features,
+                snapshot_properties,
+                snapshot_source,
+                snapshot_error)) {
+            property_layer.features = std::move(snapshot_features);
+            property_layer.feature_properties = std::move(snapshot_properties);
+            property_source = snapshot_source;
+            candidates = screenMarylandBepsCandidates(property_layer, parcel_layer_ptr, &summary);
+        }
+    }
+    if (!candidates.empty() && summary.matched_parcel_count == 0) {
+        std::vector<LayerDef::FeatureRecord> snapshot_features;
+        std::vector<LayerDef::FeatureProperties> snapshot_properties;
+        std::string snapshot_source;
+        std::string snapshot_error;
+        if (loadLatestSnapshotGeoJsonLayer(
+                root,
+                kParcelLayerFile,
+                snapshot_features,
+                snapshot_properties,
+                snapshot_source,
+                snapshot_error)) {
+            parcel_layer.features = std::move(snapshot_features);
+            parcel_layer.feature_properties = std::move(snapshot_properties);
+            parcel_source = snapshot_source;
+            parcel_layer_ptr = &parcel_layer;
+            candidates = screenMarylandBepsCandidates(property_layer, parcel_layer_ptr, &summary);
+        }
+    }
+
+    LayerDef output_layer;
+    output_layer.name = "Maryland BEPS Candidate Parcels";
+    output_layer.file = "maryland_beps_candidate_parcels.geojson";
+    output_layer.features.reserve(candidates.size());
+    for (const BepsCandidate& candidate : candidates) {
+        if (parcel_layer_ptr && candidate.parcel_feature_idx < parcel_layer_ptr->features.size()) {
+            output_layer.features.push_back(parcel_layer_ptr->features[candidate.parcel_feature_idx]);
+        } else if (candidate.property_feature_idx < property_layer.features.size()) {
+            output_layer.features.push_back(property_layer.features[candidate.property_feature_idx]);
+        }
+    }
+    applyBepsCandidateProperties(output_layer, candidates);
+
+    json features = json::array();
+    for (size_t i = 0; i < output_layer.features.size(); ++i) {
+        features.push_back({
+            {"type", "Feature"},
+            {"properties", i < output_layer.feature_properties.size()
+                ? featurePropertiesToJson(output_layer.feature_properties[i])
+                : json::object()},
+            {"geometry", featureGeometryToJson(output_layer.features[i])}
+        });
+    }
+
+    json collection = {
+        {"type", "FeatureCollection"},
+        {"name", "maryland_beps_candidate_parcels"},
+        {"properties", {
+            {"algorithm", "comar_26_28_01_parcel_candidate_screen"},
+            {"disclaimer", "Screening output only; COMAR coverage requires owner/building facts not fully present in parcel assessment data."},
+            {"rule_basis", "COMAR 26.28.01 Building Energy Performance Standards; area threshold screen uses gross floor area >= 35000 sq ft."},
+            {"property_layer", kPropertyLayerFile},
+            {"parcel_layer", kParcelLayerFile},
+            {"property_source", property_source},
+            {"parcel_source", parcel_source},
+            {"property_record_count", summary.property_record_count},
+            {"candidate_count", summary.candidate_count},
+            {"matched_parcel_count", summary.matched_parcel_count},
+            {"high_confidence_count", summary.high_confidence_count},
+            {"needs_review_count", summary.needs_review_count}
+        }},
+        {"features", std::move(features)}
+    };
+
+    const fs::path output_path = root / "data" / "derived" / "maryland_beps_candidate_parcels.geojson";
+    std::error_code ec;
+    fs::create_directories(output_path.parent_path(), ec);
+    if (ec) {
+        json out = {{"mode", "build-beps-candidates"}, {"ok", false}, {"error", ec.message()}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    std::ofstream out_file(output_path);
+    if (!out_file) {
+        json out = {{"mode", "build-beps-candidates"}, {"ok", false}, {"error", "failed to open output file"}};
+        std::cout << out.dump(2) << '\n';
+        return 1;
+    }
+    out_file << collection.dump(2) << '\n';
+
+    json out = {
+        {"mode", "build-beps-candidates"},
+        {"ok", true},
+        {"output_path", output_path.string()},
+        {"property_source", property_source},
+        {"parcel_source", parcel_source},
+        {"property_record_count", summary.property_record_count},
+        {"candidate_count", summary.candidate_count},
+        {"matched_parcel_count", summary.matched_parcel_count},
+        {"high_confidence_count", summary.high_confidence_count},
+        {"needs_review_count", summary.needs_review_count},
+        {"parcel_match_warning", parcel_layer_ptr ? "" : parcel_error}
+    };
+    std::cout << out.dump(2) << '\n';
+    return 0;
+}
+
 int runProjectionCacheSelftest() {
     LayerDef::FeatureRecord feature;
     feature.extent.min_lon = -76.7f;
@@ -1316,6 +1962,364 @@ int runParcelGpuCpuBypassSelftest() {
         !shouldBypassCpuParcelFeaturePass(true, false, true, false);
     const bool lod_heatmap_keeps_cpu =
         !shouldBypassCpuParcelFeaturePass(true, true, true, false);
+    const bool crime_plain_gpu_draws =
+        shouldUseCrimePointPrimaryGpuDraw(true, false, false, false);
+    const bool crime_heatmap_keeps_cpu_samples =
+        !shouldUseCrimePointPrimaryGpuDraw(true, true, false, false);
+    const bool crime_lod_keeps_cpu =
+        !shouldUseCrimePointPrimaryGpuDraw(true, false, true, false);
+    const bool crime_cluster_keeps_cpu =
+        !shouldUseCrimePointPrimaryGpuDraw(true, false, false, true);
+    const bool inactive_crime_gpu_does_not_draw =
+        !shouldUseCrimePointPrimaryGpuDraw(false, false, false, false);
+    const bool aggregate_label_names_layer =
+        aggregateGenerationStatusLabel({"NIBRS Group A Crime Data (2022-Present)"}) ==
+        "Generating aggregate: NIBRS Group A Crime Data (2022-Present)";
+    const bool aggregate_label_summarizes_many_layers =
+        aggregateGenerationStatusLabel({"Layer A", "Layer B", "Layer C"}) ==
+        "Generating aggregate: Layer A, Layer B +1 more";
+    LayerDef stable_aggregate_layer;
+    stable_aggregate_layer.file = "stable_aggregate_points.geojson";
+    stable_aggregate_layer.name = "Stable Aggregate Points";
+    stable_aggregate_layer.enabled = true;
+    stable_aggregate_layer.scale = "point";
+    stable_aggregate_layer.features.resize(10);
+    std::vector<LayerDef> stable_aggregate_layers{stable_aggregate_layer};
+    std::function<bool(size_t)> stable_layer_contributes = [](size_t layer_idx) { return layer_idx == 0; };
+    HeatmapKeyBuilderContext stable_key_ctx;
+    stable_key_ctx.root = fs::temp_directory_path() / "worldsim3_stable_aggregate_key_selftest";
+    stable_key_ctx.layers = &stable_aggregate_layers;
+    stable_key_ctx.layer_uses_heatmap_aggregate = &stable_layer_contributes;
+    stable_key_ctx.heatmap_algo = kAggregateGpuSplatBlur;
+    stable_key_ctx.effective_heatmap_quality_preset = 2;
+    stable_key_ctx.global_heat_cell_px = 24.0f;
+    stable_key_ctx.heatmap_bandwidth_px = 18.0f;
+    stable_key_ctx.heatmap_blur_sigma_px = 6.0f;
+    stable_key_ctx.heatmap_percentile_clip = 95.0f;
+    stable_key_ctx.heatmap_zoom_adaptive_bandwidth = true;
+    stable_key_ctx.heatmap_multires_enabled = true;
+    stable_key_ctx.heatmap_multires_blend = 0.5f;
+    stable_key_ctx.zoom = 11;
+    stable_key_ctx.math_zoom = 11;
+    const uint64_t stable_view_key_11 = buildHeatmapKey(stable_key_ctx, true);
+    const uint64_t stable_data_key_11 = buildHeatmapKey(stable_key_ctx, false);
+    stable_key_ctx.zoom = 13;
+    stable_key_ctx.math_zoom = 13;
+    const uint64_t stable_view_key_13 = buildHeatmapKey(stable_key_ctx, true);
+    const uint64_t stable_data_key_13 = buildHeatmapKey(stable_key_ctx, false);
+    const bool stable_image_aggregate_key_ignores_zoom =
+        stable_view_key_11 != stable_view_key_13 &&
+        stable_data_key_11 == stable_data_key_13 &&
+        selectHeatmapAggregateKey(stable_view_key_11, stable_data_key_11, true) ==
+            selectHeatmapAggregateKey(stable_view_key_13, stable_data_key_13, true);
+    const bool non_image_aggregate_key_remains_view_scoped =
+        selectHeatmapAggregateKey(stable_view_key_11, stable_data_key_11, false) !=
+        selectHeatmapAggregateKey(stable_view_key_13, stable_data_key_13, false);
+    HeatSample valid_heat_sample;
+    valid_heat_sample.layer = 0;
+    valid_heat_sample.lon = -76.61f;
+    valid_heat_sample.lat = 39.29f;
+    valid_heat_sample.x = 128.0f;
+    valid_heat_sample.y = 128.0f;
+    valid_heat_sample.algo = kAggregateKdeGaussian;
+    valid_heat_sample.color = ImVec4(1.0f, 0.2f, 0.1f, 1.0f);
+    HeatSample null_island_sample = valid_heat_sample;
+    null_island_sample.lon = 5.6843419e-14f;
+    null_island_sample.lat = 5.6843419e-14f;
+    const auto filtered_heatmap = buildHeatmapRenderData(
+        0x12345678ULL,
+        {valid_heat_sample, null_island_sample},
+        0.0f,
+        0.0f,
+        -76.72f,
+        39.18f,
+        -76.48f,
+        39.42f,
+        512.0f,
+        512.0f,
+        11,
+        19,
+        384,
+        512);
+    const bool aggregate_filters_null_island_bounds =
+        filtered_heatmap.second.has_raster &&
+        filtered_heatmap.second.raster.min_lon < -76.0f &&
+        filtered_heatmap.second.raster.max_lon < -76.0f &&
+        filtered_heatmap.second.raster.min_lat > 39.0f &&
+        filtered_heatmap.second.raster.max_lat > 39.0f;
+
+    const fs::path heatmap_cache_selftest_root =
+        fs::temp_directory_path() / "worldsim3_empty_heatmap_cache_selftest";
+    std::error_code ec;
+    fs::remove_all(heatmap_cache_selftest_root, ec);
+    fs::create_directories(heatmap_cache_selftest_root / "data" / "cache" / "aggregate", ec);
+    HeatmapRuntimeState empty_cache_state;
+    empty_cache_state.cache_key = 0x777ULL;
+    empty_cache_state.cache_valid = true;
+    empty_cache_state.texture_cache.emplace(0x777ULL, CachedAggregateTexture{});
+    const auto empty_cache_lookup = prepareHeatmapAggregateCache(
+        heatmap_cache_selftest_root,
+        empty_cache_state,
+        true,
+        true,
+        0x777ULL);
+    const bool empty_heatmap_cache_is_not_usable =
+        !empty_cache_lookup.can_use_cached_heatmap &&
+        empty_cache_state.texture_cache.find(0x777ULL) == empty_cache_state.texture_cache.end() &&
+        !empty_cache_state.cache_valid;
+
+    const fs::path raster_cache_path = heatmap_cache_selftest_root / "data" / "cache" / "aggregate" / "shot_hash_selftest.raster.bin";
+    HeatmapRaster cache_raster;
+    cache_raster.w = 2;
+    cache_raster.h = 2;
+    cache_raster.min_lon = -76.7f;
+    cache_raster.min_lat = 39.1f;
+    cache_raster.max_lon = -76.5f;
+    cache_raster.max_lat = 39.4f;
+    cache_raster.rgba = {
+        255, 0, 0, 128,
+        0, 255, 0, 128,
+        0, 0, 255, 128,
+        255, 255, 0, 128
+    };
+    const uint64_t expected_shot_hash = heatmapRasterShotHash(cache_raster);
+    saveHeatmapRasterCache(raster_cache_path, 0xabcULL, cache_raster);
+    HeatmapRaster loaded_cache_raster;
+    const bool aggregate_disk_cache_loads_with_shot_hash =
+        loadHeatmapRasterCache(raster_cache_path, 0xabcULL, loaded_cache_raster) &&
+        loaded_cache_raster.shot_hash == expected_shot_hash &&
+        loaded_cache_raster.rgba == cache_raster.rgba;
+    HeatmapRaster wrong_key_cache_raster;
+    const bool aggregate_disk_cache_rejects_wrong_key =
+        !loadHeatmapRasterCache(raster_cache_path, 0xabdULL, wrong_key_cache_raster);
+    {
+        std::fstream corrupt(raster_cache_path, std::ios::in | std::ios::out | std::ios::binary);
+        if (corrupt) {
+            corrupt.seekg(-1, std::ios::end);
+            char byte = 0;
+            corrupt.read(&byte, 1);
+            corrupt.clear();
+            corrupt.seekp(-1, std::ios::end);
+            byte ^= 0x1;
+            corrupt.write(&byte, 1);
+        }
+    }
+    HeatmapRaster corrupted_cache_raster;
+    const bool aggregate_disk_cache_rejects_shot_hash_mismatch =
+        !loadHeatmapRasterCache(raster_cache_path, 0xabcULL, corrupted_cache_raster);
+
+    HeatmapRuntimeState empty_samples_state;
+    empty_samples_state.cache_key = 0x778ULL;
+    empty_samples_state.cache_valid = true;
+    std::vector<HeatSample> empty_heat_samples;
+    HeatmapFramePassContext empty_samples_ctx;
+    empty_samples_ctx.runtime = &empty_samples_state;
+    empty_samples_ctx.heat_samples = &empty_heat_samples;
+    empty_samples_ctx.should_recompute_heatmap = true;
+    empty_samples_ctx.heatmap_key = 0x778ULL;
+    empty_samples_ctx.aggregate_generation_label = "Generating aggregate: selftest";
+    runHeatmapFramePass(empty_samples_ctx);
+    const bool empty_samples_do_not_create_valid_cache =
+        !empty_samples_state.cache_valid &&
+        empty_samples_state.cache_key == 0;
+
+    HeatmapRuntimeState inactive_heatmap_state;
+    inactive_heatmap_state.cache_key = 0x779ULL;
+    inactive_heatmap_state.cache_valid = true;
+    CachedAggregateTexture inactive_cached_aggregate;
+    inactive_cached_aggregate.cells.push_back(CachedHeatCell{});
+    inactive_heatmap_state.texture_cache.emplace(0x779ULL, std::move(inactive_cached_aggregate));
+    const auto inactive_cache_lookup = prepareHeatmapAggregateCache(
+        heatmap_cache_selftest_root,
+        inactive_heatmap_state,
+        false,
+        true,
+        0x779ULL);
+    const bool inactive_heatmap_preserves_last_aggregate =
+        !inactive_cache_lookup.can_use_cached_heatmap &&
+        inactive_heatmap_state.cache_valid &&
+        inactive_heatmap_state.cache_key == 0x779ULL &&
+        inactive_heatmap_state.texture_cache.find(0x779ULL) != inactive_heatmap_state.texture_cache.end();
+    const auto reactivated_cache_lookup = prepareHeatmapAggregateCache(
+        heatmap_cache_selftest_root,
+        inactive_heatmap_state,
+        true,
+        true,
+        0x779ULL);
+    const bool reactivated_heatmap_reuses_preserved_aggregate =
+        reactivated_cache_lookup.can_use_cached_heatmap &&
+        reactivated_cache_lookup.cached_aggregate_for_key != nullptr &&
+        inactive_heatmap_state.cache_valid &&
+        inactive_heatmap_state.cache_key == 0x779ULL;
+
+    LayerDef::FeatureRecord null_extent_point;
+    null_extent_point.extent.min_lon = 5.6843419e-14f;
+    null_extent_point.extent.max_lon = 5.6843419e-14f;
+    null_extent_point.extent.min_lat = 5.6843419e-14f;
+    null_extent_point.extent.max_lat = 5.6843419e-14f;
+    std::unordered_map<size_t, PointGeometryArtifact> point_anchor_artifacts;
+    PointGeometryArtifact point_anchor_artifact;
+    point_anchor_artifact.positions.push_back(ImVec2(-76.61f, 39.29f));
+    point_anchor_artifacts.emplace(0, std::move(point_anchor_artifact));
+    RenderLayerPassContext point_anchor_ctx;
+    point_anchor_ctx.point_geometry_artifacts = &point_anchor_artifacts;
+    float aggregate_anchor_lon = 0.0f;
+    float aggregate_anchor_lat = 0.0f;
+    const bool point_artifact_anchor_overrides_null_extent =
+        aggregateSampleAnchorLonLatForFeature(
+            point_anchor_ctx,
+            0,
+            0,
+            null_extent_point,
+            aggregate_anchor_lon,
+            aggregate_anchor_lat) &&
+        nearlyEqual(aggregate_anchor_lon, -76.61f) &&
+        nearlyEqual(aggregate_anchor_lat, 39.29f);
+
+    RenderLayerPassContext no_point_anchor_ctx;
+    float rejected_anchor_lon = 0.0f;
+    float rejected_anchor_lat = 0.0f;
+    const bool null_extent_without_point_artifact_rejected =
+        !aggregateSampleAnchorLonLatForFeature(
+            no_point_anchor_ctx,
+            0,
+            0,
+            null_extent_point,
+            rejected_anchor_lon,
+            rejected_anchor_lat);
+
+    CrimePointRuntimeState crime_sampling_state;
+    crime_sampling_state.uploaded_signature = "crime_sig";
+    crime_sampling_state.artifact.positions.push_back(ImVec2(-76.62f, 39.30f));
+    GeometryArtifactFeatureRecord crime_feature_rec;
+    crime_feature_rec.feature_idx = 0;
+    crime_sampling_state.artifact.features.push_back(crime_feature_rec);
+    std::unordered_map<size_t, PointGeometryArtifact> published_point_artifacts;
+    std::unordered_map<size_t, std::string> published_point_signatures;
+    publishCrimePointArtifactForAggregateSampling(
+        93,
+        crime_sampling_state,
+        published_point_artifacts,
+        &published_point_signatures);
+    const bool crime_point_artifact_published_for_aggregate_sampling =
+        published_point_artifacts.find(93) != published_point_artifacts.end() &&
+        published_point_signatures[93] == "crime_sig";
+    published_point_artifacts[93].positions[0] = ImVec2(-75.0f, 38.0f);
+    publishCrimePointArtifactForAggregateSampling(
+        93,
+        crime_sampling_state,
+        published_point_artifacts,
+        &published_point_signatures);
+    const bool crime_point_artifact_publish_skips_same_signature =
+        published_point_artifacts.find(93) != published_point_artifacts.end() &&
+        nearlyEqual(published_point_artifacts[93].positions[0].x, -75.0f) &&
+        nearlyEqual(published_point_artifacts[93].positions[0].y, 38.0f);
+    crime_sampling_state.uploaded_signature = "crime_sig_2";
+    publishCrimePointArtifactForAggregateSampling(
+        93,
+        crime_sampling_state,
+        published_point_artifacts,
+        &published_point_signatures);
+    const bool crime_point_artifact_publish_updates_new_signature =
+        published_point_artifacts.find(93) != published_point_artifacts.end() &&
+        published_point_signatures[93] == "crime_sig_2" &&
+        nearlyEqual(published_point_artifacts[93].positions[0].x, -76.62f) &&
+        nearlyEqual(published_point_artifacts[93].positions[0].y, 39.30f);
+    crime_sampling_state.uploaded_signature.clear();
+    publishCrimePointArtifactForAggregateSampling(
+        93,
+        crime_sampling_state,
+        published_point_artifacts,
+        &published_point_signatures);
+    const bool crime_point_artifact_unpublished_when_not_ready =
+        published_point_artifacts.find(93) == published_point_artifacts.end() &&
+        published_point_signatures.find(93) == published_point_signatures.end();
+
+    LayerDef artifact_only_point_layer;
+    artifact_only_point_layer.file = "artifact_only_points.geojson";
+    artifact_only_point_layer.name = "Artifact Only Points";
+    artifact_only_point_layer.enabled = true;
+    artifact_only_point_layer.scale = "point";
+    artifact_only_point_layer.duckdb_role = "point_event";
+    artifact_only_point_layer.color = ImVec4(1.0f, 0.3f, 0.1f, 1.0f);
+    std::vector<LayerDef> artifact_only_layers{artifact_only_point_layer};
+    std::vector<bool> artifact_only_heatmap_enabled{true};
+    std::vector<int> artifact_only_heatmap_algo{kAggregateGpuSplatBlur};
+    std::vector<int> artifact_only_heatmap_max_zoom{13};
+    std::vector<int> artifact_only_detail_zoom{14};
+    std::vector<float> artifact_only_cell_px{24.0f};
+    std::vector<float> artifact_only_bandwidth_px{18.0f};
+    std::vector<float> artifact_only_blur_px{6.0f};
+    std::vector<float> artifact_only_percentile{95.0f};
+    std::vector<bool> artifact_only_adaptive{true};
+    std::vector<bool> artifact_only_multires{true};
+    std::vector<float> artifact_only_blend{0.5f};
+    std::vector<bool> artifact_only_gradient{true};
+    std::vector<float> artifact_only_gamma{1.0f};
+    std::vector<int> artifact_only_normalize{0};
+    HeatmapLayerPolicyContext artifact_only_policy;
+    artifact_only_policy.layers = &artifact_only_layers;
+    artifact_only_policy.layer_heatmap_enabled = &artifact_only_heatmap_enabled;
+    artifact_only_policy.layer_heatmap_algo = &artifact_only_heatmap_algo;
+    artifact_only_policy.layer_heatmap_max_zoom = &artifact_only_heatmap_max_zoom;
+    artifact_only_policy.layer_parcel_detail_min_zoom = &artifact_only_detail_zoom;
+    artifact_only_policy.layer_heatmap_cell_px = &artifact_only_cell_px;
+    artifact_only_policy.layer_heatmap_bandwidth_px = &artifact_only_bandwidth_px;
+    artifact_only_policy.layer_heatmap_blur_sigma_px = &artifact_only_blur_px;
+    artifact_only_policy.layer_heatmap_percentile_clip = &artifact_only_percentile;
+    artifact_only_policy.layer_heatmap_zoom_adaptive_bandwidth = &artifact_only_adaptive;
+    artifact_only_policy.layer_heatmap_multires_enabled = &artifact_only_multires;
+    artifact_only_policy.layer_heatmap_multires_blend = &artifact_only_blend;
+    artifact_only_policy.zoom = 11;
+    artifact_only_policy.heatmap_algo = kAggregateGpuSplatBlur;
+    artifact_only_policy.global_heat_cell_px = 24.0f;
+    artifact_only_policy.heatmap_bandwidth_px = 18.0f;
+    artifact_only_policy.heatmap_blur_sigma_px = 6.0f;
+    artifact_only_policy.heatmap_percentile_clip = 95.0f;
+    artifact_only_policy.heatmap_zoom_adaptive_bandwidth = true;
+    artifact_only_policy.heatmap_multires_enabled = true;
+    artifact_only_policy.heatmap_multires_blend = 0.5f;
+    PointGeometryArtifact artifact_only_points;
+    artifact_only_points.positions.push_back(ImVec2(-76.63f, 39.28f));
+    artifact_only_points.feature_refs.push_back(0);
+    GeometryArtifactFeatureRecord artifact_only_rec;
+    artifact_only_rec.feature_idx = 0;
+    artifact_only_points.features.push_back(artifact_only_rec);
+    std::unordered_map<size_t, PointGeometryArtifact> artifact_only_point_map;
+    artifact_only_point_map.emplace(0, std::move(artifact_only_points));
+    RenderPlan artifact_only_plan;
+    artifact_only_plan.draw_layer_order.push_back(0);
+    std::vector<HeatSample> artifact_only_samples;
+    RenderLayerPassContext artifact_only_ctx;
+    artifact_only_ctx.should_recompute_heatmap = true;
+    artifact_only_ctx.high_quality_gpu_aggregate = true;
+    artifact_only_ctx.smooth_only_heatmap = true;
+    artifact_only_ctx.math_zoom = 11;
+    artifact_only_ctx.layers = &artifact_only_layers;
+    artifact_only_ctx.point_geometry_artifacts = &artifact_only_point_map;
+    artifact_only_ctx.layer_heatmap_use_gradient = &artifact_only_gradient;
+    artifact_only_ctx.layer_choropleth_gamma = &artifact_only_gamma;
+    artifact_only_ctx.layer_normalize_mode = &artifact_only_normalize;
+    artifact_only_ctx.layer_heatmap_percentile_clip = &artifact_only_percentile;
+    artifact_only_ctx.heatmap_policy = &artifact_only_policy;
+    artifact_only_ctx.render_plan = &artifact_only_plan;
+    artifact_only_ctx.heat_samples = &artifact_only_samples;
+    artifact_only_ctx.layer_passes_filters = [](size_t) { return true; };
+    artifact_only_ctx.feature_passes_filters = [](size_t, size_t, const LayerDef::FeatureRecord&) { return true; };
+    runRenderLayerPass(artifact_only_ctx);
+    const bool high_quality_point_aggregate_samples_artifact_without_features =
+        artifact_only_samples.size() == 1 &&
+        nearlyEqual(artifact_only_samples[0].lon, -76.63f) &&
+        nearlyEqual(artifact_only_samples[0].lat, 39.28f);
+    artifact_only_samples.clear();
+    artifact_only_heatmap_algo[0] = kAggregateKdeGaussian;
+    artifact_only_policy.heatmap_algo = kAggregateKdeGaussian;
+    artifact_only_ctx.high_quality_gpu_aggregate = false;
+    runRenderLayerPass(artifact_only_ctx);
+    const bool standard_point_aggregate_samples_artifact_without_features =
+        artifact_only_samples.size() == 1 &&
+        nearlyEqual(artifact_only_samples[0].lon, -76.63f) &&
+        nearlyEqual(artifact_only_samples[0].lat, 39.28f);
 
     const bool ok =
         plain_gpu_bypasses &&
@@ -1323,7 +2327,32 @@ int runParcelGpuCpuBypassSelftest() {
         heatmap_recompute_keeps_cpu &&
         cached_heatmap_bypasses &&
         lod_keeps_cpu &&
-        lod_heatmap_keeps_cpu;
+        lod_heatmap_keeps_cpu &&
+        crime_plain_gpu_draws &&
+        crime_heatmap_keeps_cpu_samples &&
+        crime_lod_keeps_cpu &&
+        crime_cluster_keeps_cpu &&
+        inactive_crime_gpu_does_not_draw &&
+        aggregate_label_names_layer &&
+        aggregate_label_summarizes_many_layers &&
+        stable_image_aggregate_key_ignores_zoom &&
+        non_image_aggregate_key_remains_view_scoped &&
+        aggregate_filters_null_island_bounds &&
+        empty_heatmap_cache_is_not_usable &&
+        aggregate_disk_cache_loads_with_shot_hash &&
+        aggregate_disk_cache_rejects_wrong_key &&
+        aggregate_disk_cache_rejects_shot_hash_mismatch &&
+        empty_samples_do_not_create_valid_cache &&
+        inactive_heatmap_preserves_last_aggregate &&
+        reactivated_heatmap_reuses_preserved_aggregate &&
+        point_artifact_anchor_overrides_null_extent &&
+        null_extent_without_point_artifact_rejected &&
+        crime_point_artifact_published_for_aggregate_sampling &&
+        crime_point_artifact_publish_skips_same_signature &&
+        crime_point_artifact_publish_updates_new_signature &&
+        crime_point_artifact_unpublished_when_not_ready &&
+        high_quality_point_aggregate_samples_artifact_without_features &&
+        standard_point_aggregate_samples_artifact_without_features;
 
     json out = {
         {"mode", "parcel-gpu-cpu-bypass-selftest"},
@@ -1333,7 +2362,57 @@ int runParcelGpuCpuBypassSelftest() {
         {"heatmap_recompute_keeps_cpu", heatmap_recompute_keeps_cpu},
         {"cached_heatmap_bypasses", cached_heatmap_bypasses},
         {"lod_keeps_cpu", lod_keeps_cpu},
-        {"lod_heatmap_keeps_cpu", lod_heatmap_keeps_cpu}
+        {"lod_heatmap_keeps_cpu", lod_heatmap_keeps_cpu},
+        {"crime_plain_gpu_draws", crime_plain_gpu_draws},
+        {"crime_heatmap_keeps_cpu_samples", crime_heatmap_keeps_cpu_samples},
+        {"crime_lod_keeps_cpu", crime_lod_keeps_cpu},
+        {"crime_cluster_keeps_cpu", crime_cluster_keeps_cpu},
+        {"inactive_crime_gpu_does_not_draw", inactive_crime_gpu_does_not_draw},
+        {"aggregate_label_names_layer", aggregate_label_names_layer},
+        {"aggregate_label_summarizes_many_layers", aggregate_label_summarizes_many_layers},
+        {"stable_image_aggregate_key_ignores_zoom", stable_image_aggregate_key_ignores_zoom},
+        {"non_image_aggregate_key_remains_view_scoped", non_image_aggregate_key_remains_view_scoped},
+        {"aggregate_filters_null_island_bounds", aggregate_filters_null_island_bounds},
+        {"empty_heatmap_cache_is_not_usable", empty_heatmap_cache_is_not_usable},
+        {"aggregate_disk_cache_loads_with_shot_hash", aggregate_disk_cache_loads_with_shot_hash},
+        {"aggregate_disk_cache_rejects_wrong_key", aggregate_disk_cache_rejects_wrong_key},
+        {"aggregate_disk_cache_rejects_shot_hash_mismatch", aggregate_disk_cache_rejects_shot_hash_mismatch},
+        {"empty_samples_do_not_create_valid_cache", empty_samples_do_not_create_valid_cache},
+        {"inactive_heatmap_preserves_last_aggregate", inactive_heatmap_preserves_last_aggregate},
+        {"reactivated_heatmap_reuses_preserved_aggregate", reactivated_heatmap_reuses_preserved_aggregate},
+        {"point_artifact_anchor_overrides_null_extent", point_artifact_anchor_overrides_null_extent},
+        {"null_extent_without_point_artifact_rejected", null_extent_without_point_artifact_rejected},
+        {"crime_point_artifact_published_for_aggregate_sampling", crime_point_artifact_published_for_aggregate_sampling},
+        {"crime_point_artifact_publish_skips_same_signature", crime_point_artifact_publish_skips_same_signature},
+        {"crime_point_artifact_publish_updates_new_signature", crime_point_artifact_publish_updates_new_signature},
+        {"crime_point_artifact_unpublished_when_not_ready", crime_point_artifact_unpublished_when_not_ready},
+        {"high_quality_point_aggregate_samples_artifact_without_features", high_quality_point_aggregate_samples_artifact_without_features},
+        {"standard_point_aggregate_samples_artifact_without_features", standard_point_aggregate_samples_artifact_without_features}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runVulkanDeviceLossSelftest() {
+    g_VulkanDeviceLost.store(false, std::memory_order_relaxed);
+    const bool returned_ok = check_vk_result_allow_device_loss(VK_ERROR_DEVICE_LOST);
+    const bool flag_set = g_VulkanDeviceLost.load(std::memory_order_relaxed);
+    TileTexture descriptor_only_texture;
+    descriptor_only_texture.descriptor = reinterpret_cast<VkDescriptorSet>(static_cast<uintptr_t>(0x1));
+    destroyTileTextureNow(descriptor_only_texture);
+    const bool descriptor_cleanup_after_device_loss_ok =
+        descriptor_only_texture.descriptor == VK_NULL_HANDLE &&
+        descriptor_only_texture.view == VK_NULL_HANDLE &&
+        descriptor_only_texture.image == VK_NULL_HANDLE &&
+        descriptor_only_texture.memory == VK_NULL_HANDLE;
+    g_VulkanDeviceLost.store(false, std::memory_order_relaxed);
+    const bool ok = !returned_ok && flag_set && descriptor_cleanup_after_device_loss_ok;
+    json out = {
+        {"mode", "vulkan-device-loss-selftest"},
+        {"ok", ok},
+        {"returned_ok", returned_ok},
+        {"flag_set", flag_set},
+        {"descriptor_cleanup_after_device_loss_ok", descriptor_cleanup_after_device_loss_ok}
     };
     std::cout << out.dump(2) << '\n';
     return ok ? 0 : 1;
@@ -2727,7 +3806,7 @@ int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
-        const bool cache_ok = analytics.validateExistingCache();
+        const bool cache_ok = analytics.status().last_rebuild_ok;
         const DuckDbParcelSemanticSnapshot snapshot = analytics.loadParcelSemanticSnapshot(9);
         const bool ok =
             cache_ok &&
@@ -2792,7 +3871,7 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
-        const bool cache_ok = analytics.validateExistingCache();
+        const bool cache_ok = analytics.status().last_rebuild_ok;
 
         std::vector<LayerDef> layers(2);
         layers[0].file = "parcel.geojson";
@@ -3006,7 +4085,9 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
             " reserve_cores=" + std::to_string(std::max(0, reserve_cores)));
     DuckDbAnalytics analytics(root);
     const bool needs_rebuild = analytics.needsRebuild(layers);
-    const bool current_artifact_valid = !needs_rebuild && analytics.validateExistingCache();
+    const bool current_artifact_valid =
+        !needs_rebuild &&
+        (analytics.status().last_rebuild_ok || analytics.validateExistingCache());
     emitCliProgress(
         kMode,
         "check",
@@ -4863,6 +5944,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_parcel_gpu_cpu_bypass_selftest = true;
             continue;
         }
+        if (arg == "--vulkan-device-loss-selftest") {
+            options.run_vulkan_device_loss_selftest = true;
+            continue;
+        }
         if (arg == "--render-routing-selftest") {
             options.run_render_routing_selftest = true;
             continue;
@@ -4909,6 +5994,14 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--duckdb-parcel-ingest-selftest") {
             options.run_duckdb_parcel_ingest_selftest = true;
+            continue;
+        }
+        if (arg == "--population-metrics-selftest") {
+            options.run_population_metrics_selftest = true;
+            continue;
+        }
+        if (arg == "--beps-screening-selftest") {
+            options.run_beps_screening_selftest = true;
             continue;
         }
         if (arg == "--inspect-canonical-parcel-binary") {
@@ -5067,6 +6160,14 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_build_parcel_matched_layers = true;
             continue;
         }
+        if (arg == "--build-population-metrics") {
+            options.run_build_population_metrics = true;
+            continue;
+        }
+        if (arg == "--build-beps-candidates") {
+            options.run_build_beps_candidates = true;
+            continue;
+        }
         if (arg == "--color-editor") {
             options.run_color_editor = true;
             if (i + 1 < argc) options.color_editor_session_file = argv[++i];
@@ -5094,6 +6195,11 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         }
         if (arg == "--include-large") {
             options.include_large_downloads = true;
+            continue;
+        }
+        if (arg == "--debug-gpu-aggregate") {
+            options.debug_gpu_aggregate = true;
+            setWorldsimGpuAggregateDebug(true);
             continue;
         }
         if (arg == "--reserve-one-core") {
@@ -5124,12 +6230,15 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
-        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
-        << "       worldsim3 [--generate-canonical-files [all|must-have|nice-to-have|heavy-data|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|beps|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--generate-canonical-files [all|must-have|nice-to-have|heavy-data|beps|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
         << "       worldsim3 --rebuild-duckdb-analytics [--reserve-cores N]\n"
         << "       worldsim3 --inspect-duckdb-geography-tables\n"
         << "       worldsim3 --report-duckdb-coverage\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
+        << "       worldsim3 --build-population-metrics\n"
+        << "       worldsim3 --build-beps-candidates\n"
+        << "       worldsim3 [--debug-gpu-aggregate]\n"
         << "       worldsim3 --canonical-parcel-binary-selftest\n"
         << "       worldsim3 --inspect-canonical-parcel-binary [LAYER_FILE]\n"
         << "       worldsim3 --validate-canonical-parcel-binary [LAYER_FILE]\n"
@@ -5152,6 +6261,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --layer-runtime-status-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
+        << "       worldsim3 --vulkan-device-loss-selftest\n"
         << "       worldsim3 --render-routing-selftest\n"
         << "       worldsim3 --render-tile-cache-selftest\n"
         << "       worldsim3 --render-polygon-tile-runtime-policy-selftest\n"
@@ -5163,11 +6273,14 @@ void printWorldsimUsage() {
         << "       worldsim3 --parcel-hover-click-ui-harness\n"
         << "       worldsim3 --duckdb-parcel-semantic-snapshot-selftest\n"
         << "       worldsim3 --duckdb-parcel-ingest-selftest [--reserve-cores N]\n"
+        << "       worldsim3 --population-metrics-selftest\n"
+        << "       worldsim3 --beps-screening-selftest\n"
         << "       worldsim3 --vacancy-selftest\n";
 }
 
 int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& options) {
     applyDotEnvEnvironment(root);
+    if (options.debug_gpu_aggregate) setWorldsimGpuAggregateDebug(true);
     if (options.show_help) {
         printWorldsimUsage();
         return 0;
@@ -5198,6 +6311,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_parcel_gpu_cpu_bypass_selftest) {
         return runParcelGpuCpuBypassSelftest();
+    }
+    if (options.run_vulkan_device_loss_selftest) {
+        return runVulkanDeviceLossSelftest();
     }
     if (options.run_render_routing_selftest) {
         return runRenderRoutingSelftest(root);
@@ -5234,6 +6350,12 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_duckdb_parcel_ingest_selftest) {
         return runDuckDbParcelIngestSelftest(root, options.reserve_cores_set ? options.reserve_cores : 0);
+    }
+    if (options.run_population_metrics_selftest) {
+        return runPopulationMetricsSelftest();
+    }
+    if (options.run_beps_screening_selftest) {
+        return runBepsScreeningSelftest();
     }
     if (options.run_inspect_canonical_parcel_binary) {
         return inspectCanonicalParcelBinary(root, options.canonical_parcel_binary_file);
@@ -5297,6 +6419,12 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_report_duckdb_coverage) {
         return reportDuckDbCoverageCli(root);
+    }
+    if (options.run_build_population_metrics) {
+        return runBuildPopulationMetricsCli(root);
+    }
+    if (options.run_build_beps_candidates) {
+        return runBuildBepsCandidatesCli(root);
     }
     if (options.run_build_parcel_matched_layers) {
         ensureParcelMatchedEventLayers(root, options.force_build_parcel_matched_layers, &std::cout);

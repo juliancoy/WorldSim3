@@ -1,5 +1,6 @@
 #include "heatmap_runtime.h"
 
+#include "aggregate_debug.h"
 #include "heatmap_gpu_aggregate.h"
 #include "heatmap_render.h"
 #include "map_render_hud.h"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <future>
 #include <sstream>
 
@@ -17,6 +19,31 @@ std::filesystem::path aggregateCachePath(const std::filesystem::path& root, uint
     std::ostringstream name;
     name << std::hex << key << ".raster.bin";
     return root / "data" / "cache" / "aggregate" / name.str();
+}
+
+bool cachedAggregateHasDrawableContent(const CachedAggregateTexture& entry) {
+    if (!entry.cells.empty()) return true;
+    if (entry.texture.descriptor) return true;
+    for (const auto& layer : entry.raster_layers) {
+        if (layer.has_gpu_texture && layer.gpu_texture.descriptor) return true;
+    }
+    return false;
+}
+
+bool cachedAggregateHasTextureDescriptor(const CachedAggregateTexture& entry) {
+    if (entry.texture.descriptor) return true;
+    for (const auto& layer : entry.raster_layers) {
+        if (layer.has_gpu_texture && layer.gpu_texture.descriptor) return true;
+    }
+    return false;
+}
+
+bool runtimeHasDrawableContentForKey(const HeatmapRuntimeState& state, uint64_t heatmap_key) {
+    if (!state.cache_valid || state.cache_key != heatmap_key) return false;
+    if (!state.cached_cells.empty()) return true;
+    return state.raster_texture_valid &&
+        state.raster_cache_key == heatmap_key &&
+        state.raster_texture.descriptor;
 }
 
 void pruneHeatmapTextureCache(HeatmapRuntimeState& state) {
@@ -148,24 +175,31 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
     }
 
     if (!any_active_heatmap) {
-        state.cached_cells.clear();
-        state.cache_valid = false;
-        state.cache_key = 0;
         state.pending_key = 0;
-        if (state.raster_texture_valid) destroyTileTexture(state.raster_texture);
-        state.raster_texture_valid = false;
-        state.cached_raster_meta = {};
-        state.raster_cache_key = 0;
         return {};
     }
 
     HeatmapCacheLookup lookup;
     auto cached_it = state.texture_cache.find(heatmap_key);
     if (cached_it != state.texture_cache.end()) {
-        cached_it->second.last_used_frame = ++state.texture_cache_frame;
-        lookup.cached_aggregate_for_key = &cached_it->second;
-        state.cache_key = heatmap_key;
-        state.cache_valid = true;
+        if (cachedAggregateHasDrawableContent(cached_it->second)) {
+            cached_it->second.last_used_frame = ++state.texture_cache_frame;
+            lookup.cached_aggregate_for_key = &cached_it->second;
+            state.cache_key = heatmap_key;
+            state.cache_valid = true;
+        } else {
+            destroyTileTexture(cached_it->second.texture);
+            for (auto& layer : cached_it->second.raster_layers) {
+                if (!recycleGpuAggregateTexture(layer.gpu_texture, (uint32_t)layer.raster.w, (uint32_t)layer.raster.h)) {
+                    destroyTileTexture(layer.gpu_texture);
+                }
+            }
+            state.texture_cache.erase(cached_it);
+            if (state.cache_key == heatmap_key) {
+                state.cache_valid = false;
+                state.cache_key = 0;
+            }
+        }
     } else if (!state.async_inflight) {
         HeatmapRaster disk_raster;
         if (loadHeatmapRasterCache(aggregateCachePath(root, heatmap_key), heatmap_key, disk_raster)) {
@@ -192,18 +226,46 @@ HeatmapCacheLookup prepareHeatmapAggregateCache(
 
     lookup.can_use_cached_heatmap =
         lookup.cached_aggregate_for_key != nullptr ||
-        (state.cache_valid && state.cache_key == heatmap_key);
+        runtimeHasDrawableContentForKey(state, heatmap_key);
     lookup.aggregate_generation_pending = state.async_inflight && state.pending_key != 0;
     return lookup;
+}
+
+std::string aggregateGenerationStatusLabel(const std::vector<std::string>& layer_names) {
+    if (layer_names.empty()) return "Generating aggregate";
+    std::ostringstream label;
+    label << "Generating aggregate: ";
+    const size_t shown = std::min<size_t>(layer_names.size(), 2);
+    for (size_t i = 0; i < shown; ++i) {
+        if (i > 0) label << ", ";
+        label << layer_names[i];
+    }
+    if (layer_names.size() > shown) {
+        label << " +" << (layer_names.size() - shown) << " more";
+    }
+    return label.str();
 }
 
 void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
     HeatmapRuntimeState& state = *ctx.runtime;
     bool should_recompute_heatmap = ctx.should_recompute_heatmap;
     if (should_recompute_heatmap && ctx.heat_samples->empty()) {
-        state.cached_cells.clear();
-        state.cache_key = ctx.heatmap_key;
-        state.cache_valid = true;
+        if (state.cache_key == ctx.heatmap_key) {
+            state.cached_cells.clear();
+            state.cache_key = 0;
+            state.cache_valid = false;
+            state.cached_raster_meta = {};
+            state.raster_cache_key = 0;
+            if (state.raster_texture.descriptor) destroyTileTexture(state.raster_texture);
+            state.raster_texture_valid = false;
+        }
+        if (worldsimGpuAggregateDebugEnabled()) {
+            std::fprintf(
+                stderr,
+                "[worldsim3][gpu-aggregate] empty-samples key=%llu label=\"%s\"\n",
+                (unsigned long long)ctx.heatmap_key,
+                ctx.aggregate_generation_label.c_str());
+        }
         should_recompute_heatmap = false;
     }
 
@@ -219,6 +281,18 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
         const float view_max_lat = ctx.view_max_lat;
         const int smooth_heat_raster_base_px = ctx.smooth_heat_raster_base_px;
         const int smooth_heat_raster_max_px = ctx.smooth_heat_raster_max_px;
+        if (worldsimGpuAggregateDebugEnabled()) {
+            std::fprintf(
+                stderr,
+                "[worldsim3][gpu-aggregate] start key=%llu samples=%zu zoom=%d active_heatmap=%d gpu_splat=%d high_quality=%d label=\"%s\"\n",
+                (unsigned long long)key_copy,
+                samples_copy.size(),
+                ctx.zoom,
+                ctx.any_active_heatmap ? 1 : 0,
+                ctx.any_active_gpu_splat ? 1 : 0,
+                ctx.high_quality_gpu_aggregate ? 1 : 0,
+                ctx.aggregate_generation_label.c_str());
+        }
         state.async_future = std::async(std::launch::async, [=]() mutable -> std::pair<uint64_t, HeatmapRenderData> {
             return buildHeatmapRenderData(
                 key_copy,
@@ -284,7 +358,7 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
         (should_recompute_heatmap ? frame_heat_cells : empty_heat_cells));
     const bool cached_aggregate_has_texture =
         draw_cached_aggregate &&
-        (!draw_cached_aggregate->raster_layers.empty() || draw_cached_aggregate->texture.descriptor);
+        cachedAggregateHasTextureDescriptor(*draw_cached_aggregate);
 
     MapHeatmapDrawContext heatmap_draw_ctx;
     heatmap_draw_ctx.draw = ctx.draw;
@@ -318,8 +392,9 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
     if (ctx.prof_heatmap_texture_resident) {
         ctx.prof_heatmap_texture_resident->store(
             heatmap_draw_ctx.heatmap_raster_texture_valid &&
-            ((heatmap_draw_ctx.heatmap_raster_layers && !heatmap_draw_ctx.heatmap_raster_layers->empty()) ||
-             (heatmap_draw_ctx.heatmap_raster_texture &&
+            ((draw_cached_aggregate && cachedAggregateHasTextureDescriptor(*draw_cached_aggregate)) ||
+             (!draw_cached_aggregate &&
+              heatmap_draw_ctx.heatmap_raster_texture &&
               heatmap_draw_ctx.heatmap_raster_texture->descriptor)),
             std::memory_order_relaxed);
     }
@@ -334,7 +409,12 @@ void runHeatmapFramePass(const HeatmapFramePassContext& ctx) {
     }
 
     drawHeatmapPass(heatmap_draw_ctx);
-    if (ctx.any_active_gpu_splat && state.async_inflight && !ctx.can_use_cached_heatmap) {
-        drawMapStatusBadge(ctx.draw, ctx.origin, "Generating Aggregate");
+    if (ctx.any_active_heatmap && state.async_inflight) {
+        drawMapStatusBadge(
+            ctx.draw,
+            ctx.origin,
+            ctx.aggregate_generation_label.empty()
+                ? "Generating aggregate"
+                : ctx.aggregate_generation_label.c_str());
     }
 }

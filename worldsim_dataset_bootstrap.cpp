@@ -35,8 +35,13 @@ struct CliDownloadItem {
     std::string message;
     bool exists_before = false;
     bool exists_after = false;
+    bool materialized_before = false;
+    bool materialized_after = false;
     bool hash_verified = false;
     std::string hash_state;
+    std::string output_path;
+    std::string canonical_path;
+    std::string source_artifact_path;
     uint64_t bytes_now = 0;
     uint64_t bytes_total = 0;
     double ewma_bps = 0.0;
@@ -80,6 +85,22 @@ static std::string metadataHashForOutput(const fs::path& root, const fs::path& o
     return meta.value("content_hash", std::string());
 }
 
+static fs::path canonicalOutputPathForLayerFile(const fs::path& out_path, const std::string& file) {
+    return out_path.parent_path() / (layerArtifactBasenameForFile(file) + ".canonical.bin");
+}
+
+static bool layerOutputMaterialized(const fs::path& root, const fs::path& out_path, const std::string& file) {
+    std::error_code ec;
+    if (fs::exists(out_path, ec) && !ec) return true;
+    ec.clear();
+    if (fs::exists(canonicalOutputPathForLayerFile(out_path, file), ec) && !ec) return true;
+    ec.clear();
+    const fs::path legacy_path = root / "data" / "layers" / file;
+    if (fs::exists(legacy_path, ec) && !ec) return true;
+    ec.clear();
+    return fs::exists(canonicalOutputPathForLayerFile(legacy_path, file), ec) && !ec;
+}
+
 static fs::path layerOutputDirForManifestItem(const fs::path& root, const json& item) {
     if (item.contains("directory") && item["directory"].is_string()) {
         fs::path p(item["directory"].get<std::string>());
@@ -113,7 +134,12 @@ static LayerDef layerFromManifestItem(const json& item) {
         layer.import_source_crs = import.value("source_crs", std::string());
         layer.import_shapefile = import.value("shapefile", std::string());
         layer.import_service_url = import.value("service_url", std::string());
+        layer.import_where = import.value("where", std::string());
         layer.import_normalizer = import.value("normalizer", std::string());
+        layer.import_query = import.value("query", std::string());
+        layer.import_table = import.value("table", std::string());
+        layer.import_year = import.value("year", std::string());
+        layer.import_survey = import.value("survey", std::string());
         layer.import_sheet_name = import.value("sheet_name", std::string());
         layer.import_lon_field = import.value("lon_field", std::string());
         layer.import_lat_field = import.value("lat_field", std::string());
@@ -128,6 +154,30 @@ static LayerDef layerFromManifestItem(const json& item) {
         layer.provenance_county_city = provenance.value("county_city", std::string());
     }
     return layer;
+}
+
+static fs::path importSourceArtifactPathForManifestItem(const fs::path& root, const json& item) {
+    if (!item.contains("import") || !item["import"].is_object()) return {};
+    const auto& import = item["import"];
+    const std::string import_type = import.value("type", std::string());
+    if (import_type.empty()) return {};
+    LayerDef layer = layerFromManifestItem(item);
+    const std::string file = item.value("file", std::string());
+    if (file.empty()) return {};
+    std::string artifact_file = import.value("artifact_file", std::string());
+    if (artifact_file.empty() && import_type == "socrata_csv_properties") {
+        artifact_file = file + ".source.csv";
+    }
+    if (artifact_file.empty()) return {};
+    return provenanceSourceArtifactPath(root, layer, artifact_file);
+}
+
+static bool importSourceArtifactMaterialized(const fs::path& root, const json& item, fs::path* out_path = nullptr) {
+    const fs::path artifact_path = importSourceArtifactPathForManifestItem(root, item);
+    if (out_path) *out_path = artifact_path;
+    if (artifact_path.empty()) return false;
+    std::error_code ec;
+    return fs::exists(artifact_path, ec) && !ec;
 }
 
 static std::string renderBar(float p, int width) {
@@ -200,6 +250,16 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
         CliDownloadItem c;
         c.name = item.value("name", std::string("unnamed"));
         c.file = item.value("file", std::string());
+        const fs::path out_path = c.file.empty() ? fs::path() : layerOutputDirForManifestItem(root, item) / c.file;
+        if (!out_path.empty()) {
+            c.output_path = out_path.string();
+            c.canonical_path = canonicalOutputPathForLayerFile(out_path, c.file).string();
+            c.materialized_before = layerOutputMaterialized(root, out_path, c.file);
+        }
+        fs::path source_artifact_path;
+        const bool source_artifact_before = importSourceArtifactMaterialized(root, item, &source_artifact_path);
+        if (!source_artifact_path.empty()) c.source_artifact_path = source_artifact_path.string();
+        c.materialized_before = c.materialized_before || source_artifact_before;
         const bool has_import = item.contains("import") && item["import"].is_object();
         const bool has_url = item.contains("url") && item["url"].is_string();
         if (item.value("download", true) == false && !has_import) {
@@ -217,7 +277,6 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
             summary.failed++;
         } else {
             layers.push_back(layerFromManifestItem(item));
-            const fs::path out_path = layerOutputDirForManifestItem(root, item) / c.file;
             out_paths.push_back(out_path);
             std::error_code ec;
             c.exists_before = fs::exists(out_path, ec) && !ec;
@@ -362,8 +421,35 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
     }
 
     const std::string run_stamp = isoNowUtcCompact();
+    size_t audit_materialized = 0;
+    size_t audit_missing = 0;
+    size_t audit_required_missing = 0;
+    std::vector<std::string> audit_missing_files;
+    std::vector<std::string> audit_required_missing_files;
     json records = json::array();
-    for (const auto& it : items) {
+    for (auto& it : items) {
+        if (!it.output_path.empty()) {
+            const fs::path out_path(it.output_path);
+            std::error_code ec;
+            it.exists_after = fs::exists(out_path, ec) && !ec;
+            it.materialized_after = layerOutputMaterialized(root, out_path, it.file);
+        }
+        if (!it.source_artifact_path.empty()) {
+            std::error_code ec;
+            it.materialized_after = it.materialized_after || (fs::exists(it.source_artifact_path, ec) && !ec);
+        }
+        if (!it.file.empty()) {
+            if (it.materialized_after) {
+                ++audit_materialized;
+            } else {
+                ++audit_missing;
+                audit_missing_files.push_back(it.file);
+                if (!it.skipped) {
+                    ++audit_required_missing;
+                    audit_required_missing_files.push_back(it.file);
+                }
+            }
+        }
         records.push_back({
             {"name", it.name},
             {"file", it.file},
@@ -375,8 +461,13 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
             {"message", it.message},
             {"exists_before", it.exists_before},
             {"exists_after", it.exists_after},
+            {"materialized_before", it.materialized_before},
+            {"materialized_after", it.materialized_after},
             {"hash_verified", it.hash_verified},
-            {"hash_state", it.hash_state}
+            {"hash_state", it.hash_state},
+            {"output_path", it.output_path},
+            {"canonical_path", it.canonical_path},
+            {"source_artifact_path", it.source_artifact_path}
         });
     }
     const fs::path report_path = root / "data" / "versions" / "reports" / ("layer_download_run_" + run_stamp + ".json");
@@ -390,8 +481,13 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
             {"downloaded", summary.downloaded},
             {"skipped", summary.skipped},
             {"failed", summary.failed},
-            {"total", summary.total}
+            {"total", summary.total},
+            {"audit_materialized", audit_materialized},
+            {"audit_missing", audit_missing},
+            {"audit_required_missing", audit_required_missing}
         }},
+        {"audit_missing_files", audit_missing_files},
+        {"audit_required_missing_files", audit_required_missing_files},
         {"records", std::move(records)}
     };
     {
@@ -402,9 +498,26 @@ int runLayerDownloadCli(const fs::path& root, const std::string& phase, bool inc
     std::cout << "\nDone. downloaded=" << summary.downloaded
               << " skipped=" << summary.skipped
               << " failed=" << summary.failed
-              << " total=" << summary.total << "\n";
+              << " total=" << summary.total
+              << " audit_materialized=" << audit_materialized
+              << " audit_missing=" << audit_missing
+              << " audit_required_missing=" << audit_required_missing << "\n";
+    if (!audit_missing_files.empty()) {
+        std::cout << "Audit missing files:";
+        const size_t n = std::min<size_t>(audit_missing_files.size(), 20);
+        for (size_t i = 0; i < n; ++i) std::cout << " " << audit_missing_files[i];
+        if (audit_missing_files.size() > n) std::cout << " ...";
+        std::cout << "\n";
+    }
+    if (!audit_required_missing_files.empty()) {
+        std::cout << "Audit required missing files:";
+        const size_t n = std::min<size_t>(audit_required_missing_files.size(), 20);
+        for (size_t i = 0; i < n; ++i) std::cout << " " << audit_required_missing_files[i];
+        if (audit_required_missing_files.size() > n) std::cout << " ...";
+        std::cout << "\n";
+    }
     std::cout << "Report: " << report_path.string() << "\n";
-    return summary.failed == 0 ? 0 : 1;
+    return summary.failed == 0 && audit_required_missing == 0 ? 0 : 1;
 }
 
 bool envEnabled(const char* name) {

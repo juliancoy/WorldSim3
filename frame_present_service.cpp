@@ -170,6 +170,7 @@ void createBuffer(
 }  // namespace
 
 void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
+    if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) return;
     VkSemaphore image_acquired_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
     VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
     VkResult err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
@@ -177,18 +178,18 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
         g_SwapChainRebuild = true;
         return;
     }
-    check_vk_result(err);
+    if (!check_vk_result_allow_device_loss(err)) return;
     g_CurrentFrameRenderIndex = wd->FrameIndex;
 
     ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
-    check_vk_result(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX));
-    check_vk_result(vkResetFences(g_Device, 1, &fd->Fence));
-    check_vk_result(vkResetCommandPool(g_Device, fd->CommandPool, 0));
+    if (!check_vk_result_allow_device_loss(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX))) return;
+    if (!check_vk_result_allow_device_loss(vkResetFences(g_Device, 1, &fd->Fence))) return;
+    if (!check_vk_result_allow_device_loss(vkResetCommandPool(g_Device, fd->CommandPool, 0))) return;
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    check_vk_result(vkBeginCommandBuffer(fd->CommandBuffer, &begin));
+    if (!check_vk_result_allow_device_loss(vkBeginCommandBuffer(fd->CommandBuffer, &begin))) return;
     recordZoningOutlineIndirectComputeDispatches(fd->CommandBuffer);
 
     VkRenderPassBeginInfo rp{};
@@ -207,7 +208,7 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     g_CurrentFrameRenderCommandBuffer = VK_NULL_HANDLE;
     g_CurrentFrameRenderPass = VK_NULL_HANDLE;
     vkCmdEndRenderPass(fd->CommandBuffer);
-    check_vk_result(vkEndCommandBuffer(fd->CommandBuffer));
+    if (!check_vk_result_allow_device_loss(vkEndCommandBuffer(fd->CommandBuffer))) return;
 
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
@@ -221,7 +222,7 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     submit.pSignalSemaphores = &render_complete_semaphore;
     {
         std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+        if (!check_vk_result_allow_device_loss(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence))) return;
     }
 
     uint64_t shot_req_id = 0;
@@ -435,7 +436,7 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
 }
 
 void FramePresent(ImGui_ImplVulkanH_Window* wd) {
-    if (g_SwapChainRebuild) return;
+    if (g_SwapChainRebuild || g_VulkanDeviceLost.load(std::memory_order_relaxed)) return;
     VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -453,12 +454,13 @@ void FramePresent(ImGui_ImplVulkanH_Window* wd) {
         g_SwapChainRebuild = true;
         return;
     }
-    check_vk_result(err);
+    if (!check_vk_result_allow_device_loss(err)) return;
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
     g_PresentedFrameSerial.fetch_add(1, std::memory_order_relaxed);
 }
 
 void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, bool& swapchain_rebuild) {
+    if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) return;
     VkSemaphore image_acquired_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
     VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
     VkResult err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
@@ -466,17 +468,17 @@ void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, b
         swapchain_rebuild = true;
         return;
     }
-    check_vk_result(err);
+    if (!check_vk_result_allow_device_loss(err)) return;
 
     ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
-    check_vk_result(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX));
-    check_vk_result(vkResetFences(g_Device, 1, &fd->Fence));
-    check_vk_result(vkResetCommandPool(g_Device, fd->CommandPool, 0));
+    if (!check_vk_result_allow_device_loss(vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX))) return;
+    if (!check_vk_result_allow_device_loss(vkResetFences(g_Device, 1, &fd->Fence))) return;
+    if (!check_vk_result_allow_device_loss(vkResetCommandPool(g_Device, fd->CommandPool, 0))) return;
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    check_vk_result(vkBeginCommandBuffer(fd->CommandBuffer, &begin));
+    if (!check_vk_result_allow_device_loss(vkBeginCommandBuffer(fd->CommandBuffer, &begin))) return;
 
     VkRenderPassBeginInfo rp{};
     rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -490,7 +492,7 @@ void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, b
 
     ImGui_ImplVulkan_RenderDrawData(draw_data, fd->CommandBuffer);
     vkCmdEndRenderPass(fd->CommandBuffer);
-    check_vk_result(vkEndCommandBuffer(fd->CommandBuffer));
+    if (!check_vk_result_allow_device_loss(vkEndCommandBuffer(fd->CommandBuffer))) return;
 
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     VkSubmitInfo submit{};
@@ -504,12 +506,12 @@ void FrameRenderSecondary(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data, b
     submit.pSignalSemaphores = &render_complete_semaphore;
     {
         std::lock_guard<std::mutex> qlk(g_QueueSubmitMutex);
-        check_vk_result(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence));
+        if (!check_vk_result_allow_device_loss(vkQueueSubmit(g_Queue, 1, &submit, fd->Fence))) return;
     }
 }
 
 void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild) {
-    if (swapchain_rebuild) return;
+    if (swapchain_rebuild || g_VulkanDeviceLost.load(std::memory_order_relaxed)) return;
     VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
     VkPresentInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -527,6 +529,6 @@ void FramePresentSecondary(ImGui_ImplVulkanH_Window* wd, bool& swapchain_rebuild
         swapchain_rebuild = true;
         return;
     }
-    check_vk_result(err);
+    if (!check_vk_result_allow_device_loss(err)) return;
     wd->SemaphoreIndex = (wd->SemaphoreIndex + 1) % wd->SemaphoreCount;
 }

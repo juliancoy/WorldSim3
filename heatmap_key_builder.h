@@ -39,7 +39,6 @@ struct HeatmapKeyBuilderContext {
     bool heatmap_zoom_adaptive_bandwidth = true;
     bool heatmap_multires_enabled = true;
     float heatmap_multires_blend = 0.5f;
-    bool heatmap_allow_cpu_fallback = false;
     bool filter_enabled = false;
     const char* filter_blocklot = "";
     const char* filter_status = "";
@@ -64,3 +63,4 @@ struct HeatmapKeyBuilderContext {
 };
 
 uint64_t buildHeatmapKey(const HeatmapKeyBuilderContext& ctx, bool include_view_state);
+uint64_t selectHeatmapAggregateKey(uint64_t heatmap_view_key, uint64_t heatmap_data_key, bool stable_image_aggregate);
