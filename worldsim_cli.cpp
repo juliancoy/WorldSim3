@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
@@ -117,6 +118,16 @@ bool isBareLayerFilename(const std::string& file) {
     return !file.empty() &&
            file.find('/') == std::string::npos &&
            file.find('\\') == std::string::npos;
+}
+
+std::string cliSqlQuote(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 8);
+    for (const char c : value) {
+        if (c == '\'') out += "''";
+        else out.push_back(c);
+    }
+    return out;
 }
 
 bool isPrimaryParcelGeometryFileForCli(const std::string& file) {
@@ -221,8 +232,8 @@ std::vector<const char*> cliGeometryArtifactRouteNamesForLayer(
     }
     if (cls == GeometryArtifactClass::Polygon && isOperationalParcelRenderLayer(layer)) {
         return {
-            layerRenderRouteArtifactName(LayerRenderRoute::ParcelGpu),
-            layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu)
+            layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu),
+            layerRenderRouteArtifactName(LayerRenderRoute::ParcelGpu)
         };
     }
     const LayerRenderRoute route = cliRenderRouteForLayer(root, layers, layer);
@@ -2541,7 +2552,7 @@ int runRenderPolygonTileRuntimePolicySelftest() {
     const std::string query_polygon_zoom_10 =
         mode_name(generic_polygon, LayerRenderRoute::GenericPolygonGpu, 10, false, true);
     const std::string active_parcel_zoom_10 =
-        mode_name(active_parcel, LayerRenderRoute::ParcelGpu, 10, false, false);
+        mode_name(active_parcel, LayerRenderRoute::ParcelPolygonGpu, 10, false, false);
     const std::string county_parcel_zoom_10 =
         mode_name(active_parcel, LayerRenderRoute::ParcelPolygonGpu, 10, false, false);
 
@@ -2553,7 +2564,7 @@ int runRenderPolygonTileRuntimePolicySelftest() {
         zoning_polygon_zoom_10 == "vector_only" &&
         filtered_polygon_zoom_10 == "vector_only" &&
         query_polygon_zoom_10 == "vector_only" &&
-        active_parcel_zoom_10 == "vector_only" &&
+        active_parcel_zoom_10 == "raster_only" &&
         county_parcel_zoom_10 == "raster_only";
 
     json out = {
@@ -2809,7 +2820,7 @@ int parcelArtifactHealth(const fs::path& root, std::string file) {
     }
     const char* polygon_render_path = manifest_layer
         ? layerRenderRouteArtifactName(cliRenderRouteForLayer(root, manifest_layers, *manifest_layer))
-        : layerRenderRouteArtifactName(LayerRenderRoute::ParcelGpu);
+        : layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu);
     const fs::path polygon_path = geometryArtifactCachePathForLayerFile(
         root,
         file,
@@ -2924,8 +2935,8 @@ int runRenderRoutingSelftest(const fs::path& root) {
     };
 
     std::vector<Case> cases = {
-        {"active_parcel", 0, 0, city_parcel, LayerRenderRoute::ParcelGpu, GeometryArtifactClass::Polygon, ".parcel_gpu.polygon.bin"},
-        {"county_parcel_fallback", 1, 0, county_parcel, LayerRenderRoute::ParcelPolygonGpu, GeometryArtifactClass::Polygon, ".parcel_polygon_gpu.polygon.bin"},
+        {"city_parcel", 0, 0, city_parcel, LayerRenderRoute::ParcelPolygonGpu, GeometryArtifactClass::Polygon, ".parcel_polygon_gpu.polygon.bin"},
+        {"county_parcel", 1, 0, county_parcel, LayerRenderRoute::ParcelPolygonGpu, GeometryArtifactClass::Polygon, ".parcel_polygon_gpu.polygon.bin"},
         {"point", 2, 0, point_layer, LayerRenderRoute::PointGpu, GeometryArtifactClass::Point, ".point_gpu.point.bin"},
         {"polyline", 3, 0, polyline_layer, LayerRenderRoute::PolylineGpu, GeometryArtifactClass::Polyline, ".polyline_gpu.polyline.bin"},
         {"generic_polygon", 4, 0, polygon_layer, LayerRenderRoute::GenericPolygonGpu, GeometryArtifactClass::Polygon, ".generic_polygon_gpu.polygon.bin"}
@@ -3481,6 +3492,89 @@ int runPolygonArtifactResilienceSelftest() {
     return ok ? 0 : 1;
 }
 
+int runParcelPolygonFeatureIdxSelftest() {
+    std::error_code ec;
+    const fs::path test_root = fs::temp_directory_path(ec) / "worldsim3_parcel_polygon_feature_idx_selftest";
+    fs::create_directories(test_root / "data" / "cache" / "geometry", ec);
+
+    LayerDef layer;
+    layer.file = "parcel_polygon_feature_idx_selftest.geojson";
+    layer.logical_id = "parcel_polygon_feature_idx_selftest";
+    layer.scale = "parcel";
+    layer.duckdb_role = "parcel_record";
+
+    LayerDef::FeatureRecord feature_a;
+    feature_a.extent.min_lon = -76.7000f;
+    feature_a.extent.min_lat = 39.2000f;
+    feature_a.extent.max_lon = -76.6990f;
+    feature_a.extent.max_lat = 39.2010f;
+    feature_a.rings = {{
+        ImVec2(-76.7000f, 39.2000f),
+        ImVec2(-76.6990f, 39.2000f),
+        ImVec2(-76.6990f, 39.2010f),
+        ImVec2(-76.7000f, 39.2010f),
+        ImVec2(-76.7000f, 39.2000f)
+    }};
+    ensureFeatureTriangles(feature_a);
+
+    LayerDef::FeatureRecord feature_b = feature_a;
+    feature_b.extent.min_lon = -76.6985f;
+    feature_b.extent.max_lon = -76.6975f;
+    for (ImVec2& p : feature_b.rings[0]) p.x += 0.0015f;
+    ensureFeatureTriangles(feature_b);
+
+    layer.features.push_back(feature_a);
+    layer.features.push_back(feature_b);
+
+    const std::string sig = "parcel_polygon_feature_idx_selftest_sig";
+    PolygonGeometryArtifact valid_artifact;
+    const bool build_ok = buildPolygonGeometryArtifact(layer, layer.features, sig, valid_artifact, 64);
+    const fs::path artifact_path = geometryArtifactCachePathForLayerFile(
+        test_root,
+        layer.file,
+        GeometryArtifactClass::Polygon,
+        layerRenderRouteArtifactName(LayerRenderRoute::ParcelPolygonGpu));
+
+    bool valid_indices_ok = build_ok && valid_artifact.features.size() == 2;
+    if (valid_indices_ok) {
+        for (size_t i = 0; i < valid_artifact.features.size(); ++i) {
+            if (valid_artifact.features[i].feature_idx != i) {
+                valid_indices_ok = false;
+                break;
+            }
+        }
+    }
+
+    if (build_ok) saveBinaryPolygonGeometryArtifact(artifact_path, valid_artifact);
+    PolygonGeometryArtifact roundtrip_artifact;
+    const bool roundtrip_ok = build_ok && loadBinaryPolygonGeometryArtifact(artifact_path, sig, roundtrip_artifact);
+
+    PolygonGeometryArtifact invalid_artifact = valid_artifact;
+    if (!invalid_artifact.features.empty()) {
+        invalid_artifact.features[0].feature_idx = 9999u;
+    }
+    saveBinaryPolygonGeometryArtifact(artifact_path, invalid_artifact);
+    PolygonGeometryArtifact invalid_loaded_artifact;
+    const bool invalid_rejected = !loadBinaryPolygonGeometryArtifact(artifact_path, sig, invalid_loaded_artifact);
+
+    fs::remove(artifact_path, ec);
+    fs::remove(test_root / "data" / "cache" / "geometry", ec);
+    fs::remove(test_root / "data" / "cache", ec);
+    fs::remove(test_root / "data", ec);
+    fs::remove(test_root, ec);
+
+    const bool ok = build_ok && valid_indices_ok && roundtrip_ok && invalid_rejected;
+    std::cout << json{
+        {"mode", "parcel-polygon-feature-idx-selftest"},
+        {"ok", ok},
+        {"build_ok", build_ok},
+        {"valid_indices_ok", valid_indices_ok},
+        {"roundtrip_ok", roundtrip_ok},
+        {"invalid_rejected", invalid_rejected}
+    }.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 int runParcelSelectionUiHarness() {
     IMGUI_CHECKVERSION();
     ImGuiContext* imgui = ImGui::CreateContext();
@@ -3865,9 +3959,16 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
         exec("CREATE TABLE layer_feature_properties(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, property_key VARCHAR, property_value VARCHAR)");
         exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
         exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
+        exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
         exec(R"SQL(
             INSERT INTO layer_features VALUES
             (10, 'Baltimore County Parcels', 'baltimore_county_parcels.geojson', 'parcel_record', 1, 'ENTITYCOUNTY1', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', 0, 0)
+        )SQL");
+        exec(R"SQL(
+            INSERT INTO unified_parcels VALUES
+            (0, 'CANONICALBC1', 'GEOMETRYBC1', 'BC-1', 'parcel.geojson', 'baltimore_county_parcels.geojson', true, true, 'county owner', 'county owner', '10 County St', '10 county st', '21211', 'ACTIVE', 100000, 50000, 900, 150000, 0, 150000, 0, 0, 0, 0, 0, 0, -76.70, 39.20, -76.69, 39.21)
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
@@ -3878,15 +3979,12 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
         layers[0].enabled = true;
         layers[1].file = "baltimore_county_parcels.geojson";
         layers[1].enabled = true;
-        layers[1].features.resize(2);
-        layers[1].features[1].entity_id = "ENTITYCOUNTY1";
-        layers[1].features[1].geometry_entity_id = "geom:county:1";
-        layers[1].features[1].source_feature_id = "src:county:1";
 
         MapHoverState hover_state;
         hover_state.hovered_parcel_layer_idx = 1;
-        hover_state.hovered_parcel_idx = 1;
+        hover_state.hovered_parcel_idx = 24173;
         hover_state.hovered_parcel_entity_id = "ENTITYCOUNTY1";
+        hover_state.hovered_parcel_geometry_entity_id = "GEOMETRYBC1";
 
         ParcelSelectionState selection;
         std::string opened_entity_id;
@@ -3912,17 +4010,20 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
             cache_ok &&
             hovered.hit &&
             hovered.layer_idx == 1 &&
-            hovered.feature_idx == 1 &&
+            hovered.feature_idx == 24173 &&
             !hovered.entity_id.empty() &&
             detail.available &&
+            detail.parcel_entity_id == "CANONICALBC1" &&
             detail.blocklot == "BC-1" &&
             detail.owner_display == "county owner" &&
             detail.address == "10 County St" &&
             detail.tax_lien_count == 0 &&
             click_ok &&
             selection.active_layer_idx == 1 &&
-            selection.active_entity_id == hovered.entity_id &&
-            opened_entity_id == hovered.entity_id;
+            selection.active_entity_id == "CANONICALBC1" &&
+            selection.refs.size() == 1 &&
+            selection.refs[0].geometry_entity_id == "GEOMETRYBC1" &&
+            opened_entity_id == "CANONICALBC1";
 
         std::cout << json{
             {"mode", kMode},
@@ -3930,12 +4031,603 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
             {"cache_ok", cache_ok},
             {"hover_hit", hovered.hit},
             {"hover_entity_id", hovered.entity_id},
+            {"detail_entity_id", detail.parcel_entity_id},
+            {"detail_available", detail.available},
+            {"detail_blocklot", detail.blocklot},
+            {"click_ok", click_ok},
+            {"selected_geometry_entity_id", selection.refs.empty() ? "" : selection.refs[0].geometry_entity_id},
+            {"selected_entity_id", selection.active_entity_id}
+        }.dump(2) << '\n';
+        return ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        return 1;
+    }
+}
+
+int runParcelHoverClickPickSelftest(const fs::path& root) {
+    constexpr const char* kMode = "parcel-hover-click-pick-selftest";
+    const fs::path test_root = root / "data" / "cache" / "selftest" / "parcel_hover_click_pick";
+    std::error_code ec;
+    fs::remove_all(test_root, ec);
+    fs::create_directories(test_root / "data", ec);
+    const fs::path db_path = test_root / "data" / "worldsim.duckdb";
+
+    try {
+        duckdb::DuckDB db(db_path.string());
+        duckdb::Connection con(db);
+        auto exec = [&](const char* sql) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(res ? res->GetError() : "query failed");
+            }
+        };
+        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
+        exec("CREATE TABLE layer_feature_properties(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, property_key VARCHAR, property_value VARCHAR)");
+        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
+        exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
+        exec(R"SQL(
+            INSERT INTO layer_features VALUES
+            (1, 'County Parcel Test', 'county_parcel_test.geojson', 'parcel_record', 0, 'ENTITYCOUNTY1', 'parcel', 'Housing', '', '', '', '', -76.7000, 39.2000, -76.6900, 39.2100, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', 0, 0)
+        )SQL");
+
+        DuckDbAnalytics analytics(test_root);
+        const bool cache_ok = analytics.status().last_rebuild_ok;
+
+        std::vector<LayerDef> layers(2);
+        layers[0].file = "parcel.geojson";
+        layers[0].name = "Primary Parcels";
+        layers[0].scale = "parcel";
+        layers[0].duckdb_role = "parcel_record";
+        layers[0].enabled = true;
+
+        LayerDef::FeatureRecord primary_feature;
+        primary_feature.extent.min_lon = -76.6800f;
+        primary_feature.extent.min_lat = 39.2000f;
+        primary_feature.extent.max_lon = -76.6700f;
+        primary_feature.extent.max_lat = 39.2100f;
+        primary_feature.rings = {{
+            ImVec2(-76.6800f, 39.2000f),
+            ImVec2(-76.6700f, 39.2000f),
+            ImVec2(-76.6700f, 39.2100f),
+            ImVec2(-76.6800f, 39.2100f),
+            ImVec2(-76.6800f, 39.2000f)
+        }};
+        primary_feature.entity_id = "ENTITYPRIMARY0";
+        ensureFeatureTriangles(primary_feature);
+        layers[0].features.push_back(primary_feature);
+
+        layers[1].file = "county_parcel_test.geojson";
+        layers[1].name = "County Parcel Test";
+        layers[1].scale = "parcel";
+        layers[1].duckdb_role = "parcel_record";
+        layers[1].enabled = true;
+
+        LayerDef::FeatureRecord county_feature;
+        county_feature.extent.min_lon = -76.7000f;
+        county_feature.extent.min_lat = 39.2000f;
+        county_feature.extent.max_lon = -76.6900f;
+        county_feature.extent.max_lat = 39.2100f;
+        county_feature.rings = {{
+            ImVec2(-76.7000f, 39.2000f),
+            ImVec2(-76.6900f, 39.2000f),
+            ImVec2(-76.6900f, 39.2100f),
+            ImVec2(-76.7000f, 39.2100f),
+            ImVec2(-76.7000f, 39.2000f)
+        }};
+        county_feature.entity_id = "ENTITYCOUNTY1";
+        county_feature.geometry_entity_id = "GEOMCOUNTY1";
+        county_feature.source_feature_id = "SRCCOUNTY1";
+        ensureFeatureTriangles(county_feature);
+        layers[1].features.push_back(county_feature);
+
+        PolygonGeometryArtifact county_artifact;
+        const bool artifact_ok = buildPolygonGeometryArtifact(layers[1], layers[1].features, "county_pick_sig", county_artifact, 64);
+        std::unordered_map<size_t, PolygonGeometryArtifact> polygon_artifacts;
+        polygon_artifacts.emplace(1u, county_artifact);
+
+        std::vector<LayerSpatialIndex> layer_spatial(2);
+        buildLayerSpatialIndex(layers[0], layer_spatial[0]);
+        buildLayerSpatialIndex(layers[1], layer_spatial[1]);
+
+        std::vector<bool> layer_hover_enabled(2, true);
+        std::vector<bool> layer_inspect_enabled(2, true);
+
+        MapHoverQuery hover_query;
+        hover_query.map_hovered = true;
+        hover_query.parcel_hover_active = true;
+        hover_query.parcel_inspect_active = true;
+        hover_query.active_hover_layer_idx = 1;
+        hover_query.active_click_layer_idx = 1;
+        hover_query.parcel_layer_idx = 0;
+        hover_query.layers = &layers;
+        hover_query.polygon_geometry_artifacts = &polygon_artifacts;
+        hover_query.layer_spatial = &layer_spatial;
+        hover_query.layer_hover_enabled = &layer_hover_enabled;
+        hover_query.layer_inspect_enabled = &layer_inspect_enabled;
+        hover_query.mouse_ll = ImVec2(-76.6950f, 39.2050f);
+
+        const MapHoverState hover_state = findMapHoverTargets(hover_query);
+
+        ParcelSelectionState selection;
+        std::string opened_entity_id;
+        MapInspectionContext ctx;
+        ctx.map_hovered = true;
+        ctx.parcel_hover_active = true;
+        ctx.parcel_inspect_active = true;
+        ctx.parcel_layer_idx = 0;
+        ctx.layers = &layers;
+        ctx.unified_parcels = nullptr;
+        ctx.duckdb_analytics = &analytics;
+        ctx.polygon_geometry_artifacts = &polygon_artifacts;
+        ctx.layer_spatial = &layer_spatial;
+        ctx.parcel_selection = &selection;
+        ctx.open_parcel_element = [&](const std::string& entity_id) {
+            opened_entity_id = entity_id;
+        };
+        ctx.hover_state = &hover_state;
+
+        const ParcelHoverResolution hovered = resolveHoveredParcel(ctx);
+        const ParcelHoverResolution inspect = resolveInspectParcel(ctx);
+        const ParcelHoverDetail detail = resolveParcelHoverDetail(ctx, inspect);
+        const bool click_ok = applyParcelClickSelection(ctx, inspect, false);
+
+        const bool ok =
+            cache_ok &&
+            artifact_ok &&
+            hover_state.hovered_parcel_layer_idx < 0 &&
+            hover_state.inspect_parcel_layer_idx < 0 &&
+            hover_state.hovered_parcel_idx == (size_t)-1 &&
+            hover_state.inspect_parcel_idx == (size_t)-1 &&
+            hover_state.hovered_parcel_entity_id.empty() &&
+            hover_state.inspect_parcel_entity_id.empty() &&
+            !hovered.hit &&
+            !inspect.hit &&
+            !detail.available &&
+            !click_ok &&
+            selection.active_layer_idx < 0 &&
+            selection.active_entity_id.empty() &&
+            opened_entity_id.empty();
+
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", ok},
+            {"cache_ok", cache_ok},
+            {"artifact_ok", artifact_ok},
+            {"gpu_only_no_cpu_fallback", ok},
+            {"hover_layer_idx", hover_state.hovered_parcel_layer_idx},
+            {"inspect_layer_idx", hover_state.inspect_parcel_layer_idx},
+            {"hover_feature_idx", hover_state.hovered_parcel_idx},
+            {"inspect_feature_idx", hover_state.inspect_parcel_idx},
+            {"hover_entity_id", hover_state.hovered_parcel_entity_id},
+            {"inspect_entity_id", hover_state.inspect_parcel_entity_id},
             {"detail_available", detail.available},
             {"detail_blocklot", detail.blocklot},
             {"click_ok", click_ok},
             {"selected_entity_id", selection.active_entity_id}
         }.dump(2) << '\n';
         return ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        return 1;
+    }
+}
+
+int verifyParcelDuckDbKeys(const fs::path& root) {
+    constexpr const char* kMode = "verify-parcel-duckdb-keys";
+    try {
+        const fs::path db_path = root / "data" / "worldsim.duckdb";
+        duckdb::DuckDB db(db_path.string());
+        duckdb::Connection con(db);
+        auto scalar_u64 = [&](const std::string& sql) -> uint64_t {
+            auto res = con.Query(sql);
+            if (!res || res->HasError() || res->RowCount() == 0) {
+                throw std::runtime_error(res ? res->GetError() : "query failed");
+            }
+            return res->GetValue(0, 0).GetValue<uint64_t>();
+        };
+
+        const uint64_t parcel_layer_features = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM layer_features
+            WHERE scale = 'parcel'
+              AND duckdb_role = 'parcel_record'
+              AND layer_idx IN (SELECT DISTINCT parcel_layer_idx FROM unified_parcels)
+        )SQL");
+        const uint64_t unified_parcels = scalar_u64(
+            "SELECT count(*) FROM unified_parcels");
+        const uint64_t missing_entity_matches = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM layer_features lf
+            LEFT JOIN unified_parcels up
+              ON up.parcel_layer_idx = lf.layer_idx
+             AND up.parcel_entity_id = lf.entity_id
+            WHERE lf.scale = 'parcel'
+              AND lf.duckdb_role = 'parcel_record'
+              AND lf.layer_idx IN (SELECT DISTINCT parcel_layer_idx FROM unified_parcels)
+              AND up.parcel_entity_id IS NULL
+        )SQL");
+        const uint64_t duplicate_unified_entities = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM (
+                SELECT parcel_layer_idx, parcel_entity_id, count(*) AS n
+                FROM unified_parcels
+                GROUP BY 1, 2
+                HAVING count(*) > 1
+            )
+        )SQL");
+        const uint64_t missing_property_records = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM unified_parcels
+            WHERE NOT has_property_record
+        )SQL");
+        const uint64_t layer_feature_index_gaps = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM (
+                SELECT layer_idx
+                FROM layer_features
+                WHERE scale = 'parcel'
+                  AND duckdb_role = 'parcel_record'
+                  AND layer_idx IN (SELECT DISTINCT parcel_layer_idx FROM unified_parcels)
+                GROUP BY layer_idx
+                HAVING NOT (
+                    min(feature_idx) = 0
+                    AND max(feature_idx) + 1 = count(*)
+                    AND count(DISTINCT feature_idx) = count(*)
+                )
+            )
+        )SQL");
+        const uint64_t parcel_zone_membership_tables = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name = 'parcel_zone_memberships'
+        )SQL");
+        const uint64_t layer_feature_bbox_tables = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name = 'layer_feature_bboxes'
+        )SQL");
+        const uint64_t layer_bbox_tables = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name = 'layer_bboxes'
+        )SQL");
+        const uint64_t layer_feature_bboxes = layer_feature_bbox_tables > 0
+            ? scalar_u64("SELECT count(*) FROM layer_feature_bboxes")
+            : 0;
+        const uint64_t layer_bboxes = layer_bbox_tables > 0
+            ? scalar_u64("SELECT count(*) FROM layer_bboxes")
+            : 0;
+        const uint64_t parcel_zone_memberships = parcel_zone_membership_tables > 0
+            ? scalar_u64("SELECT count(*) FROM parcel_zone_memberships")
+            : 0;
+        const uint64_t parcel_zone_membership_bad_refs = parcel_zone_membership_tables > 0
+            ? scalar_u64(R"SQL(
+                SELECT count(*)
+                FROM parcel_zone_memberships pzm
+                LEFT JOIN unified_parcels up
+                  ON up.parcel_layer_idx = pzm.parcel_layer_idx
+                 AND up.parcel_entity_id = pzm.parcel_entity_id
+                LEFT JOIN layer_features zf
+                  ON zf.layer_idx = pzm.zone_layer_idx
+                 AND zf.entity_id = pzm.zone_entity_id
+                WHERE up.parcel_entity_id IS NULL
+                   OR zf.entity_id IS NULL
+            )SQL")
+            : 0;
+
+        const bool ok =
+            parcel_layer_features > 0 &&
+            parcel_layer_features == unified_parcels &&
+            missing_entity_matches == 0 &&
+            duplicate_unified_entities == 0 &&
+            layer_feature_index_gaps == 0 &&
+            layer_feature_bbox_tables == 1 &&
+            layer_bbox_tables == 1 &&
+            layer_feature_bboxes > 0 &&
+            layer_bboxes > 0 &&
+            parcel_zone_membership_tables == 1 &&
+            parcel_zone_membership_bad_refs == 0;
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", ok},
+            {"db_path", db_path.string()},
+            {"parcel_layer_features", parcel_layer_features},
+            {"unified_parcels", unified_parcels},
+            {"missing_entity_matches", missing_entity_matches},
+            {"duplicate_unified_entities", duplicate_unified_entities},
+            {"missing_property_records", missing_property_records},
+            {"layer_feature_index_gap_count", layer_feature_index_gaps},
+            {"layer_feature_bboxes", layer_feature_bboxes},
+            {"layer_bboxes", layer_bboxes},
+            {"parcel_zone_memberships", parcel_zone_memberships},
+            {"parcel_zone_membership_bad_refs", parcel_zone_membership_bad_refs}
+        }.dump(2) << '\n';
+        return ok ? 0 : 1;
+    } catch (const std::exception& ex) {
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", false},
+            {"error", ex.what()}
+        }.dump(2) << '\n';
+        return 1;
+    }
+}
+
+int buildParcelZoneMembershipsCli(const fs::path& root, const WorldsimCliOptions& options) {
+    constexpr const char* kMode = "build-parcel-zone-memberships";
+    const auto started = std::chrono::steady_clock::now();
+    try {
+        const fs::path db_path = root / "data" / "worldsim.duckdb";
+        duckdb::DuckDB db(db_path.string());
+        duckdb::Connection con(db);
+
+        auto query_or_throw = [&](const std::string& sql, const char* context) {
+            auto res = con.Query(sql);
+            if (!res || res->HasError()) {
+                throw std::runtime_error(
+                    std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+            }
+            return res;
+        };
+        auto exec = [&](const std::string& sql, const char* context) {
+            (void)query_or_throw(sql, context);
+        };
+        auto scalar_u64 = [&](const std::string& sql, const char* context) -> uint64_t {
+            auto res = query_or_throw(sql, context);
+            if (res->RowCount() == 0) throw std::runtime_error(std::string(context) + ": empty result");
+            return res->GetValue(0, 0).GetValue<uint64_t>();
+        };
+        auto scalar_str = [&](const std::string& sql, const char* context) -> std::string {
+            auto res = query_or_throw(sql, context);
+            if (res->RowCount() == 0 || res->GetValue(0, 0).IsNull()) return {};
+            return res->GetValue(0, 0).ToString();
+        };
+        auto table_exists = [&](const char* table_name) -> bool {
+            return scalar_u64(
+                "SELECT count(*) FROM information_schema.tables "
+                "WHERE table_schema = 'main' AND table_name = '" + std::string(table_name) + "'",
+                table_name) > 0;
+        };
+
+        const std::array<const char*, 5> required_tables = {
+            "layer_features",
+            "unified_parcels",
+            "layer_feature_bboxes",
+            "layer_bboxes",
+            "parcel_zone_memberships"
+        };
+        json missing = json::array();
+        for (const char* table_name : required_tables) {
+            if (!table_exists(table_name)) missing.push_back(table_name);
+        }
+        if (!missing.empty()) {
+            std::cout << json{
+                {"mode", kMode},
+                {"ok", false},
+                {"db_path", db_path.string()},
+                {"missing_tables", missing},
+                {"message", "Run --rebuild-duckdb-analytics before building parcel-zone memberships."}
+            }.dump(2) << '\n';
+            return 1;
+        }
+
+        const std::string source_signature = table_exists("analytics_build_info")
+            ? scalar_str("SELECT coalesce(max(source_signature), '') FROM analytics_build_info", "analytics source signature")
+            : std::string();
+
+        std::ostringstream candidate_sql;
+        candidate_sql << R"SQL(
+            SELECT
+                layer_idx,
+                layer_file,
+                layer_name,
+                coalesce(scale, '') AS scale,
+                coalesce(category, '') AS category,
+                feature_count
+            FROM layer_bboxes
+            WHERE coalesce(scale, '') <> 'parcel'
+              AND (
+                  lower(coalesce(category, '')) LIKE '%zoning%'
+               OR lower(coalesce(category, '')) LIKE '%zone%'
+               OR lower(coalesce(layer_file, '')) LIKE '%zoning%'
+               OR lower(coalesce(layer_file, '')) LIKE '%zone%'
+               OR lower(coalesce(layer_file, '')) LIKE '%district%'
+               OR lower(coalesce(layer_file, '')) LIKE '%tract%'
+               OR lower(coalesce(layer_file, '')) LIKE '%neighborhood%'
+               OR lower(coalesce(layer_name, '')) LIKE '%zoning%'
+               OR lower(coalesce(layer_name, '')) LIKE '%zone%'
+               OR lower(coalesce(layer_name, '')) LIKE '%district%'
+               OR lower(coalesce(layer_name, '')) LIKE '%tract%'
+               OR lower(coalesce(layer_name, '')) LIKE '%neighborhood%'
+              )
+        )SQL";
+        if (!options.parcel_zone_membership_zone_layer_file.empty()) {
+            candidate_sql << " AND layer_file = '"
+                          << cliSqlQuote(options.parcel_zone_membership_zone_layer_file)
+                          << "'";
+        }
+        candidate_sql << " ORDER BY layer_idx";
+
+        struct ZoneLayerCandidate {
+            uint64_t layer_idx = 0;
+            std::string layer_file;
+            std::string layer_name;
+            std::string scale;
+            std::string category;
+            uint64_t feature_count = 0;
+        };
+        std::vector<ZoneLayerCandidate> candidates;
+        auto candidate_res = query_or_throw(candidate_sql.str(), "select zone layer candidates");
+        for (idx_t row = 0; row < candidate_res->RowCount(); ++row) {
+            ZoneLayerCandidate c;
+            c.layer_idx = candidate_res->GetValue<uint64_t>(0, row);
+            c.layer_file = candidate_res->GetValue(1, row).ToString();
+            c.layer_name = candidate_res->GetValue(2, row).ToString();
+            c.scale = candidate_res->GetValue(3, row).ToString();
+            c.category = candidate_res->GetValue(4, row).ToString();
+            c.feature_count = candidate_res->GetValue<uint64_t>(5, row);
+            candidates.push_back(std::move(c));
+        }
+
+        if (candidates.empty()) {
+            const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count();
+            std::cout << json{
+                {"mode", kMode},
+                {"ok", true},
+                {"changed", false},
+                {"db_path", db_path.string()},
+                {"relation", "centroid_in_bbox"},
+                {"zone_layer_file_filter", options.parcel_zone_membership_zone_layer_file},
+                {"candidate_zone_layers", 0},
+                {"inserted_memberships", 0},
+                {"processed_layers", json::array()},
+                {"elapsed_ms", elapsed_ms}
+            }.dump(2) << '\n';
+            return 0;
+        }
+
+        exec("BEGIN TRANSACTION", "begin parcel-zone membership build");
+        exec("DELETE FROM parcel_zone_memberships", "clear parcel_zone_memberships");
+
+        uint64_t total_inserted = 0;
+        json processed = json::array();
+        for (const ZoneLayerCandidate& c : candidates) {
+            const uint64_t before = scalar_u64("SELECT count(*) FROM parcel_zone_memberships", "count memberships before layer");
+            std::ostringstream insert_sql;
+            insert_sql << R"SQL(
+                INSERT INTO parcel_zone_memberships (
+                    parcel_layer_idx,
+                    parcel_entity_id,
+                    parcel_geometry_entity_id,
+                    blocklot,
+                    zone_layer_idx,
+                    zone_layer_file,
+                    zone_layer_name,
+                    zone_feature_idx,
+                    zone_entity_id,
+                    zone_key,
+                    zone_label,
+                    relation,
+                    parcel_centroid_lon,
+                    parcel_centroid_lat,
+                    overlap_area,
+                    overlap_ratio,
+                    source_signature
+                )
+                WITH parcels AS (
+                    SELECT
+                        up.parcel_layer_idx,
+                        up.parcel_entity_id,
+                        up.parcel_geometry_entity_id,
+                        up.blocklot,
+                        lfb.center_lon AS parcel_centroid_lon,
+                        lfb.center_lat AS parcel_centroid_lat,
+                        coalesce(lfb.provenance_state_region, '') AS provenance_state_region,
+                        coalesce(lfb.provenance_county_city, '') AS provenance_county_city
+                    FROM unified_parcels up
+                    JOIN layer_feature_bboxes lfb
+                      ON lfb.layer_idx = up.parcel_layer_idx
+                     AND lfb.entity_id = up.parcel_entity_id
+                    WHERE lfb.scale = 'parcel'
+                      AND lfb.duckdb_role = 'parcel_record'
+                ),
+                zones AS (
+                    SELECT
+                        zfb.layer_idx,
+                        zfb.layer_file,
+                        zfb.layer_name,
+                        zfb.feature_idx,
+                        zfb.entity_id,
+                        coalesce(lf.zoning, '') AS zoning,
+                        coalesce(lf.feature_name, '') AS feature_name,
+                        zfb.min_lon,
+                        zfb.min_lat,
+                        zfb.max_lon,
+                        zfb.max_lat,
+                        coalesce(zfb.provenance_state_region, '') AS provenance_state_region,
+                        coalesce(zfb.provenance_county_city, '') AS provenance_county_city
+                    FROM layer_feature_bboxes zfb
+                    JOIN layer_features lf
+                      ON lf.layer_idx = zfb.layer_idx
+                     AND lf.feature_idx = zfb.feature_idx
+                    WHERE zfb.layer_idx = )SQL" << c.layer_idx << R"SQL(
+                )
+                SELECT
+                    p.parcel_layer_idx,
+                    p.parcel_entity_id,
+                    p.parcel_geometry_entity_id,
+                    p.blocklot,
+                    z.layer_idx,
+                    z.layer_file,
+                    z.layer_name,
+                    z.feature_idx,
+                    z.entity_id,
+                    coalesce(nullif(z.zoning, ''), z.entity_id) AS zone_key,
+                    coalesce(nullif(z.feature_name, ''), nullif(z.zoning, ''), z.layer_name) AS zone_label,
+                    'centroid_in_bbox' AS relation,
+                    p.parcel_centroid_lon,
+                    p.parcel_centroid_lat,
+                    NULL::DOUBLE AS overlap_area,
+                    NULL::DOUBLE AS overlap_ratio,
+                    ')SQL" << cliSqlQuote(source_signature) << R"SQL(' AS source_signature
+                FROM parcels p
+                JOIN zones z
+                  ON p.parcel_centroid_lon BETWEEN z.min_lon AND z.max_lon
+                 AND p.parcel_centroid_lat BETWEEN z.min_lat AND z.max_lat
+                 AND (
+                        z.provenance_county_city = ''
+                     OR p.provenance_county_city = ''
+                     OR z.provenance_county_city = p.provenance_county_city
+                     OR z.provenance_state_region = p.provenance_state_region
+                 )
+            )SQL";
+            exec(insert_sql.str(), "insert parcel-zone memberships for zone layer");
+            const uint64_t after = scalar_u64("SELECT count(*) FROM parcel_zone_memberships", "count memberships after layer");
+            const uint64_t inserted = after >= before ? after - before : 0;
+            total_inserted += inserted;
+            processed.push_back(json{
+                {"layer_idx", c.layer_idx},
+                {"layer_file", c.layer_file},
+                {"layer_name", c.layer_name},
+                {"feature_count", c.feature_count},
+                {"inserted_memberships", inserted}
+            });
+        }
+
+        exec("CREATE INDEX IF NOT EXISTS idx_parcel_zone_memberships_parcel ON parcel_zone_memberships(parcel_layer_idx, parcel_entity_id)", "index parcel_zone_memberships parcel");
+        exec("CREATE INDEX IF NOT EXISTS idx_parcel_zone_memberships_zone ON parcel_zone_memberships(zone_layer_idx, zone_entity_id)", "index parcel_zone_memberships zone");
+        exec("COMMIT", "commit parcel-zone membership build");
+
+        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - started).count();
+        std::cout << json{
+            {"mode", kMode},
+            {"ok", true},
+            {"db_path", db_path.string()},
+            {"relation", "centroid_in_bbox"},
+            {"zone_layer_file_filter", options.parcel_zone_membership_zone_layer_file},
+            {"candidate_zone_layers", candidates.size()},
+            {"inserted_memberships", total_inserted},
+            {"processed_layers", processed},
+            {"elapsed_ms", elapsed_ms}
+        }.dump(2) << '\n';
+        return 0;
     } catch (const std::exception& ex) {
         std::cout << json{
             {"mode", kMode},
@@ -5980,12 +6672,24 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_polygon_artifact_resilience_selftest = true;
             continue;
         }
+        if (arg == "--parcel-polygon-feature-idx-selftest") {
+            options.run_parcel_polygon_feature_idx_selftest = true;
+            continue;
+        }
+        if (arg == "--parcel-hover-click-pick-selftest") {
+            options.run_parcel_hover_click_pick_selftest = true;
+            continue;
+        }
         if (arg == "--parcel-selection-ui-harness") {
             options.run_parcel_selection_ui_harness = true;
             continue;
         }
         if (arg == "--parcel-hover-click-ui-harness") {
             options.run_parcel_hover_click_ui_harness = true;
+            continue;
+        }
+        if (arg == "--verify-parcel-duckdb-keys") {
+            options.run_verify_parcel_duckdb_keys = true;
             continue;
         }
         if (arg == "--duckdb-parcel-semantic-snapshot-selftest") {
@@ -6160,6 +6864,15 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_build_parcel_matched_layers = true;
             continue;
         }
+        if (arg == "--build-parcel-zone-memberships") {
+            options.run_build_parcel_zone_memberships = true;
+            continue;
+        }
+        if (arg == "--zone-layer-file" || arg == "--parcel-zone-layer-file") {
+            options.run_build_parcel_zone_memberships = true;
+            if (i + 1 < argc) options.parcel_zone_membership_zone_layer_file = argv[++i];
+            continue;
+        }
         if (arg == "--build-population-metrics") {
             options.run_build_population_metrics = true;
             continue;
@@ -6186,6 +6899,16 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
         if (arg.rfind("--generate-canonical-files=", 0) == 0) {
             options.run_generate_canonical_files = true;
             options.generate_canonical_phase = arg.substr(std::strlen("--generate-canonical-files="));
+            continue;
+        }
+        if (arg.rfind("--zone-layer-file=", 0) == 0) {
+            options.run_build_parcel_zone_memberships = true;
+            options.parcel_zone_membership_zone_layer_file = arg.substr(std::strlen("--zone-layer-file="));
+            continue;
+        }
+        if (arg.rfind("--parcel-zone-layer-file=", 0) == 0) {
+            options.run_build_parcel_zone_memberships = true;
+            options.parcel_zone_membership_zone_layer_file = arg.substr(std::strlen("--parcel-zone-layer-file="));
             continue;
         }
         if (arg.rfind("--color-editor=", 0) == 0) {
@@ -6236,6 +6959,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --inspect-duckdb-geography-tables\n"
         << "       worldsim3 --report-duckdb-coverage\n"
         << "       worldsim3 [--build-parcel-matched-layers|--force-build-parcel-matched-layers]\n"
+        << "       worldsim3 --build-parcel-zone-memberships [--zone-layer-file LAYER_FILE]\n"
         << "       worldsim3 --build-population-metrics\n"
         << "       worldsim3 --build-beps-candidates\n"
         << "       worldsim3 [--debug-gpu-aggregate]\n"
@@ -6269,8 +6993,11 @@ void printWorldsimUsage() {
         << "       worldsim3 --render-plan-selftest\n"
         << "       worldsim3 --parcel-polygon-identity-selftest\n"
         << "       worldsim3 --polygon-artifact-resilience-selftest\n"
+        << "       worldsim3 --parcel-polygon-feature-idx-selftest\n"
+        << "       worldsim3 --parcel-hover-click-pick-selftest\n"
         << "       worldsim3 --parcel-selection-ui-harness\n"
         << "       worldsim3 --parcel-hover-click-ui-harness\n"
+        << "       worldsim3 --verify-parcel-duckdb-keys\n"
         << "       worldsim3 --duckdb-parcel-semantic-snapshot-selftest\n"
         << "       worldsim3 --duckdb-parcel-ingest-selftest [--reserve-cores N]\n"
         << "       worldsim3 --population-metrics-selftest\n"
@@ -6339,11 +7066,20 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     if (options.run_polygon_artifact_resilience_selftest) {
         return runPolygonArtifactResilienceSelftest();
     }
+    if (options.run_parcel_polygon_feature_idx_selftest) {
+        return runParcelPolygonFeatureIdxSelftest();
+    }
+    if (options.run_parcel_hover_click_pick_selftest) {
+        return runParcelHoverClickPickSelftest(root);
+    }
     if (options.run_parcel_selection_ui_harness) {
         return runParcelSelectionUiHarness();
     }
     if (options.run_parcel_hover_click_ui_harness) {
         return runParcelHoverClickUiHarness(root);
+    }
+    if (options.run_verify_parcel_duckdb_keys) {
+        return verifyParcelDuckDbKeys(root);
     }
     if (options.run_duckdb_parcel_semantic_snapshot_selftest) {
         return runDuckDbParcelSemanticSnapshotSelftest(root);
@@ -6419,6 +7155,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_report_duckdb_coverage) {
         return reportDuckDbCoverageCli(root);
+    }
+    if (options.run_build_parcel_zone_memberships) {
+        return buildParcelZoneMembershipsCli(root, options);
     }
     if (options.run_build_population_metrics) {
         return runBuildPopulationMetricsCli(root);

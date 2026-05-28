@@ -140,9 +140,17 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
     auto select_parcel_id = [&](const std::string& entity_id, bool append_toggle) -> bool {
         if (entity_id.empty()) return false;
         if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return false;
+        const UnifiedParcelRecord* rec = ctx.unified_parcels
+            ? unifiedParcelAt(*ctx.unified_parcels, entity_id)
+            : nullptr;
+        const std::string geometry_entity_id =
+            rec && !rec->parcel_geometry_entity_id.empty()
+                ? rec->parcel_geometry_entity_id
+                : entity_id;
         if (!selectParcel(
                 *ctx.parcel_selection,
                 ctx.parcel_layer_idx,
+                geometry_entity_id,
                 entity_id,
                 append_toggle)) {
             return false;

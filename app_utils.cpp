@@ -797,6 +797,17 @@ size_t featureIndexForEntityId(const LayerDef& layer, const std::string& entity_
     return (size_t)-1;
 }
 
+size_t featureIndexForGeometryEntityId(const LayerDef& layer, const std::string& geometry_entity_id) {
+    const std::string key = normalizeJoinKey(geometry_entity_id);
+    if (key.empty()) return (size_t)-1;
+    for (size_t feature_idx = 0; feature_idx < layer.features.size(); ++feature_idx) {
+        if (featureGeometryEntityIdForLayerFeature(layer, layer.features[feature_idx], feature_idx) == key) {
+            return feature_idx;
+        }
+    }
+    return (size_t)-1;
+}
+
 void openUrlInBrowser(const std::string& url) {
 #if defined(_WIN32)
     std::string cmd = "start \"\" \"" + url + "\"";

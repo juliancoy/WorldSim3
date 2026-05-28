@@ -26,3 +26,16 @@ inline bool worldsimGpuAggregateDebugEnabled() {
 inline void setWorldsimGpuAggregateDebug(bool enabled) {
     worldsimGpuAggregateDebugFlag().store(enabled, std::memory_order_relaxed);
 }
+
+inline std::atomic<bool>& worldsimParcelPickDebugFlag() {
+    static std::atomic<bool> enabled(parseWorldsimDebugBool(std::getenv("WORLD_SIM3_DEBUG_PARCEL_PICK")));
+    return enabled;
+}
+
+inline bool worldsimParcelPickDebugEnabled() {
+    return worldsimParcelPickDebugFlag().load(std::memory_order_relaxed);
+}
+
+inline void setWorldsimParcelPickDebug(bool enabled) {
+    worldsimParcelPickDebugFlag().store(enabled, std::memory_order_relaxed);
+}

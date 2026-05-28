@@ -27,7 +27,7 @@ void syncSelectionViews(ParcelSelectionState& selection) {
 }
 
 bool sameSelectionRef(const ParcelSelectionRef& ref, int layer_idx, const std::string& entity_id) {
-    return ref.layer_idx == layer_idx && !entity_id.empty() && ref.entity_id == entity_id;
+    return !entity_id.empty() && ref.entity_id == entity_id;
 }
 }
 
@@ -43,6 +43,15 @@ void clearParcelSelection(ParcelSelectionState& selection) {
 bool selectParcel(
     ParcelSelectionState& selection,
     int layer_idx,
+    const std::string& entity_id,
+    bool append_toggle) {
+    return selectParcel(selection, layer_idx, entity_id, entity_id, append_toggle);
+}
+
+bool selectParcel(
+    ParcelSelectionState& selection,
+    int layer_idx,
+    const std::string& geometry_entity_id,
     const std::string& entity_id,
     bool append_toggle) {
     if (entity_id.empty()) return false;
@@ -62,6 +71,7 @@ bool selectParcel(
 
     selection.refs.push_back(ParcelSelectionRef{
         layer_idx,
+        geometry_entity_id.empty() ? entity_id : geometry_entity_id,
         entity_id
     });
     syncSelectionViews(selection);
@@ -76,7 +86,7 @@ void pruneParcelSelection(ParcelSelectionState& selection, const std::vector<Lay
             [&](const ParcelSelectionRef& ref) {
                 if (ref.layer_idx < 0) return true;
                 if ((size_t)ref.layer_idx >= layers.size()) return true;
-                return featureIndexForEntityId(layers[(size_t)ref.layer_idx], ref.entity_id) == (size_t)-1;
+                return ref.entity_id.empty();
             }),
         selection.refs.end());
     syncSelectionViews(selection);
@@ -86,6 +96,8 @@ void reconcileParcelSelection(ParcelSelectionState& selection, const std::vector
     for (ParcelSelectionRef& ref : selection.refs) {
         if (ref.layer_idx < 0 || (size_t)ref.layer_idx >= layers.size()) continue;
         ref.entity_id = normalizeJoinKey(ref.entity_id);
+        ref.geometry_entity_id = normalizeJoinKey(ref.geometry_entity_id);
+        if (ref.geometry_entity_id.empty()) ref.geometry_entity_id = ref.entity_id;
     }
     pruneParcelSelection(selection, layers);
 }

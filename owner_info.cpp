@@ -98,7 +98,11 @@ void applyBoundsView(
 
 struct DuckDbParcelDetailSnapshot {
     bool ok = false;
+    std::string parcel_entity_id;
     std::string blocklot;
+    std::string owner;
+    std::string owner_display;
+    std::string address;
     int vacant_notice_count = 0;
     int vacant_rehab_count = 0;
     int tax_lien_count = 0;
@@ -123,7 +127,11 @@ DuckDbParcelDetailSnapshot loadDuckDbParcelDetailSnapshot(
         return {};
     };
     out.ok = true;
+    out.parcel_entity_id = cell("parcel_entity_id");
     out.blocklot = cell("blocklot");
+    out.owner = cell("owner");
+    out.owner_display = cell("owner_display");
+    out.address = cell("address");
     out.vacant_notice_count = (int)parseNumericField(cell("vacant_notice_count"));
     out.vacant_rehab_count = (int)parseNumericField(cell("vacant_rehab_count"));
     out.tax_lien_count = (int)parseNumericField(cell("tax_lien_count"));
@@ -336,7 +344,9 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
     const UnifiedParcelRecord* selected_unified = ctx.unified_parcels
         ? unifiedParcelAt(*ctx.unified_parcels, parcel_entity_id)
         : nullptr;
-    const bool parcel_info_valid = selected_unified != nullptr;
+    const DuckDbParcelDetailSnapshot duckdb_detail =
+        loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, parcel_entity_id);
+    const bool parcel_info_valid = selected_unified != nullptr || duckdb_detail.ok;
 
     if (!parcel_info_valid) {
         ImGui::TextDisabled("Parcel is unavailable.");
@@ -355,8 +365,6 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
     double tax_lien_amount = 0.0;
     double tax_sale_amount = 0.0;
     double current_value_total = 0.0;
-    const DuckDbParcelDetailSnapshot duckdb_detail =
-        loadDuckDbParcelDetailSnapshot(ctx.duckdb_analytics, parcel_entity_id);
     if (ctx.unified_parcels) {
         if (ctx.show_selected_parcel_details && ctx.selected_parcel_ids && !ctx.selected_parcel_ids->empty()) {
             for (const std::string& selected_id : *ctx.selected_parcel_ids) {
@@ -417,7 +425,9 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
     if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
     drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
-    std::string summary_owner = selected_unified ? selected_unified->owner : normalizedRealPropertyOwnerName(selected_rp);
+    std::string summary_owner = selected_unified ? selected_unified->owner : duckdb_detail.owner;
+    if (summary_owner.empty()) summary_owner = duckdb_detail.owner_display;
+    if (summary_owner.empty()) summary_owner = normalizedRealPropertyOwnerName(selected_rp);
     if (!summary_owner.empty() && ctx.state) drawOwnerInfoLink(*ctx.state, summary_owner, "open_owner_info_element_tab");
     if (duckdb_detail.ok) {
         drawDuckDbParcelDetail(ctx.state, ctx.duckdb_analytics, parcel_entity_id);

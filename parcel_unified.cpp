@@ -145,7 +145,7 @@ const UnifiedParcelRecord* unifiedParcelAt(
     const std::string key = normalizeJoinKey(parcel_entity_id);
     if (key.empty()) return nullptr;
     for (const UnifiedParcelRecord& row : parcels) {
-        if (row.parcel_entity_id == key) return &row;
+        if (row.parcel_entity_id == key || row.parcel_geometry_entity_id == key) return &row;
     }
     return nullptr;
 }

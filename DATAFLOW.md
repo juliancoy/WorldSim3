@@ -19,6 +19,55 @@ Current render and filter code still derives dense runtime coordinates such as
 access. Those coordinates are implementation detail only; query and selection
 contracts should expose stable entity IDs instead.
 
+Map parcel selection has two distinct identities:
+
+- the semantic parcel identity, normally `unified_parcels.parcel_entity_id`, used
+  by detail panels, owner/address workflows, saved selection state, DuckDB
+  queries, and API/query outputs
+- the picked geometry identity, normally a compiled geometry artifact
+  `geometry_entity_id` plus its layer, used only to redraw the selected map
+  outline/fill
+
+Do not collapse these into one field. A GPU pick may originate from a render
+artifact row whose entity ID is not the same as the canonical unified parcel ID.
+The click path should canonicalize the semantic parcel through DuckDB-backed
+identity/join fields, while retaining the picked geometry identity as a render
+implementation detail.
+
+The parcel DuckDB key contract is testable: for every operational parcel layer,
+each `layer_features(layer_idx, entity_id)` parcel record should have exactly
+one `unified_parcels(parcel_layer_idx, parcel_entity_id)` row. Use
+`worldsim3 --verify-parcel-duckdb-keys` after ingest/rebuild work to catch
+semantic/render identity drift before debugging UI behavior.
+
+Parcel map interaction should not depend on a primary parcel layer. All
+operational parcel geometry layers use the same per-layer `parcel_polygon_gpu`
+artifact path for rendering, GPU picking, and selection outline lookup. A
+registry-level `parcel_layer_idx` can exist as a semantic/default index for
+legacy overlays or initial UI state, but it must not make one parcel layer use a
+different click, hover, or selection contract than another parcel layer.
+
+Larger zone/pattern layers must stay canonical as their own layers. If a
+parcel-level workflow needs zone membership, materialize that as a DuckDB
+derived table keyed by parcel and zone identities, not by mutating parcel source
+records or rescanning geometry in the frame loop. `parcel_zone_memberships` is
+the durable table contract for explicit membership materializations; it should
+store the relation method explicitly, such as `centroid_in_bbox` or exact
+polygon overlap, without changing the parcel or zone source artifacts. Build or
+refresh this table through an explicit offline command, currently
+`worldsim3 --build-parcel-zone-memberships [--zone-layer-file LAYER_FILE]`, not
+as implicit startup, hover, click, or render work. The current materializer is a
+coarse centroid-in-bbox relation; exact polygon containment/overlap should be a
+separate materializer that keeps the same table contract and sets a different
+`relation` value.
+
+Bounding boxes are the coarse spatial-search contract. DuckDB analytics should
+persist `layer_bboxes` and `layer_feature_bboxes` from canonical feature
+extents. Hit testing and cross-layer joins should use those tables or equivalent
+compiled bbox indexes to find candidates first, then apply exact geometry only
+when the workflow requires exact containment/intersection. Do not perform broad
+cross-layer scans directly from runtime feature property bags.
+
 ## Disk-Persisted Artifact Overview
 
 WorldSim3 should converge on three broad classes of disk artifacts:
@@ -136,6 +185,8 @@ Runtime layer records may:
 - load compiled geometry artifacts and resident GPU buffers
 - support culling, upload scheduling, and GPU picking
 - hold compact session views of DuckDB-backed attributes needed for immediate interaction
+- keep short-lived picked geometry identity for selection highlighting, as long
+  as semantic selection state remains keyed by stable parcel entity IDs
 
 They must not:
 
@@ -145,6 +196,11 @@ They must not:
 - rebuild large text/numeric/property columns from canonical binaries during normal startup when those columns are already persisted in DuckDB
 
 Runtime-only joins are acceptable only as short-lived accelerators over DuckDB-backed columns or explicit derived artifacts. They are not acceptable as the sole durable representation of domain facts, and they should not be rebuilt by scanning canonical feature property bags on the startup critical path.
+
+Selection rendering is a runtime geometry workflow. It may use a selected
+reference's layer and `geometry_entity_id` to find the artifact record to draw.
+It should not use `unified_parcels.parcel_entity_id` as if it were guaranteed to
+be a layer-local render artifact identity.
 
 ### 4. Derived Runtime Boundary
 
@@ -178,6 +234,9 @@ DuckDB may:
 - accelerate startup semantic hydration, search, filtering, reporting, choropleths, detail panels, and ad hoc analysis
 - store derived tables such as `unified_parcels` when those joins are query-facing
 - store generic repository/source metadata keyed by provenance rather than region-specific one-off tables
+- canonicalize parcel click identity from geometry/source-layer IDs or blocklot
+  joins into `unified_parcels.parcel_entity_id` for semantic selection and
+  detail workflows
 
 DuckDB must not:
 

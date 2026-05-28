@@ -304,15 +304,16 @@ int runWorldSim3App(int argc, char** argv) {
                 layerRenderRouteArtifactName(render_route));
         std::fprintf(
             stderr,
-            "[worldsim3] active parcel render path idx=%d file=%s county=%s renderer=parcel_gpu stored=%s canonical=%s artifact=%s\n",
+            "[worldsim3] parcel semantic index idx=%d file=%s county=%s renderer=%s stored=%s canonical=%s artifact=%s\n",
             parcel_layer_idx,
             parcel_layer.file.c_str(),
             parcel_layer.provenance_county_city.c_str(),
+            layerRenderRouteName(render_route, true),
             stored_path.string().c_str(),
             canonical_path.string().c_str(),
             artifact_path.string().c_str());
     } else {
-        std::fprintf(stderr, "[worldsim3] active parcel render path unavailable: no parcel layer selected\n");
+        std::fprintf(stderr, "[worldsim3] parcel semantic index unavailable: no parcel layer selected\n");
     }
     std::unordered_map<std::string, size_t> real_property_by_blocklot;
     std::vector<LayerDef::FeatureRecord> harmonized_real_property_features;
@@ -734,6 +735,36 @@ int runWorldSim3App(int argc, char** argv) {
     if (active_click_layer_idx < 0 || (size_t)active_click_layer_idx >= layers.size()) {
         if (parcel_layer_idx >= 0) active_click_layer_idx = parcel_layer_idx;
         else if (zoning_layer_idx >= 0) active_click_layer_idx = zoning_layer_idx;
+    }
+    if (active_hover_layer_idx >= 0 &&
+        active_click_layer_idx >= 0 &&
+        (size_t)active_hover_layer_idx < layers.size() &&
+        (size_t)active_click_layer_idx < layers.size()) {
+        const LayerDef& hover_layer = layers[(size_t)active_hover_layer_idx];
+        const LayerDef& click_layer = layers[(size_t)active_click_layer_idx];
+        const bool hover_parcel =
+            hover_layer.scale == "parcel" &&
+            !layerUsesPointGeometry(hover_layer) &&
+            !layerUsesPolylineGeometry(hover_layer);
+        const bool click_parcel =
+            click_layer.scale == "parcel" &&
+            !layerUsesPointGeometry(click_layer) &&
+            !layerUsesPolylineGeometry(click_layer);
+        if (hover_parcel && click_parcel && active_hover_layer_idx != active_click_layer_idx) {
+            std::fprintf(
+                stderr,
+                "[worldsim3] parcel hover/click targets differ hover_idx=%d hover_file=%s click_idx=%d click_file=%s\n",
+                active_hover_layer_idx,
+                hover_layer.file.c_str(),
+                active_click_layer_idx,
+                click_layer.file.c_str());
+            active_click_layer_idx = active_hover_layer_idx;
+            std::fprintf(
+                stderr,
+                "[worldsim3] parcel click target synced to hover target idx=%d file=%s\n",
+                active_click_layer_idx,
+                hover_layer.file.c_str());
+        }
     }
     hover_inspector_enabled = active_hover_layer_idx >= 0;
     int last_active_hover_layer_idx = active_hover_layer_idx;

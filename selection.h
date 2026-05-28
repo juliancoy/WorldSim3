@@ -11,6 +11,7 @@
 
 struct ParcelSelectionRef {
     int layer_idx = -1;
+    std::string geometry_entity_id;
     std::string entity_id;
 };
 
@@ -27,6 +28,12 @@ void clearParcelSelection(ParcelSelectionState& selection);
 bool selectParcel(
     ParcelSelectionState& selection,
     int layer_idx,
+    const std::string& entity_id,
+    bool append_toggle);
+bool selectParcel(
+    ParcelSelectionState& selection,
+    int layer_idx,
+    const std::string& geometry_entity_id,
     const std::string& entity_id,
     bool append_toggle);
 void pruneParcelSelection(ParcelSelectionState& selection, const std::vector<LayerDef>& layers);

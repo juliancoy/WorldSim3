@@ -364,7 +364,9 @@ void drawSqlTab(
     if (parcel_selection.show_details && !parcel_selection.refs.empty()) {
         for (const ParcelSelectionRef& ref : parcel_selection.refs) {
             if (ref.layer_idx < 0 || (size_t)ref.layer_idx >= layers.size()) continue;
-            const size_t feature_idx = featureIndexForEntityId(layers[(size_t)ref.layer_idx], ref.entity_id);
+            const std::string geometry_entity_id =
+                ref.geometry_entity_id.empty() ? ref.entity_id : ref.geometry_entity_id;
+            const size_t feature_idx = featureIndexForGeometryEntityId(layers[(size_t)ref.layer_idx], geometry_entity_id);
             if (feature_idx >= layers[(size_t)ref.layer_idx].features.size()) continue;
             const auto& selected = layers[(size_t)ref.layer_idx].features[feature_idx];
             sql_selected_parcels.push_back(DuckDbSelectedParcel{

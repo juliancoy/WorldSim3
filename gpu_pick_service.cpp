@@ -796,6 +796,7 @@ bool gpuPickParcelFeature(
     const GpuPickRequest& request,
     size_t* out_feature_idx,
     std::string* out_entity_id,
+    std::string* out_geometry_entity_id,
     std::string* error) {
     if (!out_feature_idx) {
         if (error) *error = "GPU pick parcel output pointer is missing";
@@ -803,6 +804,7 @@ bool gpuPickParcelFeature(
     }
     *out_feature_idx = (size_t)-1;
     if (out_entity_id) out_entity_id->clear();
+    if (out_geometry_entity_id) out_geometry_entity_id->clear();
     if (!g_ParcelGpuBuffers.positions.buffer ||
         !g_ParcelGpuBuffers.vertex_feature_refs.buffer ||
         !g_ParcelGpuBuffers.indices.buffer ||
@@ -841,6 +843,7 @@ bool gpuPickParcelFeature(
     }
     *out_feature_idx = static_cast<size_t>(g_ParcelGpuBuffers.features[feature_ref].feature_idx);
     if (out_entity_id) *out_entity_id = g_ParcelGpuBuffers.features[feature_ref].entity_id;
+    if (out_geometry_entity_id) *out_geometry_entity_id = g_ParcelGpuBuffers.features[feature_ref].geometry_entity_id;
     return true;
 }
 
@@ -849,6 +852,7 @@ bool gpuPickZoningFeature(
     const GpuPickRequest& request,
     size_t* out_feature_idx,
     std::string* out_entity_id,
+    std::string* out_geometry_entity_id,
     std::string* error) {
     if (!out_feature_idx) {
         if (error) *error = "GPU pick zoning output pointer is missing";
@@ -856,6 +860,7 @@ bool gpuPickZoningFeature(
     }
     *out_feature_idx = (size_t)-1;
     if (out_entity_id) out_entity_id->clear();
+    if (out_geometry_entity_id) out_geometry_entity_id->clear();
     auto it = g_ZoningGpuLayers.find(layer_idx);
     if (it == g_ZoningGpuLayers.end()) {
         if (error) *error = "zoning GPU buffers are not resident for picking";
@@ -894,10 +899,13 @@ bool gpuPickZoningFeature(
         return false;
     }
     if (feature_ref == std::numeric_limits<uint32_t>::max()) return true;
-    *out_feature_idx = (size_t)feature_ref;
-    if (out_entity_id && feature_ref < layer_state.buffers.features.size()) {
-        *out_entity_id = layer_state.buffers.features[feature_ref].entity_id;
+    if (feature_ref >= layer_state.buffers.features.size()) {
+        if (error) *error = "zoning GPU pick returned an out-of-range render feature reference";
+        return false;
     }
+    *out_feature_idx = static_cast<size_t>(layer_state.buffers.features[feature_ref].feature_idx);
+    if (out_entity_id) *out_entity_id = layer_state.buffers.features[feature_ref].entity_id;
+    if (out_geometry_entity_id) *out_geometry_entity_id = layer_state.buffers.features[feature_ref].geometry_entity_id;
     return true;
 }
 

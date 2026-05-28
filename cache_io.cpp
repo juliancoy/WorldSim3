@@ -1059,6 +1059,7 @@ bool loadBinaryPolygonGeometryArtifact(
             !readFloat(in, rec.min_lat) ||
             !readFloat(in, rec.max_lon) ||
             !readFloat(in, rec.max_lat)) return false;
+        if (rec.feature_idx >= hdr.feature_count) return false;
     }
     for (auto& rec : out.chunks) {
         if (!readU32(in, rec.chunk_idx) ||

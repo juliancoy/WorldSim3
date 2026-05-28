@@ -164,12 +164,14 @@ bool gpuPickParcelFeature(
     const GpuPickRequest& request,
     size_t* out_feature_idx,
     std::string* out_entity_id = nullptr,
+    std::string* out_geometry_entity_id = nullptr,
     std::string* error = nullptr);
 bool gpuPickZoningFeature(
     size_t layer_idx,
     const GpuPickRequest& request,
     size_t* out_feature_idx,
     std::string* out_entity_id = nullptr,
+    std::string* out_geometry_entity_id = nullptr,
     std::string* error = nullptr);
 bool gpuPickPointFeature(
     const PointGeometryArtifact& artifact,

@@ -21,7 +21,7 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
-constexpr int kAnalyticsSchemaVersion = 6;
+constexpr int kAnalyticsSchemaVersion = 7;
 
 struct AnalyticsLayerStateRow {
     size_t layer_idx = 0;
@@ -601,6 +601,120 @@ void rewriteAnalyticsLayerState(
     appender.Close();
 }
 
+void rebuildSpatialSearchArtifacts(duckdb::Connection& con) {
+    auto exec_or_throw = [&](const std::string& sql, const char* context) {
+        auto res = con.Query(sql);
+        if (!res || res->HasError()) {
+            throw std::runtime_error(
+                std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+        }
+    };
+
+    exec_or_throw("DROP TABLE IF EXISTS layer_feature_bboxes", "drop layer_feature_bboxes");
+    exec_or_throw("DROP TABLE IF EXISTS layer_bboxes", "drop layer_bboxes");
+    exec_or_throw(R"SQL(
+        CREATE TABLE layer_feature_bboxes AS
+        SELECT
+            layer_idx,
+            layer_file,
+            layer_name,
+            duckdb_role,
+            feature_idx,
+            entity_id,
+            scale,
+            category,
+            provenance_world,
+            provenance_nation_state,
+            provenance_state_region,
+            provenance_county_city,
+            min_lon,
+            min_lat,
+            max_lon,
+            max_lat,
+            (min_lon + max_lon) / 2.0 AS center_lon,
+            (min_lat + max_lat) / 2.0 AS center_lat
+        FROM layer_features
+        WHERE min_lon < max_lon
+          AND min_lat < max_lat
+    )SQL", "create layer_feature_bboxes");
+    exec_or_throw(R"SQL(
+        CREATE TABLE layer_bboxes AS
+        SELECT
+            layer_idx,
+            layer_file,
+            layer_name,
+            duckdb_role,
+            scale,
+            category,
+            provenance_world,
+            provenance_nation_state,
+            provenance_state_region,
+            provenance_county_city,
+            count(*) AS feature_count,
+            min(min_lon) AS min_lon,
+            min(min_lat) AS min_lat,
+            max(max_lon) AS max_lon,
+            max(max_lat) AS max_lat
+        FROM layer_feature_bboxes
+        GROUP BY
+            layer_idx,
+            layer_file,
+            layer_name,
+            duckdb_role,
+            scale,
+            category,
+            provenance_world,
+            provenance_nation_state,
+            provenance_state_region,
+            provenance_county_city
+    )SQL", "create layer_bboxes");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_bboxes_layer_feature ON layer_feature_bboxes(layer_idx, feature_idx)", "index layer_feature_bboxes layer feature");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_bboxes_entity ON layer_feature_bboxes(layer_idx, entity_id)", "index layer_feature_bboxes entity");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_feature_bboxes_extent ON layer_feature_bboxes(min_lon, min_lat, max_lon, max_lat)", "index layer_feature_bboxes extent");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_layer_bboxes_layer ON layer_bboxes(layer_idx)", "index layer_bboxes layer");
+
+    exec_or_throw("DROP TABLE IF EXISTS parcel_zone_memberships", "drop parcel_zone_memberships");
+    exec_or_throw(R"SQL(
+        CREATE TABLE parcel_zone_memberships (
+            parcel_layer_idx UBIGINT,
+            parcel_entity_id VARCHAR,
+            parcel_geometry_entity_id VARCHAR,
+            blocklot VARCHAR,
+            zone_layer_idx UBIGINT,
+            zone_layer_file VARCHAR,
+            zone_layer_name VARCHAR,
+            zone_feature_idx UBIGINT,
+            zone_entity_id VARCHAR,
+            zone_key VARCHAR,
+            zone_label VARCHAR,
+            relation VARCHAR,
+            parcel_centroid_lon DOUBLE,
+            parcel_centroid_lat DOUBLE,
+            overlap_area DOUBLE,
+            overlap_ratio DOUBLE,
+            source_signature VARCHAR
+        )
+    )SQL", "create parcel_zone_memberships");
+    exec_or_throw(
+        "CREATE INDEX IF NOT EXISTS idx_parcel_zone_memberships_parcel "
+        "ON parcel_zone_memberships(parcel_layer_idx, parcel_entity_id)",
+        "index parcel_zone_memberships parcel");
+    exec_or_throw(
+        "CREATE INDEX IF NOT EXISTS idx_parcel_zone_memberships_zone "
+        "ON parcel_zone_memberships(zone_layer_idx, zone_entity_id)",
+        "index parcel_zone_memberships zone");
+    exec_or_throw(R"SQL(
+        CREATE OR REPLACE VIEW parcel_zone_membership_summary AS
+        SELECT
+            parcel_layer_idx,
+            parcel_entity_id,
+            count(*) AS zone_membership_count,
+            count(DISTINCT zone_layer_idx) AS zone_layer_count
+        FROM parcel_zone_memberships
+        GROUP BY parcel_layer_idx, parcel_entity_id
+    )SQL", "create parcel_zone_membership_summary view");
+}
+
 void rebuildDerivedAnalyticsObjects(
     const fs::path& root,
     duckdb::Connection& con,
@@ -620,10 +734,11 @@ void rebuildDerivedAnalyticsObjects(
     exec_or_throw("DELETE FROM analytics_source_contributions", "clear analytics_source_contributions");
     exec_or_throw("DELETE FROM repository_sources", "clear repository_sources");
     exec_or_throw("DELETE FROM import_audit", "clear import_audit");
+    const std::string build_source_signature = analyticsBuildSignature(root, layers);
 
     {
         const std::string built_at_utc = isoNowUtc();
-        const std::string source_signature = analyticsBuildSignature(root, layers);
+        const std::string source_signature = build_source_signature;
         size_t unified_parcel_count = 0;
         size_t parcels_with_property_record = 0;
         size_t parcels_with_geometry = 0;
@@ -791,6 +906,7 @@ void rebuildDerivedAnalyticsObjects(
 
     exec_or_throw("DROP TABLE IF EXISTS geography_feature_collections", "drop geography_feature_collections");
     exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
+    rebuildSpatialSearchArtifacts(con);
     exec_or_throw(R"SQL(
         CREATE TABLE geography_feature_collections AS
         SELECT
@@ -976,9 +1092,17 @@ bool DuckDbAnalytics::validateExistingCache() {
 
         auto table_check = con.Query(R"SQL(
             SELECT count(*)::BIGINT
-            FROM information_schema.tables
+              FROM information_schema.tables
             WHERE table_schema = 'main'
-              AND table_name IN ('layer_features', 'layer_feature_properties', 'unified_parcels', 'parcel_events')
+              AND table_name IN (
+                  'layer_features',
+                  'layer_feature_properties',
+                  'unified_parcels',
+                  'parcel_events',
+                  'layer_feature_bboxes',
+                  'layer_bboxes',
+                  'parcel_zone_memberships'
+              )
         )SQL");
         if (!table_check || table_check->HasError() || table_check->RowCount() == 0) {
             status_.last_rebuild_ok = false;
@@ -986,7 +1110,7 @@ bool DuckDbAnalytics::validateExistingCache() {
             return false;
         }
         const int64_t table_count = table_check->GetValue<int64_t>(0, 0);
-        if (table_count < 4) {
+        if (table_count < 7) {
             status_.last_rebuild_ok = false;
             status_.message = "DuckDB analytics cache is incomplete.";
             return false;
@@ -1223,6 +1347,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("DROP TABLE IF EXISTS layer_features", "drop layer_features");
         exec_or_throw("DROP TABLE IF EXISTS layer_feature_properties", "drop layer_feature_properties");
         exec_or_throw("DROP TABLE IF EXISTS unified_parcels", "drop unified_parcels");
+        exec_or_throw("DROP TABLE IF EXISTS parcel_zone_memberships", "drop parcel_zone_memberships");
         exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
         exec_or_throw("DROP TABLE IF EXISTS repository_sources", "drop repository_sources");
         exec_or_throw("DROP TABLE IF EXISTS geography_feature_collections", "drop geography_feature_collections");
@@ -1550,6 +1675,8 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_entity_id ON unified_parcels(parcel_entity_id)", "index unified_parcels entity id");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_owner ON unified_parcels(owner)", "index unified_parcels owner");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_unified_parcels_address_search ON unified_parcels(address_search)", "index unified_parcels address_search");
+        const std::string full_rebuild_source_signature = analyticsBuildSignature(root_, layers);
+        rebuildSpatialSearchArtifacts(con);
         exec_or_throw(R"SQL(
             CREATE TABLE analytics_build_info (
                 built_at_utc VARCHAR,
@@ -1614,7 +1741,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         )SQL", "create import_audit");
         {
             const std::string built_at_utc = isoNowUtc();
-            const std::string source_signature = analyticsBuildSignature(root_, layers);
+            const std::string source_signature = full_rebuild_source_signature;
             std::unordered_map<std::string, size_t> parcel_source_counts;
             std::unordered_map<std::string, size_t> property_source_counts;
             size_t unified_parcel_count = 0;
@@ -2105,6 +2232,15 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
     }
     std::ostringstream sql;
     sql << R"SQL(
+        WITH entity_hit AS (
+            SELECT blocklot
+            FROM layer_features
+            WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
+              AND scale = 'parcel'
+              AND duckdb_role = 'parcel_record'
+              AND blocklot <> ''
+            LIMIT 1
+        )
         SELECT *
         FROM (
             SELECT
@@ -2143,6 +2279,74 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
             UNION ALL
             SELECT
                 1 AS detail_priority,
+                parcel_layer_idx,
+                parcel_entity_id,
+                parcel_geometry_entity_id,
+                blocklot,
+                parcel_source_file,
+                property_source_file,
+                parcel_has_geometry,
+                has_property_record,
+                owner,
+                owner_display,
+                address,
+                zipcode,
+                status,
+                current_land,
+                current_improvements,
+                structure_area_sqft,
+                tax_base,
+                sale_price,
+                current_value,
+                vacant_notice_count,
+                vacant_rehab_count,
+                tax_lien_count,
+                tax_sale_count,
+                tax_lien_amount,
+                tax_sale_amount,
+                min_lon,
+                min_lat,
+                max_lon,
+                max_lat
+            FROM unified_parcels
+            WHERE parcel_geometry_entity_id = ')SQL" << sqlQuote(key) << R"SQL('
+            UNION ALL
+            SELECT
+                2 AS detail_priority,
+                up.parcel_layer_idx,
+                up.parcel_entity_id,
+                up.parcel_geometry_entity_id,
+                up.blocklot,
+                up.parcel_source_file,
+                up.property_source_file,
+                up.parcel_has_geometry,
+                up.has_property_record,
+                up.owner,
+                up.owner_display,
+                up.address,
+                up.zipcode,
+                up.status,
+                up.current_land,
+                up.current_improvements,
+                up.structure_area_sqft,
+                up.tax_base,
+                up.sale_price,
+                up.current_value,
+                up.vacant_notice_count,
+                up.vacant_rehab_count,
+                up.tax_lien_count,
+                up.tax_sale_count,
+                up.tax_lien_amount,
+                up.tax_sale_amount,
+                up.min_lon,
+                up.min_lat,
+                up.max_lon,
+                up.max_lat
+            FROM unified_parcels up
+            JOIN entity_hit eh ON eh.blocklot = up.blocklot
+            UNION ALL
+            SELECT
+                3 AS detail_priority,
                 layer_idx AS parcel_layer_idx,
                 entity_id AS parcel_entity_id,
                 '' AS parcel_geometry_entity_id,

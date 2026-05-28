@@ -7,10 +7,10 @@ bool isOperationalParcelRenderLayer(const LayerDef& layer) {
 }
 
 LayerRenderRoute classifyLayerRenderRoute(size_t layer_idx, const LayerDef& layer, int active_parcel_layer_idx) {
+    (void)layer_idx;
+    (void)active_parcel_layer_idx;
     if (isOperationalParcelRenderLayer(layer)) {
-        return static_cast<int>(layer_idx) == active_parcel_layer_idx
-            ? LayerRenderRoute::ParcelGpu
-            : LayerRenderRoute::ParcelPolygonGpu;
+        return LayerRenderRoute::ParcelPolygonGpu;
     }
     if (layerUsesPointGeometry(layer)) return LayerRenderRoute::PointGpu;
     if (layerUsesPolylineGeometry(layer)) return LayerRenderRoute::PolylineGpu;
@@ -52,9 +52,9 @@ const char* layerRenderRouteArtifactName(LayerRenderRoute route) {
 const char* layerRenderRouteReason(LayerRenderRoute route) {
     switch (route) {
         case LayerRenderRoute::ParcelGpu:
-            return "selected active parcel layer";
+            return "legacy monolithic parcel GPU path";
         case LayerRenderRoute::ParcelPolygonGpu:
-            return "operational parcel layer rendered through parcel polygon GPU fallback";
+            return "operational parcel layer rendered through parcel polygon GPU path";
         case LayerRenderRoute::PointGpu:
             return "point geometry layer";
         case LayerRenderRoute::PolylineGpu:

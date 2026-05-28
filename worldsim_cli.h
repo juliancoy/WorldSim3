@@ -23,8 +23,11 @@ struct WorldsimCliOptions {
     bool run_canonical_parcel_binary_selftest = false;
     bool run_parcel_polygon_identity_selftest = false;
     bool run_polygon_artifact_resilience_selftest = false;
+    bool run_parcel_polygon_feature_idx_selftest = false;
+    bool run_parcel_hover_click_pick_selftest = false;
     bool run_parcel_selection_ui_harness = false;
     bool run_parcel_hover_click_ui_harness = false;
+    bool run_verify_parcel_duckdb_keys = false;
     bool run_duckdb_parcel_semantic_snapshot_selftest = false;
     bool run_duckdb_parcel_ingest_selftest = false;
     bool run_population_metrics_selftest = false;
@@ -49,6 +52,7 @@ struct WorldsimCliOptions {
     bool run_inspect_duckdb_geography_tables = false;
     bool run_report_duckdb_coverage = false;
     bool run_build_parcel_matched_layers = false;
+    bool run_build_parcel_zone_memberships = false;
     bool run_build_population_metrics = false;
     bool run_build_beps_candidates = false;
     bool force_build_parcel_matched_layers = false;
@@ -64,6 +68,7 @@ struct WorldsimCliOptions {
     std::string polyline_geometry_file;
     std::string polygon_geometry_file;
     std::string render_polygon_tile_file;
+    std::string parcel_zone_membership_zone_layer_file;
     int render_tile_z = -1;
     int render_tile_x = -1;
     int render_tile_y = -1;

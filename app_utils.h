@@ -71,6 +71,7 @@ void ensureFeatureIdentityForLayerFeature(const LayerDef& layer, LayerDef::Featu
 void ensureFeatureIdentityForLayer(LayerDef& layer);
 void ensureFeatureIdentityForLayerFile(const std::string& layer_file, std::vector<LayerDef::FeatureRecord>& features);
 size_t featureIndexForEntityId(const LayerDef& layer, const std::string& entity_id);
+size_t featureIndexForGeometryEntityId(const LayerDef& layer, const std::string& geometry_entity_id);
 std::filesystem::path provenanceStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);
 std::filesystem::path provenanceSourceArtifactPath(const std::filesystem::path& root, const LayerDef& layer, const std::string& artifact_name);
 std::filesystem::path resolveStoredLayerPath(const std::filesystem::path& root, const LayerDef& layer);

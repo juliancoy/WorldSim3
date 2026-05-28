@@ -140,16 +140,32 @@ bool layerIsSelectedHoverTarget(const LayersPanelUiContext& ctx, size_t idx) {
 
 void selectHoverTargetLayer(LayersPanelUiContext& ctx, size_t idx) {
     if (!layerSupportsHoverSelection(ctx, idx)) return;
+    if (*ctx.active_hover_layer_idx == (int)idx) {
+        *ctx.active_hover_layer_idx = -1;
+        if (ctx.shared->layer_hover_state_changed) *ctx.shared->layer_hover_state_changed = true;
+        return;
+    }
     (*ctx.shared->layer_hover_enabled)[idx] = true;
     *ctx.active_hover_layer_idx = (int)idx;
     if (ctx.shared->layer_hover_state_changed) *ctx.shared->layer_hover_state_changed = true;
 }
 
 bool layerSupportsClickSelection(const LayersPanelUiContext& ctx, size_t idx) {
+    if (!ctx.shared ||
+        !ctx.shared->layers ||
+        !ctx.shared->layer_inspect_enabled ||
+        !ctx.active_click_layer_idx ||
+        idx >= ctx.shared->layers->size()) {
+        return false;
+    }
+    const LayerDef& layer = (*ctx.shared->layers)[idx];
+    const bool parcel_interaction_layer =
+        layer.enabled &&
+        layer.scale == "parcel" &&
+        !layerUsesPointGeometry(layer) &&
+        !layerUsesPolylineGeometry(layer);
     return ctx.shared &&
-        ctx.shared->layer_inspect_enabled &&
-        ctx.active_click_layer_idx &&
-        ((int)idx == ctx.parcel_layer_idx || (int)idx == ctx.zoning_layer_idx);
+        (parcel_interaction_layer || (int)idx == ctx.zoning_layer_idx);
 }
 
 bool layerIsSelectedClickTarget(const LayersPanelUiContext& ctx, size_t idx) {
@@ -576,14 +592,16 @@ void setGroupVisibility(const LayersPanelUiContext& ctx, const LayerGroupMatcher
 void setGroupHoverTarget(LayersPanelUiContext& ctx, const LayerGroupMatcher& matches) {
     if (!ctx.shared || !ctx.shared->layers || !ctx.shared->layer_hover_enabled) return;
     int first_idx = -1;
+    bool active_idx_in_group = false;
     for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
         LayerDef& layer = (*ctx.shared->layers)[idx];
         if (!matches(idx, layer) || !layerSupportsHoverSelection(ctx, idx)) continue;
         (*ctx.shared->layer_hover_enabled)[idx] = true;
+        active_idx_in_group = active_idx_in_group || (ctx.active_hover_layer_idx && *ctx.active_hover_layer_idx == (int)idx);
         if (first_idx < 0) first_idx = (int)idx;
     }
     if (first_idx >= 0 && ctx.active_hover_layer_idx) {
-        *ctx.active_hover_layer_idx = first_idx;
+        *ctx.active_hover_layer_idx = active_idx_in_group ? -1 : first_idx;
         if (ctx.shared->layer_hover_state_changed) *ctx.shared->layer_hover_state_changed = true;
     }
 }

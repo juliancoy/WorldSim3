@@ -22,50 +22,6 @@
 namespace {
 namespace fs = std::filesystem;
 
-const PolygonGeometryArtifact* polygonArtifactForLayer(const MapInspectionContext& ctx, size_t layer_idx) {
-    if (!ctx.polygon_geometry_artifacts) return nullptr;
-    auto it = ctx.polygon_geometry_artifacts->find(layer_idx);
-    if (it == ctx.polygon_geometry_artifacts->end()) return nullptr;
-    return &it->second;
-}
-
-bool pointInTriangleLonLat(
-    float px, float py,
-    const ImVec2& a,
-    const ImVec2& b,
-    const ImVec2& c) {
-    auto cross = [](const ImVec2& u, const ImVec2& v, float x, float y) {
-        return (v.x - u.x) * (y - u.y) - (v.y - u.y) * (x - u.x);
-    };
-    const float c1 = cross(a, b, px, py);
-    const float c2 = cross(b, c, px, py);
-    const float c3 = cross(c, a, px, py);
-    const bool has_neg = (c1 < 0.0f) || (c2 < 0.0f) || (c3 < 0.0f);
-    const bool has_pos = (c1 > 0.0f) || (c2 > 0.0f) || (c3 > 0.0f);
-    return !(has_neg && has_pos);
-}
-
-bool pointInPolygonArtifactFeature(
-    const PolygonGeometryArtifact& artifact,
-    size_t feature_idx,
-    float lon,
-    float lat) {
-    if (feature_idx >= artifact.features.size()) return false;
-    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
-    const uint32_t end = rec.index_offset + rec.index_count;
-    if (end > artifact.fill_indices.size()) return false;
-    for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
-        const uint32_t ia = artifact.fill_indices[i];
-        const uint32_t ib = artifact.fill_indices[i + 1];
-        const uint32_t ic = artifact.fill_indices[i + 2];
-        if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ic >= artifact.vertices.size()) continue;
-        if (pointInTriangleLonLat(lon, lat, artifact.vertices[ia], artifact.vertices[ib], artifact.vertices[ic])) {
-            return true;
-        }
-    }
-    return false;
-}
-
 enum class PointMarkerGlyph {
     Circle,
     Square,
@@ -550,7 +506,8 @@ ParcelHoverResolution resolveParcelHit(
     const MapInspectionContext& ctx,
     int layer_idx,
     size_t feature_idx,
-    const std::string& entity_id_hint) {
+    const std::string& entity_id_hint,
+    const std::string& geometry_entity_id_hint) {
     ParcelHoverResolution out;
     if (!ctx.hover_state || !ctx.layers) return out;
     out.layer_idx = layer_idx;
@@ -568,6 +525,17 @@ ParcelHoverResolution resolveParcelHit(
                     (*ctx.layers)[(size_t)out.layer_idx].features[out.feature_idx],
                     out.feature_idx)
                 : std::string();
+    out.geometry_entity_id =
+        !geometry_entity_id_hint.empty()
+            ? geometry_entity_id_hint
+            : (out.layer_idx >= 0 &&
+               (size_t)out.layer_idx < ctx.layers->size() &&
+               out.feature_idx < (*ctx.layers)[(size_t)out.layer_idx].features.size())
+                ? featureGeometryEntityIdForLayerFeature(
+                    (*ctx.layers)[(size_t)out.layer_idx],
+                    (*ctx.layers)[(size_t)out.layer_idx].features[out.feature_idx],
+                    out.feature_idx)
+                : out.entity_id;
     out.unified_record =
         (ctx.unified_parcels && !out.entity_id.empty())
             ? unifiedParcelAt(*ctx.unified_parcels, out.entity_id)
@@ -582,7 +550,8 @@ ParcelHoverResolution resolveHoveredParcel(const MapInspectionContext& ctx) {
         ctx,
         ctx.hover_state->hovered_parcel_layer_idx,
         ctx.hover_state->hovered_parcel_idx,
-        ctx.hover_state->hovered_parcel_entity_id);
+        ctx.hover_state->hovered_parcel_entity_id,
+        ctx.hover_state->hovered_parcel_geometry_entity_id);
 }
 
 ParcelHoverResolution resolveInspectParcel(const MapInspectionContext& ctx) {
@@ -591,7 +560,8 @@ ParcelHoverResolution resolveInspectParcel(const MapInspectionContext& ctx) {
         ctx,
         ctx.hover_state->inspect_parcel_layer_idx,
         ctx.hover_state->inspect_parcel_idx,
-        ctx.hover_state->inspect_parcel_entity_id);
+        ctx.hover_state->inspect_parcel_entity_id,
+        ctx.hover_state->inspect_parcel_geometry_entity_id);
 }
 
 ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
@@ -631,6 +601,8 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
         return {};
     };
     out.available = true;
+    out.parcel_entity_id = cell("parcel_entity_id");
+    if (out.parcel_entity_id.empty()) out.parcel_entity_id = hovered.entity_id;
     out.blocklot = cell("blocklot");
     out.owner = cell("owner");
     out.owner_display = cell("owner_display");
@@ -650,6 +622,31 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
     out.tax_lien_amount = parseNumericField(cell("tax_lien_amount"));
     out.tax_sale_amount = parseNumericField(cell("tax_sale_amount"));
     return out;
+}
+
+std::string canonicalParcelEntityIdForClick(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
+    if (!hovered.hit || hovered.entity_id.empty()) return {};
+    if (hovered.unified_record && !hovered.unified_record->parcel_entity_id.empty()) {
+        return hovered.unified_record->parcel_entity_id;
+    }
+    if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) return hovered.entity_id;
+    const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
+    if (detail.ok && !detail.rows.empty()) {
+        const auto& row = detail.rows.front();
+        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
+            if (detail.columns[i] == "parcel_entity_id" && !row[i].empty()) return row[i];
+        }
+    }
+    if (!hovered.geometry_entity_id.empty() && hovered.geometry_entity_id != hovered.entity_id) {
+        const DuckDbQueryResult geometry_detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.geometry_entity_id);
+        if (geometry_detail.ok && !geometry_detail.rows.empty()) {
+            const auto& row = geometry_detail.rows.front();
+            for (size_t i = 0; i < geometry_detail.columns.size() && i < row.size(); ++i) {
+                if (geometry_detail.columns[i] == "parcel_entity_id" && !row[i].empty()) return row[i];
+            }
+        }
+    }
+    return hovered.entity_id;
 }
 
 const LayerDef::FeatureRecord* parcelFeatureForResolution(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
@@ -690,9 +687,11 @@ void logParcelClickDebug(
         "FULLADDR", "PROPERTY_ADDRESS", "ADDRESS", "Address", "SITE_ADDR", "SITUSADDR"
     });
     const std::string geometry_entity =
-        (layer && feature && hovered.feature_idx != (size_t)-1)
-            ? featureGeometryEntityIdForLayerFeature(*layer, *feature, hovered.feature_idx)
-            : std::string();
+        !hovered.geometry_entity_id.empty()
+            ? hovered.geometry_entity_id
+            : ((layer && feature && hovered.feature_idx != (size_t)-1)
+                ? featureGeometryEntityIdForLayerFeature(*layer, *feature, hovered.feature_idx)
+                : std::string());
     const char* active_entity =
         ctx.parcel_selection ? ctx.parcel_selection->active_entity_id.c_str() : "";
     const size_t selected_count =
@@ -715,6 +714,10 @@ void logParcelClickDebug(
         active_entity ? active_entity : "",
         layer ? layer->file.c_str() : "");
 
+    if (!hovered.hit || hovered.entity_id.empty()) {
+        return;
+    }
+
     if (hovered.unified_record) {
         std::fprintf(
             stderr,
@@ -726,28 +729,40 @@ void logParcelClickDebug(
             hovered.unified_record->has_property_record ? 1 : 0,
             hovered.unified_record->parcel_has_geometry ? 1 : 0);
     } else {
-        std::fprintf(stderr, "[worldsim3][parcel-click] unified entity=%s missing\n", hovered.entity_id.c_str());
+        std::fprintf(stderr, "[worldsim3][parcel-click] in_memory_unified entity=%s missing\n", hovered.entity_id.c_str());
     }
 
     if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok && !hovered.entity_id.empty()) {
         const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
+        std::string duckdb_entity;
+        std::string duckdb_geometry_entity;
         std::string duckdb_blocklot;
+        std::string duckdb_owner;
+        std::string duckdb_address;
+        std::string duckdb_has_property;
         if (detail.ok && !detail.rows.empty()) {
             const auto& row = detail.rows.front();
             for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
-                if (detail.columns[i] == "blocklot") {
-                    duckdb_blocklot = row[i];
-                    break;
-                }
+                if (detail.columns[i] == "parcel_entity_id") duckdb_entity = row[i];
+                else if (detail.columns[i] == "parcel_geometry_entity_id") duckdb_geometry_entity = row[i];
+                else if (detail.columns[i] == "blocklot") duckdb_blocklot = row[i];
+                else if (detail.columns[i] == "owner_display") duckdb_owner = row[i];
+                else if (detail.columns[i] == "address") duckdb_address = row[i];
+                else if (detail.columns[i] == "has_property_record") duckdb_has_property = row[i];
             }
         }
         std::fprintf(
             stderr,
-            "[worldsim3][parcel-click] duckdb entity=%s ok=%d rows=%zu blocklot=%s message=%s\n",
+            "[worldsim3][parcel-click] duckdb query_entity=%s matched_entity=%s geometry_entity=%s ok=%d rows=%zu blocklot=%s owner=%s address=%s has_property=%s message=%s\n",
             hovered.entity_id.c_str(),
+            duckdb_entity.c_str(),
+            duckdb_geometry_entity.c_str(),
             detail.ok ? 1 : 0,
             detail.rows.size(),
             duckdb_blocklot.c_str(),
+            duckdb_owner.c_str(),
+            duckdb_address.c_str(),
+            duckdb_has_property.c_str(),
             detail.message.c_str());
     } else {
         std::fprintf(
@@ -760,16 +775,21 @@ void logParcelClickDebug(
 
 bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append) {
     if (!ctx.parcel_selection || !hovered.hit || hovered.entity_id.empty()) return false;
+    const std::string selected_entity_id = canonicalParcelEntityIdForClick(ctx, hovered);
+    if (selected_entity_id.empty()) return false;
+    const std::string selected_geometry_entity_id =
+        !hovered.geometry_entity_id.empty() ? hovered.geometry_entity_id : hovered.entity_id;
     const bool selected = selectParcel(
             *ctx.parcel_selection,
             hovered.layer_idx,
-            hovered.entity_id,
+            selected_geometry_entity_id,
+            selected_entity_id,
             ctrl_append);
     logParcelClickDebug(ctx, "select", hovered, ctrl_append, selected);
     if (!selected) {
         return false;
     }
-    if (ctx.open_parcel_element) ctx.open_parcel_element(hovered.entity_id);
+    if (ctx.open_parcel_element) ctx.open_parcel_element(selected_entity_id);
     if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
     if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
     return true;
@@ -850,36 +870,6 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         const double tax_lien_amount = hovered_detail.tax_lien_amount;
         const double tax_sale_amount = hovered_detail.tax_sale_amount;
         const LayerDef::FeatureRecord* hovered_zoning = hovered_zone;
-        if (hovered_detail.parcel_has_geometry &&
-            ctx.zoning_layer_idx >= 0 && (size_t)ctx.zoning_layer_idx < ctx.layers->size()) {
-            const LayerDef::FeatureExtent& parcel_extent = hovered_detail.parcel_extent;
-            const float qlon = (parcel_extent.min_lon + parcel_extent.max_lon) * 0.5f;
-            const float qlat = (parcel_extent.min_lat + parcel_extent.max_lat) * 0.5f;
-            std::vector<uint32_t> zoning_candidates;
-            bool have_zoning_candidates = false;
-            if (ctx.layer_spatial && (size_t)ctx.zoning_layer_idx < ctx.layer_spatial->size() && (*ctx.layer_spatial)[(size_t)ctx.zoning_layer_idx].built) {
-                have_zoning_candidates = queryLayerSpatialIndex(
-                    (*ctx.layer_spatial)[(size_t)ctx.zoning_layer_idx], qlon, qlat, qlon, qlat, zoning_candidates);
-            }
-            if (have_zoning_candidates) {
-                const auto& zfeats = (*ctx.layers)[(size_t)ctx.zoning_layer_idx].features;
-                const PolygonGeometryArtifact* zoning_artifact =
-                    polygonArtifactForLayer(ctx, (size_t)ctx.zoning_layer_idx);
-                for (uint32_t zi : zoning_candidates) {
-                    if (zi >= zfeats.size()) continue;
-                    const auto& zf = zfeats[zi];
-                    if (!zoning_artifact || (size_t)zi >= zoning_artifact->features.size()) continue;
-                    const bool contains_point =
-                        pointInPolygonArtifactFeature(*zoning_artifact, (size_t)zi, qlon, qlat);
-                    if (qlon >= zf.extent.min_lon && qlon <= zf.extent.max_lon &&
-                        qlat >= zf.extent.min_lat && qlat <= zf.extent.max_lat &&
-                        contains_point) {
-                        hovered_zoning = &zf;
-                        break;
-                    }
-                }
-            }
-        }
 
         ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
         ImGui::BeginTooltip();
@@ -920,7 +910,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
             ImGui::SetWindowFontScale(1.0f);
             if (!zone_description.empty()) ImGui::TextWrapped("%s", zone_description.c_str());
         } else if (ctx.zoning_layer_idx >= 0) {
-            ImGui::TextDisabled("Zoning: no intersecting zoning polygon found.");
+            ImGui::TextDisabled("Zoning: use DuckDB parcel_zone_memberships for cross-layer membership.");
         }
         ImGui::Separator();
         ImGui::TextDisabled("Open the parcel details panel for full parcel and property fields.");

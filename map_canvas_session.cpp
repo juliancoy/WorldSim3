@@ -28,14 +28,13 @@ bool isParcelInteractionLayer(const std::vector<LayerDef>& layers, int layer_idx
            !layerUsesPolylineGeometry(layer);
 }
 
-bool anyParcelInteractionLayerEnabled(const std::vector<LayerDef>& layers, const std::vector<bool>* values) {
-    if (!values) return false;
-    const size_t count = std::min(layers.size(), values->size());
-    for (size_t i = 0; i < count; ++i) {
-        if (!(*values)[i]) continue;
-        if (isParcelInteractionLayer(layers, (int)i)) return true;
-    }
-    return false;
+bool activeParcelInteractionLayerEnabled(
+    const std::vector<LayerDef>& layers,
+    const std::vector<bool>* values,
+    int active_layer_idx) {
+    return active_layer_idx >= 0 &&
+           layerToggleEnabled(values, active_layer_idx) &&
+           isParcelInteractionLayer(layers, active_layer_idx);
 }
 }
 
@@ -78,9 +77,9 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.mouse_ll = map_viewport.mouse_ll;
 
     session.parcel_hover_active =
-        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled);
+        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
     session.parcel_inspect_active =
-        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled);
+        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
     session.zoning_hover_active =
         activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
@@ -169,9 +168,9 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
     }
 
     session.parcel_hover_active =
-        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled);
+        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
     session.parcel_inspect_active =
-        anyParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled);
+        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
     session.zoning_hover_active =
         activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
@@ -180,12 +179,12 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
         layerToggleEnabled(ctx.layer_inspect_enabled, ctx.zoning_layer_idx);
     const bool hover_points_enabled =
         ctx.active_hover_layer_idx >= 0 &&
-        ctx.active_hover_layer_idx != ctx.parcel_layer_idx &&
+        !activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled, ctx.active_hover_layer_idx) &&
         ctx.active_hover_layer_idx != ctx.zoning_layer_idx &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
     const bool inspect_points_enabled =
         ctx.active_click_layer_idx >= 0 &&
-        ctx.active_click_layer_idx != ctx.parcel_layer_idx &&
+        !activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx) &&
         ctx.active_click_layer_idx != ctx.zoning_layer_idx &&
         layerToggleEnabled(ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
 

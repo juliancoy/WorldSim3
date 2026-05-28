@@ -49,6 +49,7 @@ struct ParcelHoverResolution {
     int layer_idx = -1;
     size_t feature_idx = (size_t)-1;
     std::string entity_id;
+    std::string geometry_entity_id;
     const UnifiedParcelRecord* unified_record = nullptr;
 };
 

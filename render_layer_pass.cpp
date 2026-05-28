@@ -240,11 +240,11 @@ bool featureHasPolygonGeometry(
     size_t layer_idx,
     size_t feature_idx,
     const LayerDef::FeatureRecord& fg) {
-    if ((int)layer_idx == ctx.parcel_layer_idx) {
-        return parcelRenderFeature(ctx, feature_idx) != nullptr;
-    }
     if (const PolygonGeometryArtifact* artifact = polygonArtifactForLayer(ctx, layer_idx)) {
         if (feature_idx < artifact->features.size()) return true;
+    }
+    if ((int)layer_idx == ctx.parcel_layer_idx) {
+        return parcelRenderFeature(ctx, feature_idx) != nullptr;
     }
     return !fg.rings.empty();
 }
@@ -1075,7 +1075,7 @@ void drawFeatureRecordetry(
     const PolygonGeometryArtifact* polygon_artifact = polygonArtifactForLayer(ctx, layer_idx);
     const bool artifact_ready = polygon_artifact && feature_idx < polygon_artifact->features.size();
     const ParcelRenderFeatureRecord* parcel_feature =
-        (int)layer_idx == ctx.parcel_layer_idx ? parcelRenderFeature(ctx, feature_idx) : nullptr;
+        !artifact_ready && (int)layer_idx == ctx.parcel_layer_idx ? parcelRenderFeature(ctx, feature_idx) : nullptr;
     if (artifact_ready || parcel_feature || !fg.rings.empty()) {
         return;
     }

@@ -529,7 +529,7 @@ json parcelLayerDebugJson(
         {"active_parcel_layer", static_cast<int>(layer_idx) == parcel_layer_idx},
         {"render_path", renderPathForLayer(layer_idx, layer, st, parcel_layer_idx)},
         {"render_path_reason", renderPathReasonForLayer(layer_idx, layer, parcel_layer_idx)},
-        {"expected_operational_parcel_render_path", isOperationalParcelRenderLayer(layer) ? "parcel_gpu" : ""},
+        {"expected_operational_parcel_render_path", isOperationalParcelRenderLayer(layer) ? "parcel_polygon_gpu" : ""},
         {"geometry_class", geometryArtifactClassName(geometryClassForLayer(layer))},
         {"effective_live_read_path", effective_read_path.string()},
         {"stored_layer_path", pathDebugJson(stored_path)},

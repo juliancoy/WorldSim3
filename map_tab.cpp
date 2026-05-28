@@ -489,9 +489,11 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                     (ctx.parcel_selection &&
                      ctx.parcel_selection->active_layer_idx >= 0 &&
                      (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
-                        ? featureIndexForEntityId(
+                        ? featureIndexForGeometryEntityId(
                             (*ctx.layers)[(size_t)ctx.parcel_selection->active_layer_idx],
-                            ctx.parcel_selection->active_entity_id)
+                            ctx.parcel_selection->refs.empty()
+                                ? ctx.parcel_selection->active_entity_id
+                                : ctx.parcel_selection->refs.back().geometry_entity_id)
                         : (size_t)-1;
                 ctx.hover_debug_state->selected_parcel_count =
                     ctx.parcel_selection ? ctx.parcel_selection->entity_ids.size() : 0;

@@ -46,6 +46,24 @@ bool drawParcelSelectionByEntityId(
     return drew;
 }
 
+bool drawParcelSelectionByGeometryEntityId(
+    const MapSelectionRenderContext& ctx,
+    const std::string& geometry_entity_id,
+    ImU32 fill,
+    ImU32 outline_halo,
+    ImU32 outline) {
+    if (!ctx.parcel_render_blob || geometry_entity_id.empty()) return false;
+    bool drew = false;
+    for (const ParcelRenderFeatureRecord& rec : ctx.parcel_render_blob->features) {
+        if (rec.geometry_entity_id != geometry_entity_id && rec.entity_id != geometry_entity_id) continue;
+        drawParcelSelectionArtifactFill(ctx, rec, fill);
+        drawParcelSelectionArtifactOutline(ctx, rec, outline_halo, 6.0f);
+        drawParcelSelectionArtifactOutline(ctx, rec, outline, 3.0f);
+        drew = true;
+    }
+    return drew;
+}
+
 void drawParcelSelectionArtifactFill(
     const MapSelectionRenderContext& ctx,
     const ParcelRenderFeatureRecord& rec,
@@ -97,6 +115,25 @@ bool drawPolygonSelectionByEntityId(
     bool drew = false;
     for (const GeometryArtifactFeatureRecord& rec : artifact.features) {
         if (rec.entity_id != entity_id) continue;
+        const bool filled = drawPolygonSelectionArtifactFill(ctx, artifact, rec, fill);
+        const bool halo = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline_halo, 6.0f);
+        const bool line = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline, 3.0f);
+        drew = drew || filled || halo || line;
+    }
+    return drew;
+}
+
+bool drawPolygonSelectionByGeometryEntityId(
+    const MapSelectionRenderContext& ctx,
+    const PolygonGeometryArtifact& artifact,
+    const std::string& geometry_entity_id,
+    ImU32 fill,
+    ImU32 outline_halo,
+    ImU32 outline) {
+    if (geometry_entity_id.empty()) return false;
+    bool drew = false;
+    for (const GeometryArtifactFeatureRecord& rec : artifact.features) {
+        if (rec.geometry_entity_id != geometry_entity_id && rec.entity_id != geometry_entity_id) continue;
         const bool filled = drawPolygonSelectionArtifactFill(ctx, artifact, rec, fill);
         const bool halo = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline_halo, 6.0f);
         const bool line = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline, 3.0f);
@@ -165,30 +202,29 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
         if (ref.layer_idx < 0 || (size_t)ref.layer_idx >= ctx.layers->size()) continue;
         const auto& parcel_layer = (*ctx.layers)[(size_t)ref.layer_idx];
         if (!parcel_layer.enabled || ref.entity_id.empty()) continue;
+        const std::string geometry_entity_id =
+            ref.geometry_entity_id.empty() ? ref.entity_id : ref.geometry_entity_id;
 
-        if (ref.layer_idx == ctx.parcel_layer_idx) {
-            if (!drawParcelSelectionByEntityId(
-                    ctx,
-                    ref.entity_id,
-                    selected_fill,
-                    selected_outline_halo,
-                    selected_outline)) {
-                continue;
-            }
-            continue;
-        }
-
+        bool drew = false;
         if (ctx.polygon_geometry_artifacts) {
             auto it = ctx.polygon_geometry_artifacts->find((size_t)ref.layer_idx);
             if (it != ctx.polygon_geometry_artifacts->end()) {
-                drawPolygonSelectionByEntityId(
+                drew = drawPolygonSelectionByGeometryEntityId(
                     ctx,
                     it->second,
-                    ref.entity_id,
+                    geometry_entity_id,
                     selected_fill,
                     selected_outline_halo,
                     selected_outline);
             }
+        }
+        if (!drew && ref.layer_idx == ctx.parcel_layer_idx) {
+            drawParcelSelectionByGeometryEntityId(
+                ctx,
+                geometry_entity_id,
+                selected_fill,
+                selected_outline_halo,
+                selected_outline);
         }
     }
 }

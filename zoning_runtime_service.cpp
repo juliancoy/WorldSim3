@@ -162,6 +162,15 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
             if (!loadBinaryPolygonGeometryArtifact(artifact_path, layer_state.hydration_source_signature, artifact) ||
                 (!layer.features.empty() && artifact.features.size() != layer.features.size()) ||
                 !buildPolygonGpuBlob(artifact, blob)) {
+                std::fprintf(
+                    stderr,
+                    "[worldsim3][parcel-pick] artifact-invalid layer=%zu file=%s path=%s layer_features=%zu artifact_features=%zu signature=%s\n",
+                    li,
+                    layer.file.c_str(),
+                    artifact_path.string().c_str(),
+                    layer.features.size(),
+                    artifact.features.size(),
+                    layer_state.hydration_source_signature.c_str());
                 clearZoningLayerState(li, state);
                 state.failed_signatures[li] = zoning_signature;
                 layer_state.geometry_gpu_resident = false;
