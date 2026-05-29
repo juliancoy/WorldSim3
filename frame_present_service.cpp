@@ -6,49 +6,94 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
+#include <zlib.h>
+
 namespace fs = std::filesystem;
 
 namespace {
-bool writePpmRgb(
+void writeU32Be(std::vector<uint8_t>& out, uint32_t value) {
+    out.push_back((uint8_t)((value >> 24) & 0xFFu));
+    out.push_back((uint8_t)((value >> 16) & 0xFFu));
+    out.push_back((uint8_t)((value >> 8) & 0xFFu));
+    out.push_back((uint8_t)(value & 0xFFu));
+}
+
+void appendPngChunk(std::vector<uint8_t>& out, const char type[4], const uint8_t* data, size_t size) {
+    writeU32Be(out, (uint32_t)size);
+    const size_t type_offset = out.size();
+    out.insert(out.end(), type, type + 4);
+    if (data && size > 0) out.insert(out.end(), data, data + size);
+    const uLong crc = crc32(
+        crc32(0L, Z_NULL, 0),
+        reinterpret_cast<const Bytef*>(out.data() + type_offset),
+        static_cast<uInt>(4 + size));
+    writeU32Be(out, (uint32_t)crc);
+}
+
+bool writePngRgb(
     const fs::path& out_path,
-    const uint8_t* pixels,
+    const std::vector<uint8_t>& rgb,
     uint32_t width,
     uint32_t height,
-    size_t row_pitch,
-    VkFormat fmt,
     std::string& err) {
+    if (width == 0 || height == 0 || rgb.size() != (size_t)width * (size_t)height * 3) {
+        err = "invalid PNG screenshot dimensions";
+        return false;
+    }
+
+    std::vector<uint8_t> filtered;
+    filtered.resize(((size_t)width * 3 + 1) * (size_t)height);
+    for (uint32_t y = 0; y < height; ++y) {
+        const size_t dst = ((size_t)width * 3 + 1) * (size_t)y;
+        const size_t src = (size_t)width * 3 * (size_t)y;
+        filtered[dst] = 0;
+        std::memcpy(filtered.data() + dst + 1, rgb.data() + src, (size_t)width * 3);
+    }
+
+    uLongf compressed_size = compressBound((uLong)filtered.size());
+    std::vector<uint8_t> compressed(compressed_size);
+    const int zret = compress2(
+        compressed.data(),
+        &compressed_size,
+        filtered.data(),
+        (uLong)filtered.size(),
+        Z_BEST_SPEED);
+    if (zret != Z_OK) {
+        err = "failed compressing PNG screenshot";
+        return false;
+    }
+    compressed.resize(compressed_size);
+
+    std::vector<uint8_t> png;
+    const uint8_t sig[8] = {137, 80, 78, 71, 13, 10, 26, 10};
+    png.insert(png.end(), sig, sig + 8);
+    uint8_t ihdr[13] = {};
+    ihdr[0] = (uint8_t)((width >> 24) & 0xFFu);
+    ihdr[1] = (uint8_t)((width >> 16) & 0xFFu);
+    ihdr[2] = (uint8_t)((width >> 8) & 0xFFu);
+    ihdr[3] = (uint8_t)(width & 0xFFu);
+    ihdr[4] = (uint8_t)((height >> 24) & 0xFFu);
+    ihdr[5] = (uint8_t)((height >> 16) & 0xFFu);
+    ihdr[6] = (uint8_t)((height >> 8) & 0xFFu);
+    ihdr[7] = (uint8_t)(height & 0xFFu);
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+    appendPngChunk(png, "IHDR", ihdr, sizeof(ihdr));
+    appendPngChunk(png, "IDAT", compressed.data(), compressed.size());
+    appendPngChunk(png, "IEND", nullptr, 0);
+
     std::ofstream out(out_path, std::ios::binary);
     if (!out) {
         err = "failed to open screenshot output";
         return false;
     }
-    out << "P6\n" << width << " " << height << "\n255\n";
-    const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB);
-    const bool rgba = (fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_R8G8B8A8_SRGB);
-    if (!bgra && !rgba) {
-        err = "unsupported swapchain format for screenshot";
-        return false;
-    }
-    std::vector<uint8_t> line((size_t)width * 3);
-    for (uint32_t y = 0; y < height; ++y) {
-        const uint8_t* src = pixels + (size_t)y * row_pitch;
-        for (uint32_t x = 0; x < width; ++x) {
-            const uint8_t* px = src + (size_t)x * 4;
-            uint8_t r = rgba ? px[0] : px[2];
-            uint8_t g = px[1];
-            uint8_t b = rgba ? px[2] : px[0];
-            size_t i = (size_t)x * 3;
-            line[i + 0] = r;
-            line[i + 1] = g;
-            line[i + 2] = b;
-        }
-        out.write(reinterpret_cast<const char*>(line.data()), (std::streamsize)line.size());
-    }
+    out.write(reinterpret_cast<const char*>(png.data()), (std::streamsize)png.size());
     if (!out.good()) {
         err = "failed writing screenshot file";
         return false;
@@ -56,7 +101,7 @@ bool writePpmRgb(
     return true;
 }
 
-bool writePpmRgbResized(
+bool writePngRgbResized(
     const fs::path& out_path,
     const uint8_t* pixels,
     uint32_t src_width,
@@ -66,15 +111,6 @@ bool writePpmRgbResized(
     uint32_t out_width,
     uint32_t out_height,
     std::string& err) {
-    if (out_width == src_width && out_height == src_height) {
-        return writePpmRgb(out_path, pixels, src_width, src_height, row_pitch, fmt, err);
-    }
-
-    std::ofstream out(out_path, std::ios::binary);
-    if (!out) {
-        err = "failed to open screenshot output";
-        return false;
-    }
     const bool bgra = (fmt == VK_FORMAT_B8G8R8A8_UNORM || fmt == VK_FORMAT_B8G8R8A8_SRGB);
     const bool rgba = (fmt == VK_FORMAT_R8G8B8A8_UNORM || fmt == VK_FORMAT_R8G8B8A8_SRGB);
     if (!bgra && !rgba) {
@@ -82,8 +118,7 @@ bool writePpmRgbResized(
         return false;
     }
 
-    out << "P6\n" << out_width << " " << out_height << "\n255\n";
-    std::vector<uint8_t> line((size_t)out_width * 3, 0);
+    std::vector<uint8_t> rgb((size_t)out_width * (size_t)out_height * 3, 0);
     const double scale = std::min((double)out_width / (double)src_width, (double)out_height / (double)src_height);
     const uint32_t fit_width = std::max(1u, std::min(out_width, (uint32_t)std::lround((double)src_width * scale)));
     const uint32_t fit_height = std::max(1u, std::min(out_height, (uint32_t)std::lround((double)src_height * scale)));
@@ -99,7 +134,6 @@ bool writePpmRgbResized(
     };
 
     for (uint32_t y = 0; y < out_height; ++y) {
-        std::fill(line.begin(), line.end(), 0);
         if (y >= offset_y && y < offset_y + fit_height) {
             const double src_y = ((double)(y - offset_y) + 0.5) * (double)src_height / (double)fit_height - 0.5;
             const uint32_t y0 = (uint32_t)std::clamp((int)std::floor(src_y), 0, (int)src_height - 1);
@@ -110,7 +144,7 @@ bool writePpmRgbResized(
                 const uint32_t x0 = (uint32_t)std::clamp((int)std::floor(src_x), 0, (int)src_width - 1);
                 const uint32_t x1 = std::min(x0 + 1, src_width - 1);
                 const double fx = std::clamp(src_x - (double)x0, 0.0, 1.0);
-                const size_t i = (size_t)x * 3;
+                const size_t i = ((size_t)y * out_width + x) * 3;
                 for (int channel = 0; channel < 3; ++channel) {
                     const double c00 = (double)sample_channel(x0, y0, channel);
                     const double c10 = (double)sample_channel(x1, y0, channel);
@@ -119,17 +153,12 @@ bool writePpmRgbResized(
                     const double c0 = c00 + (c10 - c00) * fx;
                     const double c1 = c01 + (c11 - c01) * fx;
                     const double c = c0 + (c1 - c0) * fy;
-                    line[i + (size_t)channel] = (uint8_t)std::clamp((int)std::lround(c), 0, 255);
+                    rgb[i + (size_t)channel] = (uint8_t)std::clamp((int)std::lround(c), 0, 255);
                 }
             }
         }
-        out.write(reinterpret_cast<const char*>(line.data()), (std::streamsize)line.size());
     }
-    if (!out.good()) {
-        err = "failed writing screenshot file";
-        return false;
-    }
-    return true;
+    return writePngRgb(out_path, rgb, out_width, out_height, err);
 }
 
 uint32_t findMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties) {
@@ -402,8 +431,8 @@ void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data) {
     auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
                   std::chrono::system_clock::now().time_since_epoch())
                   .count();
-    fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + "_" + std::to_string(output_width) + "x" + std::to_string(output_height) + ".ppm");
-    const bool ok = writePpmRgbResized(
+    fs::path out_file = shot_dir / ("shot_" + std::to_string(ts) + "_" + std::to_string(output_width) + "x" + std::to_string(output_height) + ".png");
+    const bool ok = writePngRgbResized(
         out_file,
         static_cast<const uint8_t*>(mapped),
         width,

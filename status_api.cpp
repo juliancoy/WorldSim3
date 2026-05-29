@@ -2020,7 +2020,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 }
                 json out;
                 out["supported"] = true;
-                out["format"] = "ppm";
+                out["format"] = "png";
                 out["native_requested"] = request_native;
                 if (!ready) {
                     out["ok"] = false;
