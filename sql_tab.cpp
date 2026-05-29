@@ -141,6 +141,7 @@ void renderSqlTab(
         "   OR blocklot IN (SELECT blocklot FROM ui_selected_parcels)\n"
         "LIMIT 5000;";
     static float query_color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
+    static float query_outline_color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
     static int selected_query = -1;
     static DuckDbQueryResult last_result;
     static char save_filter_id[96] = "";
@@ -164,7 +165,8 @@ void renderSqlTab(
     ImGui::TextDisabled("Use ui_selected_owners in SQL to query the current Owners-tab selection.");
     ImGui::TextDisabled("Use ui_selected_parcels in SQL to query the active Parcel Info selection.");
     ImGui::InputText("Name", query_name, sizeof(query_name));
-    ImGui::ColorEdit4("Map Color", query_color, ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit4("Map Fill Color", query_color, ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit4("Map Outline Color", query_outline_color, ImGuiColorEditFlags_NoInputs);
     ImGui::InputTextMultiline(
         "SQL",
         query_sql,
@@ -189,6 +191,7 @@ void renderSqlTab(
             layer.name = query_name[0] ? query_name : ("Query " + std::to_string(query_layers.size() + 1));
             layer.sql = query_sql;
             copyLayerColor(query_color, layer.color);
+            copyLayerColor(query_outline_color, layer.outline_color);
             layer.result_set = std::move(last_result.result_set);
             layer.row_count = last_result.rows.size();
             layer.status = last_result.message;
@@ -261,6 +264,7 @@ void renderSqlTab(
                 std::snprintf(query_name, sizeof(query_name), "%s", layer.name.c_str());
                 copyToQueryBuffer(query_sql, layer.sql);
                 copyLayerColor(layer.color, query_color);
+                copyLayerColor(layer.outline_color, query_outline_color);
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove")) {
@@ -282,8 +286,11 @@ void renderSqlTab(
         QueryMapLayer& layer = query_layers[(size_t)selected_query];
         ImGui::SeparatorText("Selected Query Layer");
         if (ImGui::InputText("Layer Name", query_name, sizeof(query_name))) layer.name = query_name;
-        if (ImGui::ColorEdit4("Layer Color", query_color, ImGuiColorEditFlags_NoInputs)) {
+        if (ImGui::ColorEdit4("Layer Fill Color", query_color, ImGuiColorEditFlags_NoInputs)) {
             copyLayerColor(query_color, layer.color);
+        }
+        if (ImGui::ColorEdit4("Layer Outline Color", query_outline_color, ImGuiColorEditFlags_NoInputs)) {
+            copyLayerColor(query_outline_color, layer.outline_color);
         }
         if (ImGui::Button("Re-run Selected Query")) {
             last_result = duckdb_analytics.executeMapQuery(layer.sql, map_filter_state.selected_owners, selected_parcels, 1000);

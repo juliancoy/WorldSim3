@@ -44,6 +44,33 @@ bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
 std::string pointFeatureTitle(const LayerDef::FeatureRecord& fg);
 std::string eventFeatureOpenUrl(const LayerDef::FeatureRecord& fg);
 
+void drawDuckDbHoverPropertySummary(const ParcelHoverDetail& detail) {
+    auto text_prop = [&](const char* label, const std::string& value) {
+        const std::string trimmed = trimDisplayValue(value);
+        if (!trimmed.empty() && trimmed != "NULL") ImGui::TextWrapped("%s: %s", label, trimmed.c_str());
+    };
+    auto money_prop = [&](const char* label, double value) {
+        if (value > 0.0) ImGui::TextWrapped("%s: %s", label, formatUsd(value, 2).c_str());
+    };
+    text_prop("Address", detail.address);
+    text_prop("Owner", detail.owner_display.empty() ? detail.owner : detail.owner_display);
+    text_prop("Status", detail.status);
+    money_prop("Current Land", detail.current_land);
+    money_prop("Current Improvements", detail.current_improvements);
+    money_prop("Tax Base", detail.tax_base);
+    money_prop("Sale Price", detail.sale_price);
+    money_prop("Current Value", detail.current_value);
+    if (detail.structure_area_sqft > 0.0) {
+        ImGui::TextWrapped("Structure Area: %.0f sqft", detail.structure_area_sqft);
+    }
+    if (detail.has_property_record) {
+        text_prop("Property Source", detail.property_source_file);
+        ImGui::TextDisabled("Source: DuckDB unified parcel/property record");
+    } else {
+        ImGui::TextDisabled("No matching property record in DuckDB.");
+    }
+}
+
 const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
     if (fg && isLikelyCrimePointLayer(layer)) return crimePointTypeLabel(*fg);
     if (containsCaseInsensitive(layer.name, "water")) return "Waterpoint";
@@ -578,9 +605,16 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
         out.address = row.address;
         out.zipcode = row.zip;
         out.status = row.status;
+        out.property_source_file = row.property_source_file;
         out.parcel_has_geometry = row.parcel_has_geometry;
         out.has_property_record = row.has_property_record;
         out.parcel_extent = row.parcel_extent;
+        out.current_land = row.current_land;
+        out.current_improvements = row.current_improvements;
+        out.structure_area_sqft = row.structure_area_sqft;
+        out.tax_base = row.tax_base;
+        out.sale_price = row.sale_price;
+        out.current_value = row.current_value;
         out.vacant_notice_count = row.vacant_notice_count;
         out.vacant_rehab_count = row.vacant_rehab_count;
         out.tax_lien_count = row.tax_lien_count;
@@ -609,8 +643,15 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
     out.address = cell("address");
     out.zipcode = cell("zipcode");
     out.status = cell("status");
+    out.property_source_file = cell("property_source_file");
     out.parcel_has_geometry = trimDisplayValue(cell("parcel_has_geometry")) == "true";
     out.has_property_record = trimDisplayValue(cell("has_property_record")) == "true";
+    out.current_land = parseNumericField(cell("current_land"));
+    out.current_improvements = parseNumericField(cell("current_improvements"));
+    out.structure_area_sqft = parseNumericField(cell("structure_area_sqft"));
+    out.tax_base = parseNumericField(cell("tax_base"));
+    out.sale_price = parseNumericField(cell("sale_price"));
+    out.current_value = parseNumericField(cell("current_value"));
     out.parcel_extent.min_lon = (float)parseNumericField(cell("min_lon"));
     out.parcel_extent.min_lat = (float)parseNumericField(cell("min_lat"));
     out.parcel_extent.max_lon = (float)parseNumericField(cell("max_lon"));
@@ -896,7 +937,11 @@ void handleMapInspection(const MapInspectionContext& ctx) {
                 ctx.real_property_by_blocklot,
                 blocklot_raw);
         }
-        drawRealPropertySummary(hovered_rp);
+        if (hovered_rp) {
+            drawRealPropertySummary(hovered_rp);
+        } else {
+            drawDuckDbHoverPropertySummary(hovered_detail);
+        }
 
         ImGui::Separator();
         if (hovered_zoning && ctx.zoning_metadata) {

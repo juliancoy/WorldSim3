@@ -479,6 +479,7 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_layer_runtime_status_selftest --layer-runtime-status-selftest)
   add_worldsim_cli_test(worldsim3_status_api_parcel_debug_selftest --status-api-parcel-debug-selftest)
   add_worldsim_cli_test(worldsim3_parcel_gpu_cpu_bypass_selftest --parcel-gpu-cpu-bypass-selftest)
+  add_worldsim_cli_test(worldsim3_parcel_query_layer_style_selftest --parcel-query-layer-style-selftest)
   add_worldsim_cli_test(worldsim3_vulkan_device_loss_selftest --vulkan-device-loss-selftest)
   add_worldsim_cli_test(worldsim3_render_routing_selftest --render-routing-selftest)
   add_worldsim_cli_test(worldsim3_render_tile_cache_selftest --render-tile-cache-selftest)
@@ -512,6 +513,14 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_parcel_selection_ui_harness --parcel-selection-ui-harness)
   add_worldsim_cli_test(worldsim3_parcel_hover_click_ui_harness --parcel-hover-click-ui-harness)
   add_worldsim_cli_test(worldsim3_parcel_hover_click_pick_selftest --parcel-hover-click-pick-selftest)
+  add_test(
+    NAME worldsim3_rest_parcel_county_perf
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_rest_parcel_county_perf.py
+      --worldsim-bin $<TARGET_FILE:worldsim3>)
+  set_tests_properties(worldsim3_rest_parcel_county_perf PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 180
+    LABELS "integration;rest;parcel;performance")
   add_worldsim_cli_test(worldsim3_duckdb_parcel_semantic_snapshot_selftest --duckdb-parcel-semantic-snapshot-selftest)
   add_worldsim_cli_test(worldsim3_population_metrics_selftest --population-metrics-selftest)
   add_worldsim_cli_test(worldsim3_beps_screening_selftest --beps-screening-selftest)

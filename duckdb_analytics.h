@@ -6,7 +6,9 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -99,4 +101,6 @@ public:
 private:
     std::filesystem::path root_;
     DuckDbAnalyticsStatus status_;
+    mutable std::mutex parcel_detail_cache_mutex_;
+    mutable std::unordered_map<std::string, DuckDbQueryResult> parcel_detail_cache_;
 };

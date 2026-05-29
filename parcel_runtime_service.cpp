@@ -75,6 +75,26 @@ std::string parcelEntityIdForRenderFeature(const ParcelRenderFeatureRecord& rec)
 
 } // namespace
 
+ImU32 resolveParcelRuntimeBaseFillColor(
+    const FeatureRenderState* render_state,
+    ImU32 base_color,
+    float base_opacity,
+    bool value_color_valid,
+    ImU32 value_color) {
+    if (render_state && !render_state->visible) return IM_COL32(0, 0, 0, 0);
+    if (render_state && render_state->has_query_color) return render_state->query_color;
+    if (value_color_valid) return mapPolygonFillColor(value_color, base_opacity);
+    return mapPolygonFillColor(base_color, base_opacity);
+}
+
+ImU32 resolveParcelRuntimeOverlayColor(
+    const FeatureRenderState* render_state,
+    ImU32 domain_overlay_color) {
+    if (render_state && !render_state->visible) return IM_COL32(0, 0, 0, 0);
+    if (render_state && render_state->has_query_color) return render_state->query_color;
+    return domain_overlay_color;
+}
+
 void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState& state) {
     if (!input.root || !input.app_settings || !input.layers || !input.layer_states ||
         !input.layer_choropleth_gamma || !input.layer_heatmap_percentile_clip ||
@@ -238,6 +258,7 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
         hashMix(color_state_key, static_cast<uint64_t>(ql.result_set.blocklots.size()));
         hashMix(color_state_key, static_cast<uint64_t>(ql.result_set.owners.size()));
         for (float c : ql.color) hashF32(color_state_key, c);
+        for (float c : ql.outline_color) hashF32(color_state_key, c);
     }
 
     uint64_t overlay_state_key = color_state_key;
@@ -269,6 +290,22 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
     uint64_t outline_state_key = overlay_state_key;
 
     const LayerFeatureRenderCache& cached_feature_render = input.ensure_feature_render_cache();
+    auto query_style_for_feature = [&](uint32_t feature_idx, ImU32& out_fill, ImU32& out_outline) {
+        if (!input.query_layers) return false;
+        const FeatureKey key{static_cast<size_t>(input.parcel_layer_idx), static_cast<size_t>(feature_idx)};
+        for (auto it = input.query_layers->rbegin(); it != input.query_layers->rend(); ++it) {
+            if (!it->enabled || !it->result_set.active) continue;
+            if (it->result_set.features.find(key) == it->result_set.features.end()) continue;
+            out_fill = ImGui::ColorConvertFloat4ToU32(ImVec4(it->color[0], it->color[1], it->color[2], it->color[3]));
+            out_outline = ImGui::ColorConvertFloat4ToU32(ImVec4(
+                it->outline_color[0],
+                it->outline_color[1],
+                it->outline_color[2],
+                it->outline_color[3]));
+            return true;
+        }
+        return false;
+    };
     hashMix(color_state_key, input.feature_render_state_key);
     hashMix(overlay_state_key, input.feature_render_state_key);
     hashMix(outline_state_key, input.feature_render_state_key);
@@ -328,10 +365,11 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
             const uint32_t feature_idx = state.render_blob.features[i].feature_idx;
             const FeatureRenderState* render_state =
                 findFeatureRenderState(cached_feature_render, static_cast<size_t>(input.parcel_layer_idx), feature_idx);
-            if (render_state && !render_state->visible) {
-                parcel_colors[i] = IM_COL32(0, 0, 0, 0);
-                continue;
-            }
+            ImU32 query_fill = IM_COL32(0, 0, 0, 0);
+            ImU32 query_outline = IM_COL32(0, 0, 0, 0);
+            const bool has_direct_query_style = query_style_for_feature(feature_idx, query_fill, query_outline);
+            bool value_color_valid_for_feature = false;
+            ImU32 value_color_for_feature = IM_COL32(0, 0, 0, 0);
             if (value_range_valid) {
                 const double v = input.parcel_parameter_mode == 3 ? current_value_per_area_at(feature_idx) : current_value_at(feature_idx);
                 if (v > 0.0 && std::isfinite(v)) {
@@ -339,17 +377,18 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
                         parcel_normalize_mode == 0 ? value_hist.normalizeLinear(v)
                         : (parcel_normalize_mode == 3 ? value_hist.normalizeEqualCountZones(v) : value_hist.normalizeApproxPercentile(v));
                     const float t = applyPowerGamma(normalized, parcel_gamma);
-                    parcel_colors[i] = mapPolygonFillColor(
-                        ImGui::ColorConvertFloat4ToU32(heatColor(t)),
-                        input.app_settings->map_polygon_fill_opacity);
-                    continue;
+                    value_color_for_feature = ImGui::ColorConvertFloat4ToU32(heatColor(t));
+                    value_color_valid_for_feature = true;
                 }
             }
-            if (render_state && render_state->has_query_color) {
-                parcel_colors[i] = mapPolygonFillColor(render_state->query_color, input.app_settings->map_polygon_fill_opacity);
-            } else {
-                parcel_colors[i] = mapPolygonFillColor(base_color, input.app_settings->map_polygon_fill_opacity);
-            }
+            parcel_colors[i] = has_direct_query_style
+                ? query_fill
+                : resolveParcelRuntimeBaseFillColor(
+                    render_state,
+                    base_color,
+                    input.app_settings->map_polygon_fill_opacity,
+                    value_color_valid_for_feature,
+                    value_color_for_feature);
         }
         std::string color_error;
         if (updateParcelGpuColorBuffer(parcel_colors, &color_error)) {
@@ -453,6 +492,9 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
             const FeatureRenderState* render_state =
                 findFeatureRenderState(cached_feature_render, static_cast<size_t>(input.parcel_layer_idx), feature_idx);
             if (render_state && !render_state->visible) continue;
+            ImU32 query_fill = IM_COL32(0, 0, 0, 0);
+            ImU32 query_outline = IM_COL32(0, 0, 0, 0);
+            const bool has_direct_query_style = query_style_for_feature(feature_idx, query_fill, query_outline);
             ImU32 overlay = IM_COL32(0, 0, 0, 0);
             if (parameter_range_valid) {
                 const double v = parameter_value(feature_idx);
@@ -498,6 +540,10 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
                 parcelEntityIdForRenderFeature(state.render_blob.features[i]);
             if (input.selected_parcel_id_set->find(parcel_entity_id) != input.selected_parcel_id_set->end()) {
                 overlay = selected_overlay;
+            } else if (has_direct_query_style) {
+                overlay = query_fill;
+            } else {
+                overlay = resolveParcelRuntimeOverlayColor(render_state, overlay);
             }
             overlay_colors[i] = overlay;
         }
@@ -516,10 +562,21 @@ void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState&
             const FeatureRenderState* render_state =
                 findFeatureRenderState(cached_feature_render, static_cast<size_t>(input.parcel_layer_idx), feature_idx);
             if (render_state && !render_state->visible) continue;
+            ImU32 query_fill = IM_COL32(0, 0, 0, 0);
+            ImU32 query_outline = IM_COL32(0, 0, 0, 0);
+            const bool has_direct_query_style = query_style_for_feature(feature_idx, query_fill, query_outline);
             const std::string parcel_entity_id =
                 parcelEntityIdForRenderFeature(state.render_blob.features[i]);
             if (input.selected_parcel_id_set->find(parcel_entity_id) != input.selected_parcel_id_set->end()) {
                 outline_colors[i] = selected_outline;
+                continue;
+            }
+            if (render_state && render_state->has_query_outline_color) {
+                outline_colors[i] = render_state->query_outline_color;
+                continue;
+            }
+            if (has_direct_query_style) {
+                outline_colors[i] = query_outline;
                 continue;
             }
             ImU32 outline =

@@ -80,6 +80,7 @@ struct QueryMapLayer {
     std::string name;
     std::string sql;
     float color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
+    float outline_color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
     FilterResultSet result_set;
     size_t row_count = 0;
     std::string status;
@@ -154,6 +155,8 @@ struct FeatureRenderState {
     bool visible = true;
     bool has_query_color = false;
     ImU32 query_color = IM_COL32(0, 0, 0, 0);
+    bool has_query_outline_color = false;
+    ImU32 query_outline_color = IM_COL32(0, 0, 0, 0);
 };
 
 struct LayerFeatureRenderCache {
@@ -182,6 +185,14 @@ bool queryMapColorForFeature(
     size_t feature_idx,
     const LayerDef::FeatureRecord& fg,
     float out_color[4]);
+
+bool queryMapStyleForFeature(
+    const FeatureFilterContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureRecord& fg,
+    float out_color[4],
+    float out_outline_color[4]);
 
 uint64_t buildFeatureRenderStateKey(const FeatureRenderStateKeyContext& ctx);
 

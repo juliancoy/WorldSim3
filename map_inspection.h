@@ -62,9 +62,16 @@ struct ParcelHoverDetail {
     std::string address;
     std::string zipcode;
     std::string status;
+    std::string property_source_file;
     bool parcel_has_geometry = false;
     bool has_property_record = false;
     LayerDef::FeatureExtent parcel_extent;
+    double current_land = 0.0;
+    double current_improvements = 0.0;
+    double structure_area_sqft = 0.0;
+    double tax_base = 0.0;
+    double sale_price = 0.0;
+    double current_value = 0.0;
     int vacant_notice_count = 0;
     int vacant_rehab_count = 0;
     int tax_lien_count = 0;

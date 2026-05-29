@@ -158,10 +158,10 @@ std::vector<size_t> parcelPickCandidateLayers(
 
     // Parcel interaction is semantic-class based. Once parcel inspect/hover mode
     // is active, all enabled operational parcel layers are valid GPU pick targets.
-    if (hover_target || active_layer_idx >= 0) {
-        for (size_t i = count; i-- > 0;) {
-            append_if_parcel_pickable((int)i, false);
-        }
+    // For click-time parcel selection, active_layer_idx may be -1 when the user
+    // has no explicit click target selected; visible parcel layers remain valid.
+    for (size_t i = count; i-- > 0;) {
+        append_if_parcel_pickable((int)i, false);
     }
     return out;
 }

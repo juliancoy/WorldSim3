@@ -33,6 +33,7 @@
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
 #include "parcel_matched_layers.h"
+#include "parcel_runtime_service.h"
 #include "vacancy_overlay.h"
 
 #include <duckdb.hpp>
@@ -2482,6 +2483,68 @@ int runVulkanDeviceLossSelftest() {
     return ok ? 0 : 1;
 }
 
+int runParcelQueryLayerStyleSelftest() {
+    FeatureRenderState query_state;
+    query_state.visible = true;
+    query_state.has_query_color = true;
+    query_state.query_color = IM_COL32(0, 255, 0, 255);
+    const ImU32 base_blue = IM_COL32(120, 160, 180, 255);
+    const ImU32 value_red = IM_COL32(255, 0, 0, 255);
+    const ImU32 query_overrides_value = resolveParcelRuntimeBaseFillColor(
+        &query_state,
+        base_blue,
+        0.05f,
+        true,
+        value_red);
+
+    FeatureRenderState hidden_query_state = query_state;
+    hidden_query_state.visible = false;
+    const ImU32 hidden_color = resolveParcelRuntimeBaseFillColor(
+        &hidden_query_state,
+        base_blue,
+        1.0f,
+        true,
+        value_red);
+
+    FeatureRenderState no_query_state;
+    no_query_state.visible = true;
+    const ImU32 value_without_query = resolveParcelRuntimeBaseFillColor(
+        &no_query_state,
+        base_blue,
+        0.5f,
+        true,
+        value_red);
+    const ImU32 base_without_query = resolveParcelRuntimeBaseFillColor(
+        &no_query_state,
+        base_blue,
+        0.5f,
+        false,
+        IM_COL32(0, 0, 0, 0));
+    const ImU32 query_overlay = resolveParcelRuntimeOverlayColor(&query_state, value_red);
+    const ImU32 domain_overlay = resolveParcelRuntimeOverlayColor(&no_query_state, value_red);
+
+    const bool ok =
+        query_overrides_value == IM_COL32(0, 255, 0, 255) &&
+        hidden_color == IM_COL32(0, 0, 0, 0) &&
+        ((value_without_query >> 24) & 0xFFu) == 128u &&
+        ((base_without_query >> 24) & 0xFFu) == 128u &&
+        query_overlay == IM_COL32(0, 255, 0, 255) &&
+        domain_overlay == value_red;
+    json out = {
+        {"mode", "parcel-query-layer-style-selftest"},
+        {"ok", ok},
+        {"query_overrides_value", query_overrides_value == IM_COL32(0, 255, 0, 255)},
+        {"query_alpha_preserved", ((query_overrides_value >> 24) & 0xFFu) == 255u},
+        {"hidden_query_transparent", hidden_color == IM_COL32(0, 0, 0, 0)},
+        {"value_without_query_uses_base_opacity", ((value_without_query >> 24) & 0xFFu) == 128u},
+        {"base_without_query_uses_base_opacity", ((base_without_query >> 24) & 0xFFu) == 128u},
+        {"query_overlay_overrides_domain_overlay", query_overlay == IM_COL32(0, 255, 0, 255)},
+        {"domain_overlay_preserved_without_query", domain_overlay == value_red}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 int runRenderPolicySelftest() {
     std::vector<LayerDef> layers(1);
     layers[0].enabled = true;
@@ -3941,6 +4004,9 @@ int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
             )
         )SQL");
         exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
+        exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
         exec(R"SQL(
             INSERT INTO layer_features VALUES
             (9, 'Parcels', 'parcel.geojson', 'parcel_record', 0, 'entity:a', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BLK1', 'owner a', '1 Main', '21201', 'ACTIVE', '', '', 100000, 1200, '', '', '', '', '', '', 0, 0),
@@ -4384,6 +4450,32 @@ int verifyParcelDuckDbKeys(const fs::path& root) {
                    OR zf.entity_id IS NULL
             )SQL")
             : 0;
+        const uint64_t open_vacant_notice_events = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM parcel_events
+            WHERE event_type = 'vacant_notice'
+              AND lower(source_layer_file) LIKE '%open_notices%vacant%'
+        )SQL");
+        const uint64_t vacant_notice_rollup_mismatches = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM unified_parcels up
+            WHERE up.vacant_notice_count <> COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = up.blocklot
+                  AND pe.event_type = 'vacant_notice'
+            ), 0)
+        )SQL");
+        const uint64_t vacant_rehab_rollup_mismatches = scalar_u64(R"SQL(
+            SELECT count(*)
+            FROM unified_parcels up
+            WHERE up.vacant_rehab_count <> COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = up.blocklot
+                  AND pe.event_type = 'vacant_rehab'
+            ), 0)
+        )SQL");
 
         const bool ok =
             parcel_layer_features > 0 &&
@@ -4396,7 +4488,9 @@ int verifyParcelDuckDbKeys(const fs::path& root) {
             layer_feature_bboxes > 0 &&
             layer_bboxes > 0 &&
             parcel_zone_membership_tables == 1 &&
-            parcel_zone_membership_bad_refs == 0;
+            parcel_zone_membership_bad_refs == 0 &&
+            vacant_notice_rollup_mismatches == 0 &&
+            vacant_rehab_rollup_mismatches == 0;
         std::cout << json{
             {"mode", kMode},
             {"ok", ok},
@@ -4410,7 +4504,10 @@ int verifyParcelDuckDbKeys(const fs::path& root) {
             {"layer_feature_bboxes", layer_feature_bboxes},
             {"layer_bboxes", layer_bboxes},
             {"parcel_zone_memberships", parcel_zone_memberships},
-            {"parcel_zone_membership_bad_refs", parcel_zone_membership_bad_refs}
+            {"parcel_zone_membership_bad_refs", parcel_zone_membership_bad_refs},
+            {"open_vacant_notice_events", open_vacant_notice_events},
+            {"vacant_notice_rollup_mismatches", vacant_notice_rollup_mismatches},
+            {"vacant_rehab_rollup_mismatches", vacant_rehab_rollup_mismatches}
         }.dump(2) << '\n';
         return ok ? 0 : 1;
     } catch (const std::exception& ex) {
@@ -6695,6 +6792,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_parcel_gpu_cpu_bypass_selftest = true;
             continue;
         }
+        if (arg == "--parcel-query-layer-style-selftest") {
+            options.run_parcel_query_layer_style_selftest = true;
+            continue;
+        }
         if (arg == "--vulkan-device-loss-selftest") {
             options.run_vulkan_device_loss_selftest = true;
             continue;
@@ -7045,6 +7146,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --layer-runtime-status-selftest\n"
         << "       worldsim3 --status-api-parcel-debug-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
+        << "       worldsim3 --parcel-query-layer-style-selftest\n"
         << "       worldsim3 --vulkan-device-loss-selftest\n"
         << "       worldsim3 --render-routing-selftest\n"
         << "       worldsim3 --render-tile-cache-selftest\n"
@@ -7101,6 +7203,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_parcel_gpu_cpu_bypass_selftest) {
         return runParcelGpuCpuBypassSelftest();
+    }
+    if (options.run_parcel_query_layer_style_selftest) {
+        return runParcelQueryLayerStyleSelftest();
     }
     if (options.run_vulkan_device_loss_selftest) {
         return runVulkanDeviceLossSelftest();

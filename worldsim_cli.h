@@ -15,6 +15,7 @@ struct WorldsimCliOptions {
     bool run_layer_runtime_status_selftest = false;
     bool run_status_api_parcel_debug_selftest = false;
     bool run_parcel_gpu_cpu_bypass_selftest = false;
+    bool run_parcel_query_layer_style_selftest = false;
     bool run_vulkan_device_loss_selftest = false;
     bool run_render_routing_selftest = false;
     bool run_render_tile_cache_selftest = false;

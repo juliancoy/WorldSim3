@@ -36,6 +36,23 @@ bool activeParcelInteractionLayerEnabled(
            layerToggleEnabled(values, active_layer_idx) &&
            isParcelInteractionLayer(layers, active_layer_idx);
 }
+
+bool anyVisibleParcelInteractionLayer(const std::vector<LayerDef>& layers) {
+    for (size_t i = 0; i < layers.size(); ++i) {
+        if (isParcelInteractionLayer(layers, (int)i)) return true;
+    }
+    return false;
+}
+
+bool parcelClickSelectionAvailable(
+    const std::vector<LayerDef>& layers,
+    const std::vector<bool>* values,
+    int active_layer_idx,
+    int zoning_layer_idx) {
+    if (activeParcelInteractionLayerEnabled(layers, values, active_layer_idx)) return true;
+    if (active_layer_idx == zoning_layer_idx && layerToggleEnabled(values, active_layer_idx)) return false;
+    return active_layer_idx < 0 && anyVisibleParcelInteractionLayer(layers);
+}
 }
 
 MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
@@ -79,7 +96,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.parcel_hover_active =
         activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
     session.parcel_inspect_active =
-        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
+        parcelClickSelectionAvailable(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx, ctx.zoning_layer_idx);
     session.zoning_hover_active =
         activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
@@ -170,7 +187,7 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
     session.parcel_hover_active =
         activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_hover_enabled, ctx.active_hover_layer_idx);
     session.parcel_inspect_active =
-        activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
+        parcelClickSelectionAvailable(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx, ctx.zoning_layer_idx);
     session.zoning_hover_active =
         activeLayerMatches(ctx.active_hover_layer_idx, ctx.zoning_layer_idx) &&
         layerToggleEnabled(ctx.layer_hover_enabled, ctx.zoning_layer_idx);
@@ -187,17 +204,21 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
         !activeParcelInteractionLayerEnabled(*ctx.layers, ctx.layer_inspect_enabled, ctx.active_click_layer_idx) &&
         ctx.active_click_layer_idx != ctx.zoning_layer_idx &&
         layerToggleEnabled(ctx.layer_inspect_enabled, ctx.active_click_layer_idx);
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool click_select =
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
 
     const bool suppress_hover_lookup =
         session.map_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f);
     MapHoverQuery hover_query;
     hover_query.map_hovered = session.map_hovered && !suppress_hover_lookup;
     hover_query.parcel_hover_active = session.parcel_hover_active;
-    hover_query.parcel_inspect_active = session.parcel_inspect_active;
+    hover_query.parcel_inspect_active = session.parcel_inspect_active && click_select;
     hover_query.zoning_hover_active = session.zoning_hover_active;
-    hover_query.zoning_inspect_active = session.zoning_inspect_active;
+    hover_query.zoning_inspect_active = session.zoning_inspect_active && click_select;
     hover_query.point_hover_active = hover_points_enabled;
-    hover_query.point_inspect_active = inspect_points_enabled;
+    hover_query.point_inspect_active = inspect_points_enabled && click_select;
     hover_query.active_hover_layer_idx = ctx.active_hover_layer_idx;
     hover_query.active_click_layer_idx = ctx.active_click_layer_idx;
     hover_query.parcel_layer_idx = ctx.parcel_layer_idx;
@@ -213,7 +234,6 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
     hover_query.center_lonlat = ImVec2(
         ctx.center_lon ? (float)*ctx.center_lon : 0.0f,
         ctx.center_lat ? (float)*ctx.center_lat : 0.0f);
-    const ImGuiIO& io = ImGui::GetIO();
     const ImVec2 fb_scale = io.DisplayFramebufferScale;
     hover_query.mouse_screen = ImVec2(io.MousePos.x * fb_scale.x, io.MousePos.y * fb_scale.y);
     hover_query.center_world = session.center_world;

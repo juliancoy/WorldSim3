@@ -202,6 +202,25 @@ reference's layer and `geometry_entity_id` to find the artifact record to draw.
 It should not use `unified_parcels.parcel_entity_id` as if it were guaranteed to
 be a layer-local render artifact identity.
 
+Parcel click selection should be click-time GPU picking over visible operational
+parcel layers, not a continuous frame-loop CPU or DuckDB search. The selected
+reference must retain `layer_idx`, `feature_idx`, `geometry_entity_id`, and the
+canonical semantic parcel entity. The renderer should draw selected parcel
+fill/outline by direct `feature_idx` artifact lookup, with entity-string scans
+reserved only as a legacy recovery fallback. Hover target selection should only
+control hover tooltip/debug behavior; it must not be required for basic parcel
+click selection.
+
+Vacancy/open-notice integration is a DuckDB child-event workflow. Open vacant
+notice layers, including `open_notices_vacant.geojson`, and legacy vacant
+building notice layers should be normalized into `parcel_events` as
+`event_type='vacant_notice'` keyed by `blocklot`. Parcel-facing fields such as
+`unified_parcels.vacant_notice_count` and `vacant_rehab_count` are derived
+rollups from `parcel_events`; they should not be maintained as independent
+runtime-only arrays or separate truth. Runtime arrays may mirror these DuckDB
+columns for fast rendering, but DuckDB remains the integration source for hover,
+click detail, filters, and REST verification.
+
 ### 4. Derived Runtime Boundary
 
 Derived runtime caches are allowed to compute narrowly scoped facts from artifact-backed layers.
@@ -333,6 +352,19 @@ For example:
 They should not depend directly on upstream source field names unless those are first normalized into canonical fields.
 
 SQL-backed repeatable filters should target canonical analytical entity tables such as `unified_parcels`, not raw source-specific per-county structures.
+
+SQL query layers are render-domain products of DuckDB analytical queries. They
+should carry their own fill and outline style, and the renderer should consume
+their resolved `FilterResultSet` exactly like any other styled layer. Query
+layers must not introduce renderer-local joins or source-specific matching
+logic; the SQL result should resolve to canonical render identities such as
+`layer_idx + entity_id`, `blocklot`, or normalized owner keys.
+
+For parcel styling, prefer SQL against `unified_parcels` and return
+`parcel_layer_idx AS layer_idx`, `parcel_entity_id AS entity_id`, and any
+diagnostic columns needed by the API response. The retained parcel renderer may
+mirror the resulting fill/outline colors into GPU color buffers, but DuckDB
+remains the semantic source of truth for the selection.
 
 ### Definition Format
 

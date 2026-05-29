@@ -61,4 +61,15 @@ struct ParcelRuntimeSyncInput {
     std::function<double(size_t)> parcel_area_sq_m;
 };
 
+ImU32 resolveParcelRuntimeBaseFillColor(
+    const FeatureRenderState* render_state,
+    ImU32 base_color,
+    float base_opacity,
+    bool value_color_valid,
+    ImU32 value_color);
+
+ImU32 resolveParcelRuntimeOverlayColor(
+    const FeatureRenderState* render_state,
+    ImU32 domain_overlay_color);
+
 void syncParcelGpuLayer(const ParcelRuntimeSyncInput& input, ParcelRuntimeState& state);

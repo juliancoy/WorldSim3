@@ -191,6 +191,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
             hashMix(color_state_key, static_cast<uint64_t>(ql.row_count));
             hashMix(color_state_key, static_cast<uint64_t>(ql.result_set.features.size()));
             for (float c : ql.color) hashF32(color_state_key, c);
+            for (float c : ql.outline_color) hashF32(color_state_key, c);
         }
         hashMix(color_state_key, static_cast<uint64_t>(input.zoning_zone_enabled->size()));
         for (const auto& [zone_key, enabled] : *input.zoning_zone_enabled) {
@@ -255,7 +256,9 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
                 const FeatureRenderState* render_state =
                     findFeatureRenderState(cached_feature_render, li, static_cast<size_t>(feature_idx));
                 if (render_state && !render_state->visible) continue;
-                outline_colors[i] = outline_color;
+                outline_colors[i] = render_state && render_state->has_query_outline_color
+                    ? render_state->query_outline_color
+                    : outline_color;
             }
             std::string outline_error;
             if (updateZoningGpuOutlineColorBuffer(li, outline_colors, &outline_error)) {

@@ -262,34 +262,114 @@ void applyControlColor(
     const std::string& r_raw,
     const std::string& g_raw,
     const std::string& b_raw,
-    const std::string& a_raw) {
+    const std::string& a_raw,
+    const std::string& fill_color_raw,
+    const std::string& outline_color_raw,
+    const std::string& outline_r_raw,
+    const std::string& outline_g_raw,
+    const std::string& outline_b_raw,
+    const std::string& outline_a_raw) {
     auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
-    std::string color = trimDisplayValue(color_raw);
-    if (!color.empty()) {
+    auto apply_hex = [](float target[4], std::string color) {
+        color = trimDisplayValue(color);
+        if (color.empty()) return false;
         if (color[0] == '#') color.erase(color.begin());
         if (color.size() == 6 || color.size() == 8) {
             try {
                 const unsigned int rgba = (unsigned int)std::stoul(color, nullptr, 16);
                 if (color.size() == 6) {
-                    layer.color[0] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
-                    layer.color[1] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
-                    layer.color[2] = (float)(rgba & 0xFFu) / 255.0f;
+                    target[0] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
+                    target[1] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
+                    target[2] = (float)(rgba & 0xFFu) / 255.0f;
                 } else {
-                    layer.color[0] = (float)((rgba >> 24) & 0xFFu) / 255.0f;
-                    layer.color[1] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
-                    layer.color[2] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
-                    layer.color[3] = (float)(rgba & 0xFFu) / 255.0f;
+                    target[0] = (float)((rgba >> 24) & 0xFFu) / 255.0f;
+                    target[1] = (float)((rgba >> 16) & 0xFFu) / 255.0f;
+                    target[2] = (float)((rgba >> 8) & 0xFFu) / 255.0f;
+                    target[3] = (float)(rgba & 0xFFu) / 255.0f;
                 }
+                return true;
             } catch (...) {
             }
         }
-    }
+        return false;
+    };
+    auto apply_components = [&](float target[4], const std::string& rr, const std::string& gg, const std::string& bb, const std::string& aa) {
+        bool changed = false;
+        float v = 0.0f;
+        if (parseControlFloat(rr, v)) {
+            target[0] = clamp01(v > 1.0f ? v / 255.0f : v);
+            changed = true;
+        }
+        if (parseControlFloat(gg, v)) {
+            target[1] = clamp01(v > 1.0f ? v / 255.0f : v);
+            changed = true;
+        }
+        if (parseControlFloat(bb, v)) {
+            target[2] = clamp01(v > 1.0f ? v / 255.0f : v);
+            changed = true;
+        }
+        if (parseControlFloat(aa, v)) {
+            target[3] = clamp01(v > 1.0f ? v / 255.0f : v);
+            changed = true;
+        }
+        return changed;
+    };
 
-    float v = 0.0f;
-    if (parseControlFloat(r_raw, v)) layer.color[0] = clamp01(v > 1.0f ? v / 255.0f : v);
-    if (parseControlFloat(g_raw, v)) layer.color[1] = clamp01(v > 1.0f ? v / 255.0f : v);
-    if (parseControlFloat(b_raw, v)) layer.color[2] = clamp01(v > 1.0f ? v / 255.0f : v);
-    if (parseControlFloat(a_raw, v)) layer.color[3] = clamp01(v > 1.0f ? v / 255.0f : v);
+    const bool has_fill_color = !trimDisplayValue(fill_color_raw).empty();
+    const bool fill_changed =
+        apply_hex(layer.color, has_fill_color ? fill_color_raw : color_raw) |
+        apply_components(layer.color, r_raw, g_raw, b_raw, a_raw);
+    const bool outline_requested =
+        !trimDisplayValue(outline_color_raw).empty() ||
+        !trimDisplayValue(outline_r_raw).empty() ||
+        !trimDisplayValue(outline_g_raw).empty() ||
+        !trimDisplayValue(outline_b_raw).empty() ||
+        !trimDisplayValue(outline_a_raw).empty();
+    if (fill_changed && !outline_requested) {
+        for (int i = 0; i < 4; ++i) layer.outline_color[i] = layer.color[i];
+    }
+    apply_hex(layer.outline_color, outline_color_raw);
+    apply_components(layer.outline_color, outline_r_raw, outline_g_raw, outline_b_raw, outline_a_raw);
+}
+
+bool applyJsonColor(float target[4], const json& value) {
+    if (!target) return false;
+    if (value.is_string()) {
+        QueryMapLayer tmp;
+        applyControlColor(tmp, value.get<std::string>(), "", "", "", "", "", "", "", "", "", "");
+        for (int i = 0; i < 4; ++i) target[i] = tmp.color[i];
+        return true;
+    }
+    if (!value.is_object()) return false;
+    bool changed = false;
+    auto read_component = [&](const char* key, int idx) {
+        if (!value.contains(key)) return;
+        try {
+            float v = value.at(key).get<float>();
+            target[idx] = std::clamp(v > 1.0f ? v / 255.0f : v, 0.0f, 1.0f);
+            changed = true;
+        } catch (...) {
+        }
+    };
+    read_component("r", 0);
+    read_component("g", 1);
+    read_component("b", 2);
+    read_component("a", 3);
+    return changed;
+}
+
+void applyPresentationStyle(QueryMapLayer& layer, const json& spec) {
+    if (!spec.contains("presentation") || !spec["presentation"].is_object()) return;
+    const json& presentation = spec["presentation"];
+    if (presentation.contains("fill_color")) {
+        applyJsonColor(layer.color, presentation["fill_color"]);
+    } else if (presentation.contains("color")) {
+        applyJsonColor(layer.color, presentation["color"]);
+    }
+    for (int i = 0; i < 4; ++i) layer.outline_color[i] = layer.color[i];
+    if (presentation.contains("outline_color")) {
+        applyJsonColor(layer.outline_color, presentation["outline_color"]);
+    }
 }
 
 struct ResourceUsageSnapshot {
@@ -1389,14 +1469,14 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 const std::string limit_raw = get_q("limit");
                                 if (!limit_raw.empty()) {
                                     try {
-                                        max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 5000);
+                                        max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 100000);
                                     } catch (...) {
                                         max_rows = 100;
                                     }
                                 }
                                 const ApiQueryControlCommand::ApplyMode apply_mode = parseControlApplyMode(get_q("apply"));
                                 const std::string name = get_q("name").empty()
-                                    ? ("Saved Filter " + filter_id)
+                                    ? spec.value("name", "Saved Filter " + filter_id)
                                     : get_q("name");
                                 DuckDbQueryResult result;
                                 if (!duckdb_analytics.status().last_rebuild_ok && !duckdb_analytics.validateExistingCache()) {
@@ -1409,29 +1489,42 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                         {},
                                         max_rows);
                                 }
+                                const bool include_rows = get_q("rows") != "0" && get_q("include_rows") != "0";
                                 json rows = json::array();
-                                for (const auto& row : result.rows) {
-                                    json row_json = json::object();
-                                    for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
-                                        row_json[result.columns[i]] = row[i];
+                                if (include_rows) {
+                                    for (const auto& row : result.rows) {
+                                        json row_json = json::object();
+                                        for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+                                            row_json[result.columns[i]] = row[i];
+                                        }
+                                        rows.push_back(std::move(row_json));
                                     }
-                                    rows.push_back(std::move(row_json));
                                 }
                                 float response_color[4] = {1.0f, 0.16f, 0.12f, 1.0f};
+                                float response_outline_color[4] = {1.0f, 0.16f, 0.12f, 1.0f};
+                                const json result_set_summary = filterResultSetSummary(result.result_set);
                                 if (result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None) {
                                     ApiQueryControlCommand cmd;
                                     cmd.apply_mode = apply_mode;
                                     cmd.layer.enabled = true;
                                     cmd.layer.name = name;
                                     cmd.layer.sql = sql;
+                                    applyPresentationStyle(cmd.layer, spec);
                                     applyControlColor(
                                         cmd.layer,
                                         get_q("color"),
                                         get_q("r"),
                                         get_q("g"),
                                         get_q("b"),
-                                        get_q("a"));
+                                        get_q("a"),
+                                        get_q("fill_color"),
+                                        get_q("outline_color"),
+                                        get_q("outline_r"),
+                                        get_q("outline_g"),
+                                        get_q("outline_b"),
+                                        get_q("outline_a"));
                                     for (int i = 0; i < 4; ++i) response_color[i] = cmd.layer.color[i];
+                                    for (int i = 0; i < 4; ++i) response_outline_color[i] = cmd.layer.outline_color[i];
                                     cmd.layer.result_set = std::move(result.result_set);
                                     cmd.layer.row_count = result.rows.size();
                                     cmd.layer.status = result.message;
@@ -1455,9 +1548,17 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                         {"b", response_color[2]},
                                         {"a", response_color[3]}
                                     }},
+                                    {"outline_color", {
+                                        {"r", response_outline_color[0]},
+                                        {"g", response_outline_color[1]},
+                                        {"b", response_outline_color[2]},
+                                        {"a", response_outline_color[3]}
+                                    }},
                                     {"columns", result.columns},
+                                    {"row_count", result.rows.size()},
+                                    {"rows_included", include_rows},
                                     {"rows", std::move(rows)},
-                                    {"result_set", filterResultSetSummary(result.result_set)}
+                                    {"result_set", result_set_summary}
                                 });
                             }
                         }
@@ -1493,6 +1594,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"enabled", layer.enabled},
                             {"row_count", layer.row_count},
                             {"status", layer.status},
+                            {"color", {
+                                {"r", layer.color[0]},
+                                {"g", layer.color[1]},
+                                {"b", layer.color[2]},
+                                {"a", layer.color[3]}
+                            }},
+                            {"outline_color", {
+                                {"r", layer.outline_color[0]},
+                                {"g", layer.outline_color[1]},
+                                {"b", layer.outline_color[2]},
+                                {"a", layer.outline_color[3]}
+                            }},
                             {"result_set", filterResultSetSummary(layer.result_set)}
                         });
                     }
@@ -1503,7 +1616,8 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"query", "/controls/query?preset=unavailable_value&apply=filter&limit=100"},
                             {"query_sql", "/controls/query?sql=SELECT...&apply=layer&name=..."},
                             {"query_filter_color", "/controls/query?preset=unavailable_value&apply=filter_layer&color=%2300d4ffcc"},
-                            {"query_color", "/controls/query?preset=unavailable_value&apply=layer&color=%23ff5533cc"}
+                            {"query_color", "/controls/query?preset=unavailable_value&apply=layer&color=%23ff5533cc"},
+                            {"query_style", "/controls/query?sql=SELECT...&apply=layer&fill_color=%2300ff0088&outline_color=%2300ff00ff&limit=50000"}
                         }},
                         {"filter", mapFilterStateJson(map_filter_state)},
                         {"active_filter", {
@@ -1554,7 +1668,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         const std::string limit_raw = get_q("limit");
                         if (!limit_raw.empty()) {
                             try {
-                                max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 5000);
+                                max_rows = std::clamp<size_t>((size_t)std::stoull(limit_raw), 0, 100000);
                             } catch (...) {
                                 max_rows = 100;
                             }
@@ -1581,13 +1695,16 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 {},
                                 max_rows);
                         }
+                        const bool include_rows = get_q("rows") != "0" && get_q("include_rows") != "0";
                         json rows = json::array();
-                        for (const auto& row : result.rows) {
-                            json row_json = json::object();
-                            for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
-                                row_json[result.columns[i]] = row[i];
+                        if (include_rows) {
+                            for (const auto& row : result.rows) {
+                                json row_json = json::object();
+                                for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+                                    row_json[result.columns[i]] = row[i];
+                                }
+                                rows.push_back(std::move(row_json));
                             }
-                            rows.push_back(std::move(row_json));
                         }
                         const json result_set_summary = filterResultSetSummary(result.result_set);
                         float response_color[4] = {
@@ -1597,6 +1714,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
                                     apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.12f : 0.08f,
                             1.0f
+                        };
+                        float response_outline_color[4] = {
+                            response_color[0], response_color[1], response_color[2], response_color[3]
                         };
                         if (result.ok && apply_mode != ApiQueryControlCommand::ApplyMode::None) {
                             ApiQueryControlCommand cmd;
@@ -1610,14 +1730,22 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             cmd.layer.color[2] = apply_mode == ApiQueryControlCommand::ApplyMode::Filter ||
                                     apply_mode == ApiQueryControlCommand::ApplyMode::FilterLayer ? 0.12f : 0.08f;
                             cmd.layer.color[3] = 1.0f;
+                            for (int i = 0; i < 4; ++i) cmd.layer.outline_color[i] = cmd.layer.color[i];
                             applyControlColor(
                                 cmd.layer,
                                 get_q("color"),
                                 get_q("r"),
                                 get_q("g"),
                                 get_q("b"),
-                                get_q("a"));
+                                get_q("a"),
+                                get_q("fill_color"),
+                                get_q("outline_color"),
+                                get_q("outline_r"),
+                                get_q("outline_g"),
+                                get_q("outline_b"),
+                                get_q("outline_a"));
                             for (int i = 0; i < 4; ++i) response_color[i] = cmd.layer.color[i];
+                            for (int i = 0; i < 4; ++i) response_outline_color[i] = cmd.layer.outline_color[i];
                             cmd.layer.result_set = std::move(result.result_set);
                             cmd.layer.row_count = result.rows.size();
                             cmd.layer.status = result.message;
@@ -1638,7 +1766,15 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                                 {"b", response_color[2]},
                                 {"a", response_color[3]}
                             }},
+                            {"outline_color", {
+                                {"r", response_outline_color[0]},
+                                {"g", response_outline_color[1]},
+                                {"b", response_outline_color[2]},
+                                {"a", response_outline_color[3]}
+                            }},
                             {"columns", result.columns},
+                            {"row_count", result.rows.size()},
+                            {"rows_included", include_rows},
                             {"rows", std::move(rows)},
                             {"result_set", result_set_summary}
                         });

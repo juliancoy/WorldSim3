@@ -415,6 +415,16 @@ bool queryMapColorForFeature(
     size_t feature_idx,
     const LayerDef::FeatureRecord& fg,
     float out_color[4]) {
+    return queryMapStyleForFeature(ctx, layer_idx, feature_idx, fg, out_color, nullptr);
+}
+
+bool queryMapStyleForFeature(
+    const FeatureFilterContext& ctx,
+    size_t layer_idx,
+    size_t feature_idx,
+    const LayerDef::FeatureRecord& fg,
+    float out_color[4],
+    float out_outline_color[4]) {
     if (!ctx.query_layers || !out_color) return false;
     for (auto it = ctx.query_layers->rbegin(); it != ctx.query_layers->rend(); ++it) {
         if (!it->enabled || !it->result_set.active) continue;
@@ -423,6 +433,12 @@ bool queryMapColorForFeature(
         out_color[1] = it->color[1];
         out_color[2] = it->color[2];
         out_color[3] = it->color[3];
+        if (out_outline_color) {
+            out_outline_color[0] = it->outline_color[0];
+            out_outline_color[1] = it->outline_color[1];
+            out_outline_color[2] = it->outline_color[2];
+            out_outline_color[3] = it->outline_color[3];
+        }
         return true;
     }
     return false;
@@ -482,6 +498,7 @@ uint64_t buildFeatureRenderStateKey(const FeatureRenderStateKeyContext& ctx) {
             hashMix(state_key, (uint64_t)layer.result_set.owners.size());
             hashResultSet(state_key, &layer.result_set);
             for (float color : layer.color) hashFloat(state_key, color);
+            for (float color : layer.outline_color) hashFloat(state_key, color);
         }
     }
     return state_key;
@@ -516,10 +533,14 @@ bool ensureLayerFeatureRenderCache(
             state.visible = featurePassesFilters(ctx, layer_idx, feature_idx, fg);
             if (state.visible) {
                 float query_color[4] = {0, 0, 0, 0};
-                if (queryMapColorForFeature(ctx, layer_idx, feature_idx, fg, query_color)) {
+                float query_outline_color[4] = {0, 0, 0, 0};
+                if (queryMapStyleForFeature(ctx, layer_idx, feature_idx, fg, query_color, query_outline_color)) {
                     state.has_query_color = true;
                     state.query_color = ImGui::ColorConvertFloat4ToU32(
                         ImVec4(query_color[0], query_color[1], query_color[2], query_color[3]));
+                    state.has_query_outline_color = true;
+                    state.query_outline_color = ImGui::ColorConvertFloat4ToU32(
+                        ImVec4(query_outline_color[0], query_outline_color[1], query_outline_color[2], query_outline_color[3]));
                 }
             }
             feature_states[feature_idx] = state;

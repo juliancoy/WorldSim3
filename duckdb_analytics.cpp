@@ -21,7 +21,7 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
-constexpr int kAnalyticsSchemaVersion = 7;
+constexpr int kAnalyticsSchemaVersion = 9;
 
 struct AnalyticsLayerStateRow {
     size_t layer_idx = 0;
@@ -715,6 +715,56 @@ void rebuildSpatialSearchArtifacts(duckdb::Connection& con) {
     )SQL", "create parcel_zone_membership_summary view");
 }
 
+void refreshUnifiedParcelEventRollups(duckdb::Connection& con) {
+    auto exec_or_throw = [&](const std::string& sql, const char* context) {
+        auto res = con.Query(sql);
+        if (!res || res->HasError()) {
+            throw std::runtime_error(
+                std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+        }
+    };
+    exec_or_throw(R"SQL(
+        UPDATE unified_parcels
+        SET
+            vacant_notice_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'vacant_notice'
+            ), 0),
+            vacant_rehab_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'vacant_rehab'
+            ), 0),
+            tax_lien_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'tax_lien'
+            ), 0),
+            tax_sale_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'tax_sale'
+            ), 0),
+            tax_lien_amount = COALESCE((
+                SELECT sum(COALESCE(pe.amount_usd, 0.0))
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'tax_lien'
+            ), 0.0),
+            tax_sale_amount = COALESCE((
+                SELECT sum(COALESCE(pe.amount_usd, 0.0))
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+                  AND pe.event_type = 'tax_sale'
+            ), 0.0)
+    )SQL", "refresh unified parcel event rollups");
+}
+
 void rebuildDerivedAnalyticsObjects(
     const fs::path& root,
     duckdb::Connection& con,
@@ -965,7 +1015,9 @@ void rebuildDerivedAnalyticsObjects(
             address,
             zipcode,
             CASE
-                WHEN lower(layer_file) = 'vacant_building_notices.geojson' THEN 'vacant_notice'
+                WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'vacant_notice'
+                WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
+                WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
                 WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
                 WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                 WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
@@ -997,6 +1049,7 @@ void rebuildDerivedAnalyticsObjects(
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+    refreshUnifiedParcelEventRollups(con);
     exec_or_throw(R"SQL(
         CREATE OR REPLACE VIEW parcel_features AS
         SELECT *
@@ -1079,6 +1132,10 @@ bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {
 
 bool DuckDbAnalytics::validateExistingCache() {
     try {
+        {
+            std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+            parcel_detail_cache_.clear();
+        }
         std::error_code ec;
         const fs::path db_path = status_.db_path;
         if (!fs::exists(db_path, ec) || ec) {
@@ -1197,9 +1254,86 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                     }
 
                     if (changed_files.empty()) {
+                        auto exec_or_throw = [&](const std::string& sql, const char* context) {
+                            auto res = con.Query(sql);
+                            if (!res || res->HasError()) {
+                                throw std::runtime_error(
+                                    std::string(context) + ": " +
+                                    (res ? res->GetError() : std::string("query failed")));
+                            }
+                        };
+                        exec_or_throw("BEGIN TRANSACTION", "begin derived analytics refresh");
+                        exec_or_throw("DROP TABLE IF EXISTS parcel_events", "drop parcel_events");
+                        exec_or_throw(R"SQL(
+                            CREATE TABLE parcel_events AS
+                            WITH base AS (
+                                SELECT
+                                    lf.blocklot,
+                                    lf.owner,
+                                    lf.address,
+                                    lf.zipcode,
+                                    lf.status AS feature_status,
+                                    lf.layer_file,
+                                    lf.layer_name,
+                                    lf.duckdb_role,
+                                    lf.feature_idx,
+                                    lf.category,
+                                    lf.value_usd,
+                                    lf.event_date_text,
+                                    lf.event_status_hint,
+                                    lf.event_year_hint,
+                                    lf.amount_usd_hint,
+                                    coalesce(
+                                        try_strptime(lf.event_date_text, '%Y-%m-%dT%H:%M:%SZ'),
+                                        try_strptime(lf.event_date_text, '%Y-%m-%d')
+                                    ) AS parsed_event_ts
+                                FROM layer_features lf
+                                WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
+                            )
+                            SELECT
+                                row_number() OVER () AS event_id,
+                                blocklot,
+                                owner,
+                                address,
+                                zipcode,
+                                CASE
+                                    WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'vacant_notice'
+                                    WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
+                                    WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
+                                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
+                                    WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
+                                    WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
+                                    WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                                    WHEN lower(category) = 'housing' THEN 'housing'
+                                    WHEN lower(category) = 'permits' THEN 'permit'
+                                    WHEN lower(category) = 'taxes' THEN 'tax'
+                                    ELSE duckdb_role
+                                END AS event_type,
+                                coalesce(nullif(event_status_hint, ''), feature_status) AS event_status,
+                                cast(parsed_event_ts AS DATE) AS event_date,
+                                coalesce(
+                                    nullif(event_year_hint, 0),
+                                    try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
+                                ) AS event_year,
+                                coalesce(nullif(value_usd, 0), nullif(amount_usd_hint, 0)) AS amount_usd,
+                                layer_file AS source_layer_file,
+                                layer_name AS source_layer_name,
+                                feature_idx AS source_feature_idx
+                            FROM base
+                        )SQL", "create parcel_events");
+                        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
+                        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
+                        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+                        refreshUnifiedParcelEventRollups(con);
+                        exec_or_throw(
+                            "UPDATE analytics_build_info SET source_signature = '" +
+                                sqlQuote(analyticsBuildSignature(root_, layers)) + "'",
+                            "update analytics build signature");
+                        exec_or_throw("COMMIT", "commit derived analytics refresh");
                         saveAnalyticsSignatureSidecar(status_.db_path, analyticsBuildSignature(root_, layers));
                         result.ok = true;
-                        result.reused_existing = true;
+                        result.incrementally_updated = true;
                         result.message = status_.message;
                         return result;
                     }
@@ -1294,6 +1428,10 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
 
 bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::vector<UnifiedParcelRecord>& unified_parcels) {
     try {
+        {
+            std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+            parcel_detail_cache_.clear();
+        }
         struct ParcelAnalyticsRow {
             size_t parcel_layer_idx = 0;
             std::string parcel_entity_id;
@@ -1954,7 +2092,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 address,
                 zipcode,
                 CASE
-                    WHEN lower(layer_file) = 'vacant_building_notices.geojson' THEN 'vacant_notice'
+                    WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'vacant_notice'
+                    WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
+                    WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
                     WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
                     WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                     WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
@@ -1986,6 +2126,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+        refreshUnifiedParcelEventRollups(con);
         exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW parcel_features AS
             SELECT *
@@ -2119,7 +2260,17 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
                     display_row.push_back(chunk->GetValue(col, row).ToString());
                 }
 
-                if (layer_col >= 0 &&
+                if (layer_col >= 0 && feature_col >= 0 &&
+                    (size_t)layer_col < display_row.size() &&
+                    (size_t)feature_col < display_row.size()) {
+                    try {
+                        const uint64_t layer_idx = std::stoull(display_row[(size_t)layer_col]);
+                        const uint64_t feature_idx = std::stoull(display_row[(size_t)feature_col]);
+                        out.result_set.layers.insert((size_t)layer_idx);
+                        out.result_set.features.insert(FeatureKey{(size_t)layer_idx, (size_t)feature_idx});
+                    } catch (...) {
+                    }
+                } else if (layer_col >= 0 &&
                     (size_t)layer_col < display_row.size() &&
                     entity_id_col >= 0 &&
                     (size_t)entity_id_col < display_row.size()) {
@@ -2129,16 +2280,6 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
                             out.result_set.layers.insert((size_t)layer_idx);
                             out.result_set.features.insert(FeatureKey{(size_t)layer_idx, *feature_idx});
                         }
-                    } catch (...) {
-                    }
-                } else if (layer_col >= 0 && feature_col >= 0 &&
-                    (size_t)layer_col < display_row.size() &&
-                    (size_t)feature_col < display_row.size()) {
-                    try {
-                        const uint64_t layer_idx = std::stoull(display_row[(size_t)layer_col]);
-                        const uint64_t feature_idx = std::stoull(display_row[(size_t)feature_col]);
-                        out.result_set.layers.insert((size_t)layer_idx);
-                        out.result_set.features.insert(FeatureKey{(size_t)layer_idx, (size_t)feature_idx});
                     } catch (...) {
                     }
                 }
@@ -2230,89 +2371,70 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
         out.message = "Parcel entity ID is empty";
         return out;
     }
-    std::ostringstream sql;
-    sql << R"SQL(
-        WITH entity_hit AS (
-            SELECT blocklot
-            FROM layer_features
-            WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
-              AND scale = 'parcel'
-              AND duckdb_role = 'parcel_record'
-              AND blocklot <> ''
+    {
+        std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+        auto it = parcel_detail_cache_.find(key);
+        if (it != parcel_detail_cache_.end()) return it->second;
+    }
+
+    auto unified_detail_sql = [&](const char* column) {
+        std::ostringstream sql;
+        sql << R"SQL(
+            SELECT
+                parcel_layer_idx,
+                parcel_entity_id,
+                parcel_geometry_entity_id,
+                blocklot,
+                parcel_source_file,
+                property_source_file,
+                parcel_has_geometry,
+                has_property_record,
+                owner,
+                owner_display,
+                address,
+                zipcode,
+                status,
+                current_land,
+                current_improvements,
+                structure_area_sqft,
+                tax_base,
+                sale_price,
+                current_value,
+                vacant_notice_count,
+                vacant_rehab_count,
+                tax_lien_count,
+                tax_sale_count,
+                tax_lien_amount,
+                tax_sale_amount,
+                min_lon,
+                min_lat,
+                max_lon,
+                max_lat
+            FROM unified_parcels
+            WHERE )SQL" << column << R"SQL( = ')SQL" << sqlQuote(key) << R"SQL('
             LIMIT 1
-        )
-        SELECT *
-        FROM (
+        )SQL";
+        return sql.str();
+    };
+
+    DuckDbQueryResult result = executeMapQuery(unified_detail_sql("parcel_entity_id"), {}, {}, 1);
+    if (!result.ok || result.rows.empty()) {
+        result = executeMapQuery(unified_detail_sql("parcel_geometry_entity_id"), {}, {}, 1);
+    }
+
+    if (!result.ok || result.rows.empty()) {
+        std::ostringstream sql;
+        sql << R"SQL(
+            WITH entity_hit AS (
+                SELECT blocklot
+                FROM layer_features
+                WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
+                  AND scale = 'parcel'
+                  AND duckdb_role = 'parcel_record'
+                  AND blocklot <> ''
+                LIMIT 1
+            )
             SELECT
-                0 AS detail_priority,
-                parcel_layer_idx,
-                parcel_entity_id,
-                parcel_geometry_entity_id,
-                blocklot,
-                parcel_source_file,
-                property_source_file,
-                parcel_has_geometry,
-                has_property_record,
-                owner,
-                owner_display,
-                address,
-                zipcode,
-                status,
-                current_land,
-                current_improvements,
-                structure_area_sqft,
-                tax_base,
-                sale_price,
-                current_value,
-                vacant_notice_count,
-                vacant_rehab_count,
-                tax_lien_count,
-                tax_sale_count,
-                tax_lien_amount,
-                tax_sale_amount,
-                min_lon,
-                min_lat,
-                max_lon,
-                max_lat
-            FROM unified_parcels
-            WHERE parcel_entity_id = ')SQL" << sqlQuote(key) << R"SQL('
-            UNION ALL
-            SELECT
-                1 AS detail_priority,
-                parcel_layer_idx,
-                parcel_entity_id,
-                parcel_geometry_entity_id,
-                blocklot,
-                parcel_source_file,
-                property_source_file,
-                parcel_has_geometry,
-                has_property_record,
-                owner,
-                owner_display,
-                address,
-                zipcode,
-                status,
-                current_land,
-                current_improvements,
-                structure_area_sqft,
-                tax_base,
-                sale_price,
-                current_value,
-                vacant_notice_count,
-                vacant_rehab_count,
-                tax_lien_count,
-                tax_sale_count,
-                tax_lien_amount,
-                tax_sale_amount,
-                min_lon,
-                min_lat,
-                max_lon,
-                max_lat
-            FROM unified_parcels
-            WHERE parcel_geometry_entity_id = ')SQL" << sqlQuote(key) << R"SQL('
-            UNION ALL
-            SELECT
-                2 AS detail_priority,
                 up.parcel_layer_idx,
                 up.parcel_entity_id,
                 up.parcel_geometry_entity_id,
@@ -2344,9 +2466,15 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
                 up.max_lat
             FROM unified_parcels up
             JOIN entity_hit eh ON eh.blocklot = up.blocklot
-            UNION ALL
+            LIMIT 1
+        )SQL";
+        result = executeMapQuery(sql.str(), {}, {}, 1);
+    }
+
+    if (!result.ok || result.rows.empty()) {
+        std::ostringstream sql;
+        sql << R"SQL(
             SELECT
-                3 AS detail_priority,
                 layer_idx AS parcel_layer_idx,
                 entity_id AS parcel_entity_id,
                 '' AS parcel_geometry_entity_id,
@@ -2380,11 +2508,16 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
             WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
               AND scale = 'parcel'
               AND duckdb_role = 'parcel_record'
-        ) detail
-        ORDER BY detail_priority ASC
-        LIMIT 1
-    )SQL";
-    return executeMapQuery(sql.str(), {}, {}, 1);
+            LIMIT 1
+        )SQL";
+        result = executeMapQuery(sql.str(), {}, {}, 1);
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+        parcel_detail_cache_[key] = result;
+    }
+    return result;
 }
 
 DuckDbQueryResult DuckDbAnalytics::queryParcelEvents(

@@ -64,6 +64,21 @@ bool drawParcelSelectionByGeometryEntityId(
     return drew;
 }
 
+bool drawParcelSelectionByFeatureIdx(
+    const MapSelectionRenderContext& ctx,
+    size_t feature_idx,
+    ImU32 fill,
+    ImU32 outline_halo,
+    ImU32 outline) {
+    if (!ctx.parcel_render_blob || feature_idx >= ctx.parcel_render_blob->features.size()) return false;
+    const ParcelRenderFeatureRecord& rec = ctx.parcel_render_blob->features[feature_idx];
+    if (rec.feature_idx != feature_idx) return false;
+    drawParcelSelectionArtifactFill(ctx, rec, fill);
+    drawParcelSelectionArtifactOutline(ctx, rec, outline_halo, 6.0f);
+    drawParcelSelectionArtifactOutline(ctx, rec, outline, 3.0f);
+    return true;
+}
+
 void drawParcelSelectionArtifactFill(
     const MapSelectionRenderContext& ctx,
     const ParcelRenderFeatureRecord& rec,
@@ -142,6 +157,22 @@ bool drawPolygonSelectionByGeometryEntityId(
     return drew;
 }
 
+bool drawPolygonSelectionByFeatureIdx(
+    const MapSelectionRenderContext& ctx,
+    const PolygonGeometryArtifact& artifact,
+    size_t feature_idx,
+    ImU32 fill,
+    ImU32 outline_halo,
+    ImU32 outline) {
+    if (feature_idx >= artifact.features.size()) return false;
+    const GeometryArtifactFeatureRecord& rec = artifact.features[feature_idx];
+    if (rec.feature_idx != feature_idx) return false;
+    const bool filled = drawPolygonSelectionArtifactFill(ctx, artifact, rec, fill);
+    const bool halo = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline_halo, 6.0f);
+    const bool line = drawPolygonSelectionArtifactOutline(ctx, artifact, rec, outline, 3.0f);
+    return filled || halo || line;
+}
+
 bool drawPolygonSelectionArtifactFill(
     const MapSelectionRenderContext& ctx,
     const PolygonGeometryArtifact& artifact,
@@ -209,22 +240,43 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
         if (ctx.polygon_geometry_artifacts) {
             auto it = ctx.polygon_geometry_artifacts->find((size_t)ref.layer_idx);
             if (it != ctx.polygon_geometry_artifacts->end()) {
-                drew = drawPolygonSelectionByGeometryEntityId(
+                if (ref.feature_idx != (size_t)-1) {
+                    drew = drawPolygonSelectionByFeatureIdx(
+                        ctx,
+                        it->second,
+                        ref.feature_idx,
+                        selected_fill,
+                        selected_outline_halo,
+                        selected_outline);
+                }
+                if (!drew) {
+                    drew = drawPolygonSelectionByGeometryEntityId(
+                        ctx,
+                        it->second,
+                        geometry_entity_id,
+                        selected_fill,
+                        selected_outline_halo,
+                        selected_outline);
+                }
+            }
+        }
+        if (!drew && ref.layer_idx == ctx.parcel_layer_idx) {
+            if (ref.feature_idx != (size_t)-1) {
+                drew = drawParcelSelectionByFeatureIdx(
                     ctx,
-                    it->second,
+                    ref.feature_idx,
+                    selected_fill,
+                    selected_outline_halo,
+                    selected_outline);
+            }
+            if (!drew) {
+                drawParcelSelectionByGeometryEntityId(
+                    ctx,
                     geometry_entity_id,
                     selected_fill,
                     selected_outline_halo,
                     selected_outline);
             }
-        }
-        if (!drew && ref.layer_idx == ctx.parcel_layer_idx) {
-            drawParcelSelectionByGeometryEntityId(
-                ctx,
-                geometry_entity_id,
-                selected_fill,
-                selected_outline_halo,
-                selected_outline);
         }
     }
 }

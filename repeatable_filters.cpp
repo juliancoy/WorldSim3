@@ -245,7 +245,7 @@ std::string repeatableFilterSql(const json& spec) {
 }
 
 json repeatableFilterSummary(const json& spec) {
-    return {
+    json out = {
         {"id", spec.value("id", "")},
         {"name", spec.value("name", "")},
         {"entity", spec.value("entity", "")},
@@ -253,6 +253,10 @@ json repeatableFilterSummary(const json& spec) {
         {"execution_mode", repeatableFilterExecutionMode(spec)},
         {"condition_count", spec.contains("conditions") && spec["conditions"].is_array() ? spec["conditions"].size() : 0}
     };
+    if (spec.contains("presentation") && spec["presentation"].is_object()) {
+        out["presentation"] = spec["presentation"];
+    }
+    return out;
 }
 
 json loadRepeatableFilterSpec(const fs::path& root, const std::string& id) {
