@@ -54,6 +54,16 @@ bool selectParcel(
     const std::string& geometry_entity_id,
     const std::string& entity_id,
     bool append_toggle) {
+    return selectParcel(selection, layer_idx, (size_t)-1, geometry_entity_id, entity_id, append_toggle);
+}
+
+bool selectParcel(
+    ParcelSelectionState& selection,
+    int layer_idx,
+    size_t feature_idx,
+    const std::string& geometry_entity_id,
+    const std::string& entity_id,
+    bool append_toggle) {
     if (entity_id.empty()) return false;
     if (!append_toggle) clearParcelSelection(selection);
 
@@ -72,7 +82,8 @@ bool selectParcel(
     selection.refs.push_back(ParcelSelectionRef{
         layer_idx,
         geometry_entity_id.empty() ? entity_id : geometry_entity_id,
-        entity_id
+        entity_id,
+        feature_idx
     });
     syncSelectionViews(selection);
     return true;

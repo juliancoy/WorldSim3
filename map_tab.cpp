@@ -477,7 +477,15 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->mouse_lon = map_canvas_session.mouse_ll.x;
                 ctx.hover_debug_state->mouse_lat = map_canvas_session.mouse_ll.y;
                 ctx.hover_debug_state->hovered_parcel = map_canvas_session.hover_state.hovered_parcel_idx != (size_t)-1;
+                ctx.hover_debug_state->hovered_parcel_layer_idx = map_canvas_session.hover_state.hovered_parcel_layer_idx;
                 ctx.hover_debug_state->hovered_parcel_idx = map_canvas_session.hover_state.hovered_parcel_idx;
+                ctx.hover_debug_state->hovered_parcel_entity_id = map_canvas_session.hover_state.hovered_parcel_entity_id;
+                ctx.hover_debug_state->hovered_parcel_geometry_entity_id = map_canvas_session.hover_state.hovered_parcel_geometry_entity_id;
+                ctx.hover_debug_state->inspect_parcel = map_canvas_session.hover_state.inspect_parcel_idx != (size_t)-1;
+                ctx.hover_debug_state->inspect_parcel_layer_idx = map_canvas_session.hover_state.inspect_parcel_layer_idx;
+                ctx.hover_debug_state->inspect_parcel_idx = map_canvas_session.hover_state.inspect_parcel_idx;
+                ctx.hover_debug_state->inspect_parcel_entity_id = map_canvas_session.hover_state.inspect_parcel_entity_id;
+                ctx.hover_debug_state->inspect_parcel_geometry_entity_id = map_canvas_session.hover_state.inspect_parcel_geometry_entity_id;
                 ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
                 ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
                 ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
@@ -485,16 +493,27 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->hovered_point_layer_idx = map_canvas_session.hover_state.hovered_point_layer_idx;
                 ctx.hover_debug_state->selected_parcel =
                     ctx.parcel_selection && !ctx.parcel_selection->active_entity_id.empty();
+                ctx.hover_debug_state->selected_parcel_layer_idx =
+                    ctx.parcel_selection ? ctx.parcel_selection->active_layer_idx : -1;
                 ctx.hover_debug_state->selected_parcel_idx =
-                    (ctx.parcel_selection &&
-                     ctx.parcel_selection->active_layer_idx >= 0 &&
-                     (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
+                    (ctx.parcel_selection && !ctx.parcel_selection->refs.empty() &&
+                     ctx.parcel_selection->refs.back().feature_idx != (size_t)-1)
+                        ? ctx.parcel_selection->refs.back().feature_idx
+                    : (ctx.parcel_selection &&
+                       ctx.parcel_selection->active_layer_idx >= 0 &&
+                       (size_t)ctx.parcel_selection->active_layer_idx < ctx.layers->size())
                         ? featureIndexForGeometryEntityId(
                             (*ctx.layers)[(size_t)ctx.parcel_selection->active_layer_idx],
                             ctx.parcel_selection->refs.empty()
                                 ? ctx.parcel_selection->active_entity_id
                                 : ctx.parcel_selection->refs.back().geometry_entity_id)
                         : (size_t)-1;
+                ctx.hover_debug_state->selected_parcel_entity_id =
+                    ctx.parcel_selection ? ctx.parcel_selection->active_entity_id : std::string();
+                ctx.hover_debug_state->selected_parcel_geometry_entity_id =
+                    (ctx.parcel_selection && !ctx.parcel_selection->refs.empty())
+                        ? ctx.parcel_selection->refs.back().geometry_entity_id
+                        : std::string();
                 ctx.hover_debug_state->selected_parcel_count =
                     ctx.parcel_selection ? ctx.parcel_selection->entity_ids.size() : 0;
             }

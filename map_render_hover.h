@@ -80,13 +80,23 @@ struct HoverDebugState {
     bool hovered_parcel = false;
     int hovered_parcel_layer_idx = -1;
     size_t hovered_parcel_idx = (size_t)-1;
+    std::string hovered_parcel_entity_id;
+    std::string hovered_parcel_geometry_entity_id;
+    bool inspect_parcel = false;
+    int inspect_parcel_layer_idx = -1;
+    size_t inspect_parcel_idx = (size_t)-1;
+    std::string inspect_parcel_entity_id;
+    std::string inspect_parcel_geometry_entity_id;
     bool hovered_zone = false;
     size_t hovered_zone_idx = (size_t)-1;
     bool hovered_point = false;
     size_t hovered_point_idx = (size_t)-1;
     int hovered_point_layer_idx = -1;
     bool selected_parcel = false;
+    int selected_parcel_layer_idx = -1;
     size_t selected_parcel_idx = (size_t)-1;
+    std::string selected_parcel_entity_id;
+    std::string selected_parcel_geometry_entity_id;
     size_t selected_parcel_count = 0;
 };
 

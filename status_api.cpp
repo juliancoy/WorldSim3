@@ -28,6 +28,37 @@
 using json = nlohmann::json;
 namespace fs = std::filesystem;
 
+json buildHoverDebugStatusJson(const HoverDebugState& hover_debug) {
+    return {
+        {"map_hovered", hover_debug.map_hovered},
+        {"mouse_screen_x", hover_debug.mouse_screen_x},
+        {"mouse_screen_y", hover_debug.mouse_screen_y},
+        {"mouse_lon", hover_debug.mouse_lon},
+        {"mouse_lat", hover_debug.mouse_lat},
+        {"hovered_parcel", hover_debug.hovered_parcel},
+        {"hovered_parcel_layer_idx", hover_debug.hovered_parcel_layer_idx},
+        {"hovered_parcel_idx", hover_debug.hovered_parcel_idx},
+        {"hovered_parcel_entity_id", hover_debug.hovered_parcel_entity_id},
+        {"hovered_parcel_geometry_entity_id", hover_debug.hovered_parcel_geometry_entity_id},
+        {"inspect_parcel", hover_debug.inspect_parcel},
+        {"inspect_parcel_layer_idx", hover_debug.inspect_parcel_layer_idx},
+        {"inspect_parcel_idx", hover_debug.inspect_parcel_idx},
+        {"inspect_parcel_entity_id", hover_debug.inspect_parcel_entity_id},
+        {"inspect_parcel_geometry_entity_id", hover_debug.inspect_parcel_geometry_entity_id},
+        {"hovered_zone", hover_debug.hovered_zone},
+        {"hovered_zone_idx", hover_debug.hovered_zone_idx},
+        {"hovered_point", hover_debug.hovered_point},
+        {"hovered_point_idx", hover_debug.hovered_point_idx},
+        {"hovered_point_layer_idx", hover_debug.hovered_point_layer_idx},
+        {"selected_parcel", hover_debug.selected_parcel},
+        {"selected_parcel_layer_idx", hover_debug.selected_parcel_layer_idx},
+        {"selected_parcel_idx", hover_debug.selected_parcel_idx},
+        {"selected_parcel_entity_id", hover_debug.selected_parcel_entity_id},
+        {"selected_parcel_geometry_entity_id", hover_debug.selected_parcel_geometry_entity_id},
+        {"selected_parcel_count", hover_debug.selected_parcel_count}
+    };
+}
+
 namespace {
 json buildParcelGpuStatusJson() {
     const ParcelGpuResidencyStatus gpu = getParcelGpuResidencyStatus();
@@ -1039,23 +1070,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 };
                 if (ctx.hover_debug_state) {
                     std::lock_guard<std::mutex> hover_lk(ctx.hover_debug_state->mutex);
-                    out["hover"] = {
-                        {"map_hovered", ctx.hover_debug_state->map_hovered},
-                        {"mouse_screen_x", ctx.hover_debug_state->mouse_screen_x},
-                        {"mouse_screen_y", ctx.hover_debug_state->mouse_screen_y},
-                        {"mouse_lon", ctx.hover_debug_state->mouse_lon},
-                        {"mouse_lat", ctx.hover_debug_state->mouse_lat},
-                        {"hovered_parcel", ctx.hover_debug_state->hovered_parcel},
-                        {"hovered_parcel_idx", ctx.hover_debug_state->hovered_parcel_idx},
-                        {"hovered_zone", ctx.hover_debug_state->hovered_zone},
-                        {"hovered_zone_idx", ctx.hover_debug_state->hovered_zone_idx},
-                        {"hovered_point", ctx.hover_debug_state->hovered_point},
-                        {"hovered_point_idx", ctx.hover_debug_state->hovered_point_idx},
-                        {"hovered_point_layer_idx", ctx.hover_debug_state->hovered_point_layer_idx},
-                        {"selected_parcel", ctx.hover_debug_state->selected_parcel},
-                        {"selected_parcel_idx", ctx.hover_debug_state->selected_parcel_idx},
-                        {"selected_parcel_count", ctx.hover_debug_state->selected_parcel_count}
-                    };
+                    out["hover"] = buildHoverDebugStatusJson(*ctx.hover_debug_state);
                 }
                 out["vacancy_probe"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},

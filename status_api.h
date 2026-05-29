@@ -8,6 +8,8 @@
 #include "types.h"
 #include "duckdb_analytics.h"
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -137,4 +139,5 @@ struct StatusApiContext {
     std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
 };
 
+nlohmann::json buildHoverDebugStatusJson(const HoverDebugState& hover_debug);
 std::thread startStatusApiWorker(StatusApiContext ctx);

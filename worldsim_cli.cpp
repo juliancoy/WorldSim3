@@ -23,6 +23,7 @@
 #include "parcel_consolidation.h"
 #include "population_metrics.h"
 #include "selection.h"
+#include "status_api.h"
 #include "profiling_layer_snapshot.h"
 #include "render_layer_pass.h"
 #include "render_plan_builder.h"
@@ -1957,6 +1958,58 @@ int runLayerRuntimeStatusSelftest() {
         {"ready", layerRuntimeDisplayStatus(ready, file)}
     };
     std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runStatusApiParcelDebugSelftest() {
+    HoverDebugState hover;
+    hover.map_hovered = true;
+    hover.mouse_screen_x = 321.0f;
+    hover.mouse_screen_y = 123.0f;
+    hover.mouse_lon = -76.6122f;
+    hover.mouse_lat = 39.2904f;
+    hover.hovered_parcel = true;
+    hover.hovered_parcel_layer_idx = 9;
+    hover.hovered_parcel_idx = 63045;
+    hover.hovered_parcel_entity_id = "ENTITY_PARCEL";
+    hover.hovered_parcel_geometry_entity_id = "GEOMETRY_PARCEL";
+    hover.inspect_parcel = true;
+    hover.inspect_parcel_layer_idx = 10;
+    hover.inspect_parcel_idx = 24173;
+    hover.inspect_parcel_entity_id = "ENTITY_COUNTY";
+    hover.inspect_parcel_geometry_entity_id = "GEOMETRY_COUNTY";
+    hover.selected_parcel = true;
+    hover.selected_parcel_layer_idx = 10;
+    hover.selected_parcel_idx = 24173;
+    hover.selected_parcel_entity_id = "CANONICAL_COUNTY";
+    hover.selected_parcel_geometry_entity_id = "GEOMETRY_COUNTY";
+    hover.selected_parcel_count = 1;
+
+    const json out_json = buildHoverDebugStatusJson(hover);
+    const bool ok =
+        out_json.value("map_hovered", false) &&
+        out_json.value("hovered_parcel", false) &&
+        out_json.value("hovered_parcel_layer_idx", -1) == 9 &&
+        out_json.value("hovered_parcel_idx", (uint64_t)0) == 63045u &&
+        out_json.value("hovered_parcel_entity_id", std::string()) == "ENTITY_PARCEL" &&
+        out_json.value("hovered_parcel_geometry_entity_id", std::string()) == "GEOMETRY_PARCEL" &&
+        out_json.value("inspect_parcel", false) &&
+        out_json.value("inspect_parcel_layer_idx", -1) == 10 &&
+        out_json.value("inspect_parcel_idx", (uint64_t)0) == 24173u &&
+        out_json.value("inspect_parcel_entity_id", std::string()) == "ENTITY_COUNTY" &&
+        out_json.value("inspect_parcel_geometry_entity_id", std::string()) == "GEOMETRY_COUNTY" &&
+        out_json.value("selected_parcel", false) &&
+        out_json.value("selected_parcel_layer_idx", -1) == 10 &&
+        out_json.value("selected_parcel_idx", (uint64_t)0) == 24173u &&
+        out_json.value("selected_parcel_entity_id", std::string()) == "CANONICAL_COUNTY" &&
+        out_json.value("selected_parcel_geometry_entity_id", std::string()) == "GEOMETRY_COUNTY" &&
+        out_json.value("selected_parcel_count", (uint64_t)0) == 1u;
+
+    std::cout << json{
+        {"mode", "status-api-parcel-debug-selftest"},
+        {"ok", ok},
+        {"hover", out_json}
+    }.dump(2) << '\n';
     return ok ? 0 : 1;
 }
 
@@ -4022,6 +4075,7 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
             selection.active_layer_idx == 1 &&
             selection.active_entity_id == "CANONICALBC1" &&
             selection.refs.size() == 1 &&
+            selection.refs[0].feature_idx == 24173 &&
             selection.refs[0].geometry_entity_id == "GEOMETRYBC1" &&
             opened_entity_id == "CANONICALBC1";
 
@@ -4035,6 +4089,7 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
             {"detail_available", detail.available},
             {"detail_blocklot", detail.blocklot},
             {"click_ok", click_ok},
+            {"selected_feature_idx", selection.refs.empty() ? (uint64_t)-1 : (uint64_t)selection.refs[0].feature_idx},
             {"selected_geometry_entity_id", selection.refs.empty() ? "" : selection.refs[0].geometry_entity_id},
             {"selected_entity_id", selection.active_entity_id}
         }.dump(2) << '\n';
@@ -6632,6 +6687,10 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_layer_runtime_status_selftest = true;
             continue;
         }
+        if (arg == "--status-api-parcel-debug-selftest") {
+            options.run_status_api_parcel_debug_selftest = true;
+            continue;
+        }
         if (arg == "--parcel-gpu-cpu-bypass-selftest") {
             options.run_parcel_gpu_cpu_bypass_selftest = true;
             continue;
@@ -6984,6 +7043,7 @@ void printWorldsimUsage() {
         << "       worldsim3 --spatial-index-selftest\n"
         << "       worldsim3 --layer-profile-selftest\n"
         << "       worldsim3 --layer-runtime-status-selftest\n"
+        << "       worldsim3 --status-api-parcel-debug-selftest\n"
         << "       worldsim3 --parcel-gpu-cpu-bypass-selftest\n"
         << "       worldsim3 --vulkan-device-loss-selftest\n"
         << "       worldsim3 --render-routing-selftest\n"
@@ -7035,6 +7095,9 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_layer_runtime_status_selftest) {
         return runLayerRuntimeStatusSelftest();
+    }
+    if (options.run_status_api_parcel_debug_selftest) {
+        return runStatusApiParcelDebugSelftest();
     }
     if (options.run_parcel_gpu_cpu_bypass_selftest) {
         return runParcelGpuCpuBypassSelftest();

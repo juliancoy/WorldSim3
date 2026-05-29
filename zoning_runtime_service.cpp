@@ -51,56 +51,6 @@ bool isZoningPolygonLayer(const LayerDef& layer) {
            name_lower.find("zoning") != std::string::npos;
 }
 
-bool buildPolygonGpuBlob(const PolygonGeometryArtifact& artifact, ParcelRenderCacheBlob& out) {
-    out = ParcelRenderCacheBlob{};
-    out.source_signature = artifact.header.source_signature;
-    out.vertices = artifact.vertices;
-    out.vertex_feature_refs = artifact.feature_refs;
-    out.indices = artifact.fill_indices;
-    if (out.indices.empty() && !out.vertices.empty()) out.indices.push_back(0);
-    out.line_indices = artifact.line_indices;
-    out.features.reserve(artifact.features.size());
-    for (const GeometryArtifactFeatureRecord& rec : artifact.features) {
-        ParcelRenderFeatureRecord dst;
-        dst.feature_idx = rec.feature_idx;
-        dst.vertex_offset = rec.vertex_offset;
-        dst.vertex_count = rec.vertex_count;
-        dst.index_offset = rec.index_offset;
-        dst.index_count = rec.index_count;
-        dst.line_index_offset = rec.aux_index_offset;
-        dst.line_index_count = rec.aux_index_count;
-        dst.min_lon = rec.min_lon;
-        dst.min_lat = rec.min_lat;
-        dst.max_lon = rec.max_lon;
-        dst.max_lat = rec.max_lat;
-        out.features.push_back(dst);
-    }
-    out.chunks.reserve(artifact.chunks.size());
-    for (const GeometryArtifactChunkRecord& rec : artifact.chunks) {
-        ParcelRenderChunkRecord dst;
-        dst.chunk_idx = rec.chunk_idx;
-        dst.feature_offset = rec.feature_offset;
-        dst.feature_count = rec.feature_count;
-        dst.vertex_offset = rec.vertex_offset;
-        dst.vertex_count = rec.vertex_count;
-        dst.index_offset = rec.index_offset;
-        dst.index_count = rec.index_count;
-        dst.line_index_offset = rec.aux_index_offset;
-        dst.line_index_count = rec.aux_index_count;
-        dst.min_lon = rec.min_lon;
-        dst.min_lat = rec.min_lat;
-        dst.max_lon = rec.max_lon;
-        dst.max_lat = rec.max_lat;
-        out.chunks.push_back(dst);
-    }
-    return
-        !out.vertices.empty() &&
-        !out.vertex_feature_refs.empty() &&
-        !out.indices.empty() &&
-        !out.line_indices.empty() &&
-        !out.features.empty();
-}
-
 void clearZoningLayerState(size_t layer_idx, ZoningRuntimeState& state) {
     clearZoningGpuBuffers(layer_idx);
     clearZoningGpuDrawState(layer_idx);
@@ -139,6 +89,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
             state.failed_signatures.erase(li);
             if (layer_state.geometry_artifact_class == GeometryArtifactClass::Polygon) {
                 layer_state.geometry_gpu_resident = false;
+                layer_state.geometry_gpu_pick_ready = false;
             }
             continue;
         }
@@ -148,6 +99,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
         auto failed_it = state.failed_signatures.find(li);
         if (failed_it != state.failed_signatures.end() && failed_it->second == zoning_signature) {
             layer_state.geometry_gpu_resident = false;
+            layer_state.geometry_gpu_pick_ready = false;
             continue;
         }
         if (state.uploaded_signatures[li] != zoning_signature) {
@@ -159,21 +111,24 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
                     GeometryArtifactClass::Polygon,
                     layerRenderRouteArtifactName(render_route));
             PolygonGeometryArtifact artifact;
+            std::string artifact_error;
             if (!loadBinaryPolygonGeometryArtifact(artifact_path, layer_state.hydration_source_signature, artifact) ||
                 (!layer.features.empty() && artifact.features.size() != layer.features.size()) ||
-                !buildPolygonGpuBlob(artifact, blob)) {
+                !buildParcelRenderCacheBlobFromPolygonArtifact(artifact, blob, &artifact_error)) {
                 std::fprintf(
                     stderr,
-                    "[worldsim3][parcel-pick] artifact-invalid layer=%zu file=%s path=%s layer_features=%zu artifact_features=%zu signature=%s\n",
+                    "[worldsim3][parcel-pick] artifact-invalid layer=%zu file=%s path=%s layer_features=%zu artifact_features=%zu signature=%s detail=%s\n",
                     li,
                     layer.file.c_str(),
                     artifact_path.string().c_str(),
                     layer.features.size(),
                     artifact.features.size(),
-                    layer_state.hydration_source_signature.c_str());
+                    layer_state.hydration_source_signature.c_str(),
+                    artifact_error.c_str());
                 clearZoningLayerState(li, state);
                 state.failed_signatures[li] = zoning_signature;
                 layer_state.geometry_gpu_resident = false;
+                layer_state.geometry_gpu_pick_ready = false;
                 continue;
             }
             blob.source_signature = zoning_signature;
@@ -196,6 +151,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
                 clearZoningLayerState(li, state);
                 state.failed_signatures[li] = zoning_signature;
                 layer_state.geometry_gpu_resident = false;
+                layer_state.geometry_gpu_pick_ready = false;
                 continue;
             }
         }
@@ -203,10 +159,12 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
         auto blob_it = state.render_blobs.find(li);
         if (blob_it == state.render_blobs.end() || blob_it->second.features.empty()) {
             layer_state.geometry_gpu_resident = false;
+            layer_state.geometry_gpu_pick_ready = false;
             continue;
         }
         const ParcelRenderCacheBlob& blob = blob_it->second;
         layer_state.geometry_gpu_resident = true;
+        layer_state.geometry_gpu_pick_ready = true;
         if (!input.ensure_feature_render_cache) continue;
 
         const LayerFeatureRenderCache& cached_feature_render = input.ensure_feature_render_cache();

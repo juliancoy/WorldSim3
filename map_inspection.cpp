@@ -782,6 +782,7 @@ bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHove
     const bool selected = selectParcel(
             *ctx.parcel_selection,
             hovered.layer_idx,
+            hovered.feature_idx,
             selected_geometry_entity_id,
             selected_entity_id,
             ctrl_append);

@@ -13,6 +13,7 @@ struct ParcelSelectionRef {
     int layer_idx = -1;
     std::string geometry_entity_id;
     std::string entity_id;
+    size_t feature_idx = (size_t)-1;
 };
 
 struct ParcelSelectionState {
@@ -33,6 +34,13 @@ bool selectParcel(
 bool selectParcel(
     ParcelSelectionState& selection,
     int layer_idx,
+    const std::string& geometry_entity_id,
+    const std::string& entity_id,
+    bool append_toggle);
+bool selectParcel(
+    ParcelSelectionState& selection,
+    int layer_idx,
+    size_t feature_idx,
     const std::string& geometry_entity_id,
     const std::string& entity_id,
     bool append_toggle);

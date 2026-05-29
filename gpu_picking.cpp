@@ -18,6 +18,7 @@ void logParcelPickLine(const std::string& line) {
 
 void logParcelHoverStateChange(
     const char* stage,
+    bool hover_target,
     size_t layer_idx,
     size_t feature_ref,
     size_t feature_idx,
@@ -26,6 +27,7 @@ void logParcelHoverStateChange(
     if (!worldsimParcelPickDebugEnabled()) return;
     struct LastState {
         std::string stage;
+        bool hover_target = false;
         size_t layer_idx = (size_t)-1;
         size_t feature_ref = (size_t)-1;
         size_t feature_idx = (size_t)-1;
@@ -35,12 +37,14 @@ void logParcelHoverStateChange(
     static LastState last;
     LastState current;
     current.stage = stage ? stage : "unknown";
+    current.hover_target = hover_target;
     current.layer_idx = layer_idx;
     current.feature_ref = feature_ref;
     current.feature_idx = feature_idx;
     current.entity_id = entity_id;
     current.detail = detail;
     if (current.stage == last.stage &&
+        current.hover_target == last.hover_target &&
         current.layer_idx == last.layer_idx &&
         current.feature_ref == last.feature_ref &&
         current.feature_idx == last.feature_idx &&
@@ -54,8 +58,9 @@ void logParcelHoverStateChange(
     std::snprintf(
         buffer,
         sizeof(buffer),
-        "[worldsim3][parcel-pick] stage=%s target=hover layer=%zu feature_ref=%zu feature=%zu entity=%s detail=%s",
+        "[worldsim3][parcel-pick] stage=%s target=%s layer=%zu feature_ref=%zu feature=%zu entity=%s detail=%s",
         current.stage.c_str(),
+        hover_target ? "hover" : "inspect",
         layer_idx,
         feature_ref,
         feature_idx,
@@ -71,8 +76,7 @@ void logParcelPickTrace(
     size_t feature_idx,
     const std::string& entity_id,
     const std::string& detail = {}) {
-    if (!hover_target) return;
-    logParcelHoverStateChange(stage, layer_idx, (size_t)-1, feature_idx, entity_id, detail);
+    logParcelHoverStateChange(stage, hover_target, layer_idx, (size_t)-1, feature_idx, entity_id, detail);
 }
 
 void logParcelPickResolved(
@@ -83,8 +87,7 @@ void logParcelPickResolved(
     size_t feature_idx,
     const std::string& entity_id,
     const std::string& detail = {}) {
-    if (!hover_target) return;
-    logParcelHoverStateChange(stage, layer_idx, feature_ref, feature_idx, entity_id, detail);
+    logParcelHoverStateChange(stage, hover_target, layer_idx, feature_ref, feature_idx, entity_id, detail);
 }
 
 void logParcelPickState(
@@ -97,7 +100,6 @@ void logParcelPickState(
     float mouse_lon = 0.0f,
     float mouse_lat = 0.0f,
     size_t candidates = 0) {
-    if (!hover_target) return;
     char detail[256];
     std::snprintf(
         detail,
@@ -110,7 +112,7 @@ void logParcelPickState(
         parcel_target_active ? 1 : 0,
         mouse_lon,
         mouse_lat);
-    logParcelHoverStateChange(stage, (size_t)-1, (size_t)-1, (size_t)-1, {}, detail);
+    logParcelHoverStateChange(stage, hover_target, (size_t)-1, (size_t)-1, (size_t)-1, {}, detail);
 }
 
 GpuPickRequest makePickRequest(const MapHoverQuery& query) {
@@ -243,14 +245,14 @@ void tryPickParcel(
         raw_feature_idx = feature_idx;
         if (!gpu_ok) {
             logParcelPickTrace("gpu-failed", hover_target, layer_idx, feature_idx, entity_id, pick_error);
-            return;
+            continue;
         } else if (feature_idx == (size_t)-1) {
             logParcelPickTrace("gpu-empty", hover_target, layer_idx, feature_idx, entity_id, "parcel polygon gpu pick returned no feature");
-            return;
+            continue;
         }
         if (feature_idx >= layer.features.size() && entity_id.empty()) {
             logParcelPickTrace("out-of-range", hover_target, layer_idx, feature_idx, entity_id, "layer feature index out of range");
-            return;
+            continue;
         }
         *out_layer_idx = (int)layer_idx;
         *out_feature_idx = feature_idx;
