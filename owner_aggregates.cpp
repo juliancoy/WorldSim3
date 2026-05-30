@@ -53,6 +53,11 @@ std::string classifyOwner(const std::string& owner) {
     return "unknown";
 }
 
+std::string ownerDisplayLabel(const UnifiedParcelRecord& parcel_record) {
+    const std::string label = trimDisplayValue(parcel_record.owner_display);
+    return label.empty() ? parcel_record.owner : label;
+}
+
 void loadOwnerClassOverrides(const OwnerAggregatesContext& ctx) {
     if (!ctx.owner_class_overrides_loaded || !ctx.owner_class_overrides) return;
     if (*ctx.owner_class_overrides_loaded) return;
@@ -133,9 +138,13 @@ void rebuildOwnerAggregates(const OwnerAggregatesContext& ctx) {
             if (owner.empty()) continue;
             auto& row = acc[owner];
             if (row.owner.empty()) row.owner = owner;
+            const std::string owner_display = ownerDisplayLabel(parcel_record);
+            if (row.owner_display.empty() || owner_display.size() > row.owner_display.size()) {
+                row.owner_display = owner_display;
+            }
             if (row.owner_class.empty()) {
                 auto oit = ctx.owner_class_overrides->find(owner);
-                row.owner_class = oit != ctx.owner_class_overrides->end() ? oit->second : classifyOwner(owner);
+                row.owner_class = oit != ctx.owner_class_overrides->end() ? oit->second : classifyOwner(toLowerAscii(owner_display));
             }
             row.property_count += 1;
             row.area_m2 += parcelAreaSqM(ctx.parcel_render_blob, parcel_record.parcel_local_feature_idx, pf ? *pf : LayerDef::FeatureRecord{});

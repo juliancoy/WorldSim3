@@ -30,7 +30,7 @@ struct DerivedLayerCachesContext {
     int tax_lien_layer_idx = -1;
     int tax_sale_layer_idx = -1;
     int parcel_layer_idx = -1;
-    const ParcelRenderCacheBlob* parcel_render_blob = nullptr;
+    ParcelRenderCacheBlob* parcel_render_blob = nullptr;
 
     std::unordered_map<std::string, ZoneMetadata>* zoning_metadata = nullptr;
     std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;

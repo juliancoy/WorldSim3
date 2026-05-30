@@ -8,7 +8,7 @@ std::string normalizedRealPropertyOwnerName(const LayerDef::FeatureRecord* rp) {
     std::string owner = firstDisplayProperty(
         *rp,
         {"OWNER_1", "OWNERNME1", "OWNER", "OWNER_NAME", "AR_OWNER", "OWNER_ABBR"});
-    return toLowerAscii(trimDisplayValue(owner));
+    return canonicalOwnerName(owner);
 }
 
 void drawRealPropertySummary(const LayerDef::FeatureRecord* rp, bool include_owner) {

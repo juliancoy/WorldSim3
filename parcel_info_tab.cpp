@@ -201,9 +201,45 @@ void drawParcelInfoTab(const ParcelInfoTabContext& ctx) {
             if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
             drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
-            std::string summary_owner = selected_unified ? selected_unified->owner : normalizedRealPropertyOwnerName(selected_rp);
+            std::string summary_owner =
+                selected_unified
+                    ? trimDisplayValue(selected_unified->owner_display.empty() ? selected_unified->owner : selected_unified->owner_display)
+                    : std::string();
+            if (summary_owner.empty() && selected_rp) {
+                summary_owner = trimDisplayValue(firstDisplayProperty(
+                    *selected_rp,
+                    {"OWNER_1", "OWNER_2", "OWNER_3", "OWNERNME1", "OWNER", "OWNER_NAME", "OWNER_ABBR", "AR_OWNER"}));
+            }
             if (!summary_owner.empty() && ctx.owner_info_state) {
-                drawOwnerInfoLink(*ctx.owner_info_state, summary_owner, "open_owner_info_parcel_tab");
+                ImGui::TextUnformatted("Owner:");
+                ImGui::SameLine();
+                ImGui::PushID("open_owner_info_parcel_tab");
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.38f, 0.72f, 0.10f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.40f, 0.72f, 0.22f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.16f, 0.34f, 0.62f, 0.32f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.72f, 1.00f, 1.0f));
+                if (ImGui::Button(summary_owner.c_str())) {
+                    openOwnerInfoPageAndSelectOwnerParcels(
+                        *ctx.owner_info_state,
+                        summary_owner,
+                        ctx.unified_parcels,
+                        ctx.clear_parcel_selection,
+                        ctx.select_parcel_id);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                    ImGui::SetTooltip("Open owner in Element tab and select all parcels for this owner");
+                }
+                ImVec2 link_min = ImGui::GetItemRectMin();
+                ImVec2 link_max = ImGui::GetItemRectMax();
+                const float pad_x = ImGui::GetStyle().FramePadding.x;
+                ImGui::GetWindowDrawList()->AddLine(
+                    ImVec2(link_min.x + pad_x, link_max.y - 3.0f),
+                    ImVec2(link_max.x - pad_x, link_max.y - 3.0f),
+                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.42f, 0.72f, 1.00f, 1.0f)),
+                    1.0f);
+                ImGui::PopStyleColor(4);
+                ImGui::PopID();
             }
             if (duckdb_detail.ok) {
                 drawDuckDbParcelDetail(ctx.owner_info_state, ctx.duckdb_analytics, active_feature_id);

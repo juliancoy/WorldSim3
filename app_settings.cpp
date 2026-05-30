@@ -95,6 +95,12 @@ AppSettings loadAppSettings(const fs::path& root, const AppSettings& defaults) {
     if (j.contains("map_title_all_caps") && j["map_title_all_caps"].is_boolean()) {
         out.map_title_all_caps = j["map_title_all_caps"].get<bool>();
     }
+    if (j.contains("map_legend_show_overlay") && j["map_legend_show_overlay"].is_boolean()) {
+        out.map_legend_show_overlay = j["map_legend_show_overlay"].get<bool>();
+    }
+    if (j.contains("map_legend_overlay_position") && j["map_legend_overlay_position"].is_number_integer()) {
+        out.map_legend_overlay_position = std::clamp(j["map_legend_overlay_position"].get<int>(), 0, 3);
+    }
     return out;
 }
 
@@ -123,6 +129,8 @@ void saveAppSettings(const fs::path& root, const AppSettings& settings) {
     j["map_title_text"] = settings.map_title_text;
     j["map_title_show_primary_parcel_source"] = settings.map_title_show_primary_parcel_source;
     j["map_title_all_caps"] = settings.map_title_all_caps;
+    j["map_legend_show_overlay"] = settings.map_legend_show_overlay;
+    j["map_legend_overlay_position"] = std::clamp(settings.map_legend_overlay_position, 0, 3);
     std::ofstream out(root / "data" / "app_settings.json");
     if (out) out << j.dump(2);
 }

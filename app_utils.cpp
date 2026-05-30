@@ -186,6 +186,42 @@ std::string toLowerAscii(std::string s) {
     return s;
 }
 
+std::string canonicalOwnerName(const std::string& s) {
+    static const std::unordered_map<std::string, bool> kStopwords = {
+        {"and", true},
+        {"of", true},
+        {"the", true}
+    };
+
+    const std::string trimmed = trimDisplayValue(s);
+    if (trimmed.empty()) return {};
+
+    std::string cleaned;
+    cleaned.reserve(trimmed.size() + 4);
+    for (unsigned char ch : trimmed) {
+        if (std::isalnum(ch)) {
+            cleaned.push_back((char)std::tolower(ch));
+        } else if (ch == '&') {
+            cleaned += " and ";
+        } else {
+            cleaned.push_back(' ');
+        }
+    }
+
+    std::istringstream in(cleaned);
+    std::ostringstream out;
+    std::string token;
+    bool first = true;
+    while (in >> token) {
+        if (kStopwords.find(token) != kStopwords.end()) continue;
+        if (!first) out << ' ';
+        out << token;
+        first = false;
+    }
+    const std::string canonical = out.str();
+    return canonical.empty() ? normalizeFuzzySearchText(trimmed) : canonical;
+}
+
 std::string normalizeGeographyToken(const std::string& s) {
     return toLowerAscii(trimDisplayValue(s));
 }

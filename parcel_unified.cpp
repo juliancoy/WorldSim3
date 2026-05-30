@@ -102,8 +102,8 @@ std::vector<UnifiedParcelRecord> buildUnifiedParcels(const UnifiedParcelBuildReq
             ? &(*real_property_features)[row.real_property_local_feature_idx]
             : nullptr;
         row.owner_display = ownerDisplay(rp, parcel);
-        row.owner = toLowerAscii(row.owner_display);
-        row.owner_search = row.owner;
+        row.owner = canonicalOwnerName(row.owner_display);
+        row.owner_search = normalizeFuzzySearchText(row.owner_display.empty() ? row.owner : row.owner_display);
         row.address = addressFor(rp, parcel);
         row.address_search = normalizeAddressSearchText(row.address);
         row.zip = rp ? firstDisplayProperty(*rp, {"zip", "ZIP", "ZIPCODE", "POSTAL_CODE"}) : "";

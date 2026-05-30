@@ -828,7 +828,15 @@ int runWorldSim3App(int argc, char** argv) {
     auto& filter_owner = map_filter_state.owner;
     char owner_search_query[96] = "";
     char owner_info_property_query[128] = "";
-    ElementInfoUiState element_info_state{{}, (size_t)-1, false, owner_info_property_query, sizeof(owner_info_property_query)};
+    ElementInfoUiState element_info_state{
+        {},
+        (size_t)-1,
+        false,
+        owner_info_property_query,
+        sizeof(owner_info_property_query),
+        100,
+        12
+    };
     ParcelSelectionState parcel_selection;
     bool& show_selected_parcel_details = parcel_selection.show_details;
     std::string& selected_parcel_entity_id = parcel_selection.active_entity_id;

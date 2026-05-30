@@ -10,8 +10,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
+#include <nlohmann/json.hpp>
 
 namespace {
+using json = nlohmann::json;
 constexpr ImVec4 kDarkModeLinkBlue = ImVec4(0.42f, 0.72f, 1.00f, 1.0f);
 constexpr ImVec4 kDarkModeLinkBlueBg = ImVec4(0.18f, 0.38f, 0.72f, 0.10f);
 constexpr ImVec4 kDarkModeLinkBlueHoverBg = ImVec4(0.20f, 0.40f, 0.72f, 0.22f);
@@ -31,6 +34,68 @@ bool sameEntry(const ElementInfoEntry& a, const ElementInfoEntry& b) {
 
 void clearOwnerPropertyQuery(ElementInfoUiState& state) {
     if (state.property_query && state.property_query_size > 0) state.property_query[0] = '\0';
+}
+
+std::string ownerLabelForRecord(const UnifiedParcelRecord& parcel) {
+    return trimDisplayValue(parcel.owner_display.empty() ? parcel.owner : parcel.owner_display);
+}
+
+std::string ownerLookupKey(const std::string& owner) {
+    return canonicalOwnerName(trimDisplayValue(owner));
+}
+
+std::string ownerLookupKeyForRecord(const UnifiedParcelRecord& parcel) {
+    if (!parcel.owner.empty()) return parcel.owner;
+    return ownerLookupKey(ownerLabelForRecord(parcel));
+}
+
+bool parcelMatchesOwner(const UnifiedParcelRecord& parcel, const std::string& owner) {
+    const std::string owner_key = ownerLookupKey(owner);
+    return !owner_key.empty() && ownerLookupKeyForRecord(parcel) == owner_key;
+}
+
+std::vector<OwnerSimilarMatch> buildSimilarOwnerMatches(
+    const std::vector<UnifiedParcelRecord>& unified_parcels,
+    const std::string& owner,
+    int min_score,
+    int limit) {
+    struct SimilarOwnerAccumulator {
+        OwnerSimilarMatch match;
+    };
+
+    const std::string owner_label = trimDisplayValue(owner);
+    const std::string owner_key = ownerLookupKey(owner_label);
+    std::unordered_map<std::string, SimilarOwnerAccumulator> matches_by_key;
+    matches_by_key.reserve(256);
+    for (const auto& parcel : unified_parcels) {
+        const std::string candidate_owner = ownerLabelForRecord(parcel);
+        const std::string candidate_key = ownerLookupKeyForRecord(parcel);
+        if (candidate_owner.empty() || candidate_key.empty() || candidate_key == owner_key) continue;
+        const int score = fuzzyTextScore(candidate_owner, owner_label);
+        if (score < min_score) continue;
+        auto [it, inserted] = matches_by_key.try_emplace(candidate_key);
+        SimilarOwnerAccumulator& acc = it->second;
+        if (inserted || acc.match.owner.empty() || candidate_owner.size() < acc.match.owner.size()) {
+            acc.match.owner = candidate_owner;
+            acc.match.score = score;
+        } else if (score > acc.match.score) {
+            acc.match.score = score;
+        }
+        acc.match.property_count += 1;
+        acc.match.current_value += parcel.current_value;
+    }
+
+    std::vector<OwnerSimilarMatch> matches;
+    matches.reserve(matches_by_key.size());
+    for (auto& kv : matches_by_key) matches.push_back(std::move(kv.second.match));
+    std::stable_sort(matches.begin(), matches.end(), [](const OwnerSimilarMatch& a, const OwnerSimilarMatch& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (a.property_count != b.property_count) return a.property_count > b.property_count;
+        if (a.current_value != b.current_value) return a.current_value > b.current_value;
+        return a.owner < b.owner;
+    });
+    if (limit > 0 && (size_t)limit < matches.size()) matches.resize((size_t)limit);
+    return matches;
 }
 
 void openElementPage(ElementInfoUiState& state, ElementInfoEntry entry) {
@@ -252,22 +317,50 @@ bool drawDuckDbParcelTimeline(DuckDbAnalytics* duckdb_analytics, const std::stri
     };
     ImGui::TextDisabled("%zu event(s), newest first", result.rows.size());
     ImGui::BeginChild("parcel_history_events", ImVec2(0, 260.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-    for (const auto& row : result.rows) {
+    for (size_t row_idx = 0; row_idx < result.rows.size(); ++row_idx) {
+        const auto& row = result.rows[row_idx];
         const std::string date = trimDisplayValue(cell(row, "event_date"));
         const std::string year = trimDisplayValue(cell(row, "event_year"));
         const std::string event_type = trimDisplayValue(cell(row, "event_type"));
+        const std::string event_label = trimDisplayValue(cell(row, "event_label"));
+        const std::string event_title = trimDisplayValue(cell(row, "event_title"));
+        const std::string event_detail = trimDisplayValue(cell(row, "event_detail"));
+        const std::string event_metadata_json = trimDisplayValue(cell(row, "event_metadata_json"));
         const std::string status = trimDisplayValue(cell(row, "event_status"));
         const std::string amount = trimDisplayValue(cell(row, "amount_usd"));
         const std::string source_name = trimDisplayValue(cell(row, "source_layer_name"));
         const std::string source_file = trimDisplayValue(cell(row, "source_layer_file"));
         const std::string date_label =
             !date.empty() && date != "NULL" ? date : (!year.empty() && year != "NULL" ? year : "(date unavailable)");
-        ImGui::TextWrapped("%s - %s", date_label.c_str(), event_type.empty() || event_type == "NULL" ? "Event" : event_type.c_str());
+        const std::string primary_label =
+            !event_label.empty() && event_label != "NULL"
+                ? event_label
+                : (event_type.empty() || event_type == "NULL" ? "Event" : event_type);
+        ImGui::TextWrapped("%s - %s", date_label.c_str(), primary_label.c_str());
+        if (!event_title.empty() && event_title != "NULL" && event_title != primary_label) {
+            ImGui::TextWrapped("%s", event_title.c_str());
+        }
+        if (!event_detail.empty() && event_detail != "NULL" && event_detail != event_title) {
+            ImGui::TextWrapped("%s", event_detail.c_str());
+        }
         if (!status.empty() && status != "NULL") ImGui::TextWrapped("Status: %s", status.c_str());
         if (!amount.empty() && amount != "NULL") {
             const double amount_value = parseNumericField(amount);
             if (amount_value > 0.0) ImGui::TextWrapped("Amount: %s", formatUsd(amount_value, 2).c_str());
             else ImGui::TextWrapped("Amount: %s", amount.c_str());
+        }
+        if (!event_metadata_json.empty() && event_metadata_json != "NULL") {
+            const json metadata = json::parse(event_metadata_json, nullptr, false);
+            ImGui::PushID((int)row_idx);
+            if (metadata.is_object() && !metadata.empty() && ImGui::TreeNode("Additional Fields")) {
+                for (auto it = metadata.begin(); it != metadata.end(); ++it) {
+                    if (it.value().is_string()) {
+                        ImGui::TextWrapped("%s: %s", it.key().c_str(), it.value().get_ref<const std::string&>().c_str());
+                    }
+                }
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
         }
         if (!source_name.empty() && source_name != "NULL") ImGui::TextDisabled("Source: %s", source_name.c_str());
         else if (!source_file.empty() && source_file != "NULL") ImGui::TextDisabled("Source: %s", source_file.c_str());
@@ -275,6 +368,13 @@ bool drawDuckDbParcelTimeline(DuckDbAnalytics* duckdb_analytics, const std::stri
     }
     ImGui::EndChild();
     return true;
+}
+
+size_t duckDbParcelTimelineCount(DuckDbAnalytics* duckdb_analytics, const std::string& blocklot) {
+    if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok || trimDisplayValue(blocklot).empty()) return 0;
+    const DuckDbQueryResult result = duckdb_analytics->queryParcelEvents(blocklot, 256);
+    if (!result.ok) return 0;
+    return result.rows.size();
 }
 
 bool drawLocalParcelTimeline(
@@ -425,10 +525,46 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
     if (tax_sale > 0) ImGui::Text("Tax Sale Total Lien: %s", formatUsd(tax_sale_amount, 2).c_str());
     drawParcelCurrentValueTotal(current_value_total, selected_unified);
 
-    std::string summary_owner = selected_unified ? selected_unified->owner : duckdb_detail.owner;
+    std::string summary_owner = selected_unified ? ownerLabelForRecord(*selected_unified) : duckdb_detail.owner;
     if (summary_owner.empty()) summary_owner = duckdb_detail.owner_display;
     if (summary_owner.empty()) summary_owner = normalizedRealPropertyOwnerName(selected_rp);
-    if (!summary_owner.empty() && ctx.state) drawOwnerInfoLink(*ctx.state, summary_owner, "open_owner_info_element_tab");
+    if (!summary_owner.empty() && ctx.state) {
+        ImGui::TextUnformatted("Owner:");
+        ImGui::SameLine();
+        ImGui::PushID("open_owner_info_element_tab");
+        ImGui::PushStyleColor(ImGuiCol_Button, kDarkModeLinkBlueBg);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kDarkModeLinkBlueHoverBg);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, kDarkModeLinkBlueActiveBg);
+        ImGui::PushStyleColor(ImGuiCol_Text, kDarkModeLinkBlue);
+        if (ImGui::Button(summary_owner.c_str())) {
+            openOwnerInfoPageAndSelectOwnerParcels(
+                *ctx.state,
+                summary_owner,
+                ctx.unified_parcels,
+                ctx.clear_parcel_selection,
+                ctx.select_parcel_id);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+            ImGui::SetTooltip("Open owner in Element tab and select all parcels for this owner");
+        }
+        ImVec2 link_min = ImGui::GetItemRectMin();
+        ImVec2 link_max = ImGui::GetItemRectMax();
+        const float pad_x = ImGui::GetStyle().FramePadding.x;
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(link_min.x + pad_x, link_max.y - 3.0f),
+            ImVec2(link_max.x - pad_x, link_max.y - 3.0f),
+            ImGui::ColorConvertFloat4ToU32(kDarkModeLinkBlue),
+            1.0f);
+        ImGui::PopStyleColor(4);
+        ImGui::PopID();
+    }
+    const std::string timeline_blocklot = duckdb_detail.ok ? duckdb_detail.blocklot : blocklot_raw;
+    const size_t duckdb_timeline_event_count = duckDbParcelTimelineCount(ctx.duckdb_analytics, timeline_blocklot);
+    if (duckdb_timeline_event_count > 0) {
+        ImGui::TextColored(ImVec4(0.98f, 0.78f, 0.22f, 1.0f), "History Available: %zu event(s)", duckdb_timeline_event_count);
+    }
+
     if (duckdb_detail.ok) {
         drawDuckDbParcelDetail(ctx.state, ctx.duckdb_analytics, parcel_entity_id);
     } else if (selected_unified) {
@@ -437,8 +573,11 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
         drawRealPropertySummary(selected_rp, false);
     }
 
-    ImGui::SeparatorText("Parcel History");
-    const std::string timeline_blocklot = duckdb_detail.ok ? duckdb_detail.blocklot : blocklot_raw;
+    const std::string history_title =
+        duckdb_timeline_event_count > 0
+            ? ("Parcel History (" + std::to_string(duckdb_timeline_event_count) + " Events)")
+            : "Parcel History";
+    ImGui::SeparatorText(history_title.c_str());
     const bool duckdb_timeline_available =
         ctx.duckdb_analytics &&
         ctx.duckdb_analytics->status().last_rebuild_ok &&
@@ -477,11 +616,17 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
     } else if (!ctx.unified_parcels) {
         ImGui::TextDisabled("Owner parcel data is unavailable.");
     } else {
+        const std::string owner_key = trimDisplayValue(owner);
+        std::string owner_label = owner_key;
         std::vector<std::string> owner_parcel_ids;
         owner_parcel_ids.reserve(512);
         double owner_value_total = 0.0;
         for (const auto& parcel_record : *ctx.unified_parcels) {
-            if (parcel_record.owner != owner) continue;
+            if (!parcelMatchesOwner(parcel_record, owner_key)) continue;
+            if (owner_label == owner_key) {
+                const std::string parcel_owner_label = ownerLabelForRecord(parcel_record);
+                if (!parcel_owner_label.empty()) owner_label = parcel_owner_label;
+            }
             owner_parcel_ids.push_back(parcel_record.parcel_entity_id);
             owner_value_total += parcel_record.current_value;
         }
@@ -494,11 +639,66 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         }
 
         ImGui::Text("Element: Owner");
-        ImGui::Text("Owner: %s", owner.c_str());
+        ImGui::TextWrapped("Owner: %s", owner_label.c_str());
         ImGui::Text("Properties: %zu", owner_parcel_ids.size());
         ImGui::Text("Total Current Value: %s", formatUsd(owner_value_total).c_str());
         if (owner_bounds.valid && ImGui::Button("Zoom To Owner Extent")) {
             applyBoundsView(ctx, owner_bounds);
+        }
+        if (ctx.state) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Similar Owner Names");
+            int min_score = std::clamp(ctx.state->owner_fuzzy_match_min_score, 25, 120);
+            if (ImGui::SliderInt("Fuzzy Threshold", &min_score, 25, 120)) {
+                ctx.state->owner_fuzzy_match_min_score = min_score;
+            }
+            int match_limit = std::clamp(ctx.state->owner_fuzzy_match_limit, 1, 32);
+            if (ImGui::SliderInt("Match Limit", &match_limit, 1, 32)) {
+                ctx.state->owner_fuzzy_match_limit = match_limit;
+            }
+            const std::string owner_cache_key = ownerLookupKey(owner_label);
+            if (ctx.state->owner_fuzzy_cache_key != owner_cache_key ||
+                ctx.state->owner_fuzzy_cache_min_score != ctx.state->owner_fuzzy_match_min_score ||
+                ctx.state->owner_fuzzy_cache_limit != ctx.state->owner_fuzzy_match_limit) {
+                ctx.state->owner_fuzzy_cache_key = owner_cache_key;
+                ctx.state->owner_fuzzy_cache_min_score = ctx.state->owner_fuzzy_match_min_score;
+                ctx.state->owner_fuzzy_cache_limit = ctx.state->owner_fuzzy_match_limit;
+                ctx.state->owner_fuzzy_cache_matches = buildSimilarOwnerMatches(
+                    *ctx.unified_parcels,
+                    owner_label,
+                    ctx.state->owner_fuzzy_match_min_score,
+                    ctx.state->owner_fuzzy_match_limit);
+            }
+            const std::vector<OwnerSimilarMatch>& similar_matches = ctx.state->owner_fuzzy_cache_matches;
+            if (similar_matches.empty()) {
+                ImGui::TextDisabled("No similar owner names at the current threshold.");
+            } else {
+                ImGui::TextDisabled(
+                    "%zu similar owner name%s",
+                    similar_matches.size(),
+                    similar_matches.size() == 1 ? "" : "s");
+                for (size_t i = 0; i < similar_matches.size(); ++i) {
+                    const OwnerSimilarMatch& match = similar_matches[i];
+                    ImGui::PushID((int)i + 4000);
+                    if (ImGui::SmallButton("Open")) {
+                        openOwnerInfoPageAndSelectOwnerParcels(
+                            *ctx.state,
+                            match.owner,
+                            ctx.unified_parcels,
+                            ctx.clear_parcel_selection,
+                            ctx.select_parcel_id);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("%s", match.owner.c_str());
+                    ImGui::TextDisabled(
+                        "score: %d | properties: %zu | value: %s",
+                        match.score,
+                        match.property_count,
+                        formatUsd(match.current_value).c_str());
+                    ImGui::PopID();
+                    ImGui::Separator();
+                }
+            }
         }
 
         if (ctx.state && ctx.state->property_query && ctx.state->property_query_size > 0) {
@@ -648,6 +848,28 @@ void openElementParcelPage(ElementInfoUiState& state, const std::string& parcel_
 
 void openOwnerInfoPage(ElementInfoUiState& state, const std::string& owner) {
     openElementPage(state, ElementInfoEntry{ElementInfoKind::Owner, {}, owner, {}});
+}
+
+void openOwnerInfoPageAndSelectOwnerParcels(
+    ElementInfoUiState& state,
+    const std::string& owner,
+    const std::vector<UnifiedParcelRecord>* unified_parcels,
+    const std::function<void()>& clear_parcel_selection,
+    const std::function<bool(const std::string&, bool)>& select_parcel_id) {
+    const std::string normalized_owner = trimDisplayValue(owner);
+    std::string page_owner = normalized_owner;
+    if (!normalized_owner.empty() && unified_parcels && clear_parcel_selection && select_parcel_id) {
+        clear_parcel_selection();
+        for (const UnifiedParcelRecord& parcel : *unified_parcels) {
+            if (!parcelMatchesOwner(parcel, normalized_owner)) continue;
+            if (page_owner == normalized_owner) {
+                const std::string parcel_owner_label = ownerLabelForRecord(parcel);
+                if (!parcel_owner_label.empty()) page_owner = parcel_owner_label;
+            }
+            select_parcel_id(parcel.parcel_entity_id, true);
+        }
+    }
+    openOwnerInfoPage(state, page_owner.empty() ? owner : page_owner);
 }
 
 void openParcelSourceInfoPage(ElementInfoUiState& state, const std::string& source) {

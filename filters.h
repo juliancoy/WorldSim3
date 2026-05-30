@@ -75,8 +75,10 @@ struct FilterResultSet {
     std::unordered_set<std::string> owners;
 };
 
-struct QueryMapLayer {
+struct QueryRecord {
     bool enabled = true;
+    std::string executed_at_utc;
+    std::string mode;
     std::string name;
     std::string sql;
     float color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
@@ -84,39 +86,31 @@ struct QueryMapLayer {
     FilterResultSet result_set;
     size_t row_count = 0;
     std::string status;
+    struct ExecutionContextSnapshot {
+        bool filter_enabled = false;
+        bool filter_use_date = false;
+        int filter_year_min = 2000;
+        int filter_year_max = 2026;
+        std::string filter_blocklot;
+        std::string filter_status;
+        std::string filter_address;
+        std::string filter_owner;
+        std::string filter_zip;
+        CrimeFilterState crime;
+        std::vector<std::string> selected_owners;
+        std::vector<std::string> selected_parcel_blocklots;
+        std::unordered_map<std::string, bool> event_sector_enabled;
+        double center_lon = -76.6122;
+        double center_lat = 39.2904;
+        double zoom = 12.0;
+        std::string map_title_text;
+        bool map_title_show_primary_parcel_source = false;
+    } snapshot;
 };
 
-struct QueryExecutionContextSnapshot {
-    bool filter_enabled = false;
-    bool filter_use_date = false;
-    int filter_year_min = 2000;
-    int filter_year_max = 2026;
-    std::string filter_blocklot;
-    std::string filter_status;
-    std::string filter_address;
-    std::string filter_owner;
-    std::string filter_zip;
-    CrimeFilterState crime;
-    std::vector<std::string> selected_owners;
-    std::vector<std::string> selected_parcel_blocklots;
-    std::unordered_map<std::string, bool> event_sector_enabled;
-    double center_lon = -76.6122;
-    double center_lat = 39.2904;
-    double zoom = 12.0;
-    std::string map_title_text;
-    bool map_title_show_primary_parcel_source = false;
-};
-
-struct QueryHistoryEntry {
-    std::string executed_at_utc;
-    std::string mode;
-    std::string name;
-    std::string sql;
-    float color[4] = {1.0f, 0.48f, 0.08f, 1.0f};
-    size_t row_count = 0;
-    std::string status;
-    QueryExecutionContextSnapshot snapshot;
-};
+using QueryExecutionContextSnapshot = QueryRecord::ExecutionContextSnapshot;
+using QueryMapLayer = QueryRecord;
+using QueryHistoryEntry = QueryRecord;
 
 struct ParcelJurisdictionFilterState {
     std::unordered_set<std::string> selected_jurisdictions;

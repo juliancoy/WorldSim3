@@ -14,6 +14,10 @@ std::string ownerClassLabel(const std::vector<std::pair<std::string, std::string
     return "Unknown";
 }
 
+const std::string& ownerRowLabel(const OwnerAggregate& row) {
+    return row.owner_display.empty() ? row.owner : row.owner_display;
+}
+
 void toggleOwnerVisibility(
     const std::vector<OwnerAggregate>& owner_aggregates,
     const std::vector<size_t>& owner_visible_indices,
@@ -74,7 +78,7 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
                 if (a.property_count != b.property_count) return a.property_count > b.property_count;
                 if (std::abs(a.area_m2 - b.area_m2) > 0.5) return a.area_m2 > b.area_m2;
                 if (std::abs(a.value_usd - b.value_usd) > 0.5) return a.value_usd > b.value_usd;
-                return a.owner < b.owner;
+                return ownerRowLabel(a) < ownerRowLabel(b);
             };
             if (*ctx.owner_sort_mode == 1 && std::abs(a.area_m2 - b.area_m2) > 0.5) return a.area_m2 > b.area_m2;
             if (*ctx.owner_sort_mode == 2 && std::abs(a.value_usd - b.value_usd) > 0.5) return a.value_usd > b.value_usd;
@@ -158,7 +162,9 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
     for (size_t i = 0; i < owner_aggregates.size(); ++i) {
         if (owner_class_filter_key != "all" && owner_aggregates[i].owner_class != owner_class_filter_key) continue;
         if (!owner_query.empty()) {
-            const int score = fuzzyTextScore(owner_aggregates[i].owner, owner_query);
+            const int score = std::max(
+                fuzzyTextScore(ownerRowLabel(owner_aggregates[i]), owner_query),
+                fuzzyTextScore(owner_aggregates[i].owner, owner_query));
             if (score < 25) continue;
             fuzzy_owner_matches.push_back({i, score});
         } else {
@@ -171,7 +177,7 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
             const auto& ao = owner_aggregates[a.first];
             const auto& bo = owner_aggregates[b.first];
             if (ao.property_count != bo.property_count) return ao.property_count > bo.property_count;
-            return ao.owner < bo.owner;
+            return ownerRowLabel(ao) < ownerRowLabel(bo);
         });
         owner_visible_indices.reserve(fuzzy_owner_matches.size());
         for (const auto& match : fuzzy_owner_matches) owner_visible_indices.push_back(match.first);
@@ -201,12 +207,12 @@ void drawOwnersTab(const OwnersTabContext& ctx) {
                 ImGui::SetTooltip("%s owner visibility. Shift-click applies a visible range.", owner_visible ? "Hide" : "Show");
             }
             ImGui::SameLine();
-            ImGui::TextUnformatted(r.owner.c_str());
+            ImGui::TextUnformatted(ownerRowLabel(r).c_str());
             ImGui::PopID();
             ImGui::SameLine();
             ImGui::PushID((int)agg_idx + 1000000);
             if (ImGui::SmallButton("Open")) {
-                openOwnerInfoPage(*ctx.owner_info_state, r.owner);
+                openOwnerInfoPage(*ctx.owner_info_state, ownerRowLabel(r));
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Open owner info page");

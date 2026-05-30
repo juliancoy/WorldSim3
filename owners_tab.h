@@ -14,6 +14,7 @@
 
 struct OwnerAggregate {
     std::string owner;
+    std::string owner_display;
     std::string owner_class;
     size_t property_count = 0;
     double area_m2 = 0.0;

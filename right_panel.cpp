@@ -99,6 +99,29 @@ void drawMapTitleTab(const RightPanelContext& ctx) {
             ctx.app_settings->map_title_all_caps = all_caps;
             saveAppSettings(*ctx.root, *ctx.app_settings);
         }
+        bool show_legend = ctx.app_settings->map_legend_show_overlay;
+        if (ImGui::Checkbox("Show legend on map", &show_legend)) {
+            ctx.app_settings->map_legend_show_overlay = show_legend;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        static const char* kLegendPositions[] = {"Top Left", "Top Right", "Bottom Left", "Bottom Right"};
+        int legend_position = std::clamp(ctx.app_settings->map_legend_overlay_position, 0, 3);
+        ImGui::BeginDisabled(!ctx.app_settings->map_legend_show_overlay);
+        if (ImGui::Combo("Legend Position", &legend_position, kLegendPositions, IM_ARRAYSIZE(kLegendPositions))) {
+            ctx.app_settings->map_legend_overlay_position = legend_position;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        ImGui::EndDisabled();
+        const size_t active_legend_items = ctx.query_layers
+            ? std::count_if(
+                ctx.query_layers->begin(),
+                ctx.query_layers->end(),
+                [](const QueryMapLayer& layer) { return layer.enabled; })
+            : 0;
+        ImGui::TextDisabled(
+            "Legend source: %zu active query layer%s",
+            active_legend_items,
+            active_legend_items == 1 ? "" : "s");
         const std::string preview_source = primaryParcelSourceLabel(ctx);
         if (!preview_source.empty()) {
             ImGui::TextDisabled("Preview: Source: %s", preview_source.c_str());

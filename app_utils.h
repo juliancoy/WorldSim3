@@ -32,6 +32,7 @@ void setBootstrapStatus(BootstrapProgress& bp, const std::string& s);
 std::string readTextFile(const std::filesystem::path& p);
 void collectTodoWork(const std::string& todo_text, std::vector<std::string>& past, std::vector<std::string>& future);
 std::string toLowerAscii(std::string s);
+std::string canonicalOwnerName(const std::string& s);
 std::string normalizeGeographyToken(const std::string& s);
 bool containsCaseInsensitive(std::string_view haystack, std::string_view needle);
 bool containsCaseInsensitive(const std::string& haystack, const std::string& needle);

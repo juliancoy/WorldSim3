@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #if !defined(_WIN32)
 #include <malloc.h>
@@ -156,6 +157,53 @@ std::string controlsPresetSql(const std::string& preset) {
             ORDER BY current_value DESC, parcel_entity_id
         )SQL";
     }
+    if (preset == "vacant_notice_parcels") {
+        return R"SQL(
+            SELECT
+                parcel_layer_idx AS layer_idx,
+                parcel_entity_id AS entity_id,
+                blocklot,
+                coalesce(nullif(owner_display, ''), owner) AS owner,
+                owner_display,
+                address,
+                vacant_notice_count,
+                current_value,
+                parcel_source_file
+            FROM unified_parcels
+            WHERE vacant_notice_count > 0
+              AND parcel_source_file = 'parcel.geojson'
+            ORDER BY vacant_notice_count DESC, current_value DESC, blocklot ASC
+        )SQL";
+    }
+    if (preset == "vacant_notice_top_owners") {
+        return R"SQL(
+            WITH vacant AS (
+                SELECT
+                    parcel_layer_idx AS layer_idx,
+                    parcel_entity_id AS entity_id,
+                    blocklot,
+                    coalesce(nullif(owner_display, ''), owner) AS owner,
+                    owner_display,
+                    address,
+                    vacant_notice_count,
+                    current_value
+                FROM unified_parcels
+                WHERE vacant_notice_count > 0
+                  AND parcel_source_file = 'parcel.geojson'
+            )
+            SELECT
+                layer_idx,
+                entity_id,
+                blocklot,
+                owner,
+                owner_display,
+                address,
+                vacant_notice_count,
+                current_value
+            FROM vacant
+            ORDER BY vacant_notice_count DESC, current_value DESC, blocklot ASC
+        )SQL";
+    }
     return {};
 }
 
@@ -181,15 +229,32 @@ DuckDbQueryResult controlsPresetInMemory(
     const bool unavailable =
         preset == "unavailable_value" || preset == "missing_value" || preset == "no_value";
     const bool valued = preset == "valued_parcels";
-    if (!unavailable && !valued) {
+    const bool vacant_notice = preset == "vacant_notice_parcels";
+    if (!unavailable && !valued && !vacant_notice) {
         out.ok = false;
         out.message = "Unknown in-memory controls preset.";
         return out;
     }
 
+    if (vacant_notice) {
+        out.columns = {
+            "layer_idx",
+            "entity_id",
+            "blocklot",
+            "owner",
+            "owner_display",
+            "address",
+            "vacant_notice_count",
+            "current_value",
+            "parcel_source_file"
+        };
+    }
+
     size_t matched = 0;
     for (const auto& rec : parcels) {
-        const bool keep = unavailable ? rec.current_value <= 0.0 : rec.current_value > 0.0;
+        const bool keep =
+            vacant_notice ? (rec.vacant_notice_count > 0 && rec.parcel_source_file == "parcel.geojson")
+                          : (unavailable ? rec.current_value <= 0.0 : rec.current_value > 0.0);
         if (!keep) continue;
         ++matched;
         out.result_set.layers.insert(rec.parcel_layer_idx);
@@ -202,18 +267,32 @@ DuckDbQueryResult controlsPresetInMemory(
         if (!rec.blocklot.empty()) out.result_set.blocklots.insert(rec.blocklot);
         if (!rec.owner.empty()) out.result_set.owners.insert(rec.owner);
         if (out.rows.size() < max_rows) {
-            out.rows.push_back({
-                std::to_string((uint64_t)rec.parcel_layer_idx),
-                rec.parcel_entity_id,
-                rec.blocklot,
-                rec.owner,
-                rec.owner_display,
-                rec.address,
-                std::to_string(rec.current_value),
-                rec.has_property_record ? "true" : "false",
-                rec.parcel_source_file,
-                rec.property_source_file
-            });
+            if (vacant_notice) {
+                out.rows.push_back({
+                    std::to_string((uint64_t)rec.parcel_layer_idx),
+                    rec.parcel_entity_id,
+                    rec.blocklot,
+                    rec.owner,
+                    rec.owner_display,
+                    rec.address,
+                    std::to_string(rec.vacant_notice_count),
+                    std::to_string(rec.current_value),
+                    rec.parcel_source_file
+                });
+            } else {
+                out.rows.push_back({
+                    std::to_string((uint64_t)rec.parcel_layer_idx),
+                    rec.parcel_entity_id,
+                    rec.blocklot,
+                    rec.owner,
+                    rec.owner_display,
+                    rec.address,
+                    std::to_string(rec.current_value),
+                    rec.has_property_record ? "true" : "false",
+                    rec.parcel_source_file,
+                    rec.property_source_file
+                });
+            }
         }
     }
     out.result_set.active = true;
@@ -330,6 +409,182 @@ void applyControlColor(
     }
     apply_hex(layer.outline_color, outline_color_raw);
     apply_components(layer.outline_color, outline_r_raw, outline_g_raw, outline_b_raw, outline_a_raw);
+}
+
+std::string vacantNoticeOwnerBaseSql() {
+    return R"SQL(
+        WITH vacant AS (
+            SELECT
+                parcel_layer_idx AS layer_idx,
+                parcel_entity_id AS entity_id,
+                blocklot,
+                coalesce(nullif(owner_display, ''), owner) AS owner,
+                owner_display,
+                address,
+                vacant_notice_count,
+                current_value
+            FROM unified_parcels
+            WHERE vacant_notice_count > 0
+              AND parcel_source_file = 'parcel.geojson'
+        )
+        SELECT
+            layer_idx,
+            entity_id,
+            blocklot,
+            owner,
+            owner_display,
+            address,
+            vacant_notice_count,
+            current_value
+        FROM vacant
+    )SQL";
+}
+
+std::string sqlQuotedList(const std::vector<std::string>& values) {
+    std::ostringstream sql;
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) sql << ", ";
+        std::string escaped;
+        escaped.reserve(values[i].size() + 8);
+        for (char ch : values[i]) {
+            if (ch == '\'') escaped += "''";
+            else escaped.push_back(ch);
+        }
+        sql << "'" << escaped << "'";
+    }
+    return sql.str();
+}
+
+struct VacantNoticeOwnerBucket {
+    std::string owner_key;
+    std::string owner_label;
+    size_t parcel_count = 0;
+};
+
+std::vector<VacantNoticeOwnerBucket> topVacantNoticeOwners(
+    DuckDbAnalytics& duckdb_analytics,
+    size_t max_owners) {
+    std::vector<VacantNoticeOwnerBucket> out;
+    const std::string sql =
+        "SELECT owner, min(coalesce(nullif(owner_display, ''), owner)) AS owner_label, count(*) AS parcel_count "
+        "FROM unified_parcels "
+        "WHERE vacant_notice_count > 0 "
+        "  AND parcel_source_file = 'parcel.geojson' "
+        "  AND trim(coalesce(nullif(owner_display, ''), owner)) <> '' "
+        "  AND trim(coalesce(owner, '')) <> '' "
+        "GROUP BY 1 "
+        "ORDER BY parcel_count DESC, owner_label ASC "
+        "LIMIT " + std::to_string(std::max<size_t>(1, max_owners));
+    const DuckDbQueryResult result = duckdb_analytics.executeMapQuery(sql, {}, {}, max_owners);
+    if (!result.ok) return out;
+    int owner_col = -1;
+    int owner_label_col = -1;
+    int count_col = -1;
+    for (size_t i = 0; i < result.columns.size(); ++i) {
+        const std::string col = toLowerAscii(trimDisplayValue(result.columns[i]));
+        if (col == "owner") owner_col = (int)i;
+        else if (col == "owner_label") owner_label_col = (int)i;
+        else if (col == "parcel_count") count_col = (int)i;
+    }
+    if (owner_col < 0) return out;
+    for (const auto& row : result.rows) {
+        if ((size_t)owner_col >= row.size()) continue;
+        const std::string owner_key = trimDisplayValue(row[(size_t)owner_col]);
+        if (owner_key.empty()) continue;
+        std::string owner_label =
+            owner_label_col >= 0 && (size_t)owner_label_col < row.size()
+                ? trimDisplayValue(row[(size_t)owner_label_col])
+                : owner_key;
+        if (owner_label.empty()) owner_label = owner_key;
+        size_t count = 0;
+        if (count_col >= 0 && (size_t)count_col < row.size()) {
+            try {
+                count = (size_t)std::stoull(row[(size_t)count_col]);
+            } catch (...) {
+            }
+        }
+        out.push_back({owner_key, owner_label, count});
+    }
+    return out;
+}
+
+DuckDbQueryResult executeVacantNoticeOwnerBucketQuery(
+    DuckDbAnalytics& duckdb_analytics,
+    const std::vector<std::string>& owners,
+    bool others,
+    size_t max_rows) {
+    std::ostringstream sql;
+    sql << "WITH bucket AS (" << vacantNoticeOwnerBaseSql() << ")";
+    sql << " SELECT layer_idx, entity_id, blocklot, owner, owner_display, address, vacant_notice_count, current_value FROM bucket";
+    if (!owners.empty()) {
+        sql << " WHERE owner " << (others ? "NOT IN (" : "IN (") << sqlQuotedList(owners) << ")";
+    } else if (others) {
+        sql << " WHERE owner IS NOT NULL";
+    }
+    sql << " ORDER BY vacant_notice_count DESC, current_value DESC, blocklot ASC";
+    return duckdb_analytics.executeMapQuery(sql.str(), {}, {}, max_rows);
+}
+
+std::vector<ApiQueryControlCommand> buildVacantNoticeOwnerLayerCommands(
+    DuckDbAnalytics& duckdb_analytics,
+    size_t top_n,
+    size_t max_rows,
+    const std::string& base_name) {
+    static const char* kPalette[] = {
+        "#1f77b4cc", "#ff7f0ecc", "#2ca02ccc", "#d62728cc",
+        "#9467bdcc", "#8c564bcc", "#e377c2cc", "#7f7f7fcc",
+        "#bcbd22cc", "#17becfcc", "#3b5b92cc", "#d95f02cc",
+        "#66a61ecc", "#e6ab02cc", "#a6761dcc", "#7570b3cc"
+    };
+    std::vector<ApiQueryControlCommand> out;
+    const std::vector<VacantNoticeOwnerBucket> top_owners =
+        topVacantNoticeOwners(duckdb_analytics, std::min<size_t>(top_n, std::size(kPalette)));
+    if (top_owners.empty()) return out;
+
+    std::vector<std::string> owner_names;
+    owner_names.reserve(top_owners.size());
+    for (size_t i = 0; i < top_owners.size(); ++i) {
+        owner_names.push_back(top_owners[i].owner_key);
+        DuckDbQueryResult result = executeVacantNoticeOwnerBucketQuery(
+            duckdb_analytics,
+            {top_owners[i].owner_key},
+            false,
+            max_rows);
+        if (!result.ok || !result.result_set.active ||
+            (result.result_set.features.empty() && result.result_set.blocklots.empty() && result.result_set.owners.empty())) {
+            continue;
+        }
+        ApiQueryControlCommand cmd;
+        cmd.apply_mode = ApiQueryControlCommand::ApplyMode::Layer;
+        cmd.layer.enabled = true;
+        cmd.layer.name = base_name + " - " + top_owners[i].owner_label;
+        cmd.layer.sql = vacantNoticeOwnerBaseSql();
+        applyControlColor(cmd.layer, kPalette[i], "", "", "", "", "", "", "", "", "", "");
+        cmd.layer.result_set = std::move(result.result_set);
+        cmd.layer.row_count = result.rows.size();
+        cmd.layer.status = result.message;
+        out.push_back(std::move(cmd));
+    }
+
+    DuckDbQueryResult others = executeVacantNoticeOwnerBucketQuery(
+        duckdb_analytics,
+        owner_names,
+        true,
+        max_rows);
+    if (others.ok && others.result_set.active &&
+        (!others.result_set.features.empty() || !others.result_set.blocklots.empty() || !others.result_set.owners.empty())) {
+        ApiQueryControlCommand cmd;
+        cmd.apply_mode = ApiQueryControlCommand::ApplyMode::Layer;
+        cmd.layer.enabled = true;
+        cmd.layer.name = base_name + " - Other";
+        cmd.layer.sql = vacantNoticeOwnerBaseSql();
+        applyControlColor(cmd.layer, "#8a8f98aa", "", "", "", "", "", "", "", "", "", "");
+        cmd.layer.result_set = std::move(others.result_set);
+        cmd.layer.row_count = others.rows.size();
+        cmd.layer.status = others.message;
+        out.push_back(std::move(cmd));
+    }
+    return out;
 }
 
 bool applyJsonColor(float target[4], const json& value) {
@@ -1617,7 +1872,9 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"query_sql", "/controls/query?sql=SELECT...&apply=layer&name=..."},
                             {"query_filter_color", "/controls/query?preset=unavailable_value&apply=filter_layer&color=%2300d4ffcc"},
                             {"query_color", "/controls/query?preset=unavailable_value&apply=layer&color=%23ff5533cc"},
-                            {"query_style", "/controls/query?sql=SELECT...&apply=layer&fill_color=%2300ff0088&outline_color=%2300ff00ff&limit=50000"}
+                            {"query_style", "/controls/query?sql=SELECT...&apply=layer&fill_color=%2300ff0088&outline_color=%2300ff00ff&limit=50000"},
+                            {"vacant_notice_green", "/controls/query?preset=vacant_notice_parcels&apply=layer&fill_color=%2300aa44cc&outline_color=%2300aa44ff&limit=50000"},
+                            {"vacant_notice_top_owners", "/controls/query?preset=vacant_notice_top_owners&apply=layer&top_n=16&limit=50000"}
                         }},
                         {"filter", mapFilterStateJson(map_filter_state)},
                         {"active_filter", {
@@ -1625,7 +1882,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             {"result_set", filterResultSetSummary(active_filter_result_set)}
                         }},
                         {"query_layers", std::move(layer_summaries)},
-                        {"presets", json::array({"unavailable_value", "valued_parcels"})}
+                        {"presets", json::array({"unavailable_value", "valued_parcels", "vacant_notice_parcels", "vacant_notice_top_owners"})}
                     });
                 } else if (path == "/controls/filter") {
                     ApiFilterControlCommand cmd;
@@ -1661,7 +1918,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     if (sql.empty()) {
                         send_json(400, "Bad Request", {
                             {"ok", false},
-                            {"error", "controls query requires sql=... or preset=unavailable_value"}
+                            {"error", "controls query requires sql=... or a supported preset"}
                         });
                     } else {
                         size_t max_rows = 100;
@@ -1677,11 +1934,74 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                         const std::string name = get_q("name").empty()
                             ? (preset.empty() ? "REST Query" : ("REST " + preset))
                             : get_q("name");
+                        if (preset == "vacant_notice_top_owners") {
+                            if (apply_mode != ApiQueryControlCommand::ApplyMode::Layer &&
+                                apply_mode != ApiQueryControlCommand::ApplyMode::None) {
+                                send_json(400, "Bad Request", {
+                                    {"ok", false},
+                                    {"error", "vacant_notice_top_owners supports apply=layer only"}
+                                });
+                                continue;
+                            }
+                            size_t top_n = 16;
+                            const std::string top_n_raw = get_q("top_n");
+                            if (!top_n_raw.empty()) {
+                                try {
+                                    top_n = std::clamp<size_t>((size_t)std::stoull(top_n_raw), 1, 16);
+                                } catch (...) {
+                                    top_n = 16;
+                                }
+                            }
+                            if (!duckdb_analytics.status().last_rebuild_ok && !duckdb_analytics.validateExistingCache()) {
+                                send_json(400, "Bad Request", {
+                                    {"ok", false},
+                                    {"error", duckdb_analytics.status().message}
+                                });
+                                continue;
+                            }
+                            std::vector<ApiQueryControlCommand> commands =
+                                buildVacantNoticeOwnerLayerCommands(duckdb_analytics, top_n, max_rows, name);
+                            if (commands.empty()) {
+                                send_json(400, "Bad Request", {
+                                    {"ok", false},
+                                    {"error", "No vacant-notice owner categories were generated."}
+                                });
+                                continue;
+                            }
+                            json queued_layers = json::array();
+                            {
+                                std::lock_guard<std::mutex> lk(api_control_mutex);
+                                for (auto& cmd : commands) {
+                                    queued_layers.push_back({
+                                        {"name", cmd.layer.name},
+                                        {"row_count", cmd.layer.row_count},
+                                        {"color", {
+                                            {"r", cmd.layer.color[0]},
+                                            {"g", cmd.layer.color[1]},
+                                            {"b", cmd.layer.color[2]},
+                                            {"a", cmd.layer.color[3]}
+                                        }}
+                                    });
+                                    api_query_control_cmds.push_back(std::move(cmd));
+                                }
+                            }
+                            send_json(200, "OK", {
+                                {"ok", true},
+                                {"preset", preset},
+                                {"apply", "layer"},
+                                {"queued", true},
+                                {"queued_layers", std::move(queued_layers)},
+                                {"independent_of_base_parcel_layer", true},
+                                {"note", "Categorical owner layers render through the parcel query overlay and do not require the base parcel fill layer to remain visible."}
+                            });
+                            continue;
+                        }
                         DuckDbQueryResult result;
                         const bool can_use_memory_preset =
                             !preset.empty() &&
                             (preset == "unavailable_value" || preset == "missing_value" ||
-                             preset == "no_value" || preset == "valued_parcels") &&
+                             preset == "no_value" || preset == "valued_parcels" ||
+                             preset == "vacant_notice_parcels") &&
                             !unified_parcels.empty();
                         if (can_use_memory_preset) {
                             result = controlsPresetInMemory(preset, layers, unified_parcels, max_rows);

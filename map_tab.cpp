@@ -199,6 +199,82 @@ void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& tit
     draw->PopClipRect();
 }
 
+void drawMapLegendOverlay(const MapCanvasSession& session, const std::vector<QueryMapLayer>* query_layers, int position) {
+    if (!query_layers || query_layers->empty()) return;
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    if (!draw) return;
+
+    std::vector<const QueryMapLayer*> visible_layers;
+    visible_layers.reserve(query_layers->size());
+    for (const QueryMapLayer& layer : *query_layers) {
+        if (!layer.enabled) continue;
+        visible_layers.push_back(&layer);
+    }
+    if (visible_layers.empty()) return;
+
+    ImFont* font = ImGui::GetFont();
+    if (!font) return;
+    const float title_font_size = ImGui::GetFontSize() * 1.02f;
+    const float row_font_size = ImGui::GetFontSize() * 0.96f;
+    const float swatch = 12.0f;
+    const float row_gap = 6.0f;
+    const float pad_x = 14.0f;
+    const float pad_y = 12.0f;
+    const char* title = "Legend";
+    const ImVec2 title_size = font->CalcTextSizeA(title_font_size, FLT_MAX, 0.0f, title);
+    float content_w = title_size.x;
+    float content_h = title_size.y;
+    for (const QueryMapLayer* layer : visible_layers) {
+        std::string label = layer->name.empty() ? "Query Layer" : layer->name;
+        if (layer->row_count > 0) label += " (" + std::to_string(layer->row_count) + ")";
+        const ImVec2 text_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
+        content_w = std::max(content_w, swatch + 10.0f + text_size.x);
+        content_h += row_gap + std::max(swatch, text_size.y);
+    }
+
+    const ImVec2 box_size(content_w + pad_x * 2.0f, content_h + pad_y * 2.0f);
+    ImVec2 box_min(session.origin.x + 18.0f, session.origin.y + 22.0f);
+    if (position == 1) {
+        box_min = ImVec2(session.origin.x + session.size.x - box_size.x - 18.0f, session.origin.y + 22.0f);
+    } else if (position == 2) {
+        box_min = ImVec2(session.origin.x + 18.0f, session.origin.y + session.size.y - box_size.y - 18.0f);
+    } else if (position == 3) {
+        box_min = ImVec2(
+            session.origin.x + session.size.x - box_size.x - 18.0f,
+            session.origin.y + session.size.y - box_size.y - 18.0f);
+    }
+    const ImVec2 box_max(box_min.x + box_size.x, box_min.y + box_size.y);
+    draw->PushClipRect(session.origin, ImVec2(session.origin.x + session.size.x, session.origin.y + session.size.y), true);
+    draw->AddRectFilled(box_min, box_max, IM_COL32(17, 24, 32, 214), 12.0f);
+    draw->AddRect(box_min, box_max, IM_COL32(255, 255, 255, 72), 12.0f);
+
+    float y = box_min.y + pad_y;
+    draw->AddText(font, title_font_size, ImVec2(box_min.x + pad_x, y), IM_COL32(245, 248, 250, 245), title);
+    y += title_size.y + row_gap;
+    for (const QueryMapLayer* layer : visible_layers) {
+        std::string label = layer->name.empty() ? "Query Layer" : layer->name;
+        if (layer->row_count > 0) label += " (" + std::to_string(layer->row_count) + ")";
+        const ImVec2 text_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
+        const float row_h = std::max(swatch, text_size.y);
+        const ImVec2 swatch_min(box_min.x + pad_x, y + (row_h - swatch) * 0.5f);
+        const ImVec2 swatch_max(swatch_min.x + swatch, swatch_min.y + swatch);
+        const ImU32 fill = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(layer->color[0], layer->color[1], layer->color[2], layer->color[3]));
+        const ImU32 outline = ImGui::ColorConvertFloat4ToU32(
+            ImVec4(layer->outline_color[0], layer->outline_color[1], layer->outline_color[2], layer->outline_color[3]));
+        draw->AddRectFilled(swatch_min, swatch_max, fill, 3.0f);
+        draw->AddRect(swatch_min, swatch_max, outline, 3.0f);
+        draw->AddText(
+            font,
+            row_font_size,
+            ImVec2(swatch_max.x + 10.0f, y + (row_h - text_size.y) * 0.5f),
+            IM_COL32(232, 236, 240, 240),
+            label.c_str());
+        y += row_h + row_gap;
+    }
+    draw->PopClipRect();
+}
+
 MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const MapCanvasSession& session) {
     MapCornerControlState state;
     constexpr float button = 34.0f;
@@ -652,11 +728,17 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             if (ctx.app_settings && ctx.app_settings->map_title_all_caps) {
                 map_title = toUpperAsciiCopy(map_title);
             }
-            const std::string parcel_source =
-                (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source)
-                    ? primaryParcelSourceLabel(ctx)
+    const std::string parcel_source =
+        (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source)
+            ? primaryParcelSourceLabel(ctx)
             : std::string();
     drawMapTitleOverlay(map_canvas_session, map_title, parcel_source);
+    if (ctx.app_settings && ctx.app_settings->map_legend_show_overlay) {
+        drawMapLegendOverlay(
+            map_canvas_session,
+            ctx.query_layers,
+            std::clamp(ctx.app_settings->map_legend_overlay_position, 0, 3));
+    }
 
     TimeCubePanelContext time_cube_panel_ctx;
     time_cube_panel_ctx.service = ctx.time_cube_service;

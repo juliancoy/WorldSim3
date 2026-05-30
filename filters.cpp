@@ -104,7 +104,7 @@ std::string ownerSearchText(
             "AR_OWNER", "OWNER_ABBR"
         });
     }
-    return toLowerAscii(trimDisplayValue(owner));
+    return normalizeFuzzySearchText(owner);
 }
 
 bool isCrimeLayer(const FeatureFilterContext& ctx, size_t layer_idx) {

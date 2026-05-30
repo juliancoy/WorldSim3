@@ -85,6 +85,8 @@ void drawParcelSelectionArtifactFill(
     ImU32 fill) {
     const uint32_t end = rec.index_offset + rec.index_count;
     if (!ctx.parcel_render_blob || end > ctx.parcel_render_blob->indices.size()) return;
+    const ImDrawListFlags saved_flags = ctx.draw->Flags;
+    ctx.draw->Flags &= ~ImDrawListFlags_AntiAliasedFill;
     for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
         const uint32_t ia = ctx.parcel_render_blob->indices[i];
         const uint32_t ib = ctx.parcel_render_blob->indices[i + 1];
@@ -98,6 +100,7 @@ void drawParcelSelectionArtifactFill(
             projectArtifactLonLat(ctx, ctx.parcel_render_blob->vertices[ic]),
             fill);
     }
+    ctx.draw->Flags = saved_flags;
 }
 
 void drawParcelSelectionArtifactOutline(
@@ -181,6 +184,8 @@ bool drawPolygonSelectionArtifactFill(
     const uint32_t end = rec.index_offset + rec.index_count;
     if (rec.index_count == 0 || end > artifact.fill_indices.size()) return false;
     bool drew = false;
+    const ImDrawListFlags saved_flags = ctx.draw->Flags;
+    ctx.draw->Flags &= ~ImDrawListFlags_AntiAliasedFill;
     for (uint32_t i = rec.index_offset; i + 2 < end; i += 3) {
         const uint32_t ia = artifact.fill_indices[i];
         const uint32_t ib = artifact.fill_indices[i + 1];
@@ -193,6 +198,7 @@ bool drawPolygonSelectionArtifactFill(
             fill);
         drew = true;
     }
+    ctx.draw->Flags = saved_flags;
     return drew;
 }
 

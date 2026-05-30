@@ -5,6 +5,7 @@
 #include "duckdb_analytics.h"
 #include "feature_props.h"
 #include "parcel_consolidation.h"
+#include "render_routing.h"
 #include "vacancy_overlay.h"
 
 #include <algorithm>
@@ -91,6 +92,47 @@ std::string ownerSearchValueFor(const LayerDef::FeatureRecord& fg) {
         "OWNERNME1", "OWNER", "OWNER_NAME",
         "AR_OWNER", "OWNER_ABBR"
     })));
+}
+
+bool ensureParcelRenderBlobForSemanticSync(
+    const DerivedLayerCachesContext& ctx,
+    const LayerDef& parcel_layer,
+    const std::string& source_signature,
+    std::string* message) {
+    if (!ctx.root || !ctx.parcel_render_blob) {
+        if (message) *message = "parcel render blob unavailable";
+        return false;
+    }
+    if (ctx.parcel_render_blob->source_signature == source_signature &&
+        !ctx.parcel_render_blob->features.empty()) {
+        return true;
+    }
+    const LayerRenderRoute render_route = classifyLayerRenderRoute(
+        static_cast<size_t>(ctx.parcel_layer_idx),
+        parcel_layer,
+        ctx.parcel_layer_idx);
+    const std::filesystem::path artifact_path =
+        geometryArtifactCachePathForLayerFile(
+            *ctx.root,
+            parcel_layer.file,
+            GeometryArtifactClass::Polygon,
+            layerRenderRouteArtifactName(render_route));
+    PolygonGeometryArtifact artifact;
+    ParcelRenderCacheBlob blob;
+    std::string blob_error;
+    if (!loadBinaryPolygonGeometryArtifact(artifact_path, source_signature, artifact) ||
+        !buildParcelRenderCacheBlobFromPolygonArtifact(artifact, blob, &blob_error)) {
+        if (message) {
+            std::ostringstream ss;
+            ss << artifact_path.string();
+            if (!blob_error.empty()) ss << " error=" << blob_error;
+            *message = ss.str();
+        }
+        return false;
+    }
+    *ctx.parcel_render_blob = std::move(blob);
+    if (message) message->clear();
+    return true;
 }
 }
 
@@ -206,9 +248,21 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     }
 
     if (ctx.parcel_layer_idx >= 0) {
-        const auto& pfeats = layers[(size_t)ctx.parcel_layer_idx].features;
+        const auto& parcel_layer = layers[(size_t)ctx.parcel_layer_idx];
         const std::string parcel_sig = hydratedLayerSignature(layers, ctx.layer_states, ctx.parcel_layer_idx);
+        std::string parcel_render_blob_error;
+        const bool parcel_render_blob_ready =
+            ensureParcelRenderBlobForSemanticSync(ctx, parcel_layer, parcel_sig, &parcel_render_blob_error);
+        const size_t parcel_feature_count =
+            (ctx.parcel_render_blob && !ctx.parcel_render_blob->features.empty())
+                ? ctx.parcel_render_blob->features.size()
+                : parcel_layer.features.size();
         if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) {
+            std::fprintf(
+                stderr,
+                "[worldsim3] parcel semantics source=duckdb ready=0 db=%s reason=%s\n",
+                (ctx.duckdb_analytics ? ctx.duckdb_analytics->status().db_path.c_str() : ""),
+                (ctx.duckdb_analytics ? ctx.duckdb_analytics->status().message.c_str() : "DuckDB analytics unavailable"));
             ctx.parcel_blocklot_by_feature->clear();
             ctx.parcel_vac_notice_by_feature->clear();
             ctx.parcel_vac_rehab_by_feature->clear();
@@ -230,7 +284,20 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         const DuckDbParcelSemanticSnapshot snapshot =
             ctx.duckdb_analytics->loadParcelSemanticSnapshot((size_t)ctx.parcel_layer_idx);
         const std::string parcel_semantic_sig = parcel_sig + "|" + snapshot.source_signature;
-        if (!snapshot.ok || snapshot.unified_parcels.size() != pfeats.size()) {
+        if (!snapshot.ok || snapshot.unified_parcels.size() != parcel_feature_count) {
+            std::fprintf(
+                stderr,
+                "[worldsim3] parcel semantics source=duckdb ready=1 snapshot_ok=%d rows=%zu expected=%zu layer_rows=%zu render_rows=%zu render_blob_ready=%d db=%s message=%s%s%s\n",
+                snapshot.ok ? 1 : 0,
+                snapshot.unified_parcels.size(),
+                parcel_feature_count,
+                parcel_layer.features.size(),
+                ctx.parcel_render_blob ? ctx.parcel_render_blob->features.size() : 0,
+                parcel_render_blob_ready ? 1 : 0,
+                ctx.duckdb_analytics->status().db_path.c_str(),
+                snapshot.message.c_str(),
+                parcel_render_blob_error.empty() ? "" : " render_blob_error=",
+                parcel_render_blob_error.empty() ? "" : parcel_render_blob_error.c_str());
             ctx.parcel_blocklot_by_feature->clear();
             ctx.parcel_vac_notice_by_feature->clear();
             ctx.parcel_vac_rehab_by_feature->clear();
@@ -251,6 +318,16 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
 
         if (*ctx.unified_parcel_cached_signature != parcel_semantic_sig ||
             *ctx.unified_parcel_cached_size != snapshot.unified_parcels.size()) {
+            std::fprintf(
+                stderr,
+                "[worldsim3] parcel semantics source=duckdb ready=1 snapshot_ok=1 rows=%zu expected=%zu layer_rows=%zu render_rows=%zu render_blob_ready=%d db=%s signature=%s\n",
+                snapshot.unified_parcels.size(),
+                parcel_feature_count,
+                parcel_layer.features.size(),
+                ctx.parcel_render_blob ? ctx.parcel_render_blob->features.size() : 0,
+                parcel_render_blob_ready ? 1 : 0,
+                ctx.duckdb_analytics->status().db_path.c_str(),
+                snapshot.source_signature.c_str());
             *ctx.parcel_blocklot_by_feature = snapshot.parcel_blocklot_by_feature;
             *ctx.parcel_vac_notice_by_feature = snapshot.parcel_vac_notice_by_feature;
             *ctx.parcel_vac_rehab_by_feature = snapshot.parcel_vac_rehab_by_feature;
@@ -305,32 +382,46 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
         size_t matched_total = 0;
         size_t with_geometry_total = 0;
         size_t triangulated_renderable_total = 0;
-        for (size_t i = 0; i < pfeats.size(); ++i) {
+        for (size_t i = 0; i < parcel_feature_count; ++i) {
             const int vac_notice = (i < ctx.parcel_vac_notice_by_feature->size()) ? (*ctx.parcel_vac_notice_by_feature)[i] : 0;
             const int vac_rehab = (i < ctx.parcel_vac_rehab_by_feature->size()) ? (*ctx.parcel_vac_rehab_by_feature)[i] : 0;
             notice_rows_matched += (size_t)std::max(vac_notice, 0);
             rehab_rows_matched += (size_t)std::max(vac_rehab, 0);
             if ((vac_notice + vac_rehab) <= 0) continue;
             matched_total++;
-            if (!pfeats[i].rings.empty()) with_geometry_total++;
-            if (!pfeats[i].rings.empty() && !pfeats[i].triangles.empty()) triangulated_renderable_total++;
+            const bool has_render_geometry =
+                ctx.parcel_render_blob &&
+                i < ctx.parcel_render_blob->features.size() &&
+                ctx.parcel_render_blob->features[i].vertex_count > 0;
+            const bool has_render_triangles =
+                ctx.parcel_render_blob &&
+                i < ctx.parcel_render_blob->features.size() &&
+                ctx.parcel_render_blob->features[i].index_count > 0;
+            const bool has_layer_geometry =
+                i < parcel_layer.features.size() && !parcel_layer.features[i].rings.empty();
+            const bool has_layer_triangles =
+                i < parcel_layer.features.size() && !parcel_layer.features[i].triangles.empty();
+            if (has_render_geometry || has_layer_geometry) with_geometry_total++;
+            if (has_render_triangles || has_layer_triangles) triangulated_renderable_total++;
         }
         ctx.vacant_notice_rows_matched_total->store(notice_rows_matched, std::memory_order_relaxed);
         ctx.vacant_rehab_rows_matched_total->store(rehab_rows_matched, std::memory_order_relaxed);
         ctx.vacant_parcels_matched_total->store(matched_total, std::memory_order_relaxed);
         ctx.vacant_parcels_with_geometry_total->store(with_geometry_total, std::memory_order_relaxed);
         ctx.vacant_parcels_triangulated_renderable_total->store(triangulated_renderable_total, std::memory_order_relaxed);
-        const std::filesystem::path derived_path = *ctx.root / "data" / "cache" / "derived" / "parcel_vacancy_status.json";
-        saveDerivedVacancyStatus(
-            derived_path,
-            pfeats,
-            *ctx.parcel_vac_notice_by_feature,
-            *ctx.parcel_vac_rehab_by_feature,
-            ctx.parcel_vac_notice_by_feature->size(),
-            ctx.parcel_vac_rehab_by_feature->size(),
-            notice_rows_matched,
-            rehab_rows_matched,
-            ctx.parcel_blocklot_by_feature);
+        if (parcel_layer.features.size() == parcel_feature_count) {
+            const std::filesystem::path derived_path = *ctx.root / "data" / "cache" / "derived" / "parcel_vacancy_status.json";
+            saveDerivedVacancyStatus(
+                derived_path,
+                parcel_layer.features,
+                *ctx.parcel_vac_notice_by_feature,
+                *ctx.parcel_vac_rehab_by_feature,
+                ctx.parcel_vac_notice_by_feature->size(),
+                ctx.parcel_vac_rehab_by_feature->size(),
+                notice_rows_matched,
+                rehab_rows_matched,
+                ctx.parcel_blocklot_by_feature);
+        }
     } else {
         ctx.parcel_owner_search_by_feature->clear();
         ctx.real_property_owner_search_by_feature->clear();

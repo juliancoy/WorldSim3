@@ -25,12 +25,25 @@ struct ElementInfoEntry {
     std::string source;
 };
 
+struct OwnerSimilarMatch {
+    std::string owner;
+    size_t property_count = 0;
+    double current_value = 0.0;
+    int score = 0;
+};
+
 struct ElementInfoUiState {
     std::vector<ElementInfoEntry> history;
     size_t history_index = (size_t)-1;
     bool tab_requested = false;
     char* property_query = nullptr;
     size_t property_query_size = 0;
+    int owner_fuzzy_match_min_score = 100;
+    int owner_fuzzy_match_limit = 12;
+    std::string owner_fuzzy_cache_key;
+    int owner_fuzzy_cache_min_score = 100;
+    int owner_fuzzy_cache_limit = 12;
+    std::vector<OwnerSimilarMatch> owner_fuzzy_cache_matches;
 };
 
 using OwnerInfoUiState = ElementInfoUiState;
@@ -63,6 +76,12 @@ struct OwnerInfoTabContext {
 
 void openElementParcelPage(ElementInfoUiState& state, const std::string& parcel_entity_id);
 void openOwnerInfoPage(ElementInfoUiState& state, const std::string& owner);
+void openOwnerInfoPageAndSelectOwnerParcels(
+    ElementInfoUiState& state,
+    const std::string& owner,
+    const std::vector<UnifiedParcelRecord>* unified_parcels,
+    const std::function<void()>& clear_parcel_selection,
+    const std::function<bool(const std::string&, bool)>& select_parcel_id);
 void openParcelSourceInfoPage(ElementInfoUiState& state, const std::string& source);
 void openPropertySourceInfoPage(ElementInfoUiState& state, const std::string& source);
 void drawOwnerInfoLink(ElementInfoUiState& state, const std::string& owner, const char* id);

@@ -22,6 +22,7 @@ struct ParcelInfoTabContext {
     int real_property_layer_idx = -1;
     bool* tab_requested = nullptr;
     std::function<void()> clear_parcel_selection;
+    std::function<bool(const std::string&, bool)> select_parcel_id;
 };
 
 void drawParcelInfoTab(const ParcelInfoTabContext& ctx);

@@ -21,7 +21,9 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
-constexpr int kAnalyticsSchemaVersion = 9;
+constexpr int kAnalyticsSchemaVersion = 11;
+constexpr size_t kMaxEventDetailChars = 4096;
+constexpr size_t kMaxEventMetadataChars = 8192;
 
 struct AnalyticsLayerStateRow {
     size_t layer_idx = 0;
@@ -147,6 +149,129 @@ double numericProp(const LayerDef::FeatureRecord& fg, std::initializer_list<cons
 
 double structureAreaSqFtProp(const LayerDef::FeatureRecord& fg) {
     return numericProp(fg, {"structure_area_sqft", "STRUCTAREA", "structarea", "BLDG_AREA", "GROSS_AREA", "LIVING_AREA"});
+}
+
+std::string trimFirstPropertyValue(
+    const LayerDef& layer,
+    size_t feature_idx,
+    std::initializer_list<const char*> keys) {
+    return trimDisplayValue(getFirstPropertyValue(layer, feature_idx, keys));
+}
+
+void appendDetailLine(std::string& out, const char* label, const std::string& value) {
+    const std::string trimmed = trimDisplayValue(value);
+    if (trimmed.empty()) return;
+    if (!out.empty()) out += '\n';
+    out += label;
+    out += ": ";
+    out += trimmed;
+}
+
+void appendMetadataValue(json& out, const char* key, const std::string& value) {
+    const std::string trimmed = trimDisplayValue(value);
+    if (!trimmed.empty()) out[key] = trimmed;
+}
+
+std::string truncateUtf8Safe(std::string value, size_t max_chars) {
+    if (value.size() <= max_chars) return value;
+    value.resize(max_chars);
+    return value;
+}
+
+std::string eventTitleHintForFeature(const LayerDef& layer, size_t feature_idx) {
+    const std::string explicit_title = trimFirstPropertyValue(layer, feature_idx, {
+        "Description", "DESCRIPTION", "description", "desc", "DESC",
+        "Project_Title", "ProjectName", "Project_Name", "Name", "name",
+        "ViolationType", "Violation_Type", "Type", "TYPE", "CaseType", "CASE_TYPE"
+    });
+    if (!explicit_title.empty()) return explicit_title;
+
+    const std::string permit_type = trimFirstPropertyValue(layer, feature_idx, {
+        "PermitType", "PERMITTYPE", "Permit_Type", "RecordType", "RECORD_TYPE"
+    });
+    const std::string permit_number = trimFirstPropertyValue(layer, feature_idx, {
+        "PermitNum", "PermitNumber", "PERMITNUM", "PERMIT_NUMBER", "CaseNumber", "CASE_NUMBER", "CASE_NUM"
+    });
+    if (!permit_type.empty() && !permit_number.empty()) return permit_type + " " + permit_number;
+    if (!permit_type.empty()) return permit_type;
+    if (!permit_number.empty()) return permit_number;
+
+    return trimFirstPropertyValue(layer, feature_idx, {
+        "name", "poi_name", "prmry_name", "set_name", "market_nam", "plc_st_nam", "fctry_st_n"
+    });
+}
+
+std::string eventDetailHintForFeature(const LayerDef& layer, size_t feature_idx) {
+    std::string detail;
+    appendDetailLine(detail, "Description", trimFirstPropertyValue(layer, feature_idx, {
+        "Description", "DESCRIPTION", "description", "desc", "DESC"
+    }));
+    appendDetailLine(detail, "Existing Use", trimFirstPropertyValue(layer, feature_idx, {
+        "ExistingUse", "EXISTINGUSE", "Existing_Use"
+    }));
+    appendDetailLine(detail, "Proposed Use", trimFirstPropertyValue(layer, feature_idx, {
+        "ProposedUse", "PROPOSEDUSE", "Proposed_Use"
+    }));
+    appendDetailLine(detail, "Permit Type", trimFirstPropertyValue(layer, feature_idx, {
+        "PermitType", "PERMITTYPE", "Permit_Type", "RecordType", "RECORD_TYPE"
+    }));
+    appendDetailLine(detail, "Permit Number", trimFirstPropertyValue(layer, feature_idx, {
+        "PermitNum", "PermitNumber", "PERMITNUM", "PERMIT_NUMBER", "CaseNumber", "CASE_NUMBER", "CASE_NUM"
+    }));
+    appendDetailLine(detail, "Neighborhood", trimFirstPropertyValue(layer, feature_idx, {
+        "Neighborhood", "NEIGHBORHOOD"
+    }));
+    appendDetailLine(detail, "Applicant", trimFirstPropertyValue(layer, feature_idx, {
+        "Applicant", "APPLICANT", "ApplicantName"
+    }));
+    appendDetailLine(detail, "Contractor", trimFirstPropertyValue(layer, feature_idx, {
+        "Contractor", "CONTRACTOR", "ContractorName"
+    }));
+    appendDetailLine(detail, "Disposition", trimFirstPropertyValue(layer, feature_idx, {
+        "Disposition", "DISPOSITION", "Result", "RESULT"
+    }));
+    return truncateUtf8Safe(detail, kMaxEventDetailChars);
+}
+
+std::string eventMetadataJsonForFeature(const LayerDef& layer, size_t feature_idx) {
+    json metadata = json::object();
+    appendMetadataValue(metadata, "description", trimFirstPropertyValue(layer, feature_idx, {
+        "Description", "DESCRIPTION", "description", "desc", "DESC"
+    }));
+    appendMetadataValue(metadata, "existing_use", trimFirstPropertyValue(layer, feature_idx, {
+        "ExistingUse", "EXISTINGUSE", "Existing_Use"
+    }));
+    appendMetadataValue(metadata, "proposed_use", trimFirstPropertyValue(layer, feature_idx, {
+        "ProposedUse", "PROPOSEDUSE", "Proposed_Use"
+    }));
+    appendMetadataValue(metadata, "permit_type", trimFirstPropertyValue(layer, feature_idx, {
+        "PermitType", "PERMITTYPE", "Permit_Type", "RecordType", "RECORD_TYPE"
+    }));
+    appendMetadataValue(metadata, "permit_number", trimFirstPropertyValue(layer, feature_idx, {
+        "PermitNum", "PermitNumber", "PERMITNUM", "PERMIT_NUMBER", "CaseNumber", "CASE_NUMBER", "CASE_NUM"
+    }));
+    appendMetadataValue(metadata, "project_title", trimFirstPropertyValue(layer, feature_idx, {
+        "Project_Title", "ProjectName", "Project_Name", "Name", "name"
+    }));
+    appendMetadataValue(metadata, "applicant", trimFirstPropertyValue(layer, feature_idx, {
+        "Applicant", "APPLICANT", "ApplicantName"
+    }));
+    appendMetadataValue(metadata, "contractor", trimFirstPropertyValue(layer, feature_idx, {
+        "Contractor", "CONTRACTOR", "ContractorName"
+    }));
+    appendMetadataValue(metadata, "neighborhood", trimFirstPropertyValue(layer, feature_idx, {
+        "Neighborhood", "NEIGHBORHOOD"
+    }));
+    appendMetadataValue(metadata, "disposition", trimFirstPropertyValue(layer, feature_idx, {
+        "Disposition", "DISPOSITION", "Result", "RESULT"
+    }));
+    appendMetadataValue(metadata, "source_address", trimFirstPropertyValue(layer, feature_idx, {
+        "FULLADDR", "FULL_ADDRESS", "PROPERTY_ADDRESS", "PROPERTYADDR", "PREMISEADD",
+        "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
+        "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
+    }));
+    if (metadata.empty()) return {};
+    return truncateUtf8Safe(metadata.dump(), kMaxEventMetadataChars);
 }
 
 bool isPrimaryParcelGeometryFile(const std::string& file) {
@@ -424,6 +549,9 @@ void appendSocrataHowardPropertyRows(
         appender.Append<const char*>("Maryland Real Property Assessments");
         appender.Append<const char*>(get(row, "sales_segment_1_transfer_date_yyyy_mm_dd_mdp_field_tradate_sdat_field_89").c_str());
         appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
         appender.Append<int32_t>((int32_t)parseNumericField(get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")));
         appender.Append<double>(parseNumericField(get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")));
         appender.EndRow();
@@ -485,10 +613,15 @@ void appendAnalyticsLayerFeatures(
             const std::string ward_name = firstDisplayProperty(fg, {"wardname"});
             const std::string source_name = firstDisplayProperty(fg, {"source"});
             const std::string event_date_text = firstDisplayProperty(fg, {
-                "event_date", "DateNotice", "DateIssue", "DateIssued", "Issue_Date_ISO",
-                "Issue_Date", "SALEDATE", "DATE", "CREATED_DATE", "RECORD_DATE"
+                "event_date", "DateNotice", "DateIssue", "DateIssued", "IssuedDate",
+                "Issue_Date_ISO", "Issue_Date", "DateFiled", "DateAuction",
+                "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
+                "CREATED_DATE", "RECORD_DATE"
             });
             const std::string event_status_hint = firstDisplayProperty(fg, {"CASE_STATUS", "STATUS", "STATE"});
+            const std::string event_title_hint = eventTitleHintForFeature(layer, fi);
+            const std::string event_detail_hint = eventDetailHintForFeature(layer, fi);
+            const std::string event_metadata_json = eventMetadataJsonForFeature(layer, fi);
             int event_year_hint = 0;
             if (const std::string year_text = firstDisplayProperty(fg, {"Issue_Year", "YEAR"});
                 !trimDisplayValue(year_text).empty()) {
@@ -529,6 +662,9 @@ void appendAnalyticsLayerFeatures(
             appender.Append<const char*>(source_name.c_str());
             appender.Append<const char*>(event_date_text.c_str());
             appender.Append<const char*>(event_status_hint.c_str());
+            appender.Append<const char*>(event_title_hint.c_str());
+            appender.Append<const char*>(event_detail_hint.c_str());
+            appender.Append<const char*>(event_metadata_json.c_str());
             appender.Append<int32_t>(event_year_hint);
             appender.Append<double>(amount_usd_hint);
             appender.EndRow();
@@ -999,6 +1135,9 @@ void rebuildDerivedAnalyticsObjects(
                 lf.value_usd,
                 lf.event_date_text,
                 lf.event_status_hint,
+                lf.event_title_hint,
+                lf.event_detail_hint,
+                lf.event_metadata_json,
                 lf.event_year_hint,
                 lf.amount_usd_hint,
                 coalesce(
@@ -1021,6 +1160,7 @@ void rebuildDerivedAnalyticsObjects(
                 WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
                 WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                 WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
+                WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
                 WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
                 WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
                 WHEN lower(category) = 'housing' THEN 'housing'
@@ -1037,6 +1177,27 @@ void rebuildDerivedAnalyticsObjects(
                 nullif(event_year_hint, 0),
                 try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
             ) AS event_year,
+            CASE
+                WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
+                WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
+                WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
+                WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
+                WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
+                WHEN nullif(event_title_hint, '') IS NOT NULL THEN event_title_hint
+                ELSE replace(
+                    CASE
+                        WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                        WHEN lower(category) = 'housing' THEN 'housing'
+                        WHEN lower(category) = 'permits' THEN 'permit'
+                        WHEN lower(category) = 'taxes' THEN 'tax'
+                        ELSE duckdb_role
+                    END,
+                    '_', ' ')
+            END AS event_label,
+            nullif(event_title_hint, '') AS event_title,
+            nullif(event_detail_hint, '') AS event_detail,
+            nullif(event_metadata_json, '') AS event_metadata_json,
             coalesce(
                 nullif(value_usd, 0),
                 nullif(amount_usd_hint, 0)
@@ -1281,6 +1442,9 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     lf.value_usd,
                                     lf.event_date_text,
                                     lf.event_status_hint,
+                                    lf.event_title_hint,
+                                    lf.event_detail_hint,
+                                    lf.event_metadata_json,
                                     lf.event_year_hint,
                                     lf.amount_usd_hint,
                                     coalesce(
@@ -1303,6 +1467,7 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
                                     WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                                     WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
+                                    WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
                                     WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
                                     WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
                                     WHEN lower(category) = 'housing' THEN 'housing'
@@ -1316,6 +1481,27 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     nullif(event_year_hint, 0),
                                     try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
                                 ) AS event_year,
+                                CASE
+                                    WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
+                                    WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
+                                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
+                                    WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
+                                    WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
+                                    WHEN nullif(event_title_hint, '') IS NOT NULL THEN event_title_hint
+                                    ELSE replace(
+                                        CASE
+                                            WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                                            WHEN lower(category) = 'housing' THEN 'housing'
+                                            WHEN lower(category) = 'permits' THEN 'permit'
+                                            WHEN lower(category) = 'taxes' THEN 'tax'
+                                            ELSE duckdb_role
+                                        END,
+                                        '_', ' ')
+                                END AS event_label,
+                                nullif(event_title_hint, '') AS event_title,
+                                nullif(event_detail_hint, '') AS event_detail,
+                                nullif(event_metadata_json, '') AS event_metadata_json,
                                 coalesce(nullif(value_usd, 0), nullif(amount_usd_hint, 0)) AS amount_usd,
                                 layer_file AS source_layer_file,
                                 layer_name AS source_layer_name,
@@ -1529,6 +1715,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 source_name VARCHAR,
                 event_date_text VARCHAR,
                 event_status_hint VARCHAR,
+                event_title_hint VARCHAR,
+                event_detail_hint VARCHAR,
+                event_metadata_json VARCHAR,
                 event_year_hint INTEGER,
                 amount_usd_hint DOUBLE
             )
@@ -1598,10 +1787,15 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     return source.empty() ? layer.file : source;
                 }();
                 const std::string event_date_text = firstDisplayProperty(fg, {
-                    "event_date", "DateNotice", "DateIssue", "DateIssued", "Issue_Date_ISO",
-                    "Issue_Date", "SALEDATE", "DATE", "CREATED_DATE", "RECORD_DATE"
+                    "event_date", "DateNotice", "DateIssue", "DateIssued", "IssuedDate",
+                    "Issue_Date_ISO", "Issue_Date", "DateFiled", "DateAuction",
+                    "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
+                    "CREATED_DATE", "RECORD_DATE"
                 });
                 const std::string event_status_hint = firstDisplayProperty(fg, {"CASE_STATUS", "STATUS", "STATE"});
+                const std::string event_title_hint = eventTitleHintForFeature(layer, fi);
+                const std::string event_detail_hint = eventDetailHintForFeature(layer, fi);
+                const std::string event_metadata_json = eventMetadataJsonForFeature(layer, fi);
                 int event_year_hint = 0;
                 if (const std::string year_text = firstDisplayProperty(fg, {"Issue_Year", "YEAR"}); !trimDisplayValue(year_text).empty()) {
                     event_year_hint = (int)parseNumericField(year_text);
@@ -1647,6 +1841,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<const char*>(source_name.c_str());
                 appender.Append<const char*>(event_date_text.c_str());
                 appender.Append<const char*>(event_status_hint.c_str());
+                appender.Append<const char*>(event_title_hint.c_str());
+                appender.Append<const char*>(event_detail_hint.c_str());
+                appender.Append<const char*>(event_metadata_json.c_str());
                 appender.Append<int32_t>(event_year_hint);
                 appender.Append<double>(amount_usd_hint);
                 appender.EndRow();
@@ -2418,100 +2615,6 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
     };
 
     DuckDbQueryResult result = executeMapQuery(unified_detail_sql("parcel_entity_id"), {}, {}, 1);
-    if (!result.ok || result.rows.empty()) {
-        result = executeMapQuery(unified_detail_sql("parcel_geometry_entity_id"), {}, {}, 1);
-    }
-
-    if (!result.ok || result.rows.empty()) {
-        std::ostringstream sql;
-        sql << R"SQL(
-            WITH entity_hit AS (
-                SELECT blocklot
-                FROM layer_features
-                WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
-                  AND scale = 'parcel'
-                  AND duckdb_role = 'parcel_record'
-                  AND blocklot <> ''
-                LIMIT 1
-            )
-            SELECT
-                up.parcel_layer_idx,
-                up.parcel_entity_id,
-                up.parcel_geometry_entity_id,
-                up.blocklot,
-                up.parcel_source_file,
-                up.property_source_file,
-                up.parcel_has_geometry,
-                up.has_property_record,
-                up.owner,
-                up.owner_display,
-                up.address,
-                up.zipcode,
-                up.status,
-                up.current_land,
-                up.current_improvements,
-                up.structure_area_sqft,
-                up.tax_base,
-                up.sale_price,
-                up.current_value,
-                up.vacant_notice_count,
-                up.vacant_rehab_count,
-                up.tax_lien_count,
-                up.tax_sale_count,
-                up.tax_lien_amount,
-                up.tax_sale_amount,
-                up.min_lon,
-                up.min_lat,
-                up.max_lon,
-                up.max_lat
-            FROM unified_parcels up
-            JOIN entity_hit eh ON eh.blocklot = up.blocklot
-            LIMIT 1
-        )SQL";
-        result = executeMapQuery(sql.str(), {}, {}, 1);
-    }
-
-    if (!result.ok || result.rows.empty()) {
-        std::ostringstream sql;
-        sql << R"SQL(
-            SELECT
-                layer_idx AS parcel_layer_idx,
-                entity_id AS parcel_entity_id,
-                '' AS parcel_geometry_entity_id,
-                blocklot,
-                layer_file AS parcel_source_file,
-                '' AS property_source_file,
-                true AS parcel_has_geometry,
-                false AS has_property_record,
-                owner,
-                owner AS owner_display,
-                address,
-                zipcode,
-                status,
-                0.0 AS current_land,
-                0.0 AS current_improvements,
-                structure_area_sqft,
-                value_usd AS tax_base,
-                0.0 AS sale_price,
-                value_usd AS current_value,
-                0 AS vacant_notice_count,
-                0 AS vacant_rehab_count,
-                0 AS tax_lien_count,
-                0 AS tax_sale_count,
-                0.0 AS tax_lien_amount,
-                0.0 AS tax_sale_amount,
-                min_lon,
-                min_lat,
-                max_lon,
-                max_lat
-            FROM layer_features
-            WHERE entity_id = ')SQL" << sqlQuote(key) << R"SQL('
-              AND scale = 'parcel'
-              AND duckdb_role = 'parcel_record'
-            LIMIT 1
-        )SQL";
-        result = executeMapQuery(sql.str(), {}, {}, 1);
-    }
 
     {
         std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
@@ -2534,6 +2637,10 @@ DuckDbQueryResult DuckDbAnalytics::queryParcelEvents(
     sql << R"SQL(
         SELECT
             event_type,
+            event_label,
+            event_title,
+            event_detail,
+            event_metadata_json,
             event_status,
             cast(event_date AS VARCHAR) AS event_date,
             cast(event_year AS VARCHAR) AS event_year,
@@ -2743,7 +2850,8 @@ DuckDbParcelSemanticSnapshot DuckDbAnalytics::loadParcelSemanticSnapshot(size_t 
                 record.parcel_extent.max_lat = (float)chunk->GetValue(29, row).GetValue<double>();
                 if (record.owner_display.empty()) record.owner_display = record.owner;
                 if (record.address_search.empty()) record.address_search = normalizeAddressSearchText(record.address);
-                record.owner_search = toLowerAscii(trimDisplayValue(record.owner));
+                record.owner_search = normalizeFuzzySearchText(
+                    record.owner_display.empty() ? record.owner : record.owner_display);
 
                 out.parcel_blocklot_by_feature.push_back(record.blocklot);
                 out.parcel_owner_search_by_feature.push_back(record.owner_search);

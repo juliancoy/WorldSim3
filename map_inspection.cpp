@@ -529,6 +529,24 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecor
 }
 
 namespace {
+const UnifiedParcelRecord* unifiedParcelAtFeature(
+    const std::vector<UnifiedParcelRecord>& parcels,
+    int layer_idx,
+    size_t feature_idx) {
+    if (layer_idx < 0) return nullptr;
+    if (feature_idx >= parcels.size()) return nullptr;
+    const UnifiedParcelRecord& direct = parcels[feature_idx];
+    if ((int)direct.parcel_layer_idx == layer_idx && direct.parcel_local_feature_idx == feature_idx) {
+        return &direct;
+    }
+    for (const UnifiedParcelRecord& row : parcels) {
+        if ((int)row.parcel_layer_idx == layer_idx && row.parcel_local_feature_idx == feature_idx) {
+            return &row;
+        }
+    }
+    return nullptr;
+}
+
 ParcelHoverResolution resolveParcelHit(
     const MapInspectionContext& ctx,
     int layer_idx,
@@ -541,32 +559,24 @@ ParcelHoverResolution resolveParcelHit(
     out.feature_idx = feature_idx;
     out.hit = out.feature_idx != (size_t)-1;
     if (!out.hit) return out;
-    out.entity_id =
-        !entity_id_hint.empty()
-            ? entity_id_hint
-            : (out.layer_idx >= 0 &&
-               (size_t)out.layer_idx < ctx.layers->size() &&
-               out.feature_idx < (*ctx.layers)[(size_t)out.layer_idx].features.size())
-                ? featureEntityIdForLayerFeature(
-                    (*ctx.layers)[(size_t)out.layer_idx],
-                    (*ctx.layers)[(size_t)out.layer_idx].features[out.feature_idx],
-                    out.feature_idx)
-                : std::string();
-    out.geometry_entity_id =
-        !geometry_entity_id_hint.empty()
-            ? geometry_entity_id_hint
-            : (out.layer_idx >= 0 &&
-               (size_t)out.layer_idx < ctx.layers->size() &&
-               out.feature_idx < (*ctx.layers)[(size_t)out.layer_idx].features.size())
-                ? featureGeometryEntityIdForLayerFeature(
-                    (*ctx.layers)[(size_t)out.layer_idx],
-                    (*ctx.layers)[(size_t)out.layer_idx].features[out.feature_idx],
-                    out.feature_idx)
-                : out.entity_id;
-    out.unified_record =
-        (ctx.unified_parcels && !out.entity_id.empty())
-            ? unifiedParcelAt(*ctx.unified_parcels, out.entity_id)
-            : nullptr;
+    out.entity_id = entity_id_hint;
+    out.geometry_entity_id = geometry_entity_id_hint;
+
+    // Parcel inspection is authoritative on the semantic snapshot row for the picked feature.
+    if (ctx.parcel_layer_idx >= 0 &&
+        out.layer_idx == ctx.parcel_layer_idx &&
+        ctx.unified_parcels) {
+        out.unified_record = unifiedParcelAtFeature(*ctx.unified_parcels, out.layer_idx, out.feature_idx);
+        if (out.unified_record) {
+            out.entity_id = out.unified_record->parcel_entity_id;
+            out.geometry_entity_id = out.unified_record->parcel_geometry_entity_id.empty()
+                ? out.unified_record->parcel_entity_id
+                : out.unified_record->parcel_geometry_entity_id;
+        } else {
+            out.entity_id.clear();
+            out.geometry_entity_id.clear();
+        }
+    }
     return out;
 }
 }
@@ -623,71 +633,13 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
         out.tax_sale_amount = row.tax_sale_amount;
         return out;
     }
-
-    if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) return out;
-    const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
-    if (!detail.ok || detail.rows.empty()) return out;
-    const auto& row = detail.rows.front();
-    auto cell = [&](const char* column) -> std::string {
-        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
-            if (detail.columns[i] == column) return row[i];
-        }
-        return {};
-    };
-    out.available = true;
-    out.parcel_entity_id = cell("parcel_entity_id");
-    if (out.parcel_entity_id.empty()) out.parcel_entity_id = hovered.entity_id;
-    out.blocklot = cell("blocklot");
-    out.owner = cell("owner");
-    out.owner_display = cell("owner_display");
-    out.address = cell("address");
-    out.zipcode = cell("zipcode");
-    out.status = cell("status");
-    out.property_source_file = cell("property_source_file");
-    out.parcel_has_geometry = trimDisplayValue(cell("parcel_has_geometry")) == "true";
-    out.has_property_record = trimDisplayValue(cell("has_property_record")) == "true";
-    out.current_land = parseNumericField(cell("current_land"));
-    out.current_improvements = parseNumericField(cell("current_improvements"));
-    out.structure_area_sqft = parseNumericField(cell("structure_area_sqft"));
-    out.tax_base = parseNumericField(cell("tax_base"));
-    out.sale_price = parseNumericField(cell("sale_price"));
-    out.current_value = parseNumericField(cell("current_value"));
-    out.parcel_extent.min_lon = (float)parseNumericField(cell("min_lon"));
-    out.parcel_extent.min_lat = (float)parseNumericField(cell("min_lat"));
-    out.parcel_extent.max_lon = (float)parseNumericField(cell("max_lon"));
-    out.parcel_extent.max_lat = (float)parseNumericField(cell("max_lat"));
-    out.vacant_notice_count = (int)parseNumericField(cell("vacant_notice_count"));
-    out.vacant_rehab_count = (int)parseNumericField(cell("vacant_rehab_count"));
-    out.tax_lien_count = (int)parseNumericField(cell("tax_lien_count"));
-    out.tax_sale_count = (int)parseNumericField(cell("tax_sale_count"));
-    out.tax_lien_amount = parseNumericField(cell("tax_lien_amount"));
-    out.tax_sale_amount = parseNumericField(cell("tax_sale_amount"));
     return out;
 }
 
 std::string canonicalParcelEntityIdForClick(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
-    if (!hovered.hit || hovered.entity_id.empty()) return {};
-    if (hovered.unified_record && !hovered.unified_record->parcel_entity_id.empty()) {
-        return hovered.unified_record->parcel_entity_id;
-    }
-    if (!ctx.duckdb_analytics || !ctx.duckdb_analytics->status().last_rebuild_ok) return hovered.entity_id;
-    const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
-    if (detail.ok && !detail.rows.empty()) {
-        const auto& row = detail.rows.front();
-        for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
-            if (detail.columns[i] == "parcel_entity_id" && !row[i].empty()) return row[i];
-        }
-    }
-    if (!hovered.geometry_entity_id.empty() && hovered.geometry_entity_id != hovered.entity_id) {
-        const DuckDbQueryResult geometry_detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.geometry_entity_id);
-        if (geometry_detail.ok && !geometry_detail.rows.empty()) {
-            const auto& row = geometry_detail.rows.front();
-            for (size_t i = 0; i < geometry_detail.columns.size() && i < row.size(); ++i) {
-                if (geometry_detail.columns[i] == "parcel_entity_id" && !row[i].empty()) return row[i];
-            }
-        }
-    }
-    return hovered.entity_id;
+    (void)ctx;
+    if (!hovered.hit || !hovered.unified_record) return {};
+    return hovered.unified_record->parcel_entity_id;
 }
 
 const LayerDef::FeatureRecord* parcelFeatureForResolution(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
@@ -755,10 +707,6 @@ void logParcelClickDebug(
         active_entity ? active_entity : "",
         layer ? layer->file.c_str() : "");
 
-    if (!hovered.hit || hovered.entity_id.empty()) {
-        return;
-    }
-
     if (hovered.unified_record) {
         std::fprintf(
             stderr,
@@ -770,7 +718,17 @@ void logParcelClickDebug(
             hovered.unified_record->has_property_record ? 1 : 0,
             hovered.unified_record->parcel_has_geometry ? 1 : 0);
     } else {
-        std::fprintf(stderr, "[worldsim3][parcel-click] in_memory_unified entity=%s missing\n", hovered.entity_id.c_str());
+        std::fprintf(
+            stderr,
+            "[worldsim3][parcel-click] parcel-semantic layer=%d feature=%zu ready=%d resolved=0 db=%s\n",
+            hovered.layer_idx,
+            hovered.feature_idx,
+            (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) ? 1 : 0,
+            (ctx.duckdb_analytics ? ctx.duckdb_analytics->status().db_path.c_str() : ""));
+    }
+
+    if (hovered.entity_id.empty()) {
+        return;
     }
 
     if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok && !hovered.entity_id.empty()) {
@@ -815,9 +773,12 @@ void logParcelClickDebug(
 }
 
 bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered, bool ctrl_append) {
-    if (!ctx.parcel_selection || !hovered.hit || hovered.entity_id.empty()) return false;
+    if (!ctx.parcel_selection || !hovered.hit) return false;
     const std::string selected_entity_id = canonicalParcelEntityIdForClick(ctx, hovered);
-    if (selected_entity_id.empty()) return false;
+    if (selected_entity_id.empty()) {
+        logParcelClickDebug(ctx, "select-unresolved", hovered, ctrl_append, false);
+        return false;
+    }
     const std::string selected_geometry_entity_id =
         !hovered.geometry_entity_id.empty() ? hovered.geometry_entity_id : hovered.entity_id;
     const bool selected = selectParcel(

@@ -26,6 +26,8 @@ struct AppSettings {
     std::string map_title_text;
     bool map_title_show_primary_parcel_source = false;
     bool map_title_all_caps = false;
+    bool map_legend_show_overlay = false;
+    int map_legend_overlay_position = 0;
 };
 
 AppSettings loadAppSettings(const std::filesystem::path& root, const AppSettings& defaults);

@@ -8,7 +8,8 @@
 #include <unordered_set>
 #include <vector>
 
-struct QueryHistoryEntry;
+struct QueryRecord;
+using QueryHistoryEntry = QueryRecord;
 
 std::vector<LayerDef> loadManifest(const std::filesystem::path& root, bool include_non_runtime = false);
 
