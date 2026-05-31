@@ -46,6 +46,14 @@ struct ElementInfoUiState {
     std::vector<OwnerSimilarMatch> owner_fuzzy_cache_matches;
     std::string owner_duckdb_cache_key;
     std::vector<UnifiedParcelRecord> owner_duckdb_cache_records;
+    std::string parcel_detail_cache_key;
+    DuckDbQueryResult parcel_detail_cache_result;
+    std::string parcel_relationship_cache_key;
+    DuckDbQueryResult parcel_relationship_cache_result;
+    std::string parcel_timeline_cache_key;
+    DuckDbQueryResult parcel_timeline_cache_result;
+    std::string parcel_property_cache_key;
+    DuckDbQueryResult parcel_property_cache_result;
 };
 
 using OwnerInfoUiState = ElementInfoUiState;
@@ -74,6 +82,7 @@ struct OwnerInfoTabContext {
     float map_view_h = 0.0f;
     std::function<void()> clear_parcel_selection;
     std::function<bool(const std::string&, bool)> select_parcel_id;
+    std::function<size_t(const std::vector<std::string>&)> select_parcel_ids;
 };
 
 void openElementParcelPage(ElementInfoUiState& state, const std::string& parcel_entity_id);

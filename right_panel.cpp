@@ -183,6 +183,34 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         *ctx.selected_zone_idx = (size_t)-1;
         return true;
     };
+    auto select_parcel_ids = [&](const std::vector<std::string>& entity_ids) -> size_t {
+        if (ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return 0;
+        clearParcelSelection(*ctx.parcel_selection);
+        size_t selected = 0;
+        for (const std::string& entity_id : entity_ids) {
+            if (entity_id.empty()) continue;
+            const UnifiedParcelRecord* rec = ctx.unified_parcels
+                ? unifiedParcelAt(*ctx.unified_parcels, entity_id)
+                : nullptr;
+            const std::string geometry_entity_id =
+                rec && !rec->parcel_geometry_entity_id.empty()
+                    ? rec->parcel_geometry_entity_id
+                    : entity_id;
+            if (selectParcel(
+                    *ctx.parcel_selection,
+                    ctx.parcel_layer_idx,
+                    rec ? rec->parcel_local_feature_idx : (size_t)-1,
+                    geometry_entity_id,
+                    entity_id,
+                    true)) {
+                selected++;
+            }
+        }
+        ctx.parcel_selection->group_highlight = selected > 0;
+        *ctx.show_selected_zone_details = false;
+        *ctx.selected_zone_idx = (size_t)-1;
+        return selected;
+    };
 
     if (ctx.layers) {
         reconcileParcelSelection(*ctx.parcel_selection, *ctx.layers);
@@ -377,7 +405,8 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.map_w,
             ctx.main_panel_h,
             clear_parcel_selection,
-            select_parcel_id
+            select_parcel_id,
+            select_parcel_ids
         });
         drawOwnersTab(OwnersTabContext{
             ctx.owner_aggregates,

@@ -231,9 +231,16 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
     if (!ctx.draw || !ctx.layers || !ctx.parcel_selection || !ctx.project_world) return;
     if (ctx.parcel_selection->refs.empty()) return;
 
-    const ImU32 selected_fill = IM_COL32(255, 230, 0, 108);
-    const ImU32 selected_outline_halo = IM_COL32(32, 24, 0, 255);
-    const ImU32 selected_outline = IM_COL32(255, 240, 64, 255);
+    const bool group_highlight = ctx.parcel_selection->group_highlight;
+    const ImU32 selected_fill = group_highlight
+        ? IM_COL32(0, 220, 255, 126)
+        : IM_COL32(255, 230, 0, 108);
+    const ImU32 selected_outline_halo = group_highlight
+        ? IM_COL32(0, 18, 32, 255)
+        : IM_COL32(32, 24, 0, 255);
+    const ImU32 selected_outline = group_highlight
+        ? IM_COL32(0, 255, 255, 255)
+        : IM_COL32(255, 240, 64, 255);
 
     for (const ParcelSelectionRef& ref : ctx.parcel_selection->refs) {
         if (ref.layer_idx < 0 || (size_t)ref.layer_idx >= ctx.layers->size()) continue;

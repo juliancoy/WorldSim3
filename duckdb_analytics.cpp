@@ -2944,9 +2944,9 @@ DuckDbQueryResult DuckDbAnalytics::executeMapQuery(
             }
             return -1;
         };
-        const int layer_col = find_col({"layer_idx", "layer"});
-        const int feature_col = find_col({"feature_idx", "feature"});
-        const int entity_id_col = find_col({"entity_id"});
+        const int layer_col = find_col({"layer_idx", "layer", "parcel_layer_idx"});
+        const int feature_col = find_col({"feature_idx", "feature", "parcel_feature_idx"});
+        const int entity_id_col = find_col({"entity_id", "parcel_entity_id", "parcel_geometry_entity_id"});
         const int blocklot_col = find_col({"blocklot", "block_lot"});
         const int owner_col = find_col({"owner", "owner_name"});
         std::unordered_map<std::string, size_t> feature_idx_cache;

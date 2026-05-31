@@ -18,6 +18,7 @@ struct ParcelSelectionRef {
 
 struct ParcelSelectionState {
     bool show_details = false;
+    bool group_highlight = false;
     int active_layer_idx = -1;
     std::string active_entity_id;
     std::vector<ParcelSelectionRef> refs;

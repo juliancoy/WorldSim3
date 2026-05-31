@@ -17,6 +17,7 @@ void syncSelectionViews(ParcelSelectionState& selection) {
     }
     if (selection.refs.empty()) {
         selection.show_details = false;
+        selection.group_highlight = false;
         selection.active_layer_idx = -1;
         selection.active_entity_id.clear();
         return;
@@ -33,6 +34,7 @@ bool sameSelectionRef(const ParcelSelectionRef& ref, int layer_idx, const std::s
 
 void clearParcelSelection(ParcelSelectionState& selection) {
     selection.show_details = false;
+    selection.group_highlight = false;
     selection.active_layer_idx = -1;
     selection.active_entity_id.clear();
     selection.refs.clear();
@@ -65,7 +67,9 @@ bool selectParcel(
     const std::string& entity_id,
     bool append_toggle) {
     if (entity_id.empty()) return false;
-    if (!append_toggle) clearParcelSelection(selection);
+    if (!append_toggle) {
+        clearParcelSelection(selection);
+    }
 
     auto ref_it = std::find_if(
         selection.refs.begin(),
