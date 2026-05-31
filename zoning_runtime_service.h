@@ -22,6 +22,8 @@ struct ZoningRuntimeState {
     std::unordered_map<size_t, std::vector<ImU32>> last_base_colors;
     std::unordered_map<size_t, std::vector<ImU32>> last_outline_colors;
     std::unordered_map<size_t, ParcelRenderCacheBlob> render_blobs;
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureRecord>> color_features;
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureProperties>> color_feature_properties;
 };
 
 struct ZoningRuntimeSyncInput {
@@ -35,6 +37,11 @@ struct ZoningRuntimeSyncInput {
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     const std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
     const std::vector<bool>* layer_fill_enabled = nullptr;
+    const std::vector<bool>* layer_heatmap_use_gradient = nullptr;
+    const std::vector<float>* layer_choropleth_gamma = nullptr;
+    const std::vector<int>* layer_normalize_mode = nullptr;
+    const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
+    float heatmap_percentile_clip = 95.0f;
     uint64_t feature_render_state_key = 0;
     std::function<const LayerFeatureRenderCache&()> ensure_feature_render_cache;
 };

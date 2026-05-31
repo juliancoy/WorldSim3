@@ -5,6 +5,7 @@ imgui.ini
 build*/
 __pycache__
 perf.*
+profiles/
 dist/
 AppDir/
 *.AppImage

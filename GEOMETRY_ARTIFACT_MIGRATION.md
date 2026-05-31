@@ -107,7 +107,8 @@ It owns:
 - source-specific spillover in `properties_json`
 - detail-panel fields
 - query/search/filter fields
-- derived domain tables such as `unified_parcels`
+- derived domain tables such as `unified_parcels` and parcel relationship
+  artifacts
 
 It does not own:
 
@@ -292,9 +293,9 @@ Strong recommendation:
 
 ### Derived Tables
 
-Derived tables such as `unified_parcels` remain allowed, but they must also preserve stable feature references back to the geometry layer.
+Derived tables such as `unified_parcels` and parcel relationship artifacts remain allowed, but they must also preserve stable feature references back to the geometry layer.
 
-That means derived parcel rows should retain enough identity to:
+That means derived parcel rows and related-record rows should retain enough identity to:
 
 - recolor geometry
 - drive selection overlays

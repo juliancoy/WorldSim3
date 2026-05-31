@@ -121,18 +121,48 @@ def configure_scene(base_url: str):
     request_ok(base_url, f"/set_zoom?value={TARGET_ZOOM}")
 
 
-def query_selected_entity(base_url: str, entity_id: str):
+def query_selected_entity(base_url: str, entity_id: str, layer_idx=None, feature_idx=None):
     escaped = entity_id.replace("'", "''")
+    if layer_idx is not None and feature_idx is not None:
+        sql = f"""
+            SELECT up.parcel_layer_idx,
+                   pf.feature_idx,
+                   up.parcel_entity_id,
+                   up.parcel_geometry_entity_id,
+                   up.blocklot,
+                   up.address,
+                   up.has_property_record,
+                   pf.blocklot AS feature_blocklot,
+                   pf.address AS feature_address
+            FROM unified_parcels up
+            JOIN parcel_features pf
+              ON pf.layer_idx = up.parcel_layer_idx
+             AND pf.feature_idx = {int(feature_idx)}
+            WHERE up.parcel_layer_idx = {int(layer_idx)}
+              AND (
+                   up.parcel_entity_id = '{escaped}'
+                   OR up.parcel_geometry_entity_id = '{escaped}'
+              )
+            LIMIT 5
+        """
+        return request_json(base_url, "/controls/query?limit=5&sql=" + urllib.parse.quote(sql), timeout=10.0)
+
     sql = f"""
-        SELECT up.parcel_layer_idx, pf.feature_idx, up.parcel_entity_id,
-               up.parcel_geometry_entity_id, up.blocklot, up.address,
-               up.has_property_record, pf.blocklot AS feature_blocklot,
+        SELECT up.parcel_layer_idx,
+               pf.feature_idx,
+               up.parcel_entity_id,
+               up.parcel_geometry_entity_id,
+               up.blocklot,
+               up.address,
+               up.has_property_record,
+               pf.blocklot AS feature_blocklot,
                pf.address AS feature_address
         FROM unified_parcels up
         JOIN parcel_features pf
           ON pf.layer_idx = up.parcel_layer_idx
          AND pf.entity_id = up.parcel_entity_id
         WHERE up.parcel_entity_id = '{escaped}'
+           OR up.parcel_geometry_entity_id = '{escaped}'
         LIMIT 5
     """
     return request_json(base_url, "/controls/query?limit=5&sql=" + urllib.parse.quote(sql), timeout=10.0)
@@ -250,7 +280,12 @@ def main() -> int:
         selection_status, click_attempts = click_county_parcel(args.base_url, target_layer_idx)
         hover = selection_status.get("hover", {})
         selected_entity = hover.get("selected_parcel_entity_id", "")
-        query = query_selected_entity(args.base_url, selected_entity) if selected_entity else {"ok": False, "rows": []}
+        query = query_selected_entity(
+            args.base_url,
+            selected_entity,
+            hover.get("selected_parcel_layer_idx"),
+            hover.get("selected_parcel_idx"),
+        ) if selected_entity else {"ok": False, "rows": []}
         rows = query.get("rows", [])
         row = rows[0] if rows else {}
 

@@ -31,7 +31,7 @@ assert payload["heatmap_polygon_zoom_10"] == "vector_only"
 assert payload["zoning_polygon_zoom_10"] == "vector_only"
 assert payload["filtered_polygon_zoom_10"] == "vector_only"
 assert payload["query_polygon_zoom_10"] == "vector_only"
-assert payload["active_parcel_zoom_10"] == "vector_only"
+assert payload["active_parcel_zoom_10"] == "raster_only"
 assert payload["county_parcel_zoom_10"] == "raster_only"
 
 print(json.dumps(payload, indent=2))

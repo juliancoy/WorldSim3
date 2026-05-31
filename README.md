@@ -10,6 +10,7 @@ Pure C++/Vulkan app (no Qt) with Vulkan-rendered UI and local Baltimore economic
 - GLFW windowing
 - Dear ImGui with Vulkan backend (UI rendered through Vulkan)
 - Canonical layer binaries plus Vulkan-ready geometry artifacts
+- DuckDB-backed parcel summaries, relationship records, search, and analytics
 - Local OpenStreetMap raster tiles rendered as Vulkan textures
 
 ## Install WorldSim3 (Priority Path: APT)

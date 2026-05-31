@@ -26,7 +26,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 assert payload["mode"] == "render-polygon-tile"
 assert payload["ok"] is True
 assert payload["file"] == "parcel.geojson"
-assert payload["render_path"] == "parcel_gpu"
+assert payload["render_path"] == "parcel_polygon_gpu"
 assert payload["source_signature"], "missing source_signature"
 assert payload["style_key"], "missing style_key"
 assert payload["tile"] == {"z": 14, "x": 4821, "y": 6140}
@@ -36,7 +36,7 @@ assert os.path.exists(output_path), f"missing output tile: {output_path}"
 assert output_path.endswith("/z14/4821_6140.ppm"), output_path
 assert "/render_tiles/" in output_path, output_path
 assert "/parcel.geojson/" in output_path, output_path
-assert "/parcel_gpu/" in output_path, output_path
+assert "/parcel_polygon_gpu/" in output_path, output_path
 assert f"/source_{payload['source_signature'].replace('/', '_').replace(' ', '_')}" in output_path or "/source_" in output_path
 assert f"/style_{payload['style_key']}" in output_path, output_path
 

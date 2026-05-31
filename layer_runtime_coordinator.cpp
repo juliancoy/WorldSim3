@@ -36,6 +36,15 @@ void applyLayerApiCommands(LayerApiCommandCoordinatorContext& ctx) {
         const int idx = findLayerIndex(ctx, kv.first);
         if (idx < 0) continue;
         (*ctx.layers)[(size_t)idx].enabled = kv.second;
+        if (kv.second && !(*ctx.layers)[(size_t)idx].heatmap_field.empty() &&
+            ctx.layer_fill_mutex && ctx.layer_fill_enabled && ctx.layer_fill_state_changed &&
+            (size_t)idx < ctx.layer_fill_enabled->size()) {
+            std::lock_guard<std::mutex> lk_fill(*ctx.layer_fill_mutex);
+            if (!(*ctx.layer_fill_enabled)[(size_t)idx]) {
+                (*ctx.layer_fill_enabled)[(size_t)idx] = true;
+                *ctx.layer_fill_state_changed = true;
+            }
+        }
         if (ctx.layer_profile_dirty && (size_t)idx < ctx.layer_profile_dirty->size()) {
             (*ctx.layer_profile_dirty)[(size_t)idx] = true;
         }

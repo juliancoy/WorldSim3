@@ -51,6 +51,7 @@ def query_selected_entity(entity_id: str):
           ON pf.layer_idx = up.parcel_layer_idx
          AND pf.entity_id = up.parcel_entity_id
         WHERE up.parcel_entity_id = '{escaped}'
+           OR up.parcel_geometry_entity_id = '{escaped}'
         LIMIT 5
     """
     return get_json("/controls/query?limit=5&sql=" + urllib.parse.quote(sql))

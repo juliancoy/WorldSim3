@@ -1,6 +1,9 @@
 #include "map_tab.h"
 
 #include "app_utils.h"
+#include "choropleth_histogram.h"
+#include "feature_props.h"
+#include "map_render_utils.h"
 #include "map_overlay_panels.h"
 #include "owner_info.h"
 #include "ui_fonts.h"
@@ -9,8 +12,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cmath>
 #include <cstdio>
+#include <iomanip>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace {
 struct MapCornerControlState {
@@ -199,24 +206,137 @@ void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& tit
     draw->PopClipRect();
 }
 
-void drawMapLegendOverlay(const MapCanvasSession& session, const std::vector<QueryMapLayer>* query_layers, int position) {
-    if (!query_layers || query_layers->empty()) return;
+struct GradientLegendItem {
+    std::string label;
+    std::string field;
+    ApproxHistogram hist;
+};
+
+struct CategoricalLegendItem {
+    std::string label;
+    ImVec4 color;
+};
+
+std::string compactLegendNumber(double value) {
+    std::ostringstream os;
+    if (std::abs(value) >= 1000000000.0) os << std::fixed << std::setprecision(1) << (value / 1000000000.0) << "B";
+    else if (std::abs(value) >= 1000000.0) os << std::fixed << std::setprecision(1) << (value / 1000000.0) << "M";
+    else if (std::abs(value) >= 1000.0) os << std::fixed << std::setprecision(0) << (value / 1000.0) << "K";
+    else if (std::abs(value) >= 100.0) os << std::fixed << std::setprecision(0) << value;
+    else os << std::fixed << std::setprecision(1) << value;
+    return os.str();
+}
+
+std::string truncateLegendLabel(const std::string& label, size_t max_chars = 34) {
+    if (label.size() <= max_chars) return label;
+    if (max_chars <= 3) return label.substr(0, max_chars);
+    return label.substr(0, max_chars - 3) + "...";
+}
+
+bool layerGradientEnabled(const MapTabContext& ctx, size_t layer_idx) {
+    return ctx.layer_heatmap_use_gradient &&
+        layer_idx < ctx.layer_heatmap_use_gradient->size() &&
+        (*ctx.layer_heatmap_use_gradient)[layer_idx];
+}
+
+std::vector<double> collectLegendNumericSamples(const LayerDef& layer, size_t max_samples = 5000) {
+    std::vector<double> values;
+    if (layer.heatmap_field.empty() || layer.features.empty()) return values;
+    const size_t stride = std::max<size_t>(1, layer.features.size() / max_samples);
+    values.reserve(std::min(max_samples, layer.features.size()));
+    for (size_t i = 0; i < layer.features.size(); i += stride) {
+        float v = 0.0f;
+        if (tryGetFeaturePropertyFloat(layer.features[i], layer.heatmap_field, v) && std::isfinite(v)) {
+            values.push_back((double)v);
+        }
+    }
+    return values;
+}
+
+std::vector<GradientLegendItem> buildGradientLegendItems(const MapTabContext& ctx) {
+    std::vector<GradientLegendItem> items;
+    if (!ctx.layers) return items;
+    for (size_t li = 0; li < ctx.layers->size() && items.size() < 3; ++li) {
+        const LayerDef& layer = (*ctx.layers)[li];
+        if (!layer.enabled || layer.heatmap_field.empty() || !layerGradientEnabled(ctx, li)) continue;
+        const float clip_pct =
+            ctx.layer_heatmap_percentile_clip && li < ctx.layer_heatmap_percentile_clip->size()
+                ? (*ctx.layer_heatmap_percentile_clip)[li]
+                : ctx.heatmap_percentile_clip;
+        ApproxHistogram hist = buildApproxHistogram(collectLegendNumericSamples(layer), clip_pct);
+        if (!hist.rangeValid()) continue;
+        items.push_back(GradientLegendItem{
+            layer.name.empty() ? layer.file : layer.name,
+            layer.heatmap_field,
+            std::move(hist)
+        });
+    }
+    return items;
+}
+
+std::vector<CategoricalLegendItem> buildZoningLegendItems(const MapTabContext& ctx) {
+    std::vector<CategoricalLegendItem> items;
+    if (!ctx.layers || ctx.zoning_layer_idx < 0 || (size_t)ctx.zoning_layer_idx >= ctx.layers->size()) return items;
+    const LayerDef& layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    if (!layer.enabled || !ctx.zoning_zone_enabled || !ctx.zoning_zone_color) return items;
+    std::vector<std::string> keys;
+    for (const LayerDef::FeatureRecord& fg : layer.features) {
+        const std::string key = zoningClassKey(fg);
+        if (key.empty()) continue;
+        if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
+        if (keys.size() >= 10) break;
+    }
+    for (const std::string& key : keys) {
+        auto enabled_it = ctx.zoning_zone_enabled->find(key);
+        if (enabled_it != ctx.zoning_zone_enabled->end() && !enabled_it->second) continue;
+        auto color_it = ctx.zoning_zone_color->find(key);
+        if (color_it == ctx.zoning_zone_color->end()) continue;
+        std::string label = key;
+        if (ctx.zoning_metadata) {
+            auto meta_it = ctx.zoning_metadata->find(key);
+            if (meta_it != ctx.zoning_metadata->end() && !meta_it->second.label.empty()) label = meta_it->second.label;
+        }
+        items.push_back(CategoricalLegendItem{label, color_it->second});
+    }
+    return items;
+}
+
+void drawGradientBar(ImDrawList* draw, const ImVec2& min, const ImVec2& max) {
+    constexpr int kSteps = 40;
+    const float w = max.x - min.x;
+    for (int i = 0; i < kSteps; ++i) {
+        const float t0 = (float)i / (float)kSteps;
+        const float t1 = (float)(i + 1) / (float)kSteps;
+        const ImVec2 p0(min.x + w * t0, min.y);
+        const ImVec2 p1(min.x + w * t1 + 0.5f, max.y);
+        draw->AddRectFilled(p0, p1, ImGui::ColorConvertFloat4ToU32(heatColor((t0 + t1) * 0.5f)));
+    }
+    draw->AddRect(min, max, IM_COL32(255, 255, 255, 82), 3.0f);
+}
+
+void drawMapLegendOverlay(const MapCanvasSession& session, const MapTabContext& ctx, int position) {
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     if (!draw) return;
 
     std::vector<const QueryMapLayer*> visible_layers;
-    visible_layers.reserve(query_layers->size());
-    for (const QueryMapLayer& layer : *query_layers) {
-        if (!layer.enabled) continue;
-        visible_layers.push_back(&layer);
+    if (ctx.query_layers) {
+        visible_layers.reserve(ctx.query_layers->size());
+        for (const QueryMapLayer& layer : *ctx.query_layers) {
+            if (!layer.enabled) continue;
+            visible_layers.push_back(&layer);
+        }
     }
-    if (visible_layers.empty()) return;
+    const std::vector<GradientLegendItem> gradient_items = buildGradientLegendItems(ctx);
+    const std::vector<CategoricalLegendItem> zoning_items = buildZoningLegendItems(ctx);
+    if (visible_layers.empty() && gradient_items.empty() && zoning_items.empty()) return;
 
     ImFont* font = ImGui::GetFont();
     if (!font) return;
     const float title_font_size = ImGui::GetFontSize() * 1.02f;
     const float row_font_size = ImGui::GetFontSize() * 0.96f;
     const float swatch = 12.0f;
+    const float gradient_w = 168.0f;
+    const float gradient_h = 12.0f;
     const float row_gap = 6.0f;
     const float pad_x = 14.0f;
     const float pad_y = 12.0f;
@@ -227,6 +347,29 @@ void drawMapLegendOverlay(const MapCanvasSession& session, const std::vector<Que
     for (const QueryMapLayer* layer : visible_layers) {
         std::string label = layer->name.empty() ? "Query Layer" : layer->name;
         if (layer->row_count > 0) label += " (" + std::to_string(layer->row_count) + ")";
+        const ImVec2 text_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
+        content_w = std::max(content_w, swatch + 10.0f + text_size.x);
+        content_h += row_gap + std::max(swatch, text_size.y);
+    }
+    for (const GradientLegendItem& item : gradient_items) {
+        const std::string label = truncateLegendLabel(item.label);
+        const std::string range =
+            compactLegendNumber(item.hist.min_value) + " - " +
+            compactLegendNumber((item.hist.min_value + item.hist.clipped_max_value) * 0.5) + " - " +
+            compactLegendNumber(item.hist.clipped_max_value);
+        const ImVec2 label_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
+        const ImVec2 range_size = font->CalcTextSizeA(row_font_size * 0.88f, FLT_MAX, 0.0f, range.c_str());
+        content_w = std::max(content_w, std::max(gradient_w, std::max(label_size.x, range_size.x)));
+        content_h += row_gap + label_size.y + 4.0f + gradient_h + 3.0f + range_size.y;
+    }
+    if (!zoning_items.empty()) {
+        const char* zoning_title = "Zoning";
+        const ImVec2 zoning_title_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, zoning_title);
+        content_w = std::max(content_w, zoning_title_size.x);
+        content_h += row_gap + zoning_title_size.y;
+    }
+    for (const CategoricalLegendItem& item : zoning_items) {
+        const std::string label = truncateLegendLabel(item.label);
         const ImVec2 text_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
         content_w = std::max(content_w, swatch + 10.0f + text_size.x);
         content_h += row_gap + std::max(swatch, text_size.y);
@@ -264,6 +407,56 @@ void drawMapLegendOverlay(const MapCanvasSession& session, const std::vector<Que
             ImVec4(layer->outline_color[0], layer->outline_color[1], layer->outline_color[2], layer->outline_color[3]));
         draw->AddRectFilled(swatch_min, swatch_max, fill, 3.0f);
         draw->AddRect(swatch_min, swatch_max, outline, 3.0f);
+        draw->AddText(
+            font,
+            row_font_size,
+            ImVec2(swatch_max.x + 10.0f, y + (row_h - text_size.y) * 0.5f),
+            IM_COL32(232, 236, 240, 240),
+            label.c_str());
+        y += row_h + row_gap;
+    }
+    for (const GradientLegendItem& item : gradient_items) {
+        const std::string label = truncateLegendLabel(item.label);
+        draw->AddText(
+            font,
+            row_font_size,
+            ImVec2(box_min.x + pad_x, y),
+            IM_COL32(232, 236, 240, 240),
+            label.c_str());
+        y += font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str()).y + 4.0f;
+        const ImVec2 grad_min(box_min.x + pad_x, y);
+        const ImVec2 grad_max(grad_min.x + gradient_w, grad_min.y + gradient_h);
+        drawGradientBar(draw, grad_min, grad_max);
+        y += gradient_h + 3.0f;
+        const std::string range =
+            compactLegendNumber(item.hist.min_value) + "   " +
+            compactLegendNumber((item.hist.min_value + item.hist.clipped_max_value) * 0.5) + "   " +
+            compactLegendNumber(item.hist.clipped_max_value);
+        draw->AddText(
+            font,
+            row_font_size * 0.88f,
+            ImVec2(box_min.x + pad_x, y),
+            IM_COL32(205, 212, 220, 230),
+            range.c_str());
+        y += font->CalcTextSizeA(row_font_size * 0.88f, FLT_MAX, 0.0f, range.c_str()).y + row_gap;
+    }
+    if (!zoning_items.empty()) {
+        draw->AddText(
+            font,
+            row_font_size,
+            ImVec2(box_min.x + pad_x, y),
+            IM_COL32(245, 248, 250, 235),
+            "Zoning");
+        y += font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, "Zoning").y + row_gap;
+    }
+    for (const CategoricalLegendItem& item : zoning_items) {
+        const std::string label = truncateLegendLabel(item.label);
+        const ImVec2 text_size = font->CalcTextSizeA(row_font_size, FLT_MAX, 0.0f, label.c_str());
+        const float row_h = std::max(swatch, text_size.y);
+        const ImVec2 swatch_min(box_min.x + pad_x, y + (row_h - swatch) * 0.5f);
+        const ImVec2 swatch_max(swatch_min.x + swatch, swatch_min.y + swatch);
+        draw->AddRectFilled(swatch_min, swatch_max, ImGui::ColorConvertFloat4ToU32(item.color), 3.0f);
+        draw->AddRect(swatch_min, swatch_max, IM_COL32(255, 255, 255, 82), 3.0f);
         draw->AddText(
             font,
             row_font_size,
@@ -736,7 +929,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
     if (ctx.app_settings && ctx.app_settings->map_legend_show_overlay) {
         drawMapLegendOverlay(
             map_canvas_session,
-            ctx.query_layers,
+            ctx,
             std::clamp(ctx.app_settings->map_legend_overlay_position, 0, 3));
     }
 

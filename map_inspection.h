@@ -51,6 +51,8 @@ struct ParcelHoverResolution {
     std::string entity_id;
     std::string geometry_entity_id;
     const UnifiedParcelRecord* unified_record = nullptr;
+    bool has_duckdb_record = false;
+    UnifiedParcelRecord duckdb_record;
 };
 
 struct ParcelHoverDetail {

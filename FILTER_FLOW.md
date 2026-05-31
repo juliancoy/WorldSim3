@@ -141,17 +141,31 @@ Parcel-domain filters include:
 
 Owner selection remains active even when the global filter toggle is off.
 
-## 7) Unified Parcel Source
+## 7) Unified Parcel And Relationship Sources
 
-Parcel-specific UI and SQL should prefer `UnifiedParcelRecord` / `unified_parcels`.
+Parcel-specific UI and SQL should prefer DuckDB-backed parcel semantic records.
+Use `UnifiedParcelRecord` / `unified_parcels` for one-row parcel identity,
+owner/address search, map filters, and summary fields. Use parcel relationship
+tables for related records that are valid context but should not be collapsed
+into the summary row.
 
 Runtime builder:
 
 - [parcel_unified.cpp](/mnt/Cancer/worldsim3/parcel_unified.cpp:45)
 
-DuckDB table:
+DuckDB tables/views:
 
 - `unified_parcels`
+- `parcel_property_records`
+- `parcel_related_events`
+- `parcel_related_features`
+- `parcel_relationships`
+- `parcel_relationship_summary`
+
+Owner pages and parcel detail panels may use DuckDB relationship fallbacks when
+the selected parcel or owner is outside the currently hydrated in-memory
+summary snapshot. Runtime owner filters still operate through normalized owner
+keys; related-record display should not mutate `MapFilterState`.
 
 ## 8) Zoning State
 

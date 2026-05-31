@@ -303,6 +303,42 @@ bool samePointLocation(const LayerDef::FeatureRecord& a, const LayerDef::Feature
            std::abs((double)a.extent.min_lat - (double)b.extent.min_lat) <= eps;
 }
 
+bool duckDbAnalyticsReady(DuckDbAnalytics* analytics) {
+    if (!analytics) return false;
+    return analytics->ensureReady();
+}
+
+ParcelHoverDetail parcelHoverDetailFromUnifiedRecord(
+    const UnifiedParcelRecord& row,
+    const std::string& fallback_entity_id = {}) {
+    ParcelHoverDetail out;
+    out.available = true;
+    out.parcel_entity_id = row.parcel_entity_id.empty() ? fallback_entity_id : row.parcel_entity_id;
+    out.blocklot = row.blocklot;
+    out.owner = row.owner;
+    out.owner_display = row.owner_display;
+    out.address = row.address;
+    out.zipcode = row.zip;
+    out.status = row.status;
+    out.property_source_file = row.property_source_file;
+    out.parcel_has_geometry = row.parcel_has_geometry;
+    out.has_property_record = row.has_property_record;
+    out.parcel_extent = row.parcel_extent;
+    out.current_land = row.current_land;
+    out.current_improvements = row.current_improvements;
+    out.structure_area_sqft = row.structure_area_sqft;
+    out.tax_base = row.tax_base;
+    out.sale_price = row.sale_price;
+    out.current_value = row.current_value;
+    out.vacant_notice_count = row.vacant_notice_count;
+    out.vacant_rehab_count = row.vacant_rehab_count;
+    out.tax_lien_count = row.tax_lien_count;
+    out.tax_sale_count = row.tax_sale_count;
+    out.tax_lien_amount = row.tax_lien_amount;
+    out.tax_sale_amount = row.tax_sale_amount;
+    return out;
+}
+
 std::vector<const LayerDef::FeatureRecord*> collectColocatedEventFeatures(
     const LayerDef& layer,
     const LayerDef::FeatureRecord& anchor) {
@@ -547,6 +583,11 @@ const UnifiedParcelRecord* unifiedParcelAtFeature(
     return nullptr;
 }
 
+const UnifiedParcelRecord* resolvedParcelRecord(const ParcelHoverResolution& hovered) {
+    if (hovered.unified_record) return hovered.unified_record;
+    return hovered.has_duckdb_record ? &hovered.duckdb_record : nullptr;
+}
+
 ParcelHoverResolution resolveParcelHit(
     const MapInspectionContext& ctx,
     int layer_idx,
@@ -563,18 +604,25 @@ ParcelHoverResolution resolveParcelHit(
     out.geometry_entity_id = geometry_entity_id_hint;
 
     // Parcel inspection is authoritative on the semantic snapshot row for the picked feature.
-    if (ctx.parcel_layer_idx >= 0 &&
-        out.layer_idx == ctx.parcel_layer_idx &&
-        ctx.unified_parcels) {
+    if (ctx.unified_parcels) {
         out.unified_record = unifiedParcelAtFeature(*ctx.unified_parcels, out.layer_idx, out.feature_idx);
         if (out.unified_record) {
             out.entity_id = out.unified_record->parcel_entity_id;
             out.geometry_entity_id = out.unified_record->parcel_geometry_entity_id.empty()
                 ? out.unified_record->parcel_entity_id
                 : out.unified_record->parcel_geometry_entity_id;
-        } else {
-            out.entity_id.clear();
-            out.geometry_entity_id.clear();
+        }
+    }
+    if (!out.unified_record && duckDbAnalyticsReady(ctx.duckdb_analytics) && out.layer_idx >= 0) {
+        const DuckDbUnifiedParcelDetail detail =
+            ctx.duckdb_analytics->queryUnifiedParcelDetailRecordByLayerFeature((size_t)out.layer_idx, out.feature_idx);
+        if (detail.ok && detail.found) {
+            out.duckdb_record = detail.record;
+            out.has_duckdb_record = true;
+            out.entity_id = out.duckdb_record.parcel_entity_id;
+            out.geometry_entity_id = out.duckdb_record.parcel_geometry_entity_id.empty()
+                ? out.duckdb_record.parcel_entity_id
+                : out.duckdb_record.parcel_geometry_entity_id;
         }
     }
     return out;
@@ -606,40 +654,21 @@ ParcelHoverDetail resolveParcelHoverDetail(const MapInspectionContext& ctx, cons
     if (!hovered.hit || hovered.entity_id.empty()) return out;
     out.parcel_entity_id = hovered.entity_id;
 
-    if (hovered.unified_record) {
-        const UnifiedParcelRecord& row = *hovered.unified_record;
-        out.available = true;
-        out.blocklot = row.blocklot;
-        out.owner = row.owner;
-        out.owner_display = row.owner_display;
-        out.address = row.address;
-        out.zipcode = row.zip;
-        out.status = row.status;
-        out.property_source_file = row.property_source_file;
-        out.parcel_has_geometry = row.parcel_has_geometry;
-        out.has_property_record = row.has_property_record;
-        out.parcel_extent = row.parcel_extent;
-        out.current_land = row.current_land;
-        out.current_improvements = row.current_improvements;
-        out.structure_area_sqft = row.structure_area_sqft;
-        out.tax_base = row.tax_base;
-        out.sale_price = row.sale_price;
-        out.current_value = row.current_value;
-        out.vacant_notice_count = row.vacant_notice_count;
-        out.vacant_rehab_count = row.vacant_rehab_count;
-        out.tax_lien_count = row.tax_lien_count;
-        out.tax_sale_count = row.tax_sale_count;
-        out.tax_lien_amount = row.tax_lien_amount;
-        out.tax_sale_amount = row.tax_sale_amount;
-        return out;
+    if (const UnifiedParcelRecord* rec = resolvedParcelRecord(hovered)) {
+        return parcelHoverDetailFromUnifiedRecord(*rec, hovered.entity_id);
+    }
+    if (duckDbAnalyticsReady(ctx.duckdb_analytics)) {
+        const DuckDbUnifiedParcelDetail detail = ctx.duckdb_analytics->queryUnifiedParcelDetailRecord(hovered.entity_id);
+        if (detail.ok && detail.found) return parcelHoverDetailFromUnifiedRecord(detail.record, hovered.entity_id);
     }
     return out;
 }
 
 std::string canonicalParcelEntityIdForClick(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
     (void)ctx;
-    if (!hovered.hit || !hovered.unified_record) return {};
-    return hovered.unified_record->parcel_entity_id;
+    if (!hovered.hit) return {};
+    if (const UnifiedParcelRecord* rec = resolvedParcelRecord(hovered)) return rec->parcel_entity_id;
+    return normalizeJoinKey(hovered.entity_id);
 }
 
 const LayerDef::FeatureRecord* parcelFeatureForResolution(const MapInspectionContext& ctx, const ParcelHoverResolution& hovered) {
@@ -707,23 +736,23 @@ void logParcelClickDebug(
         active_entity ? active_entity : "",
         layer ? layer->file.c_str() : "");
 
-    if (hovered.unified_record) {
+    if (const UnifiedParcelRecord* rec = resolvedParcelRecord(hovered)) {
         std::fprintf(
             stderr,
             "[worldsim3][parcel-click] unified entity=%s blocklot=%s owner=%s address=%s has_property=%d has_geometry=%d\n",
-            hovered.unified_record->parcel_entity_id.c_str(),
-            hovered.unified_record->blocklot.c_str(),
-            hovered.unified_record->owner_display.c_str(),
-            hovered.unified_record->address.c_str(),
-            hovered.unified_record->has_property_record ? 1 : 0,
-            hovered.unified_record->parcel_has_geometry ? 1 : 0);
+            rec->parcel_entity_id.c_str(),
+            rec->blocklot.c_str(),
+            rec->owner_display.c_str(),
+            rec->address.c_str(),
+            rec->has_property_record ? 1 : 0,
+            rec->parcel_has_geometry ? 1 : 0);
     } else {
         std::fprintf(
             stderr,
             "[worldsim3][parcel-click] parcel-semantic layer=%d feature=%zu ready=%d resolved=0 db=%s\n",
             hovered.layer_idx,
             hovered.feature_idx,
-            (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) ? 1 : 0,
+            duckDbAnalyticsReady(ctx.duckdb_analytics) ? 1 : 0,
             (ctx.duckdb_analytics ? ctx.duckdb_analytics->status().db_path.c_str() : ""));
     }
 
@@ -731,44 +760,28 @@ void logParcelClickDebug(
         return;
     }
 
-    if (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok && !hovered.entity_id.empty()) {
-        const DuckDbQueryResult detail = ctx.duckdb_analytics->queryUnifiedParcelDetail(hovered.entity_id);
-        std::string duckdb_entity;
-        std::string duckdb_geometry_entity;
-        std::string duckdb_blocklot;
-        std::string duckdb_owner;
-        std::string duckdb_address;
-        std::string duckdb_has_property;
-        if (detail.ok && !detail.rows.empty()) {
-            const auto& row = detail.rows.front();
-            for (size_t i = 0; i < detail.columns.size() && i < row.size(); ++i) {
-                if (detail.columns[i] == "parcel_entity_id") duckdb_entity = row[i];
-                else if (detail.columns[i] == "parcel_geometry_entity_id") duckdb_geometry_entity = row[i];
-                else if (detail.columns[i] == "blocklot") duckdb_blocklot = row[i];
-                else if (detail.columns[i] == "owner_display") duckdb_owner = row[i];
-                else if (detail.columns[i] == "address") duckdb_address = row[i];
-                else if (detail.columns[i] == "has_property_record") duckdb_has_property = row[i];
-            }
-        }
+    if (duckDbAnalyticsReady(ctx.duckdb_analytics) && !hovered.entity_id.empty()) {
+        const DuckDbUnifiedParcelDetail detail = ctx.duckdb_analytics->queryUnifiedParcelDetailRecord(hovered.entity_id);
+        const UnifiedParcelRecord& rec = detail.record;
         std::fprintf(
             stderr,
-            "[worldsim3][parcel-click] duckdb query_entity=%s matched_entity=%s geometry_entity=%s ok=%d rows=%zu blocklot=%s owner=%s address=%s has_property=%s message=%s\n",
+            "[worldsim3][parcel-click] duckdb query_entity=%s matched_entity=%s geometry_entity=%s ok=%d found=%d blocklot=%s owner=%s address=%s has_property=%d message=%s\n",
             hovered.entity_id.c_str(),
-            duckdb_entity.c_str(),
-            duckdb_geometry_entity.c_str(),
+            rec.parcel_entity_id.c_str(),
+            rec.parcel_geometry_entity_id.c_str(),
             detail.ok ? 1 : 0,
-            detail.rows.size(),
-            duckdb_blocklot.c_str(),
-            duckdb_owner.c_str(),
-            duckdb_address.c_str(),
-            duckdb_has_property.c_str(),
+            detail.found ? 1 : 0,
+            rec.blocklot.c_str(),
+            (rec.owner_display.empty() ? rec.owner : rec.owner_display).c_str(),
+            rec.address.c_str(),
+            rec.has_property_record ? 1 : 0,
             detail.message.c_str());
     } else {
         std::fprintf(
             stderr,
             "[worldsim3][parcel-click] duckdb entity=%s unavailable rebuild_ok=%d\n",
             hovered.entity_id.c_str(),
-            (ctx.duckdb_analytics && ctx.duckdb_analytics->status().last_rebuild_ok) ? 1 : 0);
+            duckDbAnalyticsReady(ctx.duckdb_analytics) ? 1 : 0);
     }
 }
 
@@ -817,7 +830,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const int inspect_point_layer_idx = ctx.hover_state->inspect_point_layer_idx;
     const bool hovered_parcel_hit = hovered_parcel.hit;
     const bool inspect_parcel_hit = inspect_parcel.hit;
-    const UnifiedParcelRecord* hovered_unified = hovered_parcel.unified_record;
+    const UnifiedParcelRecord* hovered_unified = resolvedParcelRecord(hovered_parcel);
 
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&

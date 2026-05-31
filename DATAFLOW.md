@@ -221,6 +221,29 @@ runtime-only arrays or separate truth. Runtime arrays may mirror these DuckDB
 columns for fast rendering, but DuckDB remains the integration source for hover,
 click detail, filters, and REST verification.
 
+Parcel detail has two DuckDB surfaces:
+
+- `unified_parcels` is the one-row-per-canonical-parcel summary surface used for
+  parcel identity, owner/address search, map coloring, filter columns, and
+  high-traffic detail fields.
+- `parcel_property_records`, `parcel_related_events`,
+  `parcel_related_features`, and `parcel_relationships` are the related-detail
+  surface for property records, events, and source features that can reasonably
+  be associated with a parcel.
+
+Do not flatten every partial or related source record into `unified_parcels`.
+That would make the summary row ambiguous, duplicate multi-source facts, and
+hide provenance. Instead, keep the summary row compact and put related facts in
+relationship tables with `relation_type`, `relation_subtype`, `source_*`,
+`match_method`, and `match_confidence` fields.
+
+Relationship materialization must include cardinality guards. Placeholder
+blocklots such as `ROW`, `UNK`, `NOID`, `UNKNOWN`, `NOTLOCATED`, `CONDO`,
+`MEDIAN`, and `PRIVATERW` are not valid broad join keys. Blocklot joins that
+would connect one generic key to many parcels or many source features should be
+skipped or represented with low-confidence diagnostics, not materialized as
+high-confidence parcel relationships.
+
 ### 4. Derived Runtime Boundary
 
 Derived runtime caches are allowed to compute narrowly scoped facts from artifact-backed layers.
@@ -252,6 +275,8 @@ DuckDB may:
 - be the universal durable store for feature attributes, normalized fields, and query-oriented denormalizations
 - accelerate startup semantic hydration, search, filtering, reporting, choropleths, detail panels, and ad hoc analysis
 - store derived tables such as `unified_parcels` when those joins are query-facing
+- store parcel relationship artifacts when source records are related to a
+  parcel but should not be flattened into the parcel summary row
 - store generic repository/source metadata keyed by provenance rather than region-specific one-off tables
 - canonicalize parcel click identity from geometry/source-layer IDs or blocklot
   joins into `unified_parcels.parcel_entity_id` for semantic selection and
@@ -711,13 +736,13 @@ duckdb_analytics.cpp -> DuckDbAnalytics::executeMapQuery()
 
 DuckDB is the canonical attribute and query store, not the render cache. The intended end state is direct ingest from persisted canonical inputs and derived artifacts rather than any session-only CPU geometry state.
 
-DuckDB stores extracted, typed feature attributes in `layer_features` and parcel-level property/detail fields in `unified_parcels`. It must not store render geometry, coordinate arrays, WKT/GeoJSON geometry payloads, or full arbitrary property bags by default. The `layer_feature_properties` table is a compatibility placeholder unless a bounded, allowlisted semantic key/value export is explicitly added. DuckDB is the intended home for searchable owner/address/value/detail data, filter inputs, choropleth inputs, and parcel join keys, not the source of startup render geometry.
+DuckDB stores extracted, typed feature attributes in `layer_features`, parcel-level summary fields in `unified_parcels`, and parcel-related detail rows in relationship artifacts such as `parcel_property_records`, `parcel_related_events`, `parcel_related_features`, `parcel_relationships`, and `parcel_relationship_summary`. It must not store render geometry, coordinate arrays, WKT/GeoJSON geometry payloads, or full arbitrary property bags by default. The `layer_feature_properties` table is a compatibility placeholder unless a bounded, allowlisted semantic key/value export is explicitly added. DuckDB is the intended home for searchable owner/address/value/detail data, filter inputs, choropleth inputs, parcel join keys, and related-record inspection, not the source of startup render geometry.
 
 Normal interactive startup should treat DuckDB as the semantic load source:
 
 ```text
 data/worldsim.duckdb
-  -> layer_features / unified_parcels / derived views
+  -> layer_features / unified_parcels / parcel_relationships / derived views
   -> compact runtime semantic arrays
   -> GPU color/filter/selection buffers and detail/query UI
 ```
@@ -736,7 +761,7 @@ That canonical-binary path is allowed for explicit rebuild, validation, and migr
 
 The database stores `analytics_build_info.source_signature`, which is the combined signature of available source files. `DuckDbAnalytics::needsRebuild()` compares that stored signature to the current source signature instead of relying on database mtime. This avoids false freshness decisions when file timestamps move or a database is copied. The database also stores per-layer analytics signatures in `analytics_layer_state`, so a stale result can be narrowed to the affected layer files instead of forcing a full-table rewrite by default.
 
-DuckDB artifact hydration is isolated in `DuckDbAnalytics::ensureCurrentArtifact()`. That function is the normal provisioning entrypoint: it validates and reuses `data/worldsim.duckdb` when the artifact is current; when the database is structurally valid but stale, it incrementally refreshes the changed `layer_features` rows and then regenerates dependent projections such as `unified_parcels`, `parcel_events`, `geography_feature_collections`, and the analytics metadata tables/views. It calls the unconditional low-level writer `DuckDbAnalytics::rebuild()` only when the output artifact does not exist, the schema is no longer compatible, or structural validation fails.
+DuckDB artifact hydration is isolated in `DuckDbAnalytics::ensureCurrentArtifact()`. That function is the normal provisioning entrypoint: it validates and reuses `data/worldsim.duckdb` when the artifact is current; when the database is structurally valid but stale, it incrementally refreshes the changed `layer_features` rows and then regenerates dependent projections such as `unified_parcels`, `parcel_events`, parcel relationship artifacts, `geography_feature_collections`, and the analytics metadata tables/views. It calls the unconditional low-level writer `DuckDbAnalytics::rebuild()` only when the output artifact does not exist, the schema is no longer compatible, or structural validation fails.
 
 Runtime layer hydration and DuckDB artifact hydration are separate responsibilities:
 
@@ -760,6 +785,9 @@ Applied rule for parcel history:
 - parcel history should be defined by a canonical parcel-event domain pipeline
 - a local runtime/derived builder may produce that event stream directly from loaded parcel-related layers
 - DuckDB may mirror the same event stream for SQL/query/search convenience
+- DuckDB parcel relationship artifacts should expose parcel-adjacent property
+  records, events, and related features without requiring a UI tab to rescan
+  every source layer
 - the UI should not claim that parcel history "requires DuckDB analytics" if the event stream can be assembled from already loaded runtime layers
 
 In other words, DuckDB can be the fast path for parcel history, but not the only legitimate path.

@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <unordered_map>
 #include <nlohmann/json.hpp>
 
@@ -45,7 +46,7 @@ std::string ownerLookupKey(const std::string& owner) {
 }
 
 std::string ownerLookupKeyForRecord(const UnifiedParcelRecord& parcel) {
-    if (!parcel.owner.empty()) return parcel.owner;
+    if (!parcel.owner.empty()) return ownerLookupKey(parcel.owner);
     return ownerLookupKey(ownerLabelForRecord(parcel));
 }
 
@@ -207,6 +208,136 @@ DuckDbParcelDetailSnapshot loadDuckDbParcelDetailSnapshot(
     return out;
 }
 
+std::string ownerInfoSqlQuote(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char ch : s) {
+        if (ch == '\'') out += "''";
+        else out.push_back(ch);
+    }
+    return out;
+}
+
+std::string queryCell(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+        if (result.columns[i] == column) return row[i];
+    }
+    return {};
+}
+
+bool queryBool(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    const std::string value = normalizeJoinKey(queryCell(result, row, column));
+    return value == "1" || value == "TRUE" || value == "T" || value == "YES";
+}
+
+std::vector<UnifiedParcelRecord> loadDuckDbOwnerParcelRecords(
+    DuckDbAnalytics* duckdb_analytics,
+    const std::string& owner,
+    size_t max_rows = 100000) {
+    std::vector<UnifiedParcelRecord> out;
+    if (!duckdb_analytics || !duckdb_analytics->ensureReady()) return out;
+    const std::string owner_key = ownerLookupKey(owner);
+    const std::string owner_raw = toLowerAscii(trimDisplayValue(owner));
+    if (owner_key.empty() && owner_raw.empty()) return out;
+
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT
+            parcel_layer_idx,
+            parcel_entity_id,
+            parcel_geometry_entity_id,
+            blocklot,
+            parcel_source_file,
+            property_source_file,
+            parcel_has_geometry,
+            has_property_record,
+            owner,
+            owner_display,
+            address,
+            zipcode,
+            status,
+            current_land,
+            current_improvements,
+            structure_area_sqft,
+            tax_base,
+            sale_price,
+            current_value,
+            vacant_notice_count,
+            vacant_rehab_count,
+            tax_lien_count,
+            tax_sale_count,
+            tax_lien_amount,
+            tax_sale_amount,
+            min_lon,
+            min_lat,
+            max_lon,
+            max_lat
+        FROM unified_parcels
+        WHERE )SQL";
+    bool has_clause = false;
+    auto append_or = [&]() {
+        if (has_clause) sql << " OR ";
+        has_clause = true;
+    };
+    if (!owner_key.empty()) {
+        append_or();
+        sql << "owner = '" << ownerInfoSqlQuote(owner_key) << "'";
+    }
+    if (!owner_raw.empty() && owner_raw != owner_key) {
+        append_or();
+        sql << "lower(trim(coalesce(owner, ''))) = '" << ownerInfoSqlQuote(owner_raw) << "'";
+        append_or();
+        sql << "lower(trim(coalesce(owner_display, ''))) = '" << ownerInfoSqlQuote(owner_raw) << "'";
+    }
+    sql << R"SQL(
+        ORDER BY has_property_record DESC, owner_display, address, parcel_entity_id
+    )SQL";
+
+    const DuckDbQueryResult result = duckdb_analytics->executeMapQuery(sql.str(), {}, {}, max_rows);
+    if (!result.ok) return out;
+    out.reserve(result.rows.size());
+    for (const auto& row : result.rows) {
+        UnifiedParcelRecord rec;
+        rec.parcel_layer_idx = (size_t)parseNumericField(queryCell(result, row, "parcel_layer_idx"));
+        rec.parcel_entity_id = queryCell(result, row, "parcel_entity_id");
+        rec.parcel_geometry_entity_id = queryCell(result, row, "parcel_geometry_entity_id");
+        rec.blocklot = queryCell(result, row, "blocklot");
+        rec.parcel_source_file = queryCell(result, row, "parcel_source_file");
+        rec.property_source_file = queryCell(result, row, "property_source_file");
+        rec.parcel_has_geometry = queryBool(result, row, "parcel_has_geometry");
+        rec.has_property_record = queryBool(result, row, "has_property_record");
+        rec.owner = queryCell(result, row, "owner");
+        rec.owner_display = queryCell(result, row, "owner_display");
+        rec.address = queryCell(result, row, "address");
+        rec.zip = queryCell(result, row, "zipcode");
+        rec.status = queryCell(result, row, "status");
+        rec.current_land = parseNumericField(queryCell(result, row, "current_land"));
+        rec.current_improvements = parseNumericField(queryCell(result, row, "current_improvements"));
+        rec.structure_area_sqft = parseNumericField(queryCell(result, row, "structure_area_sqft"));
+        rec.tax_base = parseNumericField(queryCell(result, row, "tax_base"));
+        rec.sale_price = parseNumericField(queryCell(result, row, "sale_price"));
+        rec.current_value = parseNumericField(queryCell(result, row, "current_value"));
+        rec.vacant_notice_count = (int)parseNumericField(queryCell(result, row, "vacant_notice_count"));
+        rec.vacant_rehab_count = (int)parseNumericField(queryCell(result, row, "vacant_rehab_count"));
+        rec.tax_lien_count = (int)parseNumericField(queryCell(result, row, "tax_lien_count"));
+        rec.tax_sale_count = (int)parseNumericField(queryCell(result, row, "tax_sale_count"));
+        rec.tax_lien_amount = parseNumericField(queryCell(result, row, "tax_lien_amount"));
+        rec.tax_sale_amount = parseNumericField(queryCell(result, row, "tax_sale_amount"));
+        rec.parcel_extent.min_lon = (float)parseNumericField(queryCell(result, row, "min_lon"));
+        rec.parcel_extent.min_lat = (float)parseNumericField(queryCell(result, row, "min_lat"));
+        rec.parcel_extent.max_lon = (float)parseNumericField(queryCell(result, row, "max_lon"));
+        rec.parcel_extent.max_lat = (float)parseNumericField(queryCell(result, row, "max_lat"));
+        if (!rec.parcel_entity_id.empty()) out.push_back(std::move(rec));
+    }
+    return out;
+}
+
 void drawSourceButton(ElementInfoUiState* state, const char* label, const std::string& source, bool property_source, const char* id) {
     if (source.empty() || !state) return;
     ImGui::TextUnformatted(label);
@@ -365,6 +496,54 @@ bool drawDuckDbParcelTimeline(DuckDbAnalytics* duckdb_analytics, const std::stri
         if (!source_name.empty() && source_name != "NULL") ImGui::TextDisabled("Source: %s", source_name.c_str());
         else if (!source_file.empty() && source_file != "NULL") ImGui::TextDisabled("Source: %s", source_file.c_str());
         ImGui::Separator();
+    }
+    ImGui::EndChild();
+    return true;
+}
+
+bool drawDuckDbParcelRelationships(DuckDbAnalytics* duckdb_analytics, const std::string& parcel_entity_id) {
+    if (!duckdb_analytics || !duckdb_analytics->status().last_rebuild_ok || trimDisplayValue(parcel_entity_id).empty()) return false;
+    const DuckDbQueryResult result = duckdb_analytics->queryParcelRelationships(parcel_entity_id, 300);
+    if (!result.ok || result.rows.empty()) return false;
+
+    ImGui::TextDisabled("%zu related record(s)", result.rows.size());
+    ImGui::BeginChild("parcel_related_records", ImVec2(0, 260.0f), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (size_t row_idx = 0; row_idx < result.rows.size(); ++row_idx) {
+        const auto& row = result.rows[row_idx];
+        const std::string relation_type = trimDisplayValue(queryCell(result, row, "relation_type"));
+        const std::string relation_subtype = trimDisplayValue(queryCell(result, row, "relation_subtype"));
+        const std::string label = trimDisplayValue(queryCell(result, row, "label"));
+        const std::string detail = trimDisplayValue(queryCell(result, row, "detail"));
+        const std::string source_name = trimDisplayValue(queryCell(result, row, "source_layer_name"));
+        const std::string source_file = trimDisplayValue(queryCell(result, row, "source_layer_file"));
+        const std::string match_method = trimDisplayValue(queryCell(result, row, "match_method"));
+        const std::string confidence = trimDisplayValue(queryCell(result, row, "confidence"));
+        const std::string event_date = trimDisplayValue(queryCell(result, row, "event_date"));
+        const std::string amount = trimDisplayValue(queryCell(result, row, "amount_usd"));
+
+        ImGui::PushID((int)row_idx + 17000);
+        const std::string heading =
+            (relation_type.empty() ? "related" : relation_type) +
+            (relation_subtype.empty() || relation_subtype == relation_type ? std::string() : (": " + relation_subtype));
+        ImGui::TextWrapped("%s", heading.c_str());
+        if (!label.empty() && label != "NULL") ImGui::TextWrapped("%s", label.c_str());
+        if (!detail.empty() && detail != "NULL") ImGui::TextWrapped("%s", detail.c_str());
+        if (!event_date.empty() && event_date != "NULL") ImGui::TextDisabled("Date: %s", event_date.c_str());
+        if (!amount.empty() && amount != "NULL") {
+            const double amount_value = parseNumericField(amount);
+            if (amount_value > 0.0) ImGui::TextDisabled("Amount: %s", formatUsd(amount_value, 2).c_str());
+        }
+        if (!source_name.empty() && source_name != "NULL") ImGui::TextDisabled("Source: %s", source_name.c_str());
+        else if (!source_file.empty() && source_file != "NULL") ImGui::TextDisabled("Source: %s", source_file.c_str());
+        if (!match_method.empty() && match_method != "NULL") {
+            ImGui::TextDisabled(
+                "Match: %s%s%s",
+                match_method.c_str(),
+                confidence.empty() || confidence == "NULL" ? "" : " | confidence ",
+                confidence.empty() || confidence == "NULL" ? "" : confidence.c_str());
+        }
+        ImGui::Separator();
+        ImGui::PopID();
     }
     ImGui::EndChild();
     return true;
@@ -573,6 +752,11 @@ void drawParcelElement(const OwnerInfoTabContext& ctx, const std::string& parcel
         drawRealPropertySummary(selected_rp, false);
     }
 
+    ImGui::SeparatorText("Related Parcel Records");
+    if (!drawDuckDbParcelRelationships(ctx.duckdb_analytics, parcel_entity_id)) {
+        ImGui::TextDisabled("No related parcel records found in DuckDB.");
+    }
+
     const std::string history_title =
         duckdb_timeline_event_count > 0
             ? ("Parcel History (" + std::to_string(duckdb_timeline_event_count) + " Events)")
@@ -613,39 +797,55 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
         ImGui::TextDisabled("Owner is unavailable.");
     } else if (!ctx.layers || ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) {
         ImGui::TextDisabled("Parcel layer is unavailable.");
-    } else if (!ctx.unified_parcels) {
-        ImGui::TextDisabled("Owner parcel data is unavailable.");
     } else {
         const std::string owner_key = trimDisplayValue(owner);
         std::string owner_label = owner_key;
-        std::vector<std::string> owner_parcel_ids;
-        owner_parcel_ids.reserve(512);
+        std::vector<UnifiedParcelRecord> owner_records;
+        owner_records.reserve(512);
         double owner_value_total = 0.0;
-        for (const auto& parcel_record : *ctx.unified_parcels) {
-            if (!parcelMatchesOwner(parcel_record, owner_key)) continue;
-            if (owner_label == owner_key) {
-                const std::string parcel_owner_label = ownerLabelForRecord(parcel_record);
-                if (!parcel_owner_label.empty()) owner_label = parcel_owner_label;
+        if (ctx.unified_parcels) {
+            for (const auto& parcel_record : *ctx.unified_parcels) {
+                if (!parcelMatchesOwner(parcel_record, owner_key)) continue;
+                if (owner_label == owner_key) {
+                    const std::string parcel_owner_label = ownerLabelForRecord(parcel_record);
+                    if (!parcel_owner_label.empty()) owner_label = parcel_owner_label;
+                }
+                owner_records.push_back(parcel_record);
+                owner_value_total += parcel_record.current_value;
             }
-            owner_parcel_ids.push_back(parcel_record.parcel_entity_id);
-            owner_value_total += parcel_record.current_value;
+        }
+        if (owner_records.empty() && ctx.state) {
+            const std::string duckdb_cache_key = ownerLookupKey(owner_key);
+            if (ctx.state->owner_duckdb_cache_key != duckdb_cache_key) {
+                ctx.state->owner_duckdb_cache_key = duckdb_cache_key;
+                ctx.state->owner_duckdb_cache_records =
+                    loadDuckDbOwnerParcelRecords(ctx.duckdb_analytics, owner_key);
+            }
+            owner_records = ctx.state->owner_duckdb_cache_records;
+            owner_value_total = 0.0;
+            for (const auto& parcel_record : owner_records) {
+                if (owner_label == owner_key) {
+                    const std::string parcel_owner_label = ownerLabelForRecord(parcel_record);
+                    if (!parcel_owner_label.empty()) owner_label = parcel_owner_label;
+                }
+                owner_value_total += parcel_record.current_value;
+            }
         }
 
         GeoBounds owner_bounds;
-        for (const std::string& parcel_id : owner_parcel_ids) {
-            const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, parcel_id);
-            if (!parcel_record || !parcel_record->parcel_has_geometry) continue;
-            expandBounds(owner_bounds, parcel_record->parcel_extent);
+        for (const UnifiedParcelRecord& parcel_record : owner_records) {
+            if (!parcel_record.parcel_has_geometry) continue;
+            expandBounds(owner_bounds, parcel_record.parcel_extent);
         }
 
         ImGui::Text("Element: Owner");
         ImGui::TextWrapped("Owner: %s", owner_label.c_str());
-        ImGui::Text("Properties: %zu", owner_parcel_ids.size());
+        ImGui::Text("Properties: %zu", owner_records.size());
         ImGui::Text("Total Current Value: %s", formatUsd(owner_value_total).c_str());
         if (owner_bounds.valid && ImGui::Button("Zoom To Owner Extent")) {
             applyBoundsView(ctx, owner_bounds);
         }
-        if (ctx.state) {
+        if (ctx.state && ctx.unified_parcels) {
             ImGui::Separator();
             ImGui::TextUnformatted("Similar Owner Names");
             int min_score = std::clamp(ctx.state->owner_fuzzy_match_min_score, 25, 120);
@@ -715,11 +915,9 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
             : std::string();
         size_t visible_owner_properties = 0;
         ImGui::BeginChild("owner_info_properties", ImVec2(0, 0), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        for (const std::string& parcel_id : owner_parcel_ids) {
-            const UnifiedParcelRecord* parcel_record = unifiedParcelAt(*ctx.unified_parcels, parcel_id);
-            if (!parcel_record) continue;
-            std::string blocklot = parcel_record->blocklot;
-            std::string address = parcel_record->address;
+        for (const UnifiedParcelRecord& parcel_record : owner_records) {
+            std::string blocklot = parcel_record.blocklot;
+            std::string address = parcel_record.address;
             if (address.empty()) address = "(address unavailable)";
             if (!property_query.empty() &&
                 !containsCaseInsensitive(address, property_query) &&
@@ -728,25 +926,25 @@ void drawOwnerElement(const OwnerInfoTabContext& ctx, const std::string& owner) 
             }
 
             visible_owner_properties++;
-            std::string label = address + "##owner_prop_" + parcel_record->parcel_entity_id;
+            std::string label = address + "##owner_prop_" + parcel_record.parcel_entity_id;
             const bool row_selected = ctx.selected_parcel_id_set &&
-                ctx.selected_parcel_id_set->find(parcel_record->parcel_entity_id) != ctx.selected_parcel_id_set->end();
+                ctx.selected_parcel_id_set->find(parcel_record.parcel_entity_id) != ctx.selected_parcel_id_set->end();
             if (ImGui::Selectable(label.c_str(), row_selected, ImGuiSelectableFlags_SpanAllColumns)) {
-                if (parcel_record->parcel_has_geometry && ctx.center_lon) {
-                    *ctx.center_lon = ((double)parcel_record->parcel_extent.min_lon + (double)parcel_record->parcel_extent.max_lon) * 0.5;
+                if (parcel_record.parcel_has_geometry && ctx.center_lon) {
+                    *ctx.center_lon = ((double)parcel_record.parcel_extent.min_lon + (double)parcel_record.parcel_extent.max_lon) * 0.5;
                 }
-                if (parcel_record->parcel_has_geometry && ctx.center_lat) {
+                if (parcel_record.parcel_has_geometry && ctx.center_lat) {
                     *ctx.center_lat = std::clamp(
-                        ((double)parcel_record->parcel_extent.min_lat + (double)parcel_record->parcel_extent.max_lat) * 0.5,
+                        ((double)parcel_record.parcel_extent.min_lat + (double)parcel_record.parcel_extent.max_lat) * 0.5,
                         -85.0,
                         85.0);
                 }
-                if (parcel_record->parcel_has_geometry && ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
-                if (ctx.select_parcel_id) ctx.select_parcel_id(parcel_record->parcel_entity_id, ImGui::GetIO().KeyCtrl);
-                if (ctx.state) openElementParcelPage(*ctx.state, parcel_record->parcel_entity_id);
+                if (parcel_record.parcel_has_geometry && ctx.zoom) *ctx.zoom = std::max(*ctx.zoom, 18.0);
+                if (ctx.select_parcel_id) ctx.select_parcel_id(parcel_record.parcel_entity_id, ImGui::GetIO().KeyCtrl);
+                if (ctx.state) openElementParcelPage(*ctx.state, parcel_record.parcel_entity_id);
             }
             ImGui::TextDisabled("BLOCKLOT: %s", blocklot.empty() ? "(none)" : blocklot.c_str());
-            if (parcel_record->current_value > 0.0) ImGui::TextDisabled("Current value: %s", formatUsd(parcel_record->current_value).c_str());
+            if (parcel_record.current_value > 0.0) ImGui::TextDisabled("Current value: %s", formatUsd(parcel_record.current_value).c_str());
             ImGui::Separator();
         }
         if (visible_owner_properties == 0) ImGui::TextDisabled("No matching properties.");

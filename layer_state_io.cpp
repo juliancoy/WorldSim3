@@ -439,6 +439,14 @@ void loadLayerUiState(
         {"layer_heatmap_zoom_adaptive_bandwidth", layer_heatmap_zoom_adaptive_bandwidth, true},
         {"layer_heatmap_multires_enabled", layer_heatmap_multires_enabled, true},
     });
+    if (layer_fill_enabled && layer_heatmap_use_gradient) {
+        const size_t count = std::min({layers.size(), layer_fill_enabled->size(), layer_heatmap_use_gradient->size()});
+        for (size_t i = 0; i < count; ++i) {
+            if (!layers[i].heatmap_field.empty() && (*layer_heatmap_use_gradient)[i]) {
+                (*layer_fill_enabled)[i] = true;
+            }
+        }
+    }
     loadLayerSettingsFromObject<int>(j, layers, {
         {"layer_heatmap_max_zoom", layer_heatmap_max_zoom, 13},
         {"layer_parcel_detail_min_zoom", layer_parcel_detail_min_zoom, 14},

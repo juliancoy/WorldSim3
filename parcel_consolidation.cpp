@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <iterator>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
@@ -224,63 +225,95 @@ ParcelConsolidationArtifacts buildParcelConsolidationArtifacts(
         tax_sale_count_by_blocklot,
         &tax_sale_amount_by_blocklot);
 
-    if (layer_indices.parcel_layer_idx < 0 || (size_t)layer_indices.parcel_layer_idx >= layers.size()) {
+    std::vector<size_t> parcel_layer_indices;
+    for (size_t li = 0; li < layers.size(); ++li) {
+        if (!isDirectOperationalParcelLayer(layers[li])) continue;
+        if (layers[li].features.empty()) continue;
+        parcel_layer_indices.push_back(li);
+    }
+    if (parcel_layer_indices.empty() &&
+        layer_indices.parcel_layer_idx >= 0 &&
+        (size_t)layer_indices.parcel_layer_idx < layers.size()) {
+        parcel_layer_indices.push_back((size_t)layer_indices.parcel_layer_idx);
+    }
+    std::sort(parcel_layer_indices.begin(), parcel_layer_indices.end());
+    parcel_layer_indices.erase(
+        std::unique(parcel_layer_indices.begin(), parcel_layer_indices.end()),
+        parcel_layer_indices.end());
+    if (parcel_layer_indices.empty()) {
         return artifacts;
     }
 
-    const auto& parcel_features = layers[(size_t)layer_indices.parcel_layer_idx].features;
-    artifacts.parcel_vac_notice_by_feature.assign(parcel_features.size(), 0);
-    artifacts.parcel_vac_rehab_by_feature.assign(parcel_features.size(), 0);
-    artifacts.parcel_tax_lien_by_feature.assign(parcel_features.size(), 0);
-    artifacts.parcel_tax_sale_by_feature.assign(parcel_features.size(), 0);
-    artifacts.parcel_tax_lien_amount_by_feature.assign(parcel_features.size(), 0.0);
-    artifacts.parcel_tax_sale_amount_by_feature.assign(parcel_features.size(), 0.0);
+    if (layer_indices.parcel_layer_idx >= 0 &&
+        (size_t)layer_indices.parcel_layer_idx < layers.size()) {
+        const auto& parcel_features = layers[(size_t)layer_indices.parcel_layer_idx].features;
+        artifacts.parcel_vac_notice_by_feature.assign(parcel_features.size(), 0);
+        artifacts.parcel_vac_rehab_by_feature.assign(parcel_features.size(), 0);
+        artifacts.parcel_tax_lien_by_feature.assign(parcel_features.size(), 0);
+        artifacts.parcel_tax_sale_by_feature.assign(parcel_features.size(), 0);
+        artifacts.parcel_tax_lien_amount_by_feature.assign(parcel_features.size(), 0.0);
+        artifacts.parcel_tax_sale_amount_by_feature.assign(parcel_features.size(), 0.0);
 
-    for (size_t i = 0; i < parcel_features.size(); ++i) {
-        const std::string normalized_blocklot = normalizeJoinKey(getPropertyValue(parcel_features[i], "BLOCKLOT"));
-        auto notice_it = vacant_notice_count_by_blocklot.find(normalized_blocklot);
-        if (notice_it != vacant_notice_count_by_blocklot.end()) {
-            artifacts.parcel_vac_notice_by_feature[i] = notice_it->second;
-        }
-        auto rehab_it = vacant_rehab_count_by_blocklot.find(normalized_blocklot);
-        if (rehab_it != vacant_rehab_count_by_blocklot.end()) {
-            artifacts.parcel_vac_rehab_by_feature[i] = rehab_it->second;
-        }
-
-        const std::string blocklot = featureBlockLotJoinKey(parcel_features[i]);
-        auto lien_it = tax_lien_count_by_blocklot.find(blocklot);
-        if (lien_it != tax_lien_count_by_blocklot.end()) {
-            artifacts.parcel_tax_lien_by_feature[i] = lien_it->second;
-            auto amount_it = tax_lien_amount_by_blocklot.find(blocklot);
-            if (amount_it != tax_lien_amount_by_blocklot.end()) {
-                artifacts.parcel_tax_lien_amount_by_feature[i] = amount_it->second;
+        for (size_t i = 0; i < parcel_features.size(); ++i) {
+            const std::string normalized_blocklot = normalizeJoinKey(getPropertyValue(parcel_features[i], "BLOCKLOT"));
+            auto notice_it = vacant_notice_count_by_blocklot.find(normalized_blocklot);
+            if (notice_it != vacant_notice_count_by_blocklot.end()) {
+                artifacts.parcel_vac_notice_by_feature[i] = notice_it->second;
             }
-        }
-        auto sale_it = tax_sale_count_by_blocklot.find(blocklot);
-        if (sale_it != tax_sale_count_by_blocklot.end()) {
-            artifacts.parcel_tax_sale_by_feature[i] = sale_it->second;
-            auto amount_it = tax_sale_amount_by_blocklot.find(blocklot);
-            if (amount_it != tax_sale_amount_by_blocklot.end()) {
-                artifacts.parcel_tax_sale_amount_by_feature[i] = amount_it->second;
+            auto rehab_it = vacant_rehab_count_by_blocklot.find(normalized_blocklot);
+            if (rehab_it != vacant_rehab_count_by_blocklot.end()) {
+                artifacts.parcel_vac_rehab_by_feature[i] = rehab_it->second;
+            }
+
+            const std::string blocklot = featureBlockLotJoinKey(parcel_features[i]);
+            auto lien_it = tax_lien_count_by_blocklot.find(blocklot);
+            if (lien_it != tax_lien_count_by_blocklot.end()) {
+                artifacts.parcel_tax_lien_by_feature[i] = lien_it->second;
+                auto amount_it = tax_lien_amount_by_blocklot.find(blocklot);
+                if (amount_it != tax_lien_amount_by_blocklot.end()) {
+                    artifacts.parcel_tax_lien_amount_by_feature[i] = amount_it->second;
+                }
+            }
+            auto sale_it = tax_sale_count_by_blocklot.find(blocklot);
+            if (sale_it != tax_sale_count_by_blocklot.end()) {
+                artifacts.parcel_tax_sale_by_feature[i] = sale_it->second;
+                auto amount_it = tax_sale_amount_by_blocklot.find(blocklot);
+                if (amount_it != tax_sale_amount_by_blocklot.end()) {
+                    artifacts.parcel_tax_sale_amount_by_feature[i] = amount_it->second;
+                }
             }
         }
     }
 
-    artifacts.unified_parcels = buildUnifiedParcels(UnifiedParcelBuildRequest{
-        &layers,
-        nullptr,
-        layer_indices.parcel_layer_idx,
-        layer_indices.real_property_layer_idx,
-        &artifacts.harmonized_real_property_features,
-        &artifacts.harmonized_real_property_source_files,
-        &artifacts.real_property_by_blocklot,
-        &artifacts.parcel_vac_notice_by_feature,
-        &artifacts.parcel_vac_rehab_by_feature,
-        &artifacts.parcel_tax_lien_by_feature,
-        &artifacts.parcel_tax_sale_by_feature,
-        &artifacts.parcel_tax_lien_amount_by_feature,
-        &artifacts.parcel_tax_sale_amount_by_feature,
-    });
+    size_t unified_reserve = 0;
+    for (const size_t parcel_layer_idx : parcel_layer_indices) {
+        unified_reserve += layers[parcel_layer_idx].features.size();
+    }
+    artifacts.unified_parcels.reserve(unified_reserve);
+    for (const size_t parcel_layer_idx : parcel_layer_indices) {
+        const bool active_parcel_layer =
+            layer_indices.parcel_layer_idx >= 0 &&
+            parcel_layer_idx == (size_t)layer_indices.parcel_layer_idx;
+        std::vector<UnifiedParcelRecord> layer_unified = buildUnifiedParcels(UnifiedParcelBuildRequest{
+            &layers,
+            nullptr,
+            (int)parcel_layer_idx,
+            layer_indices.real_property_layer_idx,
+            &artifacts.harmonized_real_property_features,
+            &artifacts.harmonized_real_property_source_files,
+            &artifacts.real_property_by_blocklot,
+            active_parcel_layer ? &artifacts.parcel_vac_notice_by_feature : nullptr,
+            active_parcel_layer ? &artifacts.parcel_vac_rehab_by_feature : nullptr,
+            active_parcel_layer ? &artifacts.parcel_tax_lien_by_feature : nullptr,
+            active_parcel_layer ? &artifacts.parcel_tax_sale_by_feature : nullptr,
+            active_parcel_layer ? &artifacts.parcel_tax_lien_amount_by_feature : nullptr,
+            active_parcel_layer ? &artifacts.parcel_tax_sale_amount_by_feature : nullptr,
+        });
+        artifacts.unified_parcels.insert(
+            artifacts.unified_parcels.end(),
+            std::make_move_iterator(layer_unified.begin()),
+            std::make_move_iterator(layer_unified.end()));
+    }
 
     return artifacts;
 }

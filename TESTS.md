@@ -111,6 +111,8 @@ Additional color-cache coverage:
 ./build/worldsim3 --parcel-selection-ui-harness
 ./build/worldsim3 --parcel-hover-click-ui-harness
 ./build/worldsim3 --duckdb-parcel-semantic-snapshot-selftest
+./build/worldsim3 --duckdb-parcel-ingest-selftest
+./build/worldsim3 --verify-parcel-duckdb-keys
 ```
 
 Purpose:
@@ -132,6 +134,14 @@ Additional coverage:
 - `--parcel-selection-ui-harness` verifies selected-parcel highlighting is drawn from resident artifact identity only, and that a single selected `entity_id` highlights every matching geometry record for both the primary parcel blob and county polygon artifacts.
 - `--parcel-hover-click-ui-harness` verifies parcel hover resolves stable parcel identity, county-parcel hover detail can fall back through DuckDB when no in-memory unified parcel row is present, and click selection opens/selects the resolved parcel entity.
 - `--duckdb-parcel-semantic-snapshot-selftest` verifies the runtime parcel semantic snapshot is loaded from `layer_features` and `unified_parcels` in DuckDB, producing per-feature parcel counts/search fields without scanning canonical property bags.
+- `--duckdb-parcel-ingest-selftest` verifies the DuckDB parcel ingest path builds the summary and relationship artifact surfaces used by parcel and owner detail UI.
+- `--verify-parcel-duckdb-keys` verifies operational parcel layer feature identities map one-to-one into `unified_parcels` and catches duplicate or missing parcel semantic identities.
+
+Operational note:
+
+- REST/UI parcel performance tests share the local app ports and
+  `data/worldsim.duckdb`. Run them without another live instance or concurrent
+  DuckDB rebuild when measuring performance thresholds.
 
 Current additional verification:
 
@@ -223,7 +233,7 @@ Coverage labels:
 
 - `Primary parcel canonical + geometry + DuckDB ingest path`
   Commands: `--validate-canonical-parcel-binary`, `--parcel-artifact-health`, `--compile-polygon-geometry`, `--validate-polygon-geometry`, `--duckdb-parcel-semantic-snapshot-selftest`, `--duckdb-parcel-ingest-selftest`, `--parcel-polygon-identity-selftest`.
-  Why: this is the strongest generated-data path in the repo. It has artifact validation, semantic verification, ingest verification, and UI harness coverage.
+  Why: this is the strongest generated-data path in the repo. It has artifact validation, semantic verification, ingest verification, parcel relationship artifact coverage, and UI harness coverage.
 
 - `Parcel interaction data derived from generated artifacts`
   Commands: `--parcel-selection-ui-harness`, `--parcel-hover-click-ui-harness`.

@@ -96,12 +96,23 @@ Implemented support:
 ## DuckDB / Analytics
 
 - Rebuild `unified_parcels` from the finalized statewide parcel layer after any canonical parcel refresh.
+- Rebuild parcel relationship artifacts after any canonical parcel, property,
+  event, or source-feature refresh:
+  - `parcel_property_records`
+  - `parcel_related_events`
+  - `parcel_related_features`
+  - `parcel_relationships`
+  - `parcel_relationship_summary`
 - Report:
   - total unified parcels
   - parcels with geometry
   - parcels with property record
+  - parcel relationship counts by relation type
   - counts by jurisdiction
 - Verify Maryland parcel detail lookups against the statewide dataset.
+- Verify owner detail pages from DuckDB relationships, including owners whose
+  clicked parcel was resolved by county-layer fallback rather than the in-memory
+  primary parcel snapshot.
 - Keep DuckDB geometry-free for render purposes.
 - Keep DuckDB rebuild explicit/user-initiated, not automatic startup work.
 - Add stale/missing DuckDB messaging that distinguishes analytics unavailability from render readiness.

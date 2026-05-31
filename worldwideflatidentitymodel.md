@@ -541,18 +541,22 @@ Result:
 
 - selection survives source reshaping, layer reorder, and artifact rebuilds.
 
-### 7. Rebuild `unified_parcels` on stable entity identity
+### 7. Rebuild parcel summary and relationship artifacts on stable entity identity
 
 Current problem:
 
-- `UnifiedParcelRecord` and DuckDB `unified_parcels` currently revolve around
-  `parcel_layer_idx` and `parcel_feature_idx`.
+- `UnifiedParcelRecord`, DuckDB `unified_parcels`, and parcel relationship
+  artifacts must keep moving toward stable entity identity instead of relying on
+  layer-local feature coordinates as logical primary keys.
 
 Required change:
 
 - add `parcel_entity_id`
 - add `parcel_geometry_entity_id`
 - add `property_entity_id` where applicable
+- keep `parcel_property_records`, `parcel_related_events`,
+  `parcel_related_features`, and `parcel_relationships` keyed to stable parcel
+  identities plus source/provenance identities
 - remove `parcel_layer_idx` and `parcel_feature_idx` as logical primary keys
 - move logical joins to `entity_id`
 

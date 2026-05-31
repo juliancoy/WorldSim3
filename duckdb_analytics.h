@@ -70,11 +70,19 @@ struct DuckDbParcelSemanticSnapshot {
     std::string message;
 };
 
+struct DuckDbUnifiedParcelDetail {
+    bool ok = false;
+    bool found = false;
+    std::string message;
+    UnifiedParcelRecord record;
+};
+
 class DuckDbAnalytics {
 public:
     explicit DuckDbAnalytics(std::filesystem::path root);
 
     const DuckDbAnalyticsStatus& status() const { return status_; }
+    bool ensureReady();
     bool needsRebuild(const std::vector<LayerDef>& layers) const;
     bool validateExistingCache();
     std::string buildSourceSignature() const;
@@ -92,6 +100,13 @@ public:
         const std::unordered_set<std::string>& jurisdictions,
         size_t max_rows = 1000) const;
     DuckDbQueryResult queryUnifiedParcelDetail(const std::string& parcel_entity_id) const;
+    DuckDbUnifiedParcelDetail queryUnifiedParcelDetailRecord(const std::string& parcel_entity_id) const;
+    DuckDbUnifiedParcelDetail queryUnifiedParcelDetailRecordByLayerFeature(
+        size_t parcel_layer_idx,
+        size_t parcel_feature_idx) const;
+    DuckDbQueryResult queryParcelRelationships(
+        const std::string& parcel_entity_id,
+        size_t max_rows = 200) const;
     DuckDbQueryResult queryParcelEvents(
         const std::string& blocklot,
         size_t max_rows = 200) const;

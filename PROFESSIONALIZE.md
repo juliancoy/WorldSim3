@@ -34,7 +34,11 @@ Implementation targets:
 
 - `UnifiedParcelRecord`
 - `unified_parcels` DuckDB table
-- future `parcel_events`
+- `parcel_events`
+- `parcel_property_records`
+- `parcel_related_events`
+- `parcel_related_features`
+- `parcel_relationships`
 - future `parcel_value_events`
 
 ### 2.2 Canonical Data Model
@@ -43,13 +47,18 @@ Keep moving from ad hoc layer logic to stable tables/records:
 
 - `unified_parcels`
 - `parcel_events`
+- `parcel_property_records`
+- `parcel_related_events`
+- `parcel_related_features`
+- `parcel_relationships`
+- `parcel_relationship_summary`
 - `parcel_value_events`
 - `owners`
 - `owner_classes`
 - `query_layers`
 - `scenarios`
 
-Rule: UI and SQL should consume canonical records first, raw layers only when inspecting source details.
+Rule: UI and SQL should consume canonical records first, raw layers only when inspecting source details. `unified_parcels` is the compact parcel summary; related property rows, source features, and events should stay in relationship artifacts with provenance and confidence rather than being flattened into the summary.
 
 ### 2.3 Quality And Confidence
 
@@ -200,7 +209,8 @@ Each doc should describe source fields, transformation logic, and known limitati
 
 ### Phase 3: Data Model Expansion
 
-- Add `parcel_events`.
+- Continue expanding `parcel_events`.
+- Continue expanding parcel relationship artifacts.
 - Add `parcel_value_events`.
 - Normalize sale, assessment, vacancy, permit, lien, and tax events into event rows.
 - Use `parcel_value_events` for historical value charts.

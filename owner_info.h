@@ -44,6 +44,8 @@ struct ElementInfoUiState {
     int owner_fuzzy_cache_min_score = 100;
     int owner_fuzzy_cache_limit = 12;
     std::vector<OwnerSimilarMatch> owner_fuzzy_cache_matches;
+    std::string owner_duckdb_cache_key;
+    std::vector<UnifiedParcelRecord> owner_duckdb_cache_records;
 };
 
 using OwnerInfoUiState = ElementInfoUiState;

@@ -28,7 +28,7 @@ HeatNormalizationState buildHeatNormalizationState(
     state.heat_max = -std::numeric_limits<float>::infinity();
     state.normalize_mode =
         layer_idx < layer_normalize_mode.size()
-            ? std::clamp(layer_normalize_mode[layer_idx], 0, 2)
+            ? std::clamp(layer_normalize_mode[layer_idx], 0, 3)
             : 0;
     if (layer.heatmap_field.empty()) return state;
 

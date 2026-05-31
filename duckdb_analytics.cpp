@@ -9,8 +9,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -21,7 +23,7 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
-constexpr int kAnalyticsSchemaVersion = 11;
+constexpr int kAnalyticsSchemaVersion = 13;
 constexpr size_t kMaxEventDetailChars = 4096;
 constexpr size_t kMaxEventMetadataChars = 8192;
 
@@ -40,6 +42,53 @@ bool loadAnalyticsSignatureSidecar(const fs::path& db_path, std::string& out_sig
     if (!in) return false;
     std::getline(in, out_signature);
     return !out_signature.empty();
+}
+
+std::string queryResultCell(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    for (size_t i = 0; i < result.columns.size() && i < row.size(); ++i) {
+        if (result.columns[i] == column) return row[i];
+    }
+    return {};
+}
+
+double queryResultDouble(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    const std::string value = trimDisplayValue(queryResultCell(result, row, column));
+    if (value.empty() || value == "NULL") return 0.0;
+    char* end = nullptr;
+    const double parsed = std::strtod(value.c_str(), &end);
+    return end != value.c_str() && std::isfinite(parsed) ? parsed : 0.0;
+}
+
+int queryResultInt(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    return static_cast<int>(std::lround(queryResultDouble(result, row, column)));
+}
+
+size_t queryResultSize(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    const std::string value = trimDisplayValue(queryResultCell(result, row, column));
+    if (value.empty() || value == "NULL") return 0;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
+    return end != value.c_str() ? static_cast<size_t>(parsed) : 0;
+}
+
+bool queryResultBool(
+    const DuckDbQueryResult& result,
+    const std::vector<std::string>& row,
+    const char* column) {
+    const std::string value = normalizeJoinKey(queryResultCell(result, row, column));
+    return value == "1" || value == "TRUE" || value == "T" || value == "YES";
 }
 
 void saveAnalyticsSignatureSidecar(const fs::path& db_path, const std::string& signature) {
@@ -901,6 +950,369 @@ void refreshUnifiedParcelEventRollups(duckdb::Connection& con) {
     )SQL", "refresh unified parcel event rollups");
 }
 
+void rebuildParcelRelationshipArtifacts(duckdb::Connection& con) {
+    auto exec_or_throw = [&](const std::string& sql, const char* context) {
+        auto res = con.Query(sql);
+        if (!res || res->HasError()) {
+            throw std::runtime_error(
+                std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+        }
+    };
+
+    exec_or_throw("DROP TABLE IF EXISTS parcel_relationships", "drop parcel_relationships");
+    exec_or_throw("DROP TABLE IF EXISTS parcel_related_features", "drop parcel_related_features");
+    exec_or_throw("DROP TABLE IF EXISTS parcel_related_events", "drop parcel_related_events");
+    exec_or_throw("DROP TABLE IF EXISTS parcel_property_records", "drop parcel_property_records");
+
+    exec_or_throw(R"SQL(
+        CREATE TABLE parcel_property_records AS
+        WITH valid_blocklots AS (
+            SELECT up.blocklot
+            FROM unified_parcels up
+            JOIN layer_features lf
+              ON lf.blocklot = up.blocklot
+            WHERE up.blocklot IS NOT NULL AND up.blocklot <> ''
+              AND up.blocklot NOT IN ('ROW', 'UNK', 'NOID', 'UNKNOWN', 'NOTLOCATED', 'CONDO', 'MEDIAN', 'PRIVATERW')
+              AND lf.duckdb_role = 'parcel_record'
+            GROUP BY up.blocklot
+            HAVING count(DISTINCT up.parcel_entity_id) <= 25
+               AND count(DISTINCT lf.entity_id) <= 50
+        )
+        SELECT
+            up.parcel_layer_idx,
+            up.parcel_entity_id,
+            up.parcel_geometry_entity_id,
+            up.blocklot,
+            lf.layer_idx AS property_layer_idx,
+            lf.entity_id AS property_entity_id,
+            lf.feature_idx AS property_feature_idx,
+            lf.layer_file AS property_layer_file,
+            lf.layer_name AS property_layer_name,
+            lf.owner,
+            lf.address,
+            lf.zipcode,
+            lf.status,
+            lf.value_usd,
+            lf.structure_area_sqft,
+            lf.min_lon,
+            lf.min_lat,
+            lf.max_lon,
+            lf.max_lat,
+            'blocklot_exact' AS match_method,
+            1.0::DOUBLE AS confidence
+        FROM unified_parcels up
+        JOIN valid_blocklots vb
+          ON vb.blocklot = up.blocklot
+        JOIN layer_features lf
+          ON lf.blocklot = up.blocklot
+        WHERE lf.duckdb_role = 'parcel_record'
+          AND NOT (lf.layer_idx = up.parcel_layer_idx AND lf.entity_id = up.parcel_entity_id)
+    )SQL", "create parcel_property_records");
+
+    exec_or_throw(R"SQL(
+        CREATE TABLE parcel_related_events AS
+        WITH valid_blocklots AS (
+            SELECT up.blocklot
+            FROM unified_parcels up
+            JOIN parcel_events pe
+              ON pe.blocklot = up.blocklot
+            WHERE up.blocklot IS NOT NULL AND up.blocklot <> ''
+              AND up.blocklot NOT IN ('ROW', 'UNK', 'NOID', 'UNKNOWN', 'NOTLOCATED', 'CONDO', 'MEDIAN', 'PRIVATERW')
+            GROUP BY up.blocklot
+            HAVING count(DISTINCT up.parcel_entity_id) <= 25
+               AND count(*) <= 500
+        )
+        SELECT
+            up.parcel_layer_idx,
+            up.parcel_entity_id,
+            up.parcel_geometry_entity_id,
+            up.blocklot,
+            pe.event_id,
+            pe.event_type,
+            pe.event_label,
+            pe.event_status,
+            pe.event_date,
+            pe.event_year,
+            pe.event_title,
+            pe.event_detail,
+            pe.amount_usd,
+            pe.source_layer_file,
+            pe.source_layer_name,
+            pe.source_feature_idx,
+            'blocklot_exact' AS match_method,
+            1.0::DOUBLE AS confidence
+        FROM unified_parcels up
+        JOIN valid_blocklots vb
+          ON vb.blocklot = up.blocklot
+        JOIN parcel_events pe
+          ON pe.blocklot = up.blocklot
+    )SQL", "create parcel_related_events");
+
+    exec_or_throw(R"SQL(
+        CREATE TABLE parcel_related_features AS
+        WITH valid_blocklots AS (
+            SELECT up.blocklot
+            FROM unified_parcels up
+            JOIN layer_features lf
+              ON lf.blocklot = up.blocklot
+            WHERE up.blocklot IS NOT NULL AND up.blocklot <> ''
+              AND up.blocklot NOT IN ('ROW', 'UNK', 'NOID', 'UNKNOWN', 'NOTLOCATED', 'CONDO', 'MEDIAN', 'PRIVATERW')
+              AND lf.duckdb_role NOT IN ('parcel_record', 'parcel_event')
+            GROUP BY up.blocklot
+            HAVING count(DISTINCT up.parcel_entity_id) <= 25
+               AND count(DISTINCT lf.entity_id) <= 100
+        )
+        SELECT
+            up.parcel_layer_idx,
+            up.parcel_entity_id,
+            up.parcel_geometry_entity_id,
+            up.blocklot,
+            lf.layer_idx AS related_layer_idx,
+            lf.entity_id AS related_entity_id,
+            lf.feature_idx AS related_feature_idx,
+            lf.layer_file AS related_layer_file,
+            lf.layer_name AS related_layer_name,
+            lf.duckdb_role AS relation_type,
+            lf.category,
+            lf.owner,
+            lf.address,
+            lf.zipcode,
+            lf.status,
+            lf.value_usd,
+            lf.feature_name,
+            lf.event_date_text,
+            lf.event_status_hint,
+            lf.event_title_hint,
+            lf.event_detail_hint,
+            lf.amount_usd_hint,
+            lf.min_lon,
+            lf.min_lat,
+            lf.max_lon,
+            lf.max_lat,
+            'blocklot_exact' AS match_method,
+            1.0::DOUBLE AS confidence
+        FROM unified_parcels up
+        JOIN valid_blocklots vb
+          ON vb.blocklot = up.blocklot
+        JOIN layer_features lf
+          ON lf.blocklot = up.blocklot
+        WHERE lf.duckdb_role NOT IN ('parcel_record', 'parcel_event')
+    )SQL", "create parcel_related_features");
+
+    exec_or_throw(R"SQL(
+        CREATE TABLE parcel_relationships AS
+        SELECT
+            'property_record' AS relation_type,
+            'property_record' AS relation_subtype,
+            match_method,
+            confidence,
+            parcel_layer_idx,
+            parcel_entity_id,
+            blocklot,
+            'parcel_property_records' AS related_table,
+            property_layer_idx AS related_layer_idx,
+            property_entity_id AS related_entity_id,
+            property_feature_idx AS related_feature_idx,
+            NULL::UBIGINT AS related_event_id,
+            property_layer_file AS source_layer_file,
+            property_layer_name AS source_layer_name,
+            coalesce(nullif(address, ''), nullif(owner, ''), property_layer_name) AS label,
+            status AS detail,
+            NULL::DATE AS event_date,
+            value_usd AS amount_usd
+        FROM parcel_property_records
+        UNION ALL
+        SELECT
+            'parcel_event' AS relation_type,
+            event_type AS relation_subtype,
+            match_method,
+            confidence,
+            parcel_layer_idx,
+            parcel_entity_id,
+            blocklot,
+            'parcel_related_events' AS related_table,
+            NULL::UBIGINT AS related_layer_idx,
+            NULL::VARCHAR AS related_entity_id,
+            source_feature_idx AS related_feature_idx,
+            event_id AS related_event_id,
+            source_layer_file,
+            source_layer_name,
+            coalesce(nullif(event_title, ''), nullif(event_label, ''), event_type) AS label,
+            coalesce(nullif(event_detail, ''), event_status) AS detail,
+            event_date,
+            amount_usd
+        FROM parcel_related_events
+        UNION ALL
+        SELECT
+            relation_type,
+            coalesce(nullif(category, ''), relation_type) AS relation_subtype,
+            match_method,
+            confidence,
+            parcel_layer_idx,
+            parcel_entity_id,
+            blocklot,
+            'parcel_related_features' AS related_table,
+            related_layer_idx,
+            related_entity_id,
+            related_feature_idx,
+            NULL::UBIGINT AS related_event_id,
+            related_layer_file AS source_layer_file,
+            related_layer_name AS source_layer_name,
+            coalesce(nullif(event_title_hint, ''), nullif(feature_name, ''), nullif(address, ''), related_layer_name) AS label,
+            coalesce(nullif(event_detail_hint, ''), nullif(event_status_hint, ''), status) AS detail,
+            try_cast(event_date_text AS DATE) AS event_date,
+            coalesce(nullif(amount_usd_hint, 0), nullif(value_usd, 0)) AS amount_usd
+        FROM parcel_related_features
+    )SQL", "create parcel_relationships");
+
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_property_records_parcel ON parcel_property_records(parcel_entity_id)", "index parcel_property_records parcel");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_property_records_blocklot ON parcel_property_records(blocklot)", "index parcel_property_records blocklot");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_related_events_parcel ON parcel_related_events(parcel_entity_id)", "index parcel_related_events parcel");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_related_events_blocklot ON parcel_related_events(blocklot)", "index parcel_related_events blocklot");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_related_features_parcel ON parcel_related_features(parcel_entity_id)", "index parcel_related_features parcel");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_related_features_blocklot ON parcel_related_features(blocklot)", "index parcel_related_features blocklot");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_relationships_parcel ON parcel_relationships(parcel_entity_id)", "index parcel_relationships parcel");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_relationships_type ON parcel_relationships(relation_type, relation_subtype)", "index parcel_relationships type");
+
+    exec_or_throw(R"SQL(
+        CREATE OR REPLACE VIEW parcel_relationship_summary AS
+        SELECT
+            parcel_layer_idx,
+            parcel_entity_id,
+            blocklot,
+            relation_type,
+            relation_subtype,
+            count(*) AS related_count,
+            max(confidence) AS max_confidence
+        FROM parcel_relationships
+        GROUP BY parcel_layer_idx, parcel_entity_id, blocklot, relation_type, relation_subtype
+    )SQL", "create parcel_relationship_summary view");
+}
+
+void createEmptyParcelRelationshipArtifacts(duckdb::Connection& con) {
+    auto exec_or_throw = [&](const std::string& sql, const char* context) {
+        auto res = con.Query(sql);
+        if (!res || res->HasError()) {
+            throw std::runtime_error(
+                std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
+        }
+    };
+    exec_or_throw(R"SQL(
+        CREATE TABLE IF NOT EXISTS parcel_property_records (
+            parcel_layer_idx UBIGINT,
+            parcel_entity_id VARCHAR,
+            parcel_geometry_entity_id VARCHAR,
+            blocklot VARCHAR,
+            property_layer_idx UBIGINT,
+            property_entity_id VARCHAR,
+            property_feature_idx UBIGINT,
+            property_layer_file VARCHAR,
+            property_layer_name VARCHAR,
+            owner VARCHAR,
+            address VARCHAR,
+            zipcode VARCHAR,
+            status VARCHAR,
+            value_usd DOUBLE,
+            structure_area_sqft DOUBLE,
+            min_lon DOUBLE,
+            min_lat DOUBLE,
+            max_lon DOUBLE,
+            max_lat DOUBLE,
+            match_method VARCHAR,
+            confidence DOUBLE
+        )
+    )SQL", "create empty parcel_property_records");
+    exec_or_throw(R"SQL(
+        CREATE TABLE IF NOT EXISTS parcel_related_events (
+            parcel_layer_idx UBIGINT,
+            parcel_entity_id VARCHAR,
+            parcel_geometry_entity_id VARCHAR,
+            blocklot VARCHAR,
+            event_id UBIGINT,
+            event_type VARCHAR,
+            event_label VARCHAR,
+            event_status VARCHAR,
+            event_date DATE,
+            event_year INTEGER,
+            event_title VARCHAR,
+            event_detail VARCHAR,
+            amount_usd DOUBLE,
+            source_layer_file VARCHAR,
+            source_layer_name VARCHAR,
+            source_feature_idx UBIGINT,
+            match_method VARCHAR,
+            confidence DOUBLE
+        )
+    )SQL", "create empty parcel_related_events");
+    exec_or_throw(R"SQL(
+        CREATE TABLE IF NOT EXISTS parcel_related_features (
+            parcel_layer_idx UBIGINT,
+            parcel_entity_id VARCHAR,
+            parcel_geometry_entity_id VARCHAR,
+            blocklot VARCHAR,
+            related_layer_idx UBIGINT,
+            related_entity_id VARCHAR,
+            related_feature_idx UBIGINT,
+            related_layer_file VARCHAR,
+            related_layer_name VARCHAR,
+            relation_type VARCHAR,
+            category VARCHAR,
+            owner VARCHAR,
+            address VARCHAR,
+            zipcode VARCHAR,
+            status VARCHAR,
+            value_usd DOUBLE,
+            feature_name VARCHAR,
+            event_date_text VARCHAR,
+            event_status_hint VARCHAR,
+            event_title_hint VARCHAR,
+            event_detail_hint VARCHAR,
+            amount_usd_hint DOUBLE,
+            min_lon DOUBLE,
+            min_lat DOUBLE,
+            max_lon DOUBLE,
+            max_lat DOUBLE,
+            match_method VARCHAR,
+            confidence DOUBLE
+        )
+    )SQL", "create empty parcel_related_features");
+    exec_or_throw(R"SQL(
+        CREATE TABLE IF NOT EXISTS parcel_relationships (
+            relation_type VARCHAR,
+            relation_subtype VARCHAR,
+            match_method VARCHAR,
+            confidence DOUBLE,
+            parcel_layer_idx UBIGINT,
+            parcel_entity_id VARCHAR,
+            blocklot VARCHAR,
+            related_table VARCHAR,
+            related_layer_idx UBIGINT,
+            related_entity_id VARCHAR,
+            related_feature_idx UBIGINT,
+            related_event_id UBIGINT,
+            source_layer_file VARCHAR,
+            source_layer_name VARCHAR,
+            label VARCHAR,
+            detail VARCHAR,
+            event_date DATE,
+            amount_usd DOUBLE
+        )
+    )SQL", "create empty parcel_relationships");
+    exec_or_throw(R"SQL(
+        CREATE OR REPLACE VIEW parcel_relationship_summary AS
+        SELECT
+            parcel_layer_idx,
+            parcel_entity_id,
+            blocklot,
+            relation_type,
+            relation_subtype,
+            count(*) AS related_count,
+            max(confidence) AS max_confidence
+        FROM parcel_relationships
+        GROUP BY parcel_layer_idx, parcel_entity_id, blocklot, relation_type, relation_subtype
+    )SQL", "create empty parcel_relationship_summary view");
+}
+
 void rebuildDerivedAnalyticsObjects(
     const fs::path& root,
     duckdb::Connection& con,
@@ -1211,6 +1623,7 @@ void rebuildDerivedAnalyticsObjects(
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
     refreshUnifiedParcelEventRollups(con);
+    rebuildParcelRelationshipArtifacts(con);
     exec_or_throw(R"SQL(
         CREATE OR REPLACE VIEW parcel_features AS
         SELECT *
@@ -1255,6 +1668,10 @@ DuckDbAnalytics::DuckDbAnalytics(std::filesystem::path root)
     status_.available = true;
     status_.message = "DuckDB analytics cache not built yet.";
     validateExistingCache();
+}
+
+bool DuckDbAnalytics::ensureReady() {
+    return status_.last_rebuild_ok || validateExistingCache();
 }
 
 bool DuckDbAnalytics::needsRebuild(const std::vector<LayerDef>& layers) const {
@@ -1333,6 +1750,44 @@ bool DuckDbAnalytics::validateExistingCache() {
             status_.message = "DuckDB analytics cache is incomplete.";
             return false;
         }
+        auto relationship_table_res = con.Query(R"SQL(
+            SELECT count(*)::BIGINT
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name IN (
+                  'parcel_property_records',
+                  'parcel_related_events',
+                  'parcel_related_features',
+                  'parcel_relationships'
+              )
+        )SQL");
+        const int64_t relationship_table_count =
+            relationship_table_res && !relationship_table_res->HasError() && relationship_table_res->RowCount() > 0
+                ? relationship_table_res->GetValue<int64_t>(0, 0)
+                : 0;
+        if (relationship_table_count < 4) {
+            auto event_schema_res = con.Query(R"SQL(
+                SELECT count(*)::BIGINT
+                FROM information_schema.columns
+                WHERE table_schema = 'main'
+                  AND table_name = 'parcel_events'
+                  AND column_name IN (
+                      'event_id',
+                      'event_label',
+                      'event_title',
+                      'event_detail',
+                      'event_metadata_json',
+                      'source_feature_idx'
+                  )
+            )SQL");
+            const bool full_event_schema =
+                event_schema_res &&
+                !event_schema_res->HasError() &&
+                event_schema_res->RowCount() > 0 &&
+                event_schema_res->GetValue<int64_t>(0, 0) == 6;
+            if (full_event_schema) rebuildParcelRelationshipArtifacts(con);
+            else createEmptyParcelRelationshipArtifacts(con);
+        }
 
         auto feature_count_res = con.Query("SELECT count(*)::BIGINT FROM layer_features");
         auto layer_count_res = con.Query("SELECT count(DISTINCT layer_idx)::BIGINT FROM layer_features");
@@ -1342,6 +1797,43 @@ bool DuckDbAnalytics::validateExistingCache() {
             status_.last_rebuild_ok = false;
             status_.message = "DuckDB analytics cache validation failed.";
             return false;
+        }
+        auto parcel_table_res = con.Query(R"SQL(
+            SELECT count(*)::BIGINT
+            FROM information_schema.tables
+            WHERE table_schema = 'main'
+              AND table_name IN ('parcel_features', 'unified_parcels')
+        )SQL");
+        const bool has_full_parcel_tables =
+            parcel_table_res &&
+            !parcel_table_res->HasError() &&
+            parcel_table_res->RowCount() > 0 &&
+            parcel_table_res->GetValue<int64_t>(0, 0) == 2;
+        if (has_full_parcel_tables) {
+            auto parcel_contract_res = con.Query(R"SQL(
+            SELECT
+                (SELECT count(*)::BIGINT
+                 FROM parcel_features
+                 WHERE layer_file = 'parcel.geojson'
+                    OR layer_file LIKE '%_county_parcels.geojson') AS primary_parcel_features,
+                (SELECT count(*)::BIGINT FROM unified_parcels) AS unified_parcels
+        )SQL");
+            if (!parcel_contract_res || parcel_contract_res->HasError() || parcel_contract_res->RowCount() == 0) {
+                status_.last_rebuild_ok = false;
+                status_.message = "DuckDB analytics cache validation failed: parcel contract query failed.";
+                return false;
+            }
+            const int64_t primary_parcel_features = parcel_contract_res->GetValue<int64_t>(0, 0);
+            const int64_t unified_parcel_rows = parcel_contract_res->GetValue<int64_t>(1, 0);
+            if (primary_parcel_features > 0 && unified_parcel_rows < primary_parcel_features) {
+                status_.last_rebuild_ok = false;
+                std::ostringstream parcel_msg;
+                parcel_msg << "DuckDB analytics cache validation failed: unified_parcels has "
+                           << unified_parcel_rows << " rows for "
+                           << primary_parcel_features << " primary parcel features.";
+                status_.message = parcel_msg.str();
+                return false;
+            }
         }
 
         status_.last_rebuild_ok = true;
@@ -1414,7 +1906,12 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                         if (!current_by_file.contains(file)) changed_files.insert(file);
                     }
 
-                    if (changed_files.empty()) {
+                    std::string sidecar_signature;
+                    const std::string expected_signature = analyticsBuildSignature(root_, layers);
+                    const bool build_signature_current =
+                        loadAnalyticsSignatureSidecar(status_.db_path, sidecar_signature) &&
+                        sidecar_signature == expected_signature;
+                    if (changed_files.empty() && build_signature_current) {
                         auto exec_or_throw = [&](const std::string& sql, const char* context) {
                             auto res = con.Query(sql);
                             if (!res || res->HasError()) {
@@ -1512,6 +2009,7 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
                         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
                         refreshUnifiedParcelEventRollups(con);
+                        rebuildParcelRelationshipArtifacts(con);
                         exec_or_throw(
                             "UPDATE analytics_build_info SET source_signature = '" +
                                 sqlQuote(analyticsBuildSignature(root_, layers)) + "'",
@@ -2273,6 +2771,9 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     lf.value_usd,
                     lf.event_date_text,
                     lf.event_status_hint,
+                    lf.event_title_hint,
+                    lf.event_detail_hint,
+                    lf.event_metadata_json,
                     lf.event_year_hint,
                     lf.amount_usd_hint,
                     coalesce(
@@ -2292,12 +2793,13 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'vacant_notice'
                     WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
                     WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
-                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
-                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
-                    WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
-                    WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
-                    WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
-                    WHEN lower(category) = 'housing' THEN 'housing'
+                WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
+                WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
+                WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
+                WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'vacants_to_value_bid'
+                WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                WHEN lower(category) = 'housing' THEN 'housing'
                     WHEN lower(category) = 'permits' THEN 'permit'
                     WHEN lower(category) = 'taxes' THEN 'tax'
                     ELSE duckdb_role
@@ -2311,6 +2813,27 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     nullif(event_year_hint, 0),
                     try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
                 ) AS event_year,
+                CASE
+                    WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
+                    WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
+                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
+                    WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
+                    WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
+                    WHEN nullif(event_title_hint, '') IS NOT NULL THEN event_title_hint
+                    ELSE replace(
+                        CASE
+                            WHEN lower(layer_name) LIKE '%vacant%' THEN 'vacancy_related'
+                            WHEN lower(category) = 'housing' THEN 'housing'
+                            WHEN lower(category) = 'permits' THEN 'permit'
+                            WHEN lower(category) = 'taxes' THEN 'tax'
+                            ELSE duckdb_role
+                        END,
+                        '_', ' ')
+                END AS event_label,
+                nullif(event_title_hint, '') AS event_title,
+                nullif(event_detail_hint, '') AS event_detail,
+                nullif(event_metadata_json, '') AS event_metadata_json,
                 coalesce(
                     nullif(value_usd, 0),
                     nullif(amount_usd_hint, 0)
@@ -2324,6 +2847,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
         refreshUnifiedParcelEventRollups(con);
+        rebuildParcelRelationshipArtifacts(con);
         exec_or_throw(R"SQL(
             CREATE OR REPLACE VIEW parcel_features AS
             SELECT *
@@ -2615,12 +3139,246 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
     };
 
     DuckDbQueryResult result = executeMapQuery(unified_detail_sql("parcel_entity_id"), {}, {}, 1);
+    if (result.ok && result.rows.empty()) {
+        result = executeMapQuery(unified_detail_sql("parcel_geometry_entity_id"), {}, {}, 1);
+    }
 
     {
         std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
         parcel_detail_cache_[key] = result;
     }
     return result;
+}
+
+DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecord(const std::string& parcel_entity_id) const {
+    DuckDbUnifiedParcelDetail out;
+    DuckDbQueryResult detail = queryUnifiedParcelDetail(parcel_entity_id);
+    out.ok = detail.ok;
+    out.message = detail.message;
+    if (!detail.ok || detail.rows.empty()) return out;
+
+    const auto& row = detail.rows.front();
+    UnifiedParcelRecord rec;
+    rec.parcel_layer_idx = queryResultSize(detail, row, "parcel_layer_idx");
+    rec.parcel_entity_id = queryResultCell(detail, row, "parcel_entity_id");
+    rec.parcel_geometry_entity_id = queryResultCell(detail, row, "parcel_geometry_entity_id");
+    rec.blocklot = queryResultCell(detail, row, "blocklot");
+    rec.parcel_source_file = queryResultCell(detail, row, "parcel_source_file");
+    rec.property_source_file = queryResultCell(detail, row, "property_source_file");
+    rec.parcel_has_geometry = queryResultBool(detail, row, "parcel_has_geometry");
+    rec.has_property_record = queryResultBool(detail, row, "has_property_record");
+    rec.owner = queryResultCell(detail, row, "owner");
+    rec.owner_display = queryResultCell(detail, row, "owner_display");
+    rec.address = queryResultCell(detail, row, "address");
+    rec.zip = queryResultCell(detail, row, "zipcode");
+    rec.status = queryResultCell(detail, row, "status");
+    rec.current_land = queryResultDouble(detail, row, "current_land");
+    rec.current_improvements = queryResultDouble(detail, row, "current_improvements");
+    rec.structure_area_sqft = queryResultDouble(detail, row, "structure_area_sqft");
+    rec.tax_base = queryResultDouble(detail, row, "tax_base");
+    rec.sale_price = queryResultDouble(detail, row, "sale_price");
+    rec.current_value = queryResultDouble(detail, row, "current_value");
+    rec.vacant_notice_count = queryResultInt(detail, row, "vacant_notice_count");
+    rec.vacant_rehab_count = queryResultInt(detail, row, "vacant_rehab_count");
+    rec.tax_lien_count = queryResultInt(detail, row, "tax_lien_count");
+    rec.tax_sale_count = queryResultInt(detail, row, "tax_sale_count");
+    rec.tax_lien_amount = queryResultDouble(detail, row, "tax_lien_amount");
+    rec.tax_sale_amount = queryResultDouble(detail, row, "tax_sale_amount");
+    rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(detail, row, "min_lon"));
+    rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(detail, row, "min_lat"));
+    rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(detail, row, "max_lon"));
+    rec.parcel_extent.max_lat = static_cast<float>(queryResultDouble(detail, row, "max_lat"));
+
+    out.ok = true;
+    out.found = true;
+    out.record = std::move(rec);
+    return out;
+}
+
+DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecordByLayerFeature(
+    size_t parcel_layer_idx,
+    size_t parcel_feature_idx) const {
+    DuckDbUnifiedParcelDetail out;
+    const std::string cache_key =
+        "layer_feature:" + std::to_string(parcel_layer_idx) + ":" + std::to_string(parcel_feature_idx);
+    {
+        std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+        auto it = parcel_detail_cache_.find(cache_key);
+        if (it != parcel_detail_cache_.end()) {
+            const DuckDbQueryResult& cached = it->second;
+            out.ok = cached.ok;
+            out.message = cached.message;
+            if (!cached.ok || cached.rows.empty()) return out;
+
+            const auto& row = cached.rows.front();
+            UnifiedParcelRecord rec;
+            rec.parcel_layer_idx = queryResultSize(cached, row, "parcel_layer_idx");
+            rec.parcel_entity_id = queryResultCell(cached, row, "parcel_entity_id");
+            rec.parcel_geometry_entity_id = queryResultCell(cached, row, "parcel_geometry_entity_id");
+            rec.blocklot = queryResultCell(cached, row, "blocklot");
+            rec.parcel_source_file = queryResultCell(cached, row, "parcel_source_file");
+            rec.property_source_file = queryResultCell(cached, row, "property_source_file");
+            rec.parcel_has_geometry = queryResultBool(cached, row, "parcel_has_geometry");
+            rec.has_property_record = queryResultBool(cached, row, "has_property_record");
+            rec.owner = queryResultCell(cached, row, "owner");
+            rec.owner_display = queryResultCell(cached, row, "owner_display");
+            rec.address = queryResultCell(cached, row, "address");
+            rec.zip = queryResultCell(cached, row, "zipcode");
+            rec.status = queryResultCell(cached, row, "status");
+            rec.current_land = queryResultDouble(cached, row, "current_land");
+            rec.current_improvements = queryResultDouble(cached, row, "current_improvements");
+            rec.structure_area_sqft = queryResultDouble(cached, row, "structure_area_sqft");
+            rec.tax_base = queryResultDouble(cached, row, "tax_base");
+            rec.sale_price = queryResultDouble(cached, row, "sale_price");
+            rec.current_value = queryResultDouble(cached, row, "current_value");
+            rec.vacant_notice_count = queryResultInt(cached, row, "vacant_notice_count");
+            rec.vacant_rehab_count = queryResultInt(cached, row, "vacant_rehab_count");
+            rec.tax_lien_count = queryResultInt(cached, row, "tax_lien_count");
+            rec.tax_sale_count = queryResultInt(cached, row, "tax_sale_count");
+            rec.tax_lien_amount = queryResultDouble(cached, row, "tax_lien_amount");
+            rec.tax_sale_amount = queryResultDouble(cached, row, "tax_sale_amount");
+            rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(cached, row, "min_lon"));
+            rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(cached, row, "min_lat"));
+            rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(cached, row, "max_lon"));
+            rec.parcel_extent.max_lat = static_cast<float>(queryResultDouble(cached, row, "max_lat"));
+
+            out.found = true;
+            out.record = std::move(rec);
+            return out;
+        }
+    }
+
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT
+            up.parcel_layer_idx,
+            up.parcel_entity_id,
+            up.parcel_geometry_entity_id,
+            up.blocklot,
+            up.parcel_source_file,
+            up.property_source_file,
+            up.parcel_has_geometry,
+            up.has_property_record,
+            up.owner,
+            up.owner_display,
+            up.address,
+            up.zipcode,
+            up.status,
+            up.current_land,
+            up.current_improvements,
+            up.structure_area_sqft,
+            up.tax_base,
+            up.sale_price,
+            up.current_value,
+            up.vacant_notice_count,
+            up.vacant_rehab_count,
+            up.tax_lien_count,
+            up.tax_sale_count,
+            up.tax_lien_amount,
+            up.tax_sale_amount,
+            up.min_lon,
+            up.min_lat,
+            up.max_lon,
+            up.max_lat
+        FROM layer_features lf
+        JOIN unified_parcels up
+          ON up.parcel_layer_idx = lf.layer_idx
+         AND up.parcel_entity_id = lf.entity_id
+        WHERE lf.layer_idx = )SQL" << (uint64_t)parcel_layer_idx << R"SQL(
+          AND lf.feature_idx = )SQL" << (uint64_t)parcel_feature_idx << R"SQL(
+        LIMIT 1
+    )SQL";
+
+    const DuckDbQueryResult detail = executeMapQuery(sql.str(), {}, {}, 1);
+    {
+        std::lock_guard<std::mutex> lk(parcel_detail_cache_mutex_);
+        parcel_detail_cache_[cache_key] = detail;
+    }
+    out.ok = detail.ok;
+    out.message = detail.message;
+    if (!detail.ok || detail.rows.empty()) return out;
+
+    const auto& row = detail.rows.front();
+    UnifiedParcelRecord rec;
+    rec.parcel_layer_idx = queryResultSize(detail, row, "parcel_layer_idx");
+    rec.parcel_entity_id = queryResultCell(detail, row, "parcel_entity_id");
+    rec.parcel_geometry_entity_id = queryResultCell(detail, row, "parcel_geometry_entity_id");
+    rec.blocklot = queryResultCell(detail, row, "blocklot");
+    rec.parcel_source_file = queryResultCell(detail, row, "parcel_source_file");
+    rec.property_source_file = queryResultCell(detail, row, "property_source_file");
+    rec.parcel_has_geometry = queryResultBool(detail, row, "parcel_has_geometry");
+    rec.has_property_record = queryResultBool(detail, row, "has_property_record");
+    rec.owner = queryResultCell(detail, row, "owner");
+    rec.owner_display = queryResultCell(detail, row, "owner_display");
+    rec.address = queryResultCell(detail, row, "address");
+    rec.zip = queryResultCell(detail, row, "zipcode");
+    rec.status = queryResultCell(detail, row, "status");
+    rec.current_land = queryResultDouble(detail, row, "current_land");
+    rec.current_improvements = queryResultDouble(detail, row, "current_improvements");
+    rec.structure_area_sqft = queryResultDouble(detail, row, "structure_area_sqft");
+    rec.tax_base = queryResultDouble(detail, row, "tax_base");
+    rec.sale_price = queryResultDouble(detail, row, "sale_price");
+    rec.current_value = queryResultDouble(detail, row, "current_value");
+    rec.vacant_notice_count = queryResultInt(detail, row, "vacant_notice_count");
+    rec.vacant_rehab_count = queryResultInt(detail, row, "vacant_rehab_count");
+    rec.tax_lien_count = queryResultInt(detail, row, "tax_lien_count");
+    rec.tax_sale_count = queryResultInt(detail, row, "tax_sale_count");
+    rec.tax_lien_amount = queryResultDouble(detail, row, "tax_lien_amount");
+    rec.tax_sale_amount = queryResultDouble(detail, row, "tax_sale_amount");
+    rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(detail, row, "min_lon"));
+    rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(detail, row, "min_lat"));
+    rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(detail, row, "max_lon"));
+    rec.parcel_extent.max_lat = static_cast<float>(queryResultDouble(detail, row, "max_lat"));
+
+    out.ok = true;
+    out.found = true;
+    out.record = std::move(rec);
+    return out;
+}
+
+DuckDbQueryResult DuckDbAnalytics::queryParcelRelationships(
+    const std::string& parcel_entity_id,
+    size_t max_rows) const {
+    const std::string key = normalizeJoinKey(parcel_entity_id);
+    if (key.empty()) {
+        DuckDbQueryResult out;
+        out.ok = false;
+        out.message = "Parcel entity ID is empty";
+        return out;
+    }
+
+    std::ostringstream sql;
+    sql << R"SQL(
+        SELECT
+            relation_type,
+            relation_subtype,
+            match_method,
+            confidence,
+            blocklot,
+            related_table,
+            related_layer_idx,
+            related_entity_id,
+            related_feature_idx,
+            related_event_id,
+            source_layer_file,
+            source_layer_name,
+            label,
+            detail,
+            event_date,
+            amount_usd
+        FROM parcel_relationships
+        WHERE parcel_entity_id = ')SQL" << sqlQuote(key) << R"SQL('
+        ORDER BY
+            CASE relation_type
+                WHEN 'property_record' THEN 0
+                WHEN 'parcel_event' THEN 1
+                ELSE 2
+            END,
+            event_date DESC NULLS LAST,
+            source_layer_file ASC,
+            label ASC
+    )SQL";
+    return executeMapQuery(sql.str(), {}, {}, max_rows);
 }
 
 DuckDbQueryResult DuckDbAnalytics::queryParcelEvents(

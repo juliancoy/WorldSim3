@@ -351,6 +351,10 @@ bool drawFillColorEditor(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer)
                 (*ctx.shared->layer_heatmap_use_gradient)[idx] = true;
                 if (ctx.shared->layer_heatmap_state_changed) *ctx.shared->layer_heatmap_state_changed = true;
             }
+            if (ctx.shared && ctx.shared->layer_fill_enabled && idx < ctx.shared->layer_fill_enabled->size()) {
+                (*ctx.shared->layer_fill_enabled)[idx] = true;
+                if (ctx.shared->layer_fill_state_changed) *ctx.shared->layer_fill_state_changed = true;
+            }
         }
     }
 

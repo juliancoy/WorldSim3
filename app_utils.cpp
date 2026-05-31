@@ -748,6 +748,11 @@ std::string featureSourcePrimaryKeyForLayerFeature(const LayerDef& layer, const 
     return normalizeJoinKey(ss.str());
 }
 
+bool unusableIdentityToken(const std::string& value) {
+    const std::string key = normalizeJoinKey(value);
+    return key.empty() || key == "NOTLOCATED" || key == "UNKNOWN" || key == "NULL" || key == "NONE";
+}
+
 std::string featureIdentitySeedForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
     auto candidate = [&](std::initializer_list<const char*> keys) {
         for (const char* key : keys) {
@@ -763,13 +768,13 @@ std::string featureIdentitySeedForLayerFeature(const LayerDef& layer, const Laye
         "objectid", "ID", "id", "PIN", "pin"
     });
     if (stable.empty()) stable = featureBlockLotJoinKey(fg);
-    if (!stable.empty()) return normalizeJoinKey(stable);
+    if (!unusableIdentityToken(stable)) return normalizeJoinKey(stable);
 
     stable = candidate({
         "name", "Name", "NAME", "poi_name", "prmry_name", "FULLADDR", "PROPERTY_ADDRESS",
         "ADDRESS", "Address", "SITE_ADDR", "SITUSADDR"
     });
-    if (!stable.empty()) return normalizeJoinKey(stable);
+    if (!unusableIdentityToken(stable)) return normalizeJoinKey(stable);
 
     std::ostringstream ss;
     ss << std::fixed << std::setprecision(6)
@@ -783,12 +788,22 @@ std::string featureIdentitySeedForLayerFeature(const LayerDef& layer, const Laye
 }
 
 std::string featureEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    if (layer.scale == "parcel") {
+        std::ostringstream ss;
+        ss << featureIdentitySeedForLayerFeature(layer, fg, feature_idx) << ':' << feature_idx;
+        return normalizeJoinKey("entity:" + trimDisplayValue(layer.file) + ":" + ss.str());
+    }
     if (!fg.entity_id.empty()) return normalizeJoinKey(fg.entity_id);
     return normalizeJoinKey("entity:" + trimDisplayValue(layer.file) + ":" +
                             featureIdentitySeedForLayerFeature(layer, fg, feature_idx));
 }
 
 std::string featureGeometryEntityIdForLayerFeature(const LayerDef& layer, const LayerDef::FeatureRecord& fg, size_t feature_idx) {
+    if (layer.scale == "parcel") {
+        std::ostringstream ss;
+        ss << featureIdentitySeedForLayerFeature(layer, fg, feature_idx) << ':' << feature_idx;
+        return normalizeJoinKey("geometry:" + trimDisplayValue(layer.file) + ":" + ss.str());
+    }
     if (!fg.geometry_entity_id.empty()) return normalizeJoinKey(fg.geometry_entity_id);
     return normalizeJoinKey("geometry:" + trimDisplayValue(layer.file) + ":" +
                             featureIdentitySeedForLayerFeature(layer, fg, feature_idx));

@@ -76,7 +76,7 @@
 - `map_render_hud.h`: Map HUD draw declarations.
 - `map_render_selection.cpp`: Selected parcel outline render pass.
 - `map_render_selection.h`: Selected parcel outline render context and declaration.
-- `map_inspection.cpp`: Map click inspection behavior and parcel/zoning hover tooltip rendering.
+- `map_inspection.cpp`: Map click inspection behavior, parcel/zoning hover tooltip rendering, and DuckDB-backed parcel identity/detail fallback for picked parcel geometry.
 - `map_inspection.h`: Map inspection context and handler declaration.
 - `map_overlay_panels.cpp`: Map overlay popup shell for Time Cube, policy hierarchy, and visual model tabs.
 - `map_overlay_panels.h`: Overlay popup draw declaration.
@@ -98,8 +98,8 @@
 - `change_log_tab.h`: Change Log tab draw declaration.
 - `sql_tab.cpp`: ImGui SQL tab, DuckDB query editor, query execution controls, and selected-parcel context table.
 - `sql_tab.h`: SQL tab context and draw declaration.
-- `owner_info.cpp`: ImGui Owner Info tab, owner hyperlink rendering, and owner page navigation helpers.
-- `owner_info.h`: Owner Info UI state, context, and draw declarations.
+- `owner_info.cpp`: ImGui Owner Info tab, owner hyperlink rendering, owner page navigation helpers, DuckDB-backed owner parcel fallback, and parcel relationship display.
+- `owner_info.h`: Owner Info UI state, DuckDB owner cache state, context, and draw declarations.
 - `filters_tab.cpp`: ImGui Filters tab, address locate flow, zoning detail display, field filters, and record-year histogram UI.
 - `filters_tab.h`: Filters tab context, address locate result type, and draw declaration.
 - `parcel_info_tab.cpp`: ImGui Parcel Info tab and parcel real-property summary UI.

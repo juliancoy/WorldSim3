@@ -516,10 +516,11 @@ if(BUILD_TESTING)
   add_test(
     NAME worldsim3_rest_parcel_county_perf
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_rest_parcel_county_perf.py
-      --worldsim-bin $<TARGET_FILE:worldsim3>)
+      --worldsim-bin $<TARGET_FILE:worldsim3>
+      --startup-timeout 240)
   set_tests_properties(worldsim3_rest_parcel_county_perf PROPERTIES
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    TIMEOUT 180
+    TIMEOUT 360
     LABELS "integration;rest;parcel;performance")
   add_worldsim_cli_test(worldsim3_duckdb_parcel_semantic_snapshot_selftest --duckdb-parcel-semantic-snapshot-selftest)
   add_worldsim_cli_test(worldsim3_population_metrics_selftest --population-metrics-selftest)

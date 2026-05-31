@@ -521,12 +521,17 @@ bool loadLocalLayersForCli(
     return summary.failed_layer_count == 0;
 }
 
-std::vector<size_t> parcelConsolidationInputLayerIndices(const WorldsimLayerIndices& indices) {
+std::vector<size_t> parcelConsolidationInputLayerIndices(
+    const WorldsimLayerIndices& indices,
+    const std::vector<LayerDef>* layers = nullptr) {
     std::vector<size_t> out;
     out.reserve(6);
     auto append = [&](int layer_idx) {
         if (layer_idx < 0) return;
         const size_t idx = (size_t)layer_idx;
+        if (std::find(out.begin(), out.end(), idx) == out.end()) out.push_back(idx);
+    };
+    auto append_size = [&](size_t idx) {
         if (std::find(out.begin(), out.end(), idx) == out.end()) out.push_back(idx);
     };
     append(indices.parcel_layer_idx);
@@ -535,6 +540,11 @@ std::vector<size_t> parcelConsolidationInputLayerIndices(const WorldsimLayerIndi
     append(indices.vacant_rehab_layer_idx);
     append(indices.tax_lien_layer_idx);
     append(indices.tax_sale_layer_idx);
+    if (layers) {
+        for (size_t i = 0; i < layers->size(); ++i) {
+            if (isPrimaryParcelGeometryFileForCli((*layers)[i].file)) append_size(i);
+        }
+    }
     std::sort(out.begin(), out.end());
     return out;
 }
@@ -5170,7 +5180,8 @@ int rebuildDuckDbAnalyticsCli(const fs::path& root, int reserve_cores) {
         return 0;
     }
 
-    const std::vector<size_t> parcel_input_indices = parcelConsolidationInputLayerIndices(detectWorldsimLayerIndices(root, layers));
+    const std::vector<size_t> parcel_input_indices =
+        parcelConsolidationInputLayerIndices(detectWorldsimLayerIndices(root, layers), &layers);
     LocalLayerLoadSummary load_summary;
     emitCliProgress(
         kMode,
@@ -6089,7 +6100,7 @@ json buildGeometryDuckDbArtifacts(const fs::path& root, int reserve_cores, bool 
             " failed=" + std::to_string(geometry_failed_count) +
             " skipped=" + std::to_string(geometry_skipped_count));
 
-    const std::vector<size_t> parcel_input_indices = parcelConsolidationInputLayerIndices(indices);
+    const std::vector<size_t> parcel_input_indices = parcelConsolidationInputLayerIndices(indices, &layers);
     std::unordered_set<size_t> parcel_input_keep(parcel_input_indices.begin(), parcel_input_indices.end());
     emitCliProgress(
         kMode,

@@ -132,6 +132,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
@@ -157,6 +158,8 @@
 #include <system_error>
 #include <signal.h>
 #include <thread>
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -167,6 +170,47 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+struct SingleInstanceLock {
+    int fd = -1;
+    fs::path path;
+
+    bool acquire(const fs::path& lock_path, std::string& message) {
+        path = lock_path;
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        fd = ::open(path.c_str(), O_CREAT | O_RDWR, 0644);
+        if (fd < 0) {
+            message = "failed to open " + path.string() + ": " + std::strerror(errno);
+            return false;
+        }
+        if (::flock(fd, LOCK_EX | LOCK_NB) != 0) {
+            message = "another worldsim3 GUI instance is already running; lock file " + path.string() +
+                      " is held: " + std::strerror(errno);
+            ::close(fd);
+            fd = -1;
+            return false;
+        }
+        const std::string pid_text = std::to_string((long long)::getpid()) + "\n";
+        if (::ftruncate(fd, 0) != 0 || ::lseek(fd, 0, SEEK_SET) < 0) {
+            message = "failed to prepare " + path.string() + ": " + std::strerror(errno);
+            return false;
+        }
+        const ssize_t written = ::write(fd, pid_text.c_str(), pid_text.size());
+        if (written < 0 || static_cast<size_t>(written) != pid_text.size()) {
+            message = "failed to write " + path.string() + ": " + std::strerror(errno);
+            return false;
+        }
+        return true;
+    }
+
+    ~SingleInstanceLock() {
+        if (fd >= 0) {
+            (void)::flock(fd, LOCK_UN);
+            (void)::close(fd);
+        }
+    }
+};
+
 ImU32 mapPolygonFillColor(ImU32 color, float opacity) {
     const uint32_t src_alpha = (color >> 24) & 0xFFu;
     if (src_alpha == 0) return color;
@@ -222,6 +266,13 @@ int runWorldSim3App(int argc, char** argv) {
             preprocess_plan,
             cli_options,
             argc > 0 ? argv[0] : nullptr);
+    }
+
+    SingleInstanceLock gui_instance_lock;
+    std::string gui_instance_lock_error;
+    if (!gui_instance_lock.acquire(root / "data" / "worldsim3.app.lock", gui_instance_lock_error)) {
+        std::cerr << "[worldsim3] " << gui_instance_lock_error << "\n";
+        return 1;
     }
 
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -1443,7 +1494,9 @@ int runWorldSim3App(int argc, char** argv) {
         }
         if (option_id == "self") {
             if ((size_t)layer_idx < layer_heatmap_use_gradient.size()) layer_heatmap_use_gradient[(size_t)layer_idx] = true;
+            if ((size_t)layer_idx < layer_fill_enabled.size()) layer_fill_enabled[(size_t)layer_idx] = true;
             pending_external_layer_heatmap_state_changed = true;
+            pending_external_layer_fill_state_changed = true;
         }
     };
     auto apply_color_editor_command = [&](const ColorEditorCommand& command) {
@@ -2268,6 +2321,11 @@ int runWorldSim3App(int argc, char** argv) {
                 .zoning_zone_enabled = &zoning_zone_enabled,
                 .zoning_zone_color = &zoning_zone_color,
                 .layer_fill_enabled = &layer_fill_enabled,
+                .layer_heatmap_use_gradient = &layer_heatmap_use_gradient,
+                .layer_choropleth_gamma = &layer_choropleth_gamma,
+                .layer_normalize_mode = &layer_normalize_mode,
+                .layer_heatmap_percentile_clip = &layer_heatmap_percentile_clip,
+                .heatmap_percentile_clip = heatmap_percentile_clip,
                 .feature_render_state_key = feature_render_state_key,
                 .ensure_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
                     return ensure_frame_feature_render_cache();

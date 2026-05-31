@@ -131,10 +131,10 @@ source files
 DuckDB flow:
 
 ```text
-canonical feature attributes + unified parcels
+canonical feature attributes + unified parcel summaries + parcel relationship artifacts
   -> DuckDB rebuild worker
   -> data/worldsim.duckdb
-  -> SQL/query UI
+  -> SQL/query UI, owner pages, parcel detail panels
 ```
 
 DuckDB should remain analytics-oriented. Parcel render geometry should move into a dedicated render sidecar cache rather than becoming a DuckDB-backed draw source.
@@ -155,6 +155,10 @@ The first implemented step toward that boundary is a binary parcel render sideca
 KISS data rule:
 
 - DuckDB stores parcel facts, joins, and analytics.
+- `unified_parcels` is the compact parcel summary, not the exhaustive store for
+  every partial source fact.
+- Related property rows, event rows, and source features belong in DuckDB
+  relationship artifacts keyed back to parcel identities.
 - Parcel render sidecar stores only the geometry needed for retained rendering plus minimal lookup metadata.
 - Do not duplicate parcel attribute payloads into the render sidecar unless a render-time lookup proves necessary.
 
