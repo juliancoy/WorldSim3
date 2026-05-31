@@ -322,7 +322,10 @@ void uploadCurrentImGuiFonts(ImGui_ImplVulkanH_Window& wd) {
 void printStartupPreprocessPlan(const StartupPreprocessPlan& plan, std::ostream& out) {
     out << "[worldsim3] startup preprocess required=" << (plan.required ? "true" : "false")
         << " duckdb_required=" << (plan.duckdb_required ? "true" : "false")
-        << " issues=" << plan.issues.size() << "\n";
+        << " duckdb_state=" << plan.duckdb_state
+        << " duckdb_refresh_recommended=" << (plan.duckdb_refresh_recommended ? "true" : "false")
+        << " issues=" << plan.issues.size()
+        << " warnings=" << plan.warnings.size() << "\n";
     for (const auto& issue : plan.issues) {
         out << "[worldsim3] preprocess issue kind=" << issue.kind
             << " layer=" << issue.layer_file
@@ -330,6 +333,27 @@ void printStartupPreprocessPlan(const StartupPreprocessPlan& plan, std::ostream&
         if (!issue.artifact_path.empty()) out << " artifact=" << issue.artifact_path;
         out << "\n";
     }
+    for (const auto& warning : plan.warnings) {
+        out << "[worldsim3] preprocess warning kind=" << warning.kind
+            << " layer=" << warning.layer_file
+            << " message=\"" << warning.message << "\"";
+        if (!warning.artifact_path.empty()) out << " artifact=" << warning.artifact_path;
+        out << "\n";
+    }
+}
+
+StartupDuckDbPreflightState classifyStartupDuckDbPreflight(bool cache_valid, bool stale) {
+    if (!cache_valid) return StartupDuckDbPreflightState::RequiredInvalid;
+    return stale ? StartupDuckDbPreflightState::StaleUsable : StartupDuckDbPreflightState::Current;
+}
+
+const char* startupDuckDbPreflightStateName(StartupDuckDbPreflightState state) {
+    switch (state) {
+        case StartupDuckDbPreflightState::Current: return "current";
+        case StartupDuckDbPreflightState::StaleUsable: return "stale_usable";
+        case StartupDuckDbPreflightState::RequiredInvalid: return "required_invalid";
+    }
+    return "unknown";
 }
 
 StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
@@ -370,16 +394,25 @@ StartupPreprocessPlan inspectStartupPreprocessPlan(const fs::path& root) {
 
     DuckDbAnalytics analytics(root);
     const bool duckdb_stale = analytics.needsRebuild(layers);
-    const bool duckdb_valid =
-        !duckdb_stale &&
-        (analytics.status().last_rebuild_ok || analytics.validateExistingCache());
-    if (!duckdb_valid) {
+    const bool duckdb_cache_valid = analytics.status().last_rebuild_ok || analytics.validateExistingCache();
+    const StartupDuckDbPreflightState duckdb_state =
+        classifyStartupDuckDbPreflight(duckdb_cache_valid, duckdb_stale);
+    plan.duckdb_state = startupDuckDbPreflightStateName(duckdb_state);
+    plan.duckdb_refresh_recommended = duckdb_state == StartupDuckDbPreflightState::StaleUsable;
+    if (duckdb_state == StartupDuckDbPreflightState::RequiredInvalid) {
         plan.required = true;
         plan.duckdb_required = true;
         plan.issues.push_back(StartupPreprocessIssue{
             "duckdb",
             "data/worldsim.duckdb",
             duckdb_stale ? "DuckDB semantic artifact missing or stale" : analytics.status().message,
+            analytics.status().db_path
+        });
+    } else if (duckdb_state == StartupDuckDbPreflightState::StaleUsable) {
+        plan.warnings.push_back(StartupPreprocessIssue{
+            "duckdb",
+            "data/worldsim.duckdb",
+            "DuckDB semantic artifact is incrementally stale; using validated existing cache and deferring refresh",
             analytics.status().db_path
         });
     }
@@ -485,7 +518,9 @@ int runStartupPreprocessWindow(
         ImGui::Separator();
         ImGui::Text("Initial work items: %zu", initial_plan.issues.size());
         ImGui::SameLine();
-        ImGui::Text("DuckDB: %s", initial_plan.duckdb_required ? "required" : "current");
+        ImGui::Text("Warnings: %zu", initial_plan.warnings.size());
+        ImGui::SameLine();
+        ImGui::Text("DuckDB: %s", initial_plan.duckdb_state.c_str());
         ImGui::Text("Planned startup commands: %zu", steps.size());
         ImGui::TextDisabled("Log: %s", preprocess_log_path.string().c_str());
         if (ImGui::BeginChild("preprocess_issues", ImVec2(0, 120), true)) {
@@ -493,6 +528,11 @@ int runStartupPreprocessWindow(
                 ImGui::BulletText("[%s] %s", issue.kind.c_str(), issue.layer_file.c_str());
                 if (!issue.message.empty()) ImGui::TextWrapped("  %s", issue.message.c_str());
                 if (!issue.artifact_path.empty()) ImGui::TextDisabled("  %s", issue.artifact_path.c_str());
+            }
+            for (const auto& warning : initial_plan.warnings) {
+                ImGui::BulletText("[warning:%s] %s", warning.kind.c_str(), warning.layer_file.c_str());
+                if (!warning.message.empty()) ImGui::TextWrapped("  %s", warning.message.c_str());
+                if (!warning.artifact_path.empty()) ImGui::TextDisabled("  %s", warning.artifact_path.c_str());
             }
         }
         ImGui::EndChild();
@@ -552,7 +592,12 @@ int runStartupPreprocessCli(
             {"mode", "startup-preprocess"},
             {"ok", true},
             {"required", false},
-            {"message", "startup artifacts are current"}
+            {"duckdb_state", plan.duckdb_state},
+            {"duckdb_refresh_recommended", plan.duckdb_refresh_recommended},
+            {"warning_count", plan.warnings.size()},
+            {"message", plan.warnings.empty()
+                ? "startup artifacts are current"
+                : "startup artifacts are usable; non-blocking refresh warnings are present"}
         }.dump(2) << '\n';
         return 0;
     }
@@ -570,6 +615,8 @@ int runStartupPreprocessCli(
         {"mode", "startup-preprocess"},
         {"ok", result.exit_code == 0},
         {"required", plan.required || cli_options.rebuild_all_artifacts_from_scratch},
+        {"duckdb_state", plan.duckdb_state},
+        {"duckdb_refresh_recommended", plan.duckdb_refresh_recommended},
         {"forced_rebuild_from_scratch", cli_options.rebuild_all_artifacts_from_scratch},
         {"exit_code", result.exit_code},
         {"log_path", result.log_path.string()},

@@ -1,5 +1,7 @@
 #include "worldsim_app_internal.h"
 
+#include "animation.h"
+#include "av_capture.h"
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
@@ -40,6 +42,7 @@
 #include "render_plan_builder.h"
 #include "render_routing.h"
 #include "render_layer_pass.h"
+#include "road_label_state.h"
 #include "render_tail_pass.h"
 #include "map_render_overlays.h"
 #include "map_render_projection.h"
@@ -170,6 +173,15 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
+bool isZoningInteractionLayer(const std::vector<LayerDef>& layers, int layer_idx) {
+    if (layer_idx < 0 || (size_t)layer_idx >= layers.size()) return false;
+    const LayerDef& layer = layers[(size_t)layer_idx];
+    return layer.enabled &&
+        layer.category == LayerDef::Category::Zoning &&
+        !layerUsesPointGeometry(layer) &&
+        !layerUsesPolylineGeometry(layer);
+}
+
 struct SingleInstanceLock {
     int fd = -1;
     fs::path path;
@@ -499,11 +511,23 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<int> api_zoom_cmd{-1};
     std::atomic<double> api_lon_cmd{std::numeric_limits<double>::quiet_NaN()};
     std::atomic<double> api_lat_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<int> api_smooth_scroll_zoom_cmd{-1};
+    std::atomic<double> api_zoom_step_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<double> api_scroll_zoom_distance_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<double> api_scroll_zoom_duration_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<double> api_alt_zoom_number_multiplier_cmd{std::numeric_limits<double>::quiet_NaN()};
+    std::atomic<int> api_smooth_scroll_zoom_state{app_settings.smooth_scroll_zoom ? 1 : 0};
+    std::atomic<double> api_zoom_step_state{app_settings.zoom_step};
+    std::atomic<double> api_scroll_zoom_distance_state{app_settings.scroll_zoom_distance};
+    std::atomic<double> api_scroll_zoom_duration_state{app_settings.scroll_zoom_duration_s};
+    std::atomic<double> api_alt_zoom_number_multiplier_state{app_settings.alt_zoom_number_multiplier};
     std::atomic<uint64_t> api_ui_cmd_seq{0};
     std::atomic<int> api_ui_cmd_kind{0};
     std::atomic<double> api_ui_cmd_x{0.0};
     std::atomic<double> api_ui_cmd_y{0.0};
     std::atomic<int> api_ui_cmd_button{0};
+    std::atomic<bool> api_ui_cmd_ctrl{false};
+    std::atomic<bool> api_ui_cmd_alt{false};
     std::atomic<double> api_ui_cmd_scroll_y{0.0};
     std::mutex api_layer_mutex;
     std::unordered_map<std::string, bool> api_layer_enable_cmds;
@@ -540,6 +564,7 @@ int runWorldSim3App(int argc, char** argv) {
     int active_hover_layer_idx = -1;
     int active_click_layer_idx = -1;
     bool hover_inspector_enabled = true;
+    RoadLabelState road_label_state;
     loadLayerUiState(
         root,
         layers,
@@ -723,11 +748,23 @@ int runWorldSim3App(int argc, char** argv) {
             .api_zoom_cmd = &api_zoom_cmd,
             .api_lon_cmd = &api_lon_cmd,
             .api_lat_cmd = &api_lat_cmd,
+            .api_smooth_scroll_zoom_cmd = &api_smooth_scroll_zoom_cmd,
+            .api_zoom_step_cmd = &api_zoom_step_cmd,
+            .api_scroll_zoom_distance_cmd = &api_scroll_zoom_distance_cmd,
+            .api_scroll_zoom_duration_cmd = &api_scroll_zoom_duration_cmd,
+            .api_alt_zoom_number_multiplier_cmd = &api_alt_zoom_number_multiplier_cmd,
+            .api_smooth_scroll_zoom_state = &api_smooth_scroll_zoom_state,
+            .api_zoom_step_state = &api_zoom_step_state,
+            .api_scroll_zoom_distance_state = &api_scroll_zoom_distance_state,
+            .api_scroll_zoom_duration_state = &api_scroll_zoom_duration_state,
+            .api_alt_zoom_number_multiplier_state = &api_alt_zoom_number_multiplier_state,
             .api_ui_cmd_seq = &api_ui_cmd_seq,
             .api_ui_cmd_kind = &api_ui_cmd_kind,
             .api_ui_cmd_x = &api_ui_cmd_x,
             .api_ui_cmd_y = &api_ui_cmd_y,
             .api_ui_cmd_button = &api_ui_cmd_button,
+            .api_ui_cmd_ctrl = &api_ui_cmd_ctrl,
+            .api_ui_cmd_alt = &api_ui_cmd_alt,
             .api_ui_cmd_scroll_y = &api_ui_cmd_scroll_y,
             .api_control_mutex = &api_control_mutex,
             .api_filter_control_cmd = &api_filter_control_cmd,
@@ -772,13 +809,20 @@ int runWorldSim3App(int argc, char** argv) {
     double zoom = 12.0;
     double center_lon = -76.6122;
     double center_lat = 39.2904;
+    CameraAnimationState camera_animation;
+    TargetIndicatorState target_indicator;
     float ui_text_scale = 1.0f;
     uint64_t api_ui_cmd_last_seq = 0;
     bool api_ui_mouse_release_pending = false;
     int api_ui_mouse_release_button = 0;
+    bool api_ui_mouse_release_ctrl = false;
+    bool api_ui_mouse_release_alt = false;
+    bool api_ui_ctrl_release_pending = false;
+    bool api_ui_alt_release_pending = false;
     std::vector<bool> last_enabled_state;
     last_enabled_state.reserve(layers.size());
     for (const auto& l : layers) last_enabled_state.push_back(l.enabled);
+    int most_recent_toggled_layer_idx = -1;
     if (active_hover_layer_idx < 0 || (size_t)active_hover_layer_idx >= layers.size()) {
         if (parcel_layer_idx >= 0) active_hover_layer_idx = parcel_layer_idx;
         else if (zoning_layer_idx >= 0) active_hover_layer_idx = zoning_layer_idx;
@@ -787,36 +831,19 @@ int runWorldSim3App(int argc, char** argv) {
         if (parcel_layer_idx >= 0) active_click_layer_idx = parcel_layer_idx;
         else if (zoning_layer_idx >= 0) active_click_layer_idx = zoning_layer_idx;
     }
-    if (active_hover_layer_idx >= 0 &&
-        active_click_layer_idx >= 0 &&
-        (size_t)active_hover_layer_idx < layers.size() &&
-        (size_t)active_click_layer_idx < layers.size()) {
-        const LayerDef& hover_layer = layers[(size_t)active_hover_layer_idx];
-        const LayerDef& click_layer = layers[(size_t)active_click_layer_idx];
-        const bool hover_parcel =
-            hover_layer.scale == "parcel" &&
-            !layerUsesPointGeometry(hover_layer) &&
-            !layerUsesPolylineGeometry(hover_layer);
-        const bool click_parcel =
-            click_layer.scale == "parcel" &&
-            !layerUsesPointGeometry(click_layer) &&
-            !layerUsesPolylineGeometry(click_layer);
-        if (hover_parcel && click_parcel && active_hover_layer_idx != active_click_layer_idx) {
-            std::fprintf(
-                stderr,
-                "[worldsim3] parcel hover/click targets differ hover_idx=%d hover_file=%s click_idx=%d click_file=%s\n",
-                active_hover_layer_idx,
-                hover_layer.file.c_str(),
-                active_click_layer_idx,
-                click_layer.file.c_str());
-            active_click_layer_idx = active_hover_layer_idx;
-            std::fprintf(
-                stderr,
-                "[worldsim3] parcel click target synced to hover target idx=%d file=%s\n",
-                active_click_layer_idx,
-                hover_layer.file.c_str());
+    auto sync_active_zoning_layer = [&]() {
+        if (isZoningInteractionLayer(layers, active_click_layer_idx)) {
+            zoning_layer_idx = active_click_layer_idx;
+        } else if (isZoningInteractionLayer(layers, active_hover_layer_idx)) {
+            zoning_layer_idx = active_hover_layer_idx;
+        } else {
+            zoning_layer_idx = resolveActiveZoningLayerIndex(
+                layers,
+                zoning_layer_idx,
+                layer_registry.indices().zoning_layer_idx);
         }
-    }
+    };
+    sync_active_zoning_layer();
     hover_inspector_enabled = active_hover_layer_idx >= 0;
     int last_active_hover_layer_idx = active_hover_layer_idx;
     int last_active_click_layer_idx = active_click_layer_idx;
@@ -938,6 +965,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::vector<std::string> selected_record_year_samples;
     bool show_selected_zone_details = false;
     size_t selected_zone_idx = (size_t)-1;
+    std::string current_project_path;
+    std::string project_status;
     bool basemap_source_has_any_files_cached = false;
     bool topo_tiles_available_cached = false;
     bool topo_vector_available_cached = false;
@@ -1100,6 +1129,7 @@ int runWorldSim3App(int argc, char** argv) {
     char arkavo_send_peer[160] = "";
     char arkavo_send_path[512] = "";
     bool map_window_fullscreen = false;
+    bool left_panel_collapsed = false;
     int map_windowed_x = 0;
     int map_windowed_y = 0;
     int map_windowed_w = initial_window_w;
@@ -1146,6 +1176,32 @@ int runWorldSim3App(int argc, char** argv) {
         g_ScreenshotState.requested_output_height = 2160;
         g_ScreenshotState.framebuffer_scale_x = 1.0f;
         g_ScreenshotState.framebuffer_scale_y = 1.0f;
+    };
+    AvCaptureState av_capture_state;
+    refreshAvAudioSources(av_capture_state);
+    av_capture_state.encoder_name = detectAvHardwareEncoder();
+    auto make_av_capture_options = [&]() {
+        int capture_x = 0;
+        int capture_y = 0;
+        int capture_w = 0;
+        int capture_h = 0;
+        glfwGetWindowPos(window, &capture_x, &capture_y);
+        glfwGetFramebufferSize(window, &capture_w, &capture_h);
+        const char* display = std::getenv("DISPLAY");
+        return AvCaptureStartOptions{
+            root,
+            capture_x,
+            capture_y,
+            capture_w,
+            capture_h,
+            display ? std::string(display) : std::string()
+        };
+    };
+    auto toggle_video_recording = [&]() {
+        toggleAvRecording(av_capture_state, make_av_capture_options());
+    };
+    auto video_recording_active = [&]() -> bool {
+        return av_capture_state.recording;
     };
     const fs::path color_editor_dir = root / "data" / "cache" / "ui" / "layer_color_editor";
     const fs::path color_editor_snapshot_path = color_editor_dir / "session.json";
@@ -1550,6 +1606,63 @@ int runWorldSim3App(int argc, char** argv) {
         active_color_editor_outline_target = outline;
         spawn_color_editor_process();
     };
+    auto publish_api_zoom_settings_state = [&]() {
+        api_smooth_scroll_zoom_state.store(app_settings.smooth_scroll_zoom ? 1 : 0, std::memory_order_relaxed);
+        api_zoom_step_state.store(app_settings.zoom_step, std::memory_order_relaxed);
+        api_scroll_zoom_distance_state.store(app_settings.scroll_zoom_distance, std::memory_order_relaxed);
+        api_scroll_zoom_duration_state.store(app_settings.scroll_zoom_duration_s, std::memory_order_relaxed);
+        api_alt_zoom_number_multiplier_state.store(app_settings.alt_zoom_number_multiplier, std::memory_order_relaxed);
+    };
+    auto apply_api_zoom_settings_commands = [&]() {
+        bool changed = false;
+        const int smooth_cmd = api_smooth_scroll_zoom_cmd.exchange(-1, std::memory_order_relaxed);
+        if (smooth_cmd == 0 || smooth_cmd == 1) {
+            const bool smooth = smooth_cmd == 1;
+            if (app_settings.smooth_scroll_zoom != smooth) {
+                app_settings.smooth_scroll_zoom = smooth;
+                changed = true;
+            }
+        }
+        const double zoom_step_cmd =
+            api_zoom_step_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
+        if (!std::isnan(zoom_step_cmd)) {
+            const double value = std::clamp(zoom_step_cmd, 0.05, 4.0);
+            if (app_settings.zoom_step != value) {
+                app_settings.zoom_step = value;
+                changed = true;
+            }
+        }
+        const double distance_cmd =
+            api_scroll_zoom_distance_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
+        if (!std::isnan(distance_cmd)) {
+            const double value = std::clamp(distance_cmd, 0.01, 4.0);
+            if (app_settings.scroll_zoom_distance != value) {
+                app_settings.scroll_zoom_distance = value;
+                changed = true;
+            }
+        }
+        const double duration_cmd =
+            api_scroll_zoom_duration_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
+        if (!std::isnan(duration_cmd)) {
+            const double value = std::clamp(duration_cmd, 0.0, 1.5);
+            if (app_settings.scroll_zoom_duration_s != value) {
+                app_settings.scroll_zoom_duration_s = value;
+                changed = true;
+            }
+        }
+        const double alt_multiplier_cmd =
+            api_alt_zoom_number_multiplier_cmd.exchange(std::numeric_limits<double>::quiet_NaN(), std::memory_order_relaxed);
+        if (!std::isnan(alt_multiplier_cmd)) {
+            const double value = std::clamp(alt_multiplier_cmd, 0.25, 16.0);
+            if (app_settings.alt_zoom_number_multiplier != value) {
+                app_settings.alt_zoom_number_multiplier = value;
+                changed = true;
+            }
+        }
+        if (changed) saveAppSettings(root, app_settings);
+        publish_api_zoom_settings_state();
+    };
+    publish_api_zoom_settings_state();
 
     while (!glfwWindowShouldClose(window)) {
         if (g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
@@ -1558,7 +1671,25 @@ int runWorldSim3App(int argc, char** argv) {
             break;
         }
         g_MapPolygonOutlineThickness = app_settings.map_polygon_outline_thickness;
+        const auto prof_frame_begin = std::chrono::steady_clock::now();
+        auto prof_ms_since = [](std::chrono::steady_clock::time_point t) {
+            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+        };
+        double prof_event_poll_ms = 0.0;
+        double prof_imgui_new_frame_ms = 0.0;
+        double prof_frame_prelude_ms = 0.0;
+        double prof_left_panel_ms = 0.0;
+        double prof_aux_windows_ms = 0.0;
+        double prof_layer_ui_sync_ms = 0.0;
+        double prof_derived_caches_ms = 0.0;
+        double prof_feature_render_cache_ms = 0.0;
+        double prof_runtime_sync_ms = 0.0;
+        double prof_right_panel_ms = 0.0;
+        double prof_map_tab_ms = 0.0;
+        apply_api_zoom_settings_commands();
+        const auto prof_event_poll_begin = std::chrono::steady_clock::now();
         glfwPollEvents();
+        prof_event_poll_ms = prof_ms_since(prof_event_poll_begin);
         const bool color_editor_alive = color_editor_process_alive();
         ColorEditorCommand color_editor_command;
         if (loadColorEditorCommand(color_editor_command_path, color_editor_command) &&
@@ -1593,9 +1724,11 @@ int runWorldSim3App(int argc, char** argv) {
         }
 
         ImGui::SetCurrentContext(main_imgui_context);
+        const auto prof_imgui_new_frame_begin = std::chrono::steady_clock::now();
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        prof_imgui_new_frame_ms = prof_ms_since(prof_imgui_new_frame_begin);
         ImGuiIO& frame_io = ImGui::GetIO();
         const FrameLayout frame_layout = updateFrameLayoutAndTextScale(
             frame_io,
@@ -1611,6 +1744,11 @@ int runWorldSim3App(int argc, char** argv) {
         float map_w = frame_layout.map_w;
         float map_x = frame_layout.map_x;
         float main_panel_h = frame_layout.main_panel_h;
+        if (left_panel_collapsed && !map_window_fullscreen) {
+            left_panel_w = 0.0f;
+            map_x = layout_margin;
+            map_w = std::max(1.0f, layout_w - layout_margin * 2.0f - right_panel_w - layout_gap);
+        }
         if (map_window_fullscreen) {
             left_panel_w = 0.0f;
             right_panel_w = 0.0f;
@@ -1620,10 +1758,6 @@ int runWorldSim3App(int argc, char** argv) {
         }
         drainRetiredTextures();
         drainRetiredParcelGpuResources();
-        const auto prof_frame_begin = std::chrono::steady_clock::now();
-        auto prof_ms_since = [](std::chrono::steady_clock::time_point t) {
-            return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
-        };
         size_t prof_tiles_drawn_frame = 0;
         size_t prof_features_considered_frame = 0;
         size_t prof_features_drawn_frame = 0;
@@ -1641,6 +1775,7 @@ int runWorldSim3App(int argc, char** argv) {
             save_color_editor_snapshot_if_changed(
                 build_color_editor_snapshot((size_t)active_color_editor_layer_idx, active_color_editor_outline_target));
         }
+        const auto prof_frame_prelude_begin = std::chrono::steady_clock::now();
         FramePreludeResult frame_prelude = runFramePrelude(FramePreludeContext{
             &root,
             &layers,
@@ -1691,6 +1826,8 @@ int runWorldSim3App(int argc, char** argv) {
             &api_ui_cmd_x,
             &api_ui_cmd_y,
             &api_ui_cmd_button,
+            &api_ui_cmd_ctrl,
+            &api_ui_cmd_alt,
             &api_ui_cmd_scroll_y,
             &map_filter_state,
             &parcel_jurisdiction_filter_state.result_set,
@@ -1703,6 +1840,10 @@ int runWorldSim3App(int argc, char** argv) {
             &api_ui_cmd_last_seq,
             &api_ui_mouse_release_pending,
             &api_ui_mouse_release_button,
+            &api_ui_mouse_release_ctrl,
+            &api_ui_mouse_release_alt,
+            &api_ui_ctrl_release_pending,
+            &api_ui_alt_release_pending,
             &api_zoom_cmd,
             &api_lon_cmd,
             &api_lat_cmd,
@@ -1723,8 +1864,25 @@ int runWorldSim3App(int argc, char** argv) {
             [&](size_t idx, bool required) { enqueue_hydration(idx, required); },
             [&]() { refresh_local_layer_exists_cache(); }
         });
+        prof_frame_prelude_ms = prof_ms_since(prof_frame_prelude_begin);
+        if (ImGui::IsKeyPressed(ImGuiKey_V, false) &&
+            !frame_io.WantTextInput &&
+            !frame_io.KeyCtrl &&
+            !frame_io.KeyAlt &&
+            most_recent_toggled_layer_idx >= 0 &&
+            (size_t)most_recent_toggled_layer_idx < layers.size()) {
+            LayerDef& layer = layers[(size_t)most_recent_toggled_layer_idx];
+            layer.enabled = !layer.enabled;
+            if (!layer.enabled &&
+                (size_t)most_recent_toggled_layer_idx < layer_heatmap_enabled.size() &&
+                layer_heatmap_enabled[(size_t)most_recent_toggled_layer_idx]) {
+                layer_heatmap_enabled[(size_t)most_recent_toggled_layer_idx] = false;
+                layer_heatmap_state_changed = true;
+            }
+        }
         LeftPanelResult left_panel;
-        if (!map_window_fullscreen) {
+        if (!map_window_fullscreen && !left_panel_collapsed) {
+            const auto prof_left_panel_begin = std::chrono::steady_clock::now();
             left_panel = drawLeftPanelWindow(LeftPanelContext{
                 layout_margin,
                 left_panel_w,
@@ -1745,9 +1903,10 @@ int runWorldSim3App(int argc, char** argv) {
                     &layer_browse_state,
 	                &map_filter_state,
 	                &active_hover_layer_idx,
-	                &active_click_layer_idx,
+                &active_click_layer_idx,
                 &show_sources_panel,
                 &show_data_library,
+                &left_panel_collapsed,
                 &parcel_parameter_mode,
                 &layer_spatial,
                 &layer_states,
@@ -1820,8 +1979,10 @@ int runWorldSim3App(int argc, char** argv) {
                 [&]() { return frame_prelude.queue_all_missing_layer_downloads(); },
                 [&](size_t i, bool exists) { mark_local_layer_exists(i, exists); },
                 [&](size_t i, bool required) { enqueue_hydration(i, required); },
-                [&](size_t i, bool outline) { open_external_color_editor(i, outline); }
+                [&](size_t i, bool outline) { open_external_color_editor(i, outline); },
+                &road_label_state
             });
+            prof_left_panel_ms = prof_ms_since(prof_left_panel_begin);
         }
         if (left_panel.geography_changed) {
             zoning_layer_idx = resolveActiveZoningLayerIndex(
@@ -1829,6 +1990,7 @@ int runWorldSim3App(int argc, char** argv) {
                 zoning_layer_idx,
                 layer_registry.indices().zoning_layer_idx);
         }
+        sync_active_zoning_layer();
         bool zoning_filters_changed = left_panel.zoning_filters_changed;
         bool event_sector_filters_changed = left_panel.event_sector_filters_changed;
         const size_t downloadable_missing_layer_count = left_panel.downloadable_missing_layer_count;
@@ -1868,41 +2030,43 @@ int runWorldSim3App(int argc, char** argv) {
         data_library_ctx.data_library_bulk_future = &data_library_bulk_future;
         data_library_ctx.refresh_local_layer_exists_cache = [&]() { refresh_local_layer_exists_cache(); };
         data_library_ctx.enqueue_hydration = [&](size_t idx, bool required) { enqueue_hydration(idx, required); };
-        drawGearPanel(
-            &show_sources_panel,
-            root,
-            &app_settings,
-            main_imgui_context,
-            download_queue_imgui_context,
-            bootstrap,
-            [&]() { rescanDataLibraryLocalFiles(data_library_ctx); });
-        DataLibraryUiContext data_library_ui_ctx;
-        data_library_ui_ctx.root = &root;
-        data_library_ui_ctx.layers = &layers;
-        data_library_ui_ctx.coordinator = &data_library_ctx;
-        data_library_ui_ctx.show_data_library = &show_data_library;
-        data_library_ui_ctx.query_buffer = data_library_query;
-        data_library_ui_ctx.query_buffer_size = sizeof(data_library_query);
-        data_library_ui_ctx.download_phase = &data_library_download_phase;
-        data_library_ui_ctx.include_large = &data_library_include_large;
-        data_library_ui_ctx.cached_query = &data_library_cached_query;
-        data_library_ui_ctx.cached_layer_count = &data_library_cached_layer_count;
-        data_library_ui_ctx.visible_rows = &data_library_visible_rows;
-        data_library_ui_ctx.cache_rebuilds = &data_library_cache_rebuilds;
-        data_library_ui_ctx.rendered_rows_last = &data_library_rendered_rows_last;
-        data_library_ui_ctx.enqueue_layer_download_request = [&](size_t idx) {
-            return enqueueLayerDownloadRequest(frame_prelude.layer_download, idx);
-        };
-        data_library_ui_ctx.queue_all_missing_layer_downloads = [&]() {
-            return frame_prelude.queue_all_missing_layer_downloads();
-        };
-        data_library_ui_ctx.get_layer_download_snapshot = [&](size_t idx) {
-            return layerDownloadItemSnapshot(frame_prelude.layer_download, idx);
-        };
-        data_library_ui_ctx.downloadable_missing_layer_count = downloadable_missing_layer_count;
-        data_library_ui_ctx.queueable_missing_layer_count = queueable_missing_layer_count;
-        drawDataLibraryWindow(data_library_ui_ctx);
-        runPerformanceRuntimeSupport(PerformanceRuntimeContext{
+        {
+            const auto prof_aux_windows_begin = std::chrono::steady_clock::now();
+            drawGearPanel(
+                &show_sources_panel,
+                root,
+                &app_settings,
+                main_imgui_context,
+                download_queue_imgui_context,
+                bootstrap,
+                [&]() { rescanDataLibraryLocalFiles(data_library_ctx); });
+            DataLibraryUiContext data_library_ui_ctx;
+            data_library_ui_ctx.root = &root;
+            data_library_ui_ctx.layers = &layers;
+            data_library_ui_ctx.coordinator = &data_library_ctx;
+            data_library_ui_ctx.show_data_library = &show_data_library;
+            data_library_ui_ctx.query_buffer = data_library_query;
+            data_library_ui_ctx.query_buffer_size = sizeof(data_library_query);
+            data_library_ui_ctx.download_phase = &data_library_download_phase;
+            data_library_ui_ctx.include_large = &data_library_include_large;
+            data_library_ui_ctx.cached_query = &data_library_cached_query;
+            data_library_ui_ctx.cached_layer_count = &data_library_cached_layer_count;
+            data_library_ui_ctx.visible_rows = &data_library_visible_rows;
+            data_library_ui_ctx.cache_rebuilds = &data_library_cache_rebuilds;
+            data_library_ui_ctx.rendered_rows_last = &data_library_rendered_rows_last;
+            data_library_ui_ctx.enqueue_layer_download_request = [&](size_t idx) {
+                return enqueueLayerDownloadRequest(frame_prelude.layer_download, idx);
+            };
+            data_library_ui_ctx.queue_all_missing_layer_downloads = [&]() {
+                return frame_prelude.queue_all_missing_layer_downloads();
+            };
+            data_library_ui_ctx.get_layer_download_snapshot = [&](size_t idx) {
+                return layerDownloadItemSnapshot(frame_prelude.layer_download, idx);
+            };
+            data_library_ui_ctx.downloadable_missing_layer_count = downloadable_missing_layer_count;
+            data_library_ui_ctx.queueable_missing_layer_count = queueable_missing_layer_count;
+            drawDataLibraryWindow(data_library_ui_ctx);
+            runPerformanceRuntimeSupport(PerformanceRuntimeContext{
             layout_margin,
             layout_h,
             main_panel_h,
@@ -1980,9 +2144,12 @@ int runWorldSim3App(int argc, char** argv) {
             [&]() { clear_heatmap_runtime_cache(); },
             [&]() { reset_derived_cache_state(); },
             [&]() { trimProcessHeap(); },
-            []() {}
-        });
+                []() {}
+            });
+            prof_aux_windows_ms = prof_ms_since(prof_aux_windows_begin);
+        }
         hover_inspector_enabled = active_hover_layer_idx >= 0;
+        const auto prof_layer_ui_sync_begin = std::chrono::steady_clock::now();
         const LayerUiStateSyncResult ui_state_sync = syncLayerUiState(LayerUiStateSyncContext{
             &root,
             &layers,
@@ -1991,6 +2158,7 @@ int runWorldSim3App(int argc, char** argv) {
             &last_active_hover_layer_idx,
             &last_active_click_layer_idx,
             &last_enabled_state,
+            &most_recent_toggled_layer_idx,
             zoning_filters_changed,
             event_sector_filters_changed,
             layer_fill_state_changed,
@@ -2062,6 +2230,7 @@ int runWorldSim3App(int argc, char** argv) {
             &selected_owners,
             &map_filter_state.event_sector_enabled
         });
+        prof_layer_ui_sync_ms = prof_ms_since(prof_layer_ui_sync_begin);
         const bool vacant_layer_active = ui_state_sync.vacant_layer_active;
         LayerPipelineDrainContext pipeline_drain_ctx;
         pipeline_drain_ctx.layers = &layers;
@@ -2155,6 +2324,7 @@ int runWorldSim3App(int argc, char** argv) {
         derived_layer_caches_ctx.unified_vacancy_generation_applied = &unified_vacancy_generation_applied;
         derived_layer_caches_ctx.unified_tax_generation_applied = &unified_tax_generation_applied;
         derived_layer_caches_ctx.owner_aggregates_dirty = &owner_aggregates_dirty;
+        const auto prof_derived_caches_begin = std::chrono::steady_clock::now();
         refreshDerivedLayerCaches(derived_layer_caches_ctx);
         refreshOwnerTextFilterState(owner_text_filter_state, OwnerTextFilterRefreshContext{
             &map_filter_state,
@@ -2174,6 +2344,7 @@ int runWorldSim3App(int argc, char** argv) {
             real_property_layer_idx,
             &unified_parcel_cached_signature
         });
+        prof_derived_caches_ms = prof_ms_since(prof_derived_caches_begin);
         for (size_t li = 0; li < layers.size(); ++li) {
             LayerPipelineStatus st = LayerPipelineStatus::Queued;
             std::string hydration_signature;
@@ -2255,6 +2426,7 @@ int runWorldSim3App(int argc, char** argv) {
             return filter_input;
         };
         auto ensure_frame_feature_render_cache = [&]() -> const LayerFeatureRenderCache& {
+            const auto prof_feature_render_cache_begin = std::chrono::steady_clock::now();
             FeatureFilterContextFactoryInput filter_input = make_frame_filter_input();
             FeatureRenderStateKeyContext key_ctx;
             key_ctx.map_filters = &map_filter_state;
@@ -2269,9 +2441,11 @@ int runWorldSim3App(int argc, char** argv) {
                 layers,
                 feature_render_state_key,
                 feature_render_cache);
+            prof_feature_render_cache_ms += prof_ms_since(prof_feature_render_cache_begin);
             return feature_render_cache;
         };
 
+        const auto prof_runtime_sync_begin = std::chrono::steady_clock::now();
         syncParcelGpuLayer(
             ParcelRuntimeSyncInput{
                 .root = &root,
@@ -2391,8 +2565,10 @@ int runWorldSim3App(int argc, char** argv) {
                 .gpu_uploaded_signatures = &zoning_runtime_state.uploaded_signatures,
             },
             polygon_artifact_runtime_state);
+        prof_runtime_sync_ms = prof_ms_since(prof_runtime_sync_begin);
 
         if (!map_window_fullscreen) {
+            const auto prof_right_panel_begin = std::chrono::steady_clock::now();
             drawRightPanelWindow(RightPanelContext{
                 &root,
                 &app_settings,
@@ -2435,14 +2611,39 @@ int runWorldSim3App(int argc, char** argv) {
                 parcel_parameter_mode,
                 heatmap_algo,
                 &layer_heatmap_enabled,
+                &layer_hover_enabled,
+                &layer_inspect_enabled,
                 &layer_heatmap_max_zoom,
                 &layer_parcel_detail_min_zoom,
                 &layer_heatmap_algo,
+                &layer_normalize_mode,
+                &layer_heatmap_cell_px,
+                &layer_heatmap_bandwidth_px,
+                &layer_heatmap_blur_sigma_px,
                 &layer_heatmap_percentile_clip,
                 &layer_choropleth_gamma,
                 &layer_fill_enabled,
+                &layer_heatmap_zoom_adaptive_bandwidth,
+                &layer_heatmap_multires_enabled,
+                &layer_heatmap_multires_blend,
+                &layer_heatmap_use_gradient,
+                &active_hover_layer_idx,
+                &active_click_layer_idx,
+                &parcel_parameter_mode,
                 &layer_heatmap_state_changed,
+                &layer_fill_state_changed,
+                &layer_hover_state_changed,
+                &layer_inspect_state_changed,
                 heatmap_percentile_clip,
+                &heatmap_algo,
+                &heatmap_quality_preset,
+                &global_heat_cell_px,
+                &heatmap_bandwidth_px,
+                &heatmap_blur_sigma_px,
+                &heatmap_percentile_clip,
+                &heatmap_zoom_adaptive_bandwidth,
+                &heatmap_multires_enabled,
+                &heatmap_multires_blend,
                 &parcel_vac_notice_by_feature,
                 &parcel_vac_rehab_by_feature,
                 &parcel_jurisdiction_filter_state,
@@ -2497,11 +2698,17 @@ int runWorldSim3App(int argc, char** argv) {
 	                &prof_heatmap_async_inflight,
 	                &prof_heatmap_texture_cache_entries,
 	                &gpu_profiler_tab_requested,
-	                &gpu_profiler_reload_requested
-	            });
+                &gpu_profiler_reload_requested,
+                &current_project_path,
+                &project_status,
+                &road_label_state,
+                &av_capture_state
+		            });
+            prof_right_panel_ms = prof_ms_since(prof_right_panel_begin);
         }
 
         (void)ensure_frame_feature_render_cache();
+        const auto prof_map_tab_begin = std::chrono::steady_clock::now();
         drawMapTabWindow(MapTabContext{
             map_x,
             map_w,
@@ -2513,6 +2720,8 @@ int runWorldSim3App(int argc, char** argv) {
             &center_lon,
             &center_lat,
             &zoom,
+            &camera_animation,
+            &target_indicator,
             kMinZoom,
             kMaxZoom,
             kMaxInternalMathZoom,
@@ -2659,14 +2868,50 @@ int runWorldSim3App(int argc, char** argv) {
             &policy_viz_node_count,
             toggle_map_fullscreen,
             request_map_snapshot,
+            toggle_video_recording,
+            video_recording_active,
+            &road_label_state,
             map_window_fullscreen
         });
+        prof_map_tab_ms = prof_ms_since(prof_map_tab_begin);
+        if (left_panel_collapsed && !map_window_fullscreen) {
+            ImDrawList* fg = ImGui::GetForegroundDrawList();
+            const ImVec2 button_min(layout_margin + 8.0f, layout_margin + 52.0f);
+            const ImVec2 button_max(button_min.x + 34.0f, button_min.y + 34.0f);
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const bool hovered =
+                mouse.x >= button_min.x && mouse.x <= button_max.x &&
+                mouse.y >= button_min.y && mouse.y <= button_max.y;
+            if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                left_panel_collapsed = false;
+            }
+            const ImU32 fill = hovered ? IM_COL32(35, 52, 64, 242) : IM_COL32(17, 24, 32, 226);
+            fg->AddRectFilled(button_min, button_max, fill, 7.0f);
+            fg->AddRect(button_min, button_max, IM_COL32(125, 220, 255, hovered ? 220 : 140), 7.0f);
+            const ImVec2 c((button_min.x + button_max.x) * 0.5f, (button_min.y + button_max.y) * 0.5f);
+            fg->AddLine(ImVec2(c.x - 4.0f, c.y - 8.0f), ImVec2(c.x + 5.0f, c.y), IM_COL32(245, 248, 250, 245), 2.0f);
+            fg->AddLine(ImVec2(c.x + 5.0f, c.y), ImVec2(c.x - 4.0f, c.y + 8.0f), IM_COL32(245, 248, 250, 245), 2.0f);
+            if (hovered) {
+                ImGui::SetTooltip("Show left panel");
+            }
+        }
         finalizeFrameSupport(FrameSupportFinalizationContext{
             wd,
             &last_frame_ts,
             &ema_frame_ms,
             kPerfAlpha,
             prof_frame_begin,
+            prof_event_poll_ms,
+            prof_imgui_new_frame_ms,
+            prof_frame_prelude_ms,
+            prof_left_panel_ms,
+            prof_aux_windows_ms,
+            prof_layer_ui_sync_ms,
+            prof_derived_caches_ms,
+            prof_feature_render_cache_ms,
+            prof_runtime_sync_ms,
+            prof_right_panel_ms,
+            prof_map_tab_ms,
             prof_tiles_drawn_frame,
             prof_features_considered_frame,
             prof_features_drawn_frame,
@@ -2727,6 +2972,9 @@ int runWorldSim3App(int argc, char** argv) {
         kill(color_editor_pid, SIGTERM);
         waitpid(color_editor_pid, nullptr, 0);
         color_editor_pid = -1;
+    }
+    if (av_capture_state.recording) {
+        stopAvRecording(av_capture_state);
     }
     if (!g_VulkanDeviceLost.load(std::memory_order_relaxed)) {
         vkDeviceWaitIdle(g_Device);

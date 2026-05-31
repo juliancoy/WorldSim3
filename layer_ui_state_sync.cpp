@@ -5,7 +5,8 @@
 
 LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
     LayerUiStateSyncResult result;
-    if (!ctx.root || !ctx.layers || !ctx.last_active_hover_layer_idx || !ctx.last_active_click_layer_idx || !ctx.last_enabled_state ||
+    if (!ctx.root || !ctx.layers || !ctx.last_active_hover_layer_idx || !ctx.last_active_click_layer_idx ||
+        !ctx.last_enabled_state || !ctx.most_recent_toggled_layer_idx ||
         !ctx.layer_profile_dirty || !ctx.layer_states || !ctx.status_mutex ||
         !ctx.zoning_zone_enabled || !ctx.layer_fill_enabled || !ctx.layer_hover_enabled ||
         !ctx.layer_inspect_enabled || !ctx.layer_heatmap_enabled || !ctx.layer_heatmap_max_zoom ||
@@ -40,6 +41,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         for (size_t i = 0; i < ctx.layers->size(); ++i) {
             if ((*ctx.layers)[i].enabled != (*ctx.last_enabled_state)[i]) {
                 result.ui_state_changed = true;
+                *ctx.most_recent_toggled_layer_idx = (int)i;
                 if (i < ctx.layer_profile_dirty->size()) (*ctx.layer_profile_dirty)[i] = true;
                 if ((*ctx.layers)[i].enabled && !(*ctx.last_enabled_state)[i]) newly_enabled.push_back(i);
             }
@@ -49,6 +51,7 @@ LayerUiStateSyncResult syncLayerUiState(const LayerUiStateSyncContext& ctx) {
         for (size_t i = 0; i < ctx.layers->size(); ++i) {
             if ((*ctx.layers)[i].enabled) newly_enabled.push_back(i);
         }
+        *ctx.most_recent_toggled_layer_idx = -1;
     }
 
     for (size_t i : newly_enabled) {

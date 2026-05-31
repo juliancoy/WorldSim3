@@ -4,6 +4,7 @@
 #include "filters.h"
 #include "layer_registry.h"
 #include "layer_runtime.h"
+#include "road_label_state.h"
 #include "types.h"
 
 #include <filesystem>
@@ -62,6 +63,7 @@ struct LayerUiSharedContext {
     int* parcel_parameter_mode = nullptr;
     const MapFilterState* map_filter_state = nullptr;
     const LayerBrowseState* layer_browse_state = nullptr;
+    RoadLabelState* road_label_state = nullptr;
 };
 
 enum class LayerColorEditorTarget {

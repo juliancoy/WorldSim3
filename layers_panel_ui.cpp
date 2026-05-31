@@ -164,8 +164,13 @@ bool layerSupportsClickSelection(const LayersPanelUiContext& ctx, size_t idx) {
         layer.scale == "parcel" &&
         !layerUsesPointGeometry(layer) &&
         !layerUsesPolylineGeometry(layer);
+    const bool zoning_interaction_layer =
+        layer.enabled &&
+        layer.category == LayerDef::Category::Zoning &&
+        !layerUsesPointGeometry(layer) &&
+        !layerUsesPolylineGeometry(layer);
     return ctx.shared &&
-        (parcel_interaction_layer || (int)idx == ctx.zoning_layer_idx);
+        (parcel_interaction_layer || zoning_interaction_layer);
 }
 
 bool layerIsSelectedClickTarget(const LayersPanelUiContext& ctx, size_t idx) {
@@ -307,6 +312,11 @@ bool drawOutlineColorEditor(ImVec4& color) {
         color = ImVec4(rgba[0], rgba[1], rgba[2], rgba[3]);
         changed = true;
     }
+    float opacity_pct = std::clamp(color.w, 0.0f, 1.0f) * 100.0f;
+    if (ImGui::SliderFloat("Opacity##outline_opacity", &opacity_pct, 0.0f, 100.0f, "%.0f%%")) {
+        color.w = std::clamp(opacity_pct / 100.0f, 0.0f, 1.0f);
+        changed = true;
+    }
     return changed;
 }
 
@@ -316,6 +326,11 @@ bool drawFillColorEditor(LayersPanelUiContext& ctx, size_t idx, LayerDef& layer)
     float rgba[4] = {layer.color.x, layer.color.y, layer.color.z, layer.color.w};
     if (ImGui::ColorPicker4("Static color", rgba, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_NoSidePreview)) {
         layer.color = ImVec4(rgba[0], rgba[1], rgba[2], rgba[3]);
+        changed = true;
+    }
+    float opacity_pct = std::clamp(layer.color.w, 0.0f, 1.0f) * 100.0f;
+    if (ImGui::SliderFloat("Opacity##fill_opacity", &opacity_pct, 0.0f, 100.0f, "%.0f%%")) {
+        layer.color.w = std::clamp(opacity_pct / 100.0f, 0.0f, 1.0f);
         changed = true;
     }
 
@@ -894,6 +909,43 @@ void drawSourceHierarchyNode(LayersPanelUiContext& ctx, const SourceHierarchyNod
     ImGui::TreePop();
 }
 
+std::string zoningJurisdictionLabel(const LayerDef& layer) {
+    if (!layer.provenance_county_city.empty()) return humanizeSourceHierarchyValue(layer.provenance_county_city);
+    if (!layer.region.empty()) return layer.region;
+    return "Regional";
+}
+
+void drawZoningLayersByJurisdiction(LayersPanelUiContext& ctx) {
+    std::vector<size_t> zoning_indices;
+    zoning_indices.reserve(ctx.shared->layers->size());
+    for (size_t idx = 0; idx < ctx.shared->layers->size(); ++idx) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        if (layer.category != LayerDef::Category::Zoning) continue;
+        if (hiddenParcelParameterLayer(*ctx.shared, ctx.parcel_layer_idx, idx)) continue;
+        if (!layerVisibleInHierarchy(ctx, layer)) continue;
+        zoning_indices.push_back(idx);
+    }
+    std::stable_sort(zoning_indices.begin(), zoning_indices.end(), [&](size_t a, size_t b) {
+        const LayerDef& la = (*ctx.shared->layers)[a];
+        const LayerDef& lb = (*ctx.shared->layers)[b];
+        const std::string ja = zoningJurisdictionLabel(la);
+        const std::string jb = zoningJurisdictionLabel(lb);
+        if (ja != jb) return ja < jb;
+        return la.name < lb.name;
+    });
+
+    std::string current_jurisdiction;
+    for (size_t idx : zoning_indices) {
+        LayerDef& layer = (*ctx.shared->layers)[idx];
+        const std::string jurisdiction = zoningJurisdictionLabel(layer);
+        if (jurisdiction != current_jurisdiction) {
+            current_jurisdiction = jurisdiction;
+            ImGui::SeparatorText(current_jurisdiction.c_str());
+        }
+        drawStandardLayerRow(ctx, idx, layer);
+    }
+}
+
 void setParcelJurisdictionSelected(LayersPanelUiContext& ctx, const char* jurisdiction, bool selected) {
     if (!ctx.parcel_jurisdiction_filter_state || !jurisdiction || jurisdiction[0] == '\0') return;
     if (selected) ctx.parcel_jurisdiction_filter_state->selected_jurisdictions.insert(jurisdiction);
@@ -1111,6 +1163,11 @@ void drawLayerCategory(LayersPanelUiContext& ctx, LayerDef::Category cat, const 
         category_click_tip.c_str());
     const bool open = ImGui::TreeNodeEx(label, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_SpanAvailWidth);
     if (!open) return;
+    if (cat == LayerDef::Category::Zoning) {
+        drawZoningLayersByJurisdiction(ctx);
+        ImGui::TreePop();
+        return;
+    }
     SourceHierarchyNode root;
     root.key = std::string("source_root_") + label;
     root.label = label;
@@ -1148,6 +1205,33 @@ bool drawLayerColorEditorContents(LayersPanelUiContext& ctx, size_t idx, LayerCo
 }
 
 void drawLayerCategoriesPanel(LayersPanelUiContext& ctx) {
+    if (ctx.shared && ctx.shared->road_label_state) {
+        ImGui::SeparatorText("Map Annotations");
+        ImGui::PushID("road_label_overlay_layer");
+        bool visible = ctx.shared->road_label_state->visible;
+        if (drawIconToggleButton("show", "V", visible, "Show road label annotations")) {
+            ctx.shared->road_label_state->visible = visible;
+        }
+        ImGui::SameLine(0.0f, 6.0f);
+        drawLayerNameBadge("Road Labels", ImVec4(1.0f, 0.84f, 0.32f, 1.0f));
+        ImGui::SameLine();
+        ImGui::TextDisabled("[%zu]", ctx.shared->road_label_state->selections.size());
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Placed road label annotations");
+            ImGui::Text("Visible: %s", ctx.shared->road_label_state->visible ? "yes" : "no");
+            ImGui::Text("Labels: %zu", ctx.shared->road_label_state->selections.size());
+            ImGui::TextDisabled("Hiding this layer preserves existing labels.");
+            ImGui::EndTooltip();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(ctx.shared->road_label_state->selections.empty());
+        if (ImGui::SmallButton("Clear")) {
+            ctx.shared->road_label_state->selections.clear();
+        }
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
     drawLayerCategory(ctx, LayerDef::Category::Housing, "Housing");
     drawLayerCategory(ctx, LayerDef::Category::PublicHealth, "Public Health");
     drawLayerCategory(ctx, LayerDef::Category::Safety, "Safety");

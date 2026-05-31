@@ -10,6 +10,7 @@
 #include "zoning.h"
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +21,8 @@ struct MapInspectionContext {
     bool parcel_inspect_active = false;
     bool zoning_hover_active = false;
     bool zoning_inspect_active = false;
+    ImVec2 map_origin = ImVec2(0.0f, 0.0f);
+    ImVec2 map_size = ImVec2(0.0f, 0.0f);
     int parcel_layer_idx = -1;
     int zoning_layer_idx = -1;
     const std::vector<LayerDef>* layers = nullptr;
@@ -42,6 +45,7 @@ struct MapInspectionContext {
     const std::vector<double>* parcel_tax_sale_amount_by_feature = nullptr;
     const std::unordered_map<std::string, size_t>* real_property_by_blocklot = nullptr;
     int real_property_layer_idx = -1;
+    const std::filesystem::path* root = nullptr;
 };
 
 struct ParcelHoverResolution {

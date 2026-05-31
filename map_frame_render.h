@@ -96,6 +96,8 @@ struct RenderFrameOrchestrationContext {
     const std::vector<int>* parcel_tax_sale_by_feature = nullptr;
     const std::vector<UnifiedParcelRecord>* unified_parcels = nullptr;
     const ParcelSelectionState* parcel_selection = nullptr;
+    const bool* show_selected_zone_details = nullptr;
+    const size_t* selected_zone_idx = nullptr;
     const std::unordered_map<std::string, bool>* zoning_zone_enabled = nullptr;
     const std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
     const std::vector<QueryMapLayer>* query_layers = nullptr;

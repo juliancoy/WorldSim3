@@ -18,6 +18,12 @@ struct WorldsimCliOptions {
     bool run_parcel_query_layer_style_selftest = false;
     bool run_vulkan_device_loss_selftest = false;
     bool run_render_routing_selftest = false;
+    bool run_road_label_selftest = false;
+    bool run_road_manifest_selftest = false;
+    bool run_zoning_manifest_selftest = false;
+    bool run_map_title_source_selftest = false;
+    bool run_layer_action_targets_selftest = false;
+    bool run_startup_preprocess_policy_selftest = false;
     bool run_render_tile_cache_selftest = false;
     bool run_render_polygon_tile_runtime_policy_selftest = false;
     bool run_render_policy_selftest = false;

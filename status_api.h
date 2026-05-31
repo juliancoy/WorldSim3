@@ -94,11 +94,23 @@ struct StatusApiContext {
     std::atomic<int>* api_zoom_cmd = nullptr;
     std::atomic<double>* api_lon_cmd = nullptr;
     std::atomic<double>* api_lat_cmd = nullptr;
+    std::atomic<int>* api_smooth_scroll_zoom_cmd = nullptr;
+    std::atomic<double>* api_zoom_step_cmd = nullptr;
+    std::atomic<double>* api_scroll_zoom_distance_cmd = nullptr;
+    std::atomic<double>* api_scroll_zoom_duration_cmd = nullptr;
+    std::atomic<double>* api_alt_zoom_number_multiplier_cmd = nullptr;
+    std::atomic<int>* api_smooth_scroll_zoom_state = nullptr;
+    std::atomic<double>* api_zoom_step_state = nullptr;
+    std::atomic<double>* api_scroll_zoom_distance_state = nullptr;
+    std::atomic<double>* api_scroll_zoom_duration_state = nullptr;
+    std::atomic<double>* api_alt_zoom_number_multiplier_state = nullptr;
     std::atomic<uint64_t>* api_ui_cmd_seq = nullptr;
     std::atomic<int>* api_ui_cmd_kind = nullptr; // 0=none,1=click,2=move,3=scroll
     std::atomic<double>* api_ui_cmd_x = nullptr;
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
+    std::atomic<bool>* api_ui_cmd_ctrl = nullptr;
+    std::atomic<bool>* api_ui_cmd_alt = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
     std::mutex* api_control_mutex = nullptr;
     ApiFilterControlCommand* api_filter_control_cmd = nullptr;

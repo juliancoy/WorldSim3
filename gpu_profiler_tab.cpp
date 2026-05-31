@@ -174,6 +174,13 @@ void drawGpuProfilerTab(const GpuProfilerTabContext& ctx) {
     }
 
     const std::vector<float> frame_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.frame_ms; });
+    const std::vector<float> ui_total_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.ui_total_ms; });
+    const std::vector<float> left_panel_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.left_panel_ms; });
+    const std::vector<float> right_panel_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.right_panel_ms; });
+    const std::vector<float> map_tab_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.map_tab_ms; });
+    const std::vector<float> runtime_sync_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.runtime_sync_ms; });
+    const std::vector<float> feature_render_cache_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.feature_render_cache_ms; });
+    const std::vector<float> imgui_render_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.imgui_render_ms; });
     const std::vector<float> present_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.render_present_ms; });
     const std::vector<float> layers_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.layers_ms; });
     const std::vector<float> tiles_ms = collectSeries(samples, [](const ProfileFrameSample& s) { return s.tiles_ms; });
@@ -190,6 +197,13 @@ void drawGpuProfilerTab(const GpuProfilerTabContext& ctx) {
 
     ImGui::Separator();
     ImGui::Text("Frame phases");
+    drawMetricSummary("UI total ms", ui_total_ms);
+    drawMetricSummary("Left panel ms", left_panel_ms);
+    drawMetricSummary("Right panel ms", right_panel_ms);
+    drawMetricSummary("Map tab ms", map_tab_ms);
+    drawMetricSummary("Runtime sync ms", runtime_sync_ms);
+    drawMetricSummary("Feature cache ms", feature_render_cache_ms);
+    drawMetricSummary("ImGui render ms", imgui_render_ms);
     drawMetricSummary("Layer pass ms", layers_ms);
     ImGui::PlotLines("##gpu_prof_layers_ms", layers_ms.data(), (int)layers_ms.size(), 0, nullptr, 0.0f, *std::max_element(layers_ms.begin(), layers_ms.end()) * 1.10f, ImVec2(-1.0f, 56.0f));
     drawMetricSummary("Tile ms", tiles_ms);

@@ -75,6 +75,8 @@ struct FramePreludeContext {
     std::atomic<double>* api_ui_cmd_x = nullptr;
     std::atomic<double>* api_ui_cmd_y = nullptr;
     std::atomic<int>* api_ui_cmd_button = nullptr;
+    std::atomic<bool>* api_ui_cmd_ctrl = nullptr;
+    std::atomic<bool>* api_ui_cmd_alt = nullptr;
     std::atomic<double>* api_ui_cmd_scroll_y = nullptr;
     MapFilterState* map_filter_state = nullptr;
     FilterResultSet* active_filter_result_set = nullptr;
@@ -87,6 +89,10 @@ struct FramePreludeContext {
     uint64_t* api_ui_cmd_last_seq = nullptr;
     bool* api_ui_mouse_release_pending = nullptr;
     int* api_ui_mouse_release_button = nullptr;
+    bool* api_ui_mouse_release_ctrl = nullptr;
+    bool* api_ui_mouse_release_alt = nullptr;
+    bool* api_ui_ctrl_release_pending = nullptr;
+    bool* api_ui_alt_release_pending = nullptr;
     std::atomic<int>* api_zoom_cmd = nullptr;
     std::atomic<double>* api_lon_cmd = nullptr;
     std::atomic<double>* api_lat_cmd = nullptr;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app_settings.h"
+#include "animation.h"
 #include "cache_io.h"
 #include "imgui.h"
 #include "layer_runtime.h"
@@ -22,6 +23,8 @@ struct MapCanvasSessionContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
     double* zoom = nullptr;
+    CameraAnimationState* camera_animation = nullptr;
+    TargetIndicatorState* target_indicator = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
@@ -69,6 +72,7 @@ struct MapCanvasSession {
     ImVec2 size = ImVec2(0.0f, 0.0f);
     bool map_hovered = false;
     bool map_active = false;
+    bool navigation_click_consumed = false;
     int math_zoom = 0;
     double zoom_scale = 1.0;
     ImVec2 center_world = ImVec2(0.0f, 0.0f);

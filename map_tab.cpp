@@ -3,9 +3,14 @@
 #include "app_utils.h"
 #include "choropleth_histogram.h"
 #include "feature_props.h"
+#include "geo.h"
 #include "map_render_utils.h"
 #include "map_overlay_panels.h"
+#include "map_title_source.h"
 #include "owner_info.h"
+#include "road_label.h"
+#include "cache_io.h"
+#include "render_routing.h"
 #include "ui_fonts.h"
 #include "worldsim_app.h"
 
@@ -15,23 +20,50 @@
 #include <cmath>
 #include <cstdio>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
+std::string trimCopy(const std::string& value);
+
 struct MapCornerControlState {
     bool hovered = false;
     bool fullscreen_hovered = false;
     bool snapshot_hovered = false;
+    bool video_hovered = false;
 };
 
-void mapCornerControlPositions(const MapCanvasSession& session, ImVec2& fullscreen_min, ImVec2& camera_min) {
+struct RoadLabelPropertyCache {
+    std::string signature;
+    bool attempted = false;
+    bool loaded = false;
+    std::vector<LayerDef::FeatureProperties> properties;
+};
+
+struct RoadLabelArtifactCache {
+    std::string signature;
+    bool attempted = false;
+    bool loaded = false;
+    PolylineGeometryArtifact artifact;
+};
+
+std::unordered_map<size_t, RoadLabelPropertyCache> g_road_label_property_cache;
+std::unordered_map<size_t, RoadLabelArtifactCache> g_road_label_artifact_cache;
+
+void mapCornerControlPositions(
+    const MapCanvasSession& session,
+    ImVec2& fullscreen_min,
+    ImVec2& camera_min,
+    ImVec2& video_min) {
     constexpr float button = 34.0f;
     constexpr float gap = 8.0f;
-    camera_min = ImVec2(
+    video_min = ImVec2(
         session.origin.x + session.size.x - 12.0f - button,
         session.origin.y + session.size.y - 12.0f - button);
+    camera_min = ImVec2(video_min.x - gap - button, video_min.y);
     fullscreen_min = ImVec2(camera_min.x - gap - button, camera_min.y);
 }
 
@@ -77,6 +109,22 @@ void drawMapCameraIcon(ImDrawList* draw, const ImVec2& min, bool hovered) {
     draw->AddCircleFilled(ImVec2(min.x + 26.0f, min.y + 15.0f), 1.4f, c, 8);
 }
 
+void drawMapVideoIcon(ImDrawList* draw, const ImVec2& min, bool hovered, bool recording) {
+    constexpr float button = 34.0f;
+    drawMapIconFrame(draw, min, ImVec2(button, button), hovered || recording);
+    const ImU32 c = recording ? IM_COL32(255, 92, 92, 245) : IM_COL32(245, 248, 250, 240);
+    const ImVec2 body_min(min.x + 8.0f, min.y + 11.0f);
+    const ImVec2 body_max(min.x + 21.0f, min.y + 23.0f);
+    draw->AddRect(body_min, body_max, c, 3.0f, 0, 1.8f);
+    draw->AddTriangle(
+        ImVec2(min.x + 22.0f, min.y + 16.0f),
+        ImVec2(min.x + 28.0f, min.y + 12.0f),
+        ImVec2(min.x + 28.0f, min.y + 22.0f),
+        c,
+        1.8f);
+    if (recording) draw->AddCircleFilled(ImVec2(min.x + 14.5f, min.y + 17.0f), 3.2f, c, 16);
+}
+
 void drawMapFpsOverlay(const MapCanvasSession& session) {
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     if (!draw) return;
@@ -86,13 +134,701 @@ void drawMapFpsOverlay(const MapCanvasSession& session) {
 
     const ImVec2 text_size = ImGui::CalcTextSize(label);
     const ImVec2 pad(10.0f, 6.0f);
-    const ImVec2 min(session.origin.x + 12.0f, session.origin.y + 12.0f);
-    const ImVec2 max(min.x + text_size.x + pad.x * 2.0f, min.y + text_size.y + pad.y * 2.0f);
+    const float box_w = text_size.x + pad.x * 2.0f;
+    const float box_h = text_size.y + pad.y * 2.0f;
+    const ImVec2 min(
+        session.origin.x + 12.0f,
+        session.origin.y + std::max(12.0f, session.size.y - box_h - 12.0f));
+    const ImVec2 max(min.x + box_w, min.y + box_h);
     draw->PushClipRect(session.origin, ImVec2(session.origin.x + session.size.x, session.origin.y + session.size.y), true);
     draw->AddRectFilled(min, max, IM_COL32(17, 24, 32, 215), 8.0f);
     draw->AddRect(min, max, IM_COL32(255, 255, 255, 80), 8.0f);
     draw->AddText(ImVec2(min.x + pad.x, min.y + pad.y), IM_COL32(245, 248, 250, 240), label);
     draw->PopClipRect();
+}
+
+bool featureExtentNearScreenPoint(
+    const MapCanvasSession& session,
+    const LayerDef::FeatureRecord& fg,
+    const ImVec2& mouse,
+    float tolerance_px) {
+    const ImVec2 nw = lonLatToWorldPx(fg.extent.min_lon, fg.extent.max_lat, session.math_zoom);
+    const ImVec2 se = lonLatToWorldPx(fg.extent.max_lon, fg.extent.min_lat, session.math_zoom);
+    const ImVec2 a = session.project_world(nw);
+    const ImVec2 b = session.project_world(se);
+    const float min_x = std::min(a.x, b.x) - tolerance_px;
+    const float max_x = std::max(a.x, b.x) + tolerance_px;
+    const float min_y = std::min(a.y, b.y) - tolerance_px;
+    const float max_y = std::max(a.y, b.y) + tolerance_px;
+    return mouse.x >= min_x && mouse.x <= max_x && mouse.y >= min_y && mouse.y <= max_y;
+}
+
+float normalizeRoadLabelAngle(float angle_rad) {
+    constexpr float pi = 3.14159265358979323846f;
+    while (angle_rad <= -pi) angle_rad += 2.0f * pi;
+    while (angle_rad > pi) angle_rad -= 2.0f * pi;
+    if (angle_rad > pi * 0.5f) angle_rad -= pi;
+    if (angle_rad < -pi * 0.5f) angle_rad += pi;
+    return angle_rad;
+}
+
+ImVec2 rotatePointAround(const ImVec2& point, const ImVec2& center, float angle_rad) {
+    const float s = std::sin(angle_rad);
+    const float c = std::cos(angle_rad);
+    const float x = point.x - center.x;
+    const float y = point.y - center.y;
+    return ImVec2(center.x + x * c - y * s, center.y + x * s + y * c);
+}
+
+void rotateDrawListVertices(ImDrawList* draw, int vtx_start, const ImVec2& center, float angle_rad) {
+    if (!draw || std::abs(angle_rad) < 0.001f) return;
+    for (int i = vtx_start; i < draw->VtxBuffer.Size; ++i) {
+        draw->VtxBuffer[i].pos = rotatePointAround(draw->VtxBuffer[i].pos, center, angle_rad);
+    }
+}
+
+bool tryPickRoadLabelFromPolylineArtifact(
+    const MapTabContext& ctx,
+    const MapCanvasSession& session,
+    size_t layer_idx,
+    const PolylineGeometryArtifact& artifact,
+    float tolerance_px,
+    int& best_layer_idx,
+    size_t& best_feature_idx,
+    ImVec2& best_anchor,
+    ImVec2& best_anchor_lonlat,
+    float& best_angle_rad,
+    float& best_dist_sq) {
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const float tolerance_sq = tolerance_px * tolerance_px;
+    bool found = false;
+    for (const GeometryArtifactChunkRecord& chunk : artifact.chunks) {
+        LayerDef::FeatureRecord chunk_extent{};
+        chunk_extent.extent.min_lon = chunk.min_lon;
+        chunk_extent.extent.min_lat = chunk.min_lat;
+        chunk_extent.extent.max_lon = chunk.max_lon;
+        chunk_extent.extent.max_lat = chunk.max_lat;
+        if (!featureExtentNearScreenPoint(session, chunk_extent, mouse, tolerance_px)) continue;
+        const uint32_t index_begin = chunk.index_offset;
+        const uint32_t index_end = chunk.index_offset + chunk.index_count;
+        for (uint32_t i = index_begin; i + 1 < index_end && i + 1 < artifact.line_indices.size(); i += 2) {
+            const uint32_t ia = artifact.line_indices[i];
+            const uint32_t ib = artifact.line_indices[i + 1];
+            if (ia >= artifact.vertices.size() || ib >= artifact.vertices.size() || ia >= artifact.feature_refs.size()) continue;
+            const uint32_t artifact_feature_ref = artifact.feature_refs[ia];
+            if (artifact_feature_ref >= artifact.features.size()) continue;
+            const size_t feature_idx = artifact.features[artifact_feature_ref].feature_idx;
+            const ImVec2 aw = lonLatToWorldPx(artifact.vertices[ia].x, artifact.vertices[ia].y, session.math_zoom);
+            const ImVec2 bw = lonLatToWorldPx(artifact.vertices[ib].x, artifact.vertices[ib].y, session.math_zoom);
+            const ImVec2 a = session.project_world(aw);
+            const ImVec2 b = session.project_world(bw);
+            ImVec2 closest;
+            const float dist_sq = squaredDistancePointToSegment(mouse, a, b, &closest);
+            if (dist_sq <= tolerance_sq && dist_sq < best_dist_sq) {
+                const float vx = b.x - a.x;
+                const float vy = b.y - a.y;
+                const float len_sq = vx * vx + vy * vy;
+                const float t = len_sq > 0.0f
+                    ? std::clamp(((mouse.x - a.x) * vx + (mouse.y - a.y) * vy) / len_sq, 0.0f, 1.0f)
+                    : 0.0f;
+                best_dist_sq = dist_sq;
+                best_layer_idx = (int)layer_idx;
+                best_feature_idx = feature_idx;
+                best_anchor = closest;
+                best_anchor_lonlat = ImVec2(
+                    artifact.vertices[ia].x + (artifact.vertices[ib].x - artifact.vertices[ia].x) * t,
+                    artifact.vertices[ia].y + (artifact.vertices[ib].y - artifact.vertices[ia].y) * t);
+                best_angle_rad = normalizeRoadLabelAngle(std::atan2(b.y - a.y, b.x - a.x));
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+
+bool tryPickRoadLabelFromArtifact(
+    const MapTabContext& ctx,
+    const MapCanvasSession& session,
+    size_t layer_idx,
+    float tolerance_px,
+    int& best_layer_idx,
+    size_t& best_feature_idx,
+    ImVec2& best_anchor,
+    ImVec2& best_anchor_lonlat,
+    float& best_angle_rad,
+    float& best_dist_sq) {
+    if (!ctx.polyline_geometry_artifacts) return false;
+    auto artifact_it = ctx.polyline_geometry_artifacts->find(layer_idx);
+    if (artifact_it == ctx.polyline_geometry_artifacts->end()) return false;
+    return tryPickRoadLabelFromPolylineArtifact(
+        ctx,
+        session,
+        layer_idx,
+        artifact_it->second,
+        tolerance_px,
+        best_layer_idx,
+        best_feature_idx,
+        best_anchor,
+        best_anchor_lonlat,
+        best_angle_rad,
+        best_dist_sq);
+}
+
+const PolylineGeometryArtifact* selectableRoadLabelArtifactForLayer(
+    const MapTabContext& ctx,
+    size_t layer_idx) {
+    if (!ctx.root || !ctx.layers || layer_idx >= ctx.layers->size()) return nullptr;
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    const std::filesystem::path layer_path = resolveStoredLayerPath(*ctx.root, layer);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr) || sig.empty()) return nullptr;
+
+    RoadLabelArtifactCache& cache = g_road_label_artifact_cache[layer_idx];
+    if (cache.signature != sig) {
+        cache = RoadLabelArtifactCache{};
+        cache.signature = sig;
+    }
+    if (!cache.attempted) {
+        cache.attempted = true;
+        const std::filesystem::path artifact_path =
+            geometryArtifactCachePathForLayerFile(
+                *ctx.root,
+                layer.file,
+                GeometryArtifactClass::Polyline,
+                layerRenderRouteArtifactName(LayerRenderRoute::PolylineGpu));
+        cache.loaded = loadBinaryPolylineGeometryArtifact(artifact_path, sig, cache.artifact);
+    }
+    return cache.loaded ? &cache.artifact : nullptr;
+}
+
+bool tryPickRoadLabelFromLayerFeatures(
+    const MapTabContext& ctx,
+    const MapCanvasSession& session,
+    size_t layer_idx,
+    float tolerance_px,
+    int& best_layer_idx,
+    size_t& best_feature_idx,
+    ImVec2& best_anchor,
+    ImVec2& best_anchor_lonlat,
+    float& best_angle_rad,
+    float& best_dist_sq) {
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const float tolerance_sq = tolerance_px * tolerance_px;
+    bool found = false;
+    for (size_t feature_idx = 0; feature_idx < layer.features.size(); ++feature_idx) {
+        const LayerDef::FeatureRecord& fg = layer.features[feature_idx];
+        if (fg.paths.empty() || !featureExtentNearScreenPoint(session, fg, mouse, tolerance_px)) continue;
+        for (const std::vector<ImVec2>& path : fg.paths) {
+            if (path.size() < 2) continue;
+            for (size_t i = 1; i < path.size(); ++i) {
+                const ImVec2 aw = lonLatToWorldPx(path[i - 1].x, path[i - 1].y, session.math_zoom);
+                const ImVec2 bw = lonLatToWorldPx(path[i].x, path[i].y, session.math_zoom);
+                const ImVec2 a = session.project_world(aw);
+                const ImVec2 b = session.project_world(bw);
+                ImVec2 closest;
+                const float dist_sq = squaredDistancePointToSegment(mouse, a, b, &closest);
+                if (dist_sq <= tolerance_sq && dist_sq < best_dist_sq) {
+                    const float vx = b.x - a.x;
+                    const float vy = b.y - a.y;
+                    const float len_sq = vx * vx + vy * vy;
+                    const float t = len_sq > 0.0f
+                        ? std::clamp(((mouse.x - a.x) * vx + (mouse.y - a.y) * vy) / len_sq, 0.0f, 1.0f)
+                        : 0.0f;
+                    best_dist_sq = dist_sq;
+                    best_layer_idx = (int)layer_idx;
+                    best_feature_idx = feature_idx;
+                    best_anchor = closest;
+                    best_anchor_lonlat = ImVec2(
+                        path[i - 1].x + (path[i].x - path[i - 1].x) * t,
+                        path[i - 1].y + (path[i].y - path[i - 1].y) * t);
+                    best_angle_rad = normalizeRoadLabelAngle(std::atan2(b.y - a.y, b.x - a.x));
+                    found = true;
+                }
+            }
+        }
+    }
+    return found;
+}
+
+std::string resolveRoadLabelForPickedFeature(const MapTabContext& ctx, size_t layer_idx, size_t feature_idx) {
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    if (feature_idx < layer.feature_properties.size() || feature_idx < layer.features.size()) {
+        return roadLabelForFeature(layer, feature_idx);
+    }
+    if (!ctx.root) return "Unnamed road";
+
+    const std::filesystem::path layer_path = resolveStoredLayerPath(*ctx.root, layer);
+    std::string sig;
+    if (!resolveLayerSourceSignature(layer_path, sig, nullptr) || sig.empty()) {
+        return "Unnamed road";
+    }
+
+    RoadLabelPropertyCache& cache = g_road_label_property_cache[layer_idx];
+    if (cache.signature != sig) {
+        cache = RoadLabelPropertyCache{};
+        cache.signature = sig;
+    }
+    if (!cache.attempted) {
+        cache.attempted = true;
+        std::vector<LayerDef::FeatureRecord> ignored_features;
+        cache.loaded = loadCanonicalLayerFeatureCollection(
+            *ctx.root,
+            layer.file,
+            sig,
+            ignored_features,
+            &cache.properties);
+    }
+    if (cache.loaded && feature_idx < cache.properties.size()) {
+        return roadLabelForFeatureProperties(cache.properties[feature_idx]);
+    }
+    return "Unnamed road";
+}
+
+bool roadLabelScreenBox(
+    const RoadLabelSelection& state,
+    const MapCanvasSession& session,
+    float size_scale,
+    ImVec2& anchor,
+    ImVec2& min,
+    ImVec2& max) {
+    const ImVec2 map_min = session.origin;
+    const ImVec2 map_max(session.origin.x + session.size.x, session.origin.y + session.size.y);
+    const ImVec2 anchor_world = lonLatToWorldPx(state.anchor_lonlat.x, state.anchor_lonlat.y, session.math_zoom);
+    anchor = session.project_world(anchor_world);
+    if (anchor.x < map_min.x || anchor.x > map_max.x || anchor.y < map_min.y || anchor.y > map_max.y) {
+        return false;
+    }
+
+    const std::string caption = state.label;
+    ImFont* font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize() * std::clamp(size_scale, 0.65f, 2.5f);
+    const ImVec2 text_size = font
+        ? font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, caption.c_str())
+        : ImGui::CalcTextSize(caption.c_str());
+    const ImVec2 pad(10.0f * std::clamp(size_scale, 0.65f, 2.5f), 6.0f * std::clamp(size_scale, 0.65f, 2.5f));
+    const float box_w = text_size.x + pad.x * 2.0f;
+    const float box_h = text_size.y + pad.y * 2.0f;
+    min = ImVec2(anchor.x - box_w * 0.5f, anchor.y - box_h * 0.5f);
+    max = ImVec2(min.x + box_w, min.y + box_h);
+    if (min.x < map_min.x + 8.0f) {
+        min.x = map_min.x + 8.0f;
+        max.x = min.x + box_w;
+    }
+    if (max.x > map_max.x - 8.0f) {
+        min.x = std::max(map_min.x + 8.0f, map_max.x - 8.0f - box_w);
+        max.x = min.x + box_w;
+    }
+    if (min.y < map_min.y + 8.0f) {
+        min.y = anchor.y + 14.0f;
+        max.y = min.y + box_h;
+    }
+    return true;
+}
+
+struct RoadLabelLayoutItem {
+    const RoadLabelSelection* state = nullptr;
+    std::string caption;
+    ImVec2 anchor = ImVec2(0.0f, 0.0f);
+    ImVec2 center = ImVec2(0.0f, 0.0f);
+    ImVec2 half_size = ImVec2(0.0f, 0.0f);
+    ImVec2 collision_half_size = ImVec2(0.0f, 0.0f);
+    ImVec2 min = ImVec2(0.0f, 0.0f);
+    ImVec2 max = ImVec2(0.0f, 0.0f);
+    ImVec2 collision_min = ImVec2(0.0f, 0.0f);
+    ImVec2 collision_max = ImVec2(0.0f, 0.0f);
+    float angle_rad = 0.0f;
+};
+
+void updateRoadLabelLayoutBox(RoadLabelLayoutItem& item) {
+    item.min = ImVec2(item.center.x - item.half_size.x, item.center.y - item.half_size.y);
+    item.max = ImVec2(item.center.x + item.half_size.x, item.center.y + item.half_size.y);
+    const float s = std::abs(std::sin(item.angle_rad));
+    const float c = std::abs(std::cos(item.angle_rad));
+    item.collision_half_size = ImVec2(
+        c * item.half_size.x + s * item.half_size.y,
+        s * item.half_size.x + c * item.half_size.y);
+    item.collision_min = ImVec2(item.center.x - item.collision_half_size.x, item.center.y - item.collision_half_size.y);
+    item.collision_max = ImVec2(item.center.x + item.collision_half_size.x, item.center.y + item.collision_half_size.y);
+}
+
+void clampRoadLabelLayoutBox(RoadLabelLayoutItem& item, const ImVec2& map_min, const ImVec2& map_max) {
+    item.center.x = std::clamp(item.center.x, map_min.x + 8.0f + item.collision_half_size.x, map_max.x - 8.0f - item.collision_half_size.x);
+    item.center.y = std::clamp(item.center.y, map_min.y + 8.0f + item.collision_half_size.y, map_max.y - 8.0f - item.collision_half_size.y);
+    updateRoadLabelLayoutBox(item);
+}
+
+float roadLabelOverlapArea(const ImVec2& a_min, const ImVec2& a_max, const ImVec2& b_min, const ImVec2& b_max) {
+    const float overlap_x = std::min(a_max.x, b_max.x) - std::max(a_min.x, b_min.x);
+    const float overlap_y = std::min(a_max.y, b_max.y) - std::max(a_min.y, b_min.y);
+    return overlap_x > 0.0f && overlap_y > 0.0f ? overlap_x * overlap_y : 0.0f;
+}
+
+ImVec2 roadLabelTitleReserveMin(const MapCanvasSession& session, const AppSettings* app_settings) {
+    if (!app_settings || trimCopy(app_settings->map_title_text).empty()) return ImVec2(0.0f, 0.0f);
+    return ImVec2(session.origin.x + 40.0f, session.origin.y + 8.0f);
+}
+
+ImVec2 roadLabelTitleReserveMax(const MapCanvasSession& session, const AppSettings* app_settings) {
+    if (!app_settings || trimCopy(app_settings->map_title_text).empty()) return ImVec2(0.0f, 0.0f);
+    return ImVec2(session.origin.x + session.size.x - 40.0f, session.origin.y + 132.0f);
+}
+
+int roadLabelCollisionMode(const AppSettings* app_settings) {
+    if (!app_settings || !app_settings->road_label_avoid_overlap) return 0;
+    return std::clamp(app_settings->road_label_collision_mode, 1, 3);
+}
+
+float roadLabelEffectiveSeparation(const AppSettings* app_settings) {
+    if (!app_settings) return 8.0f;
+    const float base = std::clamp(app_settings->road_label_separation_px, 0.0f, 48.0f);
+    switch (roadLabelCollisionMode(app_settings)) {
+        case 1: return base * 0.35f;
+        case 3: return base * 1.6f;
+        case 2:
+        default: return base;
+    }
+}
+
+void applyRoadLabelCandidateLayout(
+    std::vector<RoadLabelLayoutItem>& items,
+    const MapCanvasSession& session,
+    const AppSettings* app_settings) {
+    if (items.empty()) return;
+    const int mode = roadLabelCollisionMode(app_settings);
+    if (mode == 0) return;
+    const ImVec2 map_min = session.origin;
+    const ImVec2 map_max(session.origin.x + session.size.x, session.origin.y + session.size.y);
+    const bool has_title_reserve = app_settings && !trimCopy(app_settings->map_title_text).empty();
+    const ImVec2 title_min = roadLabelTitleReserveMin(session, app_settings);
+    const ImVec2 title_max = roadLabelTitleReserveMax(session, app_settings);
+    std::vector<RoadLabelLayoutItem> placed;
+    placed.reserve(items.size());
+    const float separation = roadLabelEffectiveSeparation(app_settings);
+    const float movement_weight = mode == 1 ? 0.055f : (mode == 3 ? 0.006f : 0.015f);
+    const float title_weight = mode == 1 ? 4.0f : (mode == 3 ? 20.0f : 12.0f);
+    const float collision_weight = mode == 1 ? 7.0f : (mode == 3 ? 28.0f : 18.0f);
+    const float offset_scale = mode == 1 ? 0.55f : (mode == 3 ? 1.35f : 1.0f);
+
+    for (RoadLabelLayoutItem& item : items) {
+        const float t_x = std::cos(item.angle_rad);
+        const float t_y = std::sin(item.angle_rad);
+        const ImVec2 tangent(t_x, t_y);
+        const ImVec2 normal(-t_y, t_x);
+        const float near_step = std::max(12.0f, item.collision_half_size.y + separation) * offset_scale;
+        const float far_step = near_step + std::max(18.0f, item.collision_half_size.y) * offset_scale;
+        const float along_step = std::max(16.0f, item.collision_half_size.x * 0.33f) * offset_scale;
+        const ImVec2 offsets[] = {
+            ImVec2(0.0f, 0.0f),
+            ImVec2(normal.x * near_step, normal.y * near_step),
+            ImVec2(-normal.x * near_step, -normal.y * near_step),
+            ImVec2(normal.x * far_step, normal.y * far_step),
+            ImVec2(-normal.x * far_step, -normal.y * far_step),
+            ImVec2(tangent.x * along_step, tangent.y * along_step),
+            ImVec2(-tangent.x * along_step, -tangent.y * along_step),
+            ImVec2(tangent.x * along_step + normal.x * near_step, tangent.y * along_step + normal.y * near_step),
+            ImVec2(-tangent.x * along_step - normal.x * near_step, -tangent.y * along_step - normal.y * near_step)
+        };
+
+        RoadLabelLayoutItem best = item;
+        float best_score = std::numeric_limits<float>::max();
+        for (const ImVec2& offset : offsets) {
+            RoadLabelLayoutItem candidate = item;
+            candidate.center = ImVec2(item.anchor.x + offset.x, item.anchor.y + offset.y);
+            updateRoadLabelLayoutBox(candidate);
+            clampRoadLabelLayoutBox(candidate, map_min, map_max);
+
+            float score = (candidate.center.x - item.anchor.x) * (candidate.center.x - item.anchor.x) * movement_weight +
+                          (candidate.center.y - item.anchor.y) * (candidate.center.y - item.anchor.y) * movement_weight;
+            if (has_title_reserve) {
+                score += roadLabelOverlapArea(candidate.collision_min, candidate.collision_max, title_min, title_max) * title_weight;
+            }
+            for (const RoadLabelLayoutItem& placed_item : placed) {
+                const ImVec2 expanded_min(placed_item.collision_min.x - separation, placed_item.collision_min.y - separation);
+                const ImVec2 expanded_max(placed_item.collision_max.x + separation, placed_item.collision_max.y + separation);
+                score += roadLabelOverlapArea(candidate.collision_min, candidate.collision_max, expanded_min, expanded_max) * collision_weight;
+            }
+            const float edge_penalty =
+                std::max(0.0f, 20.0f - (candidate.collision_min.x - map_min.x)) +
+                std::max(0.0f, 20.0f - (candidate.collision_min.y - map_min.y)) +
+                std::max(0.0f, 20.0f - (map_max.x - candidate.collision_max.x)) +
+                std::max(0.0f, 20.0f - (map_max.y - candidate.collision_max.y));
+            score += edge_penalty * 50.0f;
+            if (score < best_score) {
+                best_score = score;
+                best = candidate;
+            }
+        }
+        item = best;
+        placed.push_back(item);
+    }
+}
+
+void applyRoadLabelOverlapLayout(std::vector<RoadLabelLayoutItem>& items, const ImVec2& map_min, const ImVec2& map_max, const AppSettings* app_settings) {
+    if (items.size() < 2) return;
+    const int mode = roadLabelCollisionMode(app_settings);
+    if (mode == 0) return;
+    const float separation = roadLabelEffectiveSeparation(app_settings);
+    const int iterations = mode == 1 ? 7 : (mode == 3 ? 28 : 18);
+    const float tether = mode == 1 ? 0.20f : (mode == 3 ? 0.035f : 0.075f);
+    const float max_step = mode == 1 ? 7.0f : (mode == 3 ? 24.0f : 14.0f);
+    for (int iter = 0; iter < iterations; ++iter) {
+        for (size_t i = 0; i < items.size(); ++i) {
+            for (size_t j = i + 1; j < items.size(); ++j) {
+                RoadLabelLayoutItem& a = items[i];
+                RoadLabelLayoutItem& b = items[j];
+                const float dx = b.center.x - a.center.x;
+                const float dy = b.center.y - a.center.y;
+                const float overlap_x = a.collision_half_size.x + b.collision_half_size.x + separation - std::abs(dx);
+                const float overlap_y = a.collision_half_size.y + b.collision_half_size.y + separation - std::abs(dy);
+                if (overlap_x <= 0.0f || overlap_y <= 0.0f) continue;
+
+                if (overlap_x < overlap_y) {
+                    const float dir = dx < 0.0f ? -1.0f : 1.0f;
+                    const float step = std::min(overlap_x * 0.5f, max_step);
+                    a.center.x -= dir * step;
+                    b.center.x += dir * step;
+                } else {
+                    const float dir = dy < 0.0f ? -1.0f : 1.0f;
+                    const float step = std::min(overlap_y * 0.5f, max_step);
+                    a.center.y -= dir * step;
+                    b.center.y += dir * step;
+                }
+            }
+        }
+        for (RoadLabelLayoutItem& item : items) {
+            item.center.x += (item.anchor.x - item.center.x) * tether;
+            item.center.y += (item.anchor.y - item.center.y) * tether;
+            clampRoadLabelLayoutBox(item, map_min, map_max);
+        }
+    }
+}
+
+std::vector<RoadLabelLayoutItem> buildRoadLabelLayout(
+    const RoadLabelState* label_state,
+    const MapCanvasSession& session,
+    const AppSettings* app_settings) {
+    std::vector<RoadLabelLayoutItem> items;
+    if (!label_state || !label_state->visible || label_state->selections.empty()) return items;
+    const float size_scale = app_settings ? std::clamp(app_settings->road_label_size_scale, 0.65f, 2.5f) : 1.0f;
+    const bool angle_along_road = app_settings ? app_settings->road_label_angle_along_road : true;
+    const ImVec2 map_min = session.origin;
+    const ImVec2 map_max(session.origin.x + session.size.x, session.origin.y + session.size.y);
+
+    items.reserve(label_state->selections.size());
+    for (const RoadLabelSelection& state : label_state->selections) {
+        ImVec2 anchor, min, max;
+        if (!roadLabelScreenBox(state, session, size_scale, anchor, min, max)) continue;
+        RoadLabelLayoutItem item;
+        item.state = &state;
+        item.caption = state.label;
+        item.anchor = anchor;
+        item.center = ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+        item.half_size = ImVec2((max.x - min.x) * 0.5f, (max.y - min.y) * 0.5f);
+        item.angle_rad = angle_along_road ? normalizeRoadLabelAngle(state.angle_rad) : 0.0f;
+        updateRoadLabelLayoutBox(item);
+        items.push_back(std::move(item));
+    }
+    if (roadLabelCollisionMode(app_settings) != 0) {
+        applyRoadLabelCandidateLayout(items, session, app_settings);
+        applyRoadLabelOverlapLayout(items, map_min, map_max, app_settings);
+    }
+    return items;
+}
+
+bool handleRoadLabelRemovalClick(RoadLabelState& label_state, const MapCanvasSession& session, const AppSettings* app_settings) {
+    if (!label_state.visible || label_state.selections.empty()) return false;
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool remove_click =
+        session.map_hovered &&
+        !session.navigation_click_consumed &&
+        io.KeyCtrl &&
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
+    if (!remove_click) return false;
+
+    const std::vector<RoadLabelLayoutItem> items = buildRoadLabelLayout(&label_state, session, app_settings);
+    for (size_t i = items.size(); i > 0; --i) {
+        const RoadLabelLayoutItem& item = items[i - 1];
+        if (io.MousePos.x >= item.min.x && io.MousePos.x <= item.max.x && io.MousePos.y >= item.min.y && io.MousePos.y <= item.max.y) {
+            auto erase_it = std::find_if(
+                label_state.selections.begin(),
+                label_state.selections.end(),
+                [&](const RoadLabelSelection& state) { return &state == item.state; });
+            if (erase_it != label_state.selections.end()) {
+                const size_t erased_idx = (size_t)std::distance(label_state.selections.begin(), erase_it);
+                label_state.selections.erase(erase_it);
+                if (label_state.selected_idx == erased_idx) {
+                    label_state.selected_idx = (size_t)-1;
+                } else if (label_state.selected_idx != (size_t)-1 && label_state.selected_idx > erased_idx) {
+                    label_state.selected_idx -= 1;
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool handleRoadLabelInspectorClick(RoadLabelState& label_state, const MapCanvasSession& session, const AppSettings* app_settings) {
+    if (!label_state.visible || label_state.selections.empty()) return false;
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool inspect_click =
+        session.map_hovered &&
+        !session.navigation_click_consumed &&
+        !io.KeyCtrl &&
+        !io.KeyAlt &&
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
+    if (!inspect_click) return false;
+
+    const std::vector<RoadLabelLayoutItem> items = buildRoadLabelLayout(&label_state, session, app_settings);
+    for (size_t i = items.size(); i > 0; --i) {
+        const RoadLabelLayoutItem& item = items[i - 1];
+        if (io.MousePos.x < item.min.x || io.MousePos.x > item.max.x ||
+            io.MousePos.y < item.min.y || io.MousePos.y > item.max.y) {
+            continue;
+        }
+        auto selected_it = std::find_if(
+            label_state.selections.begin(),
+            label_state.selections.end(),
+            [&](const RoadLabelSelection& state) { return &state == item.state; });
+        if (selected_it == label_state.selections.end()) return false;
+        label_state.selected_idx = (size_t)std::distance(label_state.selections.begin(), selected_it);
+        label_state.inspector_open_requested = true;
+        return true;
+    }
+    return false;
+}
+
+bool roadLabelClickShouldDeferToPrimaryMapTarget(const MapCanvasSession& session) {
+    const MapHoverState& hover = session.hover_state;
+    if (session.parcel_inspect_active && hover.inspect_parcel_idx != (size_t)-1) return true;
+    if (session.zoning_inspect_active && hover.hovered_zone_idx != (size_t)-1) return true;
+    if (hover.inspect_point_idx != (size_t)-1) return true;
+    return false;
+}
+
+bool handleRoadLabelClickMode(const MapTabContext& ctx, const MapCanvasSession& session) {
+    if (!ctx.app_settings || !ctx.app_settings->road_label_click_mode || !ctx.layers ||
+        !ctx.road_label_state || !ctx.road_label_state->visible) {
+        return false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    const bool click_select =
+        session.map_hovered &&
+        !session.navigation_click_consumed &&
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        !io.KeyAlt &&
+        !io.KeyCtrl &&
+        io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
+    if (!click_select) return false;
+
+    const float tolerance_px = std::clamp(ctx.app_settings->road_label_pick_tolerance_px, 4.0f, 32.0f);
+    int best_layer_idx = -1;
+    size_t best_feature_idx = (size_t)-1;
+    ImVec2 best_anchor = io.MousePos;
+    ImVec2 best_anchor_lonlat = session.mouse_ll;
+    float best_angle_rad = 0.0f;
+    float best_dist_sq = std::numeric_limits<float>::max();
+    auto pick_layers = [&](bool enabled_layers) {
+        for (size_t layer_idx = 0; layer_idx < ctx.layers->size(); ++layer_idx) {
+            const LayerDef& layer = (*ctx.layers)[layer_idx];
+            if (layer.enabled != enabled_layers || !isRoadLabelLayer(layer)) continue;
+            bool artifact_found = tryPickRoadLabelFromArtifact(
+                ctx, session, layer_idx, tolerance_px, best_layer_idx, best_feature_idx, best_anchor, best_anchor_lonlat, best_angle_rad, best_dist_sq);
+            if (!artifact_found) {
+                if (const PolylineGeometryArtifact* selectable_artifact = selectableRoadLabelArtifactForLayer(ctx, layer_idx)) {
+                    artifact_found = tryPickRoadLabelFromPolylineArtifact(
+                        ctx,
+                        session,
+                        layer_idx,
+                        *selectable_artifact,
+                        tolerance_px,
+                        best_layer_idx,
+                        best_feature_idx,
+                        best_anchor,
+                        best_anchor_lonlat,
+                        best_angle_rad,
+                        best_dist_sq);
+                }
+            }
+            if (!artifact_found && enabled_layers) {
+                tryPickRoadLabelFromLayerFeatures(
+                    ctx, session, layer_idx, tolerance_px, best_layer_idx, best_feature_idx, best_anchor, best_anchor_lonlat, best_angle_rad, best_dist_sq);
+            }
+        }
+    };
+    pick_layers(true);
+    if (best_layer_idx < 0) {
+        pick_layers(false);
+    }
+    if (best_layer_idx < 0 || best_feature_idx == (size_t)-1) {
+        return false;
+    }
+    RoadLabelSelection label_selection;
+    label_selection.label = resolveRoadLabelForPickedFeature(ctx, (size_t)best_layer_idx, best_feature_idx);
+    label_selection.layer_idx = best_layer_idx;
+    label_selection.feature_idx = best_feature_idx;
+    label_selection.anchor_lonlat = best_anchor_lonlat;
+    label_selection.angle_rad = best_angle_rad;
+    auto existing = std::find_if(
+        ctx.road_label_state->selections.begin(),
+        ctx.road_label_state->selections.end(),
+        [&](const RoadLabelSelection& state) {
+            return state.layer_idx == best_layer_idx && state.feature_idx == best_feature_idx;
+        });
+    if (existing != ctx.road_label_state->selections.end()) {
+        *existing = label_selection;
+    } else {
+        ctx.road_label_state->selections.push_back(std::move(label_selection));
+    }
+    if (ctx.target_indicator) {
+        startTargetIndicator(*ctx.target_indicator, ImGui::GetTime(), best_anchor_lonlat.x, best_anchor_lonlat.y);
+    }
+    return true;
+}
+
+void drawRoadLabelPopups(const RoadLabelState* label_state, const MapCanvasSession& session, const AppSettings* app_settings) {
+    if (!label_state || !label_state->visible || label_state->selections.empty() || !session.draw) return;
+    const ImVec2 map_min = session.origin;
+    const ImVec2 map_max(session.origin.x + session.size.x, session.origin.y + session.size.y);
+    const float size_scale = app_settings ? std::clamp(app_settings->road_label_size_scale, 0.65f, 2.5f) : 1.0f;
+    const ImVec2 pad(10.0f * size_scale, 6.0f * size_scale);
+    ImFont* font = ImGui::GetFont();
+    const float font_size = ImGui::GetFontSize() * size_scale;
+    const ImGuiIO& io = ImGui::GetIO();
+    std::vector<RoadLabelLayoutItem> items = buildRoadLabelLayout(label_state, session, app_settings);
+
+    session.draw->PushClipRect(map_min, map_max, true);
+    for (const RoadLabelLayoutItem& item : items) {
+        const bool hovered =
+            io.MousePos.x >= item.min.x && io.MousePos.x <= item.max.x &&
+            io.MousePos.y >= item.min.y && io.MousePos.y <= item.max.y;
+        const float displaced_dx = item.center.x - item.anchor.x;
+        const float displaced_dy = item.center.y - item.anchor.y;
+        const bool displaced = displaced_dx * displaced_dx + displaced_dy * displaced_dy > 36.0f;
+        ImVec2 box_pts[4] = {
+            rotatePointAround(item.min, item.center, item.angle_rad),
+            rotatePointAround(ImVec2(item.max.x, item.min.y), item.center, item.angle_rad),
+            rotatePointAround(item.max, item.center, item.angle_rad),
+            rotatePointAround(ImVec2(item.min.x, item.max.y), item.center, item.angle_rad)
+        };
+        if (displaced) {
+            session.draw->AddLine(item.anchor, item.center, IM_COL32(255, 214, 82, 125), 1.2f);
+        }
+        session.draw->AddConvexPolyFilled(box_pts, 4, hovered ? IM_COL32(31, 40, 48, 240) : IM_COL32(18, 24, 30, 232));
+        session.draw->AddPolyline(box_pts, 4, IM_COL32(255, 214, 82, 190), ImDrawFlags_Closed, 1.0f);
+        const int text_vtx_start = session.draw->VtxBuffer.Size;
+        if (font) {
+            session.draw->AddText(font, font_size, ImVec2(item.min.x + pad.x, item.min.y + pad.y), IM_COL32(248, 250, 252, 245), item.caption.c_str());
+        } else {
+            session.draw->AddText(ImVec2(item.min.x + pad.x, item.min.y + pad.y), IM_COL32(248, 250, 252, 245), item.caption.c_str());
+        }
+        rotateDrawListVertices(session.draw, text_vtx_start, item.center, item.angle_rad);
+    }
+    session.draw->PopClipRect();
 }
 
 std::string trimCopy(const std::string& value) {
@@ -106,58 +842,6 @@ std::string trimCopy(const std::string& value) {
 std::string toUpperAsciiCopy(std::string value) {
     for (char& c : value) c = (char)std::toupper((unsigned char)c);
     return value;
-}
-
-std::string hostFromUrl(const std::string& url) {
-    const size_t scheme = url.find("://");
-    const size_t host_begin = scheme == std::string::npos ? 0 : scheme + 3;
-    if (host_begin >= url.size()) return {};
-    size_t host_end = url.find_first_of("/?#", host_begin);
-    if (host_end == std::string::npos) host_end = url.size();
-    return url.substr(host_begin, host_end - host_begin);
-}
-
-std::string titleCaseHostLabel(std::string host) {
-    if (host.empty()) return host;
-    std::replace(host.begin(), host.end(), '-', ' ');
-    std::replace(host.begin(), host.end(), '.', ' ');
-    bool new_word = true;
-    for (char& c : host) {
-        if (std::isspace((unsigned char)c)) {
-            new_word = true;
-            continue;
-        }
-        c = new_word ? (char)std::toupper((unsigned char)c) : (char)std::tolower((unsigned char)c);
-        new_word = false;
-    }
-    return host;
-}
-
-std::string inferAgencyFromUrl(const std::string& url) {
-    std::string host = hostFromUrl(url);
-    std::string lower = host;
-    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
-    if (lower.find("hud") != std::string::npos) return "Housing and Urban Development";
-    if (lower.find("planning.maryland.gov") != std::string::npos || lower.find("mdgeodata.md.gov") != std::string::npos) {
-        return "Maryland Department of Planning";
-    }
-    if (lower.find("opendata.maryland.gov") != std::string::npos) return "Maryland Open Data";
-    if (lower.find("baltimorecity.gov") != std::string::npos) return "Baltimore City Open Data";
-    if (lower.find("baltimorecountymd.gov") != std::string::npos) return "Baltimore County";
-    if (lower.find("howardcountymd.gov") != std::string::npos) return "Howard County";
-    return titleCaseHostLabel(host);
-}
-
-std::string primaryParcelSourceLabel(const MapTabContext& ctx) {
-    if (!ctx.layers || ctx.parcel_layer_idx < 0 || (size_t)ctx.parcel_layer_idx >= ctx.layers->size()) return {};
-    const LayerDef& layer = (*ctx.layers)[(size_t)ctx.parcel_layer_idx];
-    for (const std::string& url : layer.source_urls) {
-        if (const std::string label = inferAgencyFromUrl(url); !label.empty()) return label;
-    }
-    if (const std::string label = inferAgencyFromUrl(layer.source_url); !label.empty()) return label;
-    if (const std::string label = inferAgencyFromUrl(layer.reference_url); !label.empty()) return label;
-    if (const std::string label = inferAgencyFromUrl(layer.import_url); !label.empty()) return label;
-    return trimCopy(layer.name);
 }
 
 void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& title, const std::string& source_label) {
@@ -287,8 +971,6 @@ std::vector<CategoricalLegendItem> buildZoningLegendItems(const MapTabContext& c
         if (keys.size() >= 10) break;
     }
     for (const std::string& key : keys) {
-        auto enabled_it = ctx.zoning_zone_enabled->find(key);
-        if (enabled_it != ctx.zoning_zone_enabled->end() && !enabled_it->second) continue;
         auto color_it = ctx.zoning_zone_color->find(key);
         if (color_it == ctx.zoning_zone_color->end()) continue;
         std::string label = key;
@@ -473,7 +1155,8 @@ MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const M
     constexpr float button = 34.0f;
     ImVec2 fullscreen_min;
     ImVec2 camera_min;
-    mapCornerControlPositions(session, fullscreen_min, camera_min);
+    ImVec2 video_min;
+    mapCornerControlPositions(session, fullscreen_min, camera_min, video_min);
 
     ImGui::SetCursorScreenPos(fullscreen_min);
     ImGui::InvisibleButton("##map_fullscreen", ImVec2(button, button));
@@ -487,7 +1170,14 @@ MapCornerControlState hitTestMapCornerControls(const MapTabContext& ctx, const M
     if (state.snapshot_hovered) ImGui::SetTooltip("Snapshot");
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ctx.request_snapshot) ctx.request_snapshot();
 
-    state.hovered = state.fullscreen_hovered || state.snapshot_hovered;
+    ImGui::SetCursorScreenPos(video_min);
+    ImGui::InvisibleButton("##map_video_record", ImVec2(button, button));
+    state.video_hovered = ImGui::IsItemHovered();
+    const bool recording = ctx.video_recording_active && ctx.video_recording_active();
+    if (state.video_hovered) ImGui::SetTooltip("%s", recording ? "Stop recording" : "Record video");
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && ctx.toggle_video_recording) ctx.toggle_video_recording();
+
+    state.hovered = state.fullscreen_hovered || state.snapshot_hovered || state.video_hovered;
     return state;
 }
 
@@ -495,9 +1185,12 @@ void drawMapCornerControlsVisual(const MapTabContext& ctx, const MapCanvasSessio
     if (!session.draw) return;
     ImVec2 fullscreen_min;
     ImVec2 camera_min;
-    mapCornerControlPositions(session, fullscreen_min, camera_min);
+    ImVec2 video_min;
+    mapCornerControlPositions(session, fullscreen_min, camera_min, video_min);
     drawMapFullscreenIcon(session.draw, fullscreen_min, state.fullscreen_hovered);
     drawMapCameraIcon(session.draw, camera_min, state.snapshot_hovered);
+    const bool recording = ctx.video_recording_active && ctx.video_recording_active();
+    drawMapVideoIcon(session.draw, video_min, state.video_hovered, recording);
 }
 
 bool isZoningPolygonLayerForGpu(const LayerDef& layer) {
@@ -558,6 +1251,8 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.center_lon,
                 ctx.center_lat,
                 ctx.zoom,
+                ctx.camera_animation,
+                ctx.target_indicator,
                 ctx.min_zoom,
                 ctx.max_zoom,
                 ctx.max_internal_math_zoom,
@@ -738,6 +1433,16 @@ void drawMapTabWindow(const MapTabContext& ctx) {
 
             map_canvas_session.map_hovered = map_canvas_session.map_hovered && !map_corner_controls.hovered;
             refreshMapCanvasHoverState(map_canvas_session, map_canvas_ctx);
+            const bool road_label_removal_consumed = ctx.road_label_state
+                ? handleRoadLabelRemovalClick(*ctx.road_label_state, map_canvas_session, ctx.app_settings)
+                : false;
+            const bool road_label_inspector_consumed =
+                !road_label_removal_consumed && ctx.road_label_state
+                    ? handleRoadLabelInspectorClick(*ctx.road_label_state, map_canvas_session, ctx.app_settings)
+                    : false;
+            if (road_label_removal_consumed || road_label_inspector_consumed) {
+                map_canvas_session.map_hovered = false;
+            }
             if (ctx.hover_debug_state) {
                 std::lock_guard<std::mutex> lk(ctx.hover_debug_state->mutex);
                 ctx.hover_debug_state->map_hovered = map_canvas_session.map_hovered;
@@ -755,7 +1460,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->inspect_parcel_idx = map_canvas_session.hover_state.inspect_parcel_idx;
                 ctx.hover_debug_state->inspect_parcel_entity_id = map_canvas_session.hover_state.inspect_parcel_entity_id;
                 ctx.hover_debug_state->inspect_parcel_geometry_entity_id = map_canvas_session.hover_state.inspect_parcel_geometry_entity_id;
-                ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone != nullptr;
+                ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone_idx != (size_t)-1;
                 ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
                 ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
                 ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
@@ -916,21 +1621,45 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.prof_features_considered_frame = ctx.prof_features_considered_frame;
             map_frame_session_ctx.prof_features_drawn_frame = ctx.prof_features_drawn_frame;
     runMapFrameSession(map_frame_session_ctx);
+    const bool road_label_click_consumed =
+        !road_label_removal_consumed &&
+        !roadLabelClickShouldDeferToPrimaryMapTarget(map_canvas_session) &&
+        handleRoadLabelClickMode(ctx, map_canvas_session);
+    if (road_label_click_consumed) {
+        map_canvas_session.map_hovered = false;
+    }
     drawMapCornerControlsVisual(ctx, map_canvas_session, map_corner_controls);
             std::string map_title = ctx.app_settings ? ctx.app_settings->map_title_text : std::string();
             if (ctx.app_settings && ctx.app_settings->map_title_all_caps) {
                 map_title = toUpperAsciiCopy(map_title);
             }
-    const std::string parcel_source =
-        (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source)
-            ? primaryParcelSourceLabel(ctx)
-            : std::string();
-    drawMapTitleOverlay(map_canvas_session, map_title, parcel_source);
+    std::string title_source;
+    if (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source && ctx.layers) {
+        const size_t source_layer_idx = resolveMapTitleSourceLayerIndex(
+            *ctx.layers,
+            ctx.app_settings->map_title_source_layer_file,
+            ctx.parcel_layer_idx);
+        if (source_layer_idx != (size_t)-1 && source_layer_idx < ctx.layers->size()) {
+            title_source = mapTitleSourceLabelForLayer((*ctx.layers)[source_layer_idx]);
+        }
+    }
+    drawMapTitleOverlay(map_canvas_session, map_title, title_source);
     if (ctx.app_settings && ctx.app_settings->map_legend_show_overlay) {
         drawMapLegendOverlay(
             map_canvas_session,
             ctx,
             std::clamp(ctx.app_settings->map_legend_overlay_position, 0, 3));
+    }
+    drawRoadLabelPopups(ctx.road_label_state, map_canvas_session, ctx.app_settings);
+    if (ctx.target_indicator) {
+        MapViewportFrame target_frame;
+        target_frame.draw = map_canvas_session.draw;
+        target_frame.origin = map_canvas_session.origin;
+        target_frame.size = map_canvas_session.size;
+        target_frame.math_zoom = map_canvas_session.math_zoom;
+        target_frame.zoom_scale = map_canvas_session.zoom_scale;
+        target_frame.center_world = map_canvas_session.center_world;
+        drawMapTargetIndicator(*ctx.target_indicator, target_frame, ImGui::GetTime());
     }
 
     TimeCubePanelContext time_cube_panel_ctx;

@@ -18,8 +18,20 @@ struct StartupPreprocessIssue {
 struct StartupPreprocessPlan {
     bool required = false;
     bool duckdb_required = false;
+    std::string duckdb_state = "unknown";
+    bool duckdb_refresh_recommended = false;
     std::vector<StartupPreprocessIssue> issues;
+    std::vector<StartupPreprocessIssue> warnings;
 };
+
+enum class StartupDuckDbPreflightState {
+    Current,
+    StaleUsable,
+    RequiredInvalid
+};
+
+StartupDuckDbPreflightState classifyStartupDuckDbPreflight(bool cache_valid, bool stale);
+const char* startupDuckDbPreflightStateName(StartupDuckDbPreflightState state);
 
 struct StartupPreprocessCommandStep {
     std::string kind;

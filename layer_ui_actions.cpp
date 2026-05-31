@@ -49,6 +49,7 @@ bool hiddenParcelParameterLayer(const LayerUiSharedContext& ctx, int parcel_laye
            idx < ctx.layers->size() &&
            (int)idx != parcel_layer_idx &&
            (*ctx.layers)[idx].scale == "parcel" &&
+           (*ctx.layers)[idx].category != LayerDef::Category::Zoning &&
            (*ctx.layers)[idx].region.empty();
 }
 

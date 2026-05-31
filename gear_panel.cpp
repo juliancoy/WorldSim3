@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "ui_theme.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -48,6 +49,89 @@ void drawGearPanel(
                         saveAppSettings(root, *app_settings);
                     }
                     ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
+                } else {
+                    ImGui::TextDisabled("App settings unavailable.");
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Road Labels")) {
+                if (app_settings) {
+                    bool road_label_click_mode = app_settings->road_label_click_mode;
+                    if (ImGui::Checkbox("Road label click mode", &road_label_click_mode)) {
+                        app_settings->road_label_click_mode = road_label_click_mode;
+                        saveAppSettings(root, *app_settings);
+                    }
+                    float road_label_pick_tolerance = app_settings->road_label_pick_tolerance_px;
+                    if (ImGui::SliderFloat("Road label pick tolerance", &road_label_pick_tolerance, 4.0f, 32.0f, "%.0f px")) {
+                        app_settings->road_label_pick_tolerance_px = std::clamp(road_label_pick_tolerance, 4.0f, 32.0f);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    float road_label_size_scale = app_settings->road_label_size_scale;
+                    if (ImGui::SliderFloat("Road label size", &road_label_size_scale, 0.65f, 2.5f, "%.2fx")) {
+                        app_settings->road_label_size_scale = std::clamp(road_label_size_scale, 0.65f, 2.5f);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    bool road_label_angle_along_road = app_settings->road_label_angle_along_road;
+                    if (ImGui::Checkbox("Angle labels along road", &road_label_angle_along_road)) {
+                        app_settings->road_label_angle_along_road = road_label_angle_along_road;
+                        saveAppSettings(root, *app_settings);
+                    }
+                    bool road_label_avoid_overlap = app_settings->road_label_avoid_overlap;
+                    if (ImGui::Checkbox("Avoid road label overlap", &road_label_avoid_overlap)) {
+                        app_settings->road_label_avoid_overlap = road_label_avoid_overlap;
+                        if (!road_label_avoid_overlap) app_settings->road_label_collision_mode = 0;
+                        else if (app_settings->road_label_collision_mode == 0) app_settings->road_label_collision_mode = 1;
+                        saveAppSettings(root, *app_settings);
+                    }
+                    const char* collision_modes[] = {"Off", "Compact", "Balanced", "Strict"};
+                    int collision_mode = app_settings->road_label_avoid_overlap
+                        ? std::clamp(app_settings->road_label_collision_mode, 1, 3)
+                        : 0;
+                    if (ImGui::Combo("Collision behavior", &collision_mode, collision_modes, IM_ARRAYSIZE(collision_modes))) {
+                        app_settings->road_label_collision_mode = collision_mode;
+                        app_settings->road_label_avoid_overlap = collision_mode != 0;
+                        saveAppSettings(root, *app_settings);
+                    }
+                    float road_label_separation = app_settings->road_label_separation_px;
+                    if (ImGui::SliderFloat("Road label separation", &road_label_separation, 0.0f, 48.0f, "%.0f px")) {
+                        app_settings->road_label_separation_px = std::clamp(road_label_separation, 0.0f, 48.0f);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    ImGui::TextDisabled("Labels are centered on the clicked road point.");
+                    ImGui::TextDisabled("Applies immediately and persists in data/app_settings.json.");
+                } else {
+                    ImGui::TextDisabled("App settings unavailable.");
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Navigation")) {
+                if (app_settings) {
+                    double zoom_step = app_settings->zoom_step;
+                    if (ImGui::InputDouble("Button/key zoom step", &zoom_step, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        app_settings->zoom_step = std::clamp(zoom_step, 0.05, 4.0);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    bool smooth_scroll_zoom = app_settings->smooth_scroll_zoom;
+                    if (ImGui::Checkbox("Smooth scroll wheel zoom", &smooth_scroll_zoom)) {
+                        app_settings->smooth_scroll_zoom = smooth_scroll_zoom;
+                        saveAppSettings(root, *app_settings);
+                    }
+                    double scroll_zoom_distance = app_settings->scroll_zoom_distance;
+                    if (ImGui::InputDouble("Scroll wheel zoom distance", &scroll_zoom_distance, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        app_settings->scroll_zoom_distance = std::clamp(scroll_zoom_distance, 0.01, 4.0);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    double scroll_zoom_duration = app_settings->scroll_zoom_duration_s;
+                    if (ImGui::InputDouble("Scroll wheel animation duration", &scroll_zoom_duration, 0.0, 0.0, "%.2f s", ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        app_settings->scroll_zoom_duration_s = std::clamp(scroll_zoom_duration, 0.0, 1.5);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    double alt_zoom_number_multiplier = app_settings->alt_zoom_number_multiplier;
+                    if (ImGui::InputDouble("Alt-number zoom multiplier", &alt_zoom_number_multiplier, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue)) {
+                        app_settings->alt_zoom_number_multiplier = std::clamp(alt_zoom_number_multiplier, 0.25, 16.0);
+                        saveAppSettings(root, *app_settings);
+                    }
+                    ImGui::TextDisabled("Alt+N stages N times this multiplier; defaults to 3.");
                 } else {
                     ImGui::TextDisabled("App settings unavailable.");
                 }

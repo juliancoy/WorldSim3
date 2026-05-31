@@ -978,7 +978,8 @@ json queryHistoryEntryJson(const QueryHistoryEntry& entry) {
             {"center_lat", entry.snapshot.center_lat},
             {"zoom", entry.snapshot.zoom},
             {"map_title_text", entry.snapshot.map_title_text},
-            {"map_title_show_primary_parcel_source", entry.snapshot.map_title_show_primary_parcel_source}
+            {"map_title_show_primary_parcel_source", entry.snapshot.map_title_show_primary_parcel_source},
+            {"map_title_source_layer_file", entry.snapshot.map_title_source_layer_file}
         }}
     };
 }
@@ -1032,6 +1033,9 @@ void loadQueryHistoryEntryFromJson(const json& j, QueryHistoryEntry& entry) {
     if (s.contains("map_title_text") && s["map_title_text"].is_string()) entry.snapshot.map_title_text = s["map_title_text"].get<std::string>();
     if (s.contains("map_title_show_primary_parcel_source") && s["map_title_show_primary_parcel_source"].is_boolean()) {
         entry.snapshot.map_title_show_primary_parcel_source = s["map_title_show_primary_parcel_source"].get<bool>();
+    }
+    if (s.contains("map_title_source_layer_file") && s["map_title_source_layer_file"].is_string()) {
+        entry.snapshot.map_title_source_layer_file = s["map_title_source_layer_file"].get<std::string>();
     }
 }
 }

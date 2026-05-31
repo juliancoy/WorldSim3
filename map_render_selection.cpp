@@ -293,3 +293,27 @@ void renderSelectedParcelOutlines(const MapSelectionRenderContext& ctx) {
         }
     }
 }
+
+void renderSelectedZoneOutline(const MapSelectionRenderContext& ctx) {
+    if (!ctx.draw || !ctx.layers || !ctx.polygon_geometry_artifacts || !ctx.project_world ||
+        !ctx.show_selected_zone_details || !*ctx.show_selected_zone_details ||
+        !ctx.selected_zone_idx || *ctx.selected_zone_idx == (size_t)-1 ||
+        ctx.zoning_layer_idx < 0 || (size_t)ctx.zoning_layer_idx >= ctx.layers->size()) {
+        return;
+    }
+    const LayerDef& layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    if (!layer.enabled) return;
+    auto artifact_it = ctx.polygon_geometry_artifacts->find((size_t)ctx.zoning_layer_idx);
+    if (artifact_it == ctx.polygon_geometry_artifacts->end()) return;
+
+    const ImU32 fill = IM_COL32(255, 230, 0, 82);
+    const ImU32 outline_halo = IM_COL32(32, 24, 0, 255);
+    const ImU32 outline = IM_COL32(255, 240, 64, 255);
+    drawPolygonSelectionByFeatureIdx(
+        ctx,
+        artifact_it->second,
+        *ctx.selected_zone_idx,
+        fill,
+        outline_halo,
+        outline);
+}

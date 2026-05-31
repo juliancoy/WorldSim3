@@ -31,6 +31,10 @@
 #include "render_policy.h"
 #include "render_routing.h"
 #include "render_tile_cache.h"
+#include "road_label.h"
+#include "road_label_state.h"
+#include "startup_preprocess_service.h"
+#include "map_title_source.h"
 #include "worldsim_dataset_bootstrap.h"
 #include "worldsim_app.h"
 #include "parcel_matched_layers.h"
@@ -3105,6 +3109,336 @@ int runRenderRoutingSelftest(const fs::path& root) {
     return ok ? 0 : 1;
 }
 
+int runRoadLabelSelftest() {
+    LayerDef road_layer;
+    road_layer.name = "Street centerlines";
+    road_layer.file = "streets.geojson";
+    road_layer.import_type = "polyline";
+    road_layer.features.resize(1);
+    road_layer.features[0].paths = {{ImVec2(-76.72f, 39.32f), ImVec2(-76.62f, 39.31f)}};
+    road_layer.feature_properties.resize(1);
+    road_layer.feature_properties[0].values = {{"ROADNAMESHA", "Liberty Road"}};
+
+    LayerDef bus_layer = road_layer;
+    bus_layer.name = "Bus Routes";
+    bus_layer.file = "bus_routes.geojson";
+    LayerDef bike_layer = road_layer;
+    bike_layer.name = "On Street Bike Facilities";
+    bike_layer.file = "on_street_bike_facilities.geojson";
+
+    ImVec2 closest;
+    const float dist_sq = squaredDistancePointToSegment(
+        ImVec2(5.0f, 4.0f),
+        ImVec2(0.0f, 0.0f),
+        ImVec2(10.0f, 0.0f),
+        &closest);
+    const bool road_layer_ok = isRoadLabelLayer(road_layer);
+    const bool bus_layer_ok = !isRoadLabelLayer(bus_layer);
+    const bool bike_layer_ok = !isRoadLabelLayer(bike_layer);
+    const bool label_ok = roadLabelForFeature(road_layer, 0) == "Liberty Road";
+    const bool distance_ok =
+        nearlyEqual(dist_sq, 16.0f) &&
+        nearlyEqual(closest.x, 5.0f) &&
+        nearlyEqual(closest.y, 0.0f);
+    const float expected_angle_rad = 1.2345f;
+    json project_road_label_selection = {
+        {"label", "Liberty Road"},
+        {"layer_idx", 7},
+        {"feature_idx", 42},
+        {"anchor_lon", -76.72f},
+        {"anchor_lat", 39.32f},
+        {"angle_rad", expected_angle_rad}
+    };
+    RoadLabelSelection restored_label;
+    restored_label.label = project_road_label_selection.value("label", std::string());
+    restored_label.layer_idx = project_road_label_selection.value("layer_idx", -1);
+    restored_label.feature_idx = project_road_label_selection["feature_idx"].get<size_t>();
+    restored_label.anchor_lonlat.x = project_road_label_selection["anchor_lon"].get<float>();
+    restored_label.anchor_lonlat.y = project_road_label_selection["anchor_lat"].get<float>();
+    restored_label.angle_rad = project_road_label_selection["angle_rad"].get<float>();
+    const bool project_angle_roundtrip_ok =
+        restored_label.label == "Liberty Road" &&
+        restored_label.layer_idx == 7 &&
+        restored_label.feature_idx == 42 &&
+        nearlyEqual(restored_label.anchor_lonlat.x, -76.72f) &&
+        nearlyEqual(restored_label.anchor_lonlat.y, 39.32f) &&
+        nearlyEqual(restored_label.angle_rad, expected_angle_rad);
+    const bool ok = road_layer_ok && bus_layer_ok && bike_layer_ok && label_ok && distance_ok && project_angle_roundtrip_ok;
+    json out = {
+        {"mode", "road-label-selftest"},
+        {"ok", ok},
+        {"road_layer_detected", road_layer_ok},
+        {"bus_layer_excluded", bus_layer_ok},
+        {"bike_layer_excluded", bike_layer_ok},
+        {"label", roadLabelForFeature(road_layer, 0)},
+        {"distance_sq", dist_sq},
+        {"closest", {{"x", closest.x}, {"y", closest.y}}},
+        {"project_angle_roundtrip", project_angle_roundtrip_ok},
+        {"project_angle_rad", restored_label.angle_rad}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runZoningManifestSelftest(const fs::path& root) {
+    const std::vector<LayerDef> layers = loadManifest(root, false);
+    auto find_layer = [&](const std::string& name, const std::string& county_city) -> const LayerDef* {
+        for (const LayerDef& layer : layers) {
+            if (layer.name == name && layer.provenance_county_city == county_city) return &layer;
+        }
+        return nullptr;
+    };
+    const LayerDef* city = find_layer("Baltimore City Zoning", "baltimore_city");
+    const LayerDef* county = find_layer("Baltimore County Zoning", "baltimore_county");
+    const bool city_ok =
+        city &&
+        city->category == LayerDef::Category::Zoning &&
+        city->duckdb_role == "parcel_context" &&
+        !city->file.empty();
+    const bool county_ok =
+        county &&
+        county->category == LayerDef::Category::Zoning &&
+        county->duckdb_role == "parcel_context" &&
+        !county->file.empty();
+    const bool city_local = city ? layerRuntimeSourceMaterializedForFile(root, city->file) : false;
+    const bool county_local = county ? layerRuntimeSourceMaterializedForFile(root, county->file) : false;
+    LayerRegistry registry(root, layers);
+    const bool city_visible_in_layer_panel =
+        city ? !registry.isHiddenParcelGeometryLayer((size_t)(city - layers.data())) : false;
+    const bool county_visible_in_layer_panel =
+        county ? !registry.isHiddenParcelGeometryLayer((size_t)(county - layers.data())) : false;
+    const bool ok = city_ok && county_ok && city_local && county_local &&
+        city_visible_in_layer_panel && county_visible_in_layer_panel;
+    json out = {
+        {"mode", "zoning-manifest-selftest"},
+        {"ok", ok},
+        {"layer_count", layers.size()},
+        {"baltimore_city", {
+            {"present", city != nullptr},
+            {"file", city ? city->file : ""},
+            {"category_ok", city_ok},
+            {"local_source_materialized", city_local},
+            {"visible_in_layer_panel", city_visible_in_layer_panel}
+        }},
+        {"baltimore_county", {
+            {"present", county != nullptr},
+            {"file", county ? county->file : ""},
+            {"category_ok", county_ok},
+            {"local_source_materialized", county_local},
+            {"visible_in_layer_panel", county_visible_in_layer_panel}
+        }}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runRoadManifestSelftest(const fs::path& root) {
+    const std::vector<LayerDef> layers = loadManifest(root, false);
+    const LayerDef* statewide = nullptr;
+    for (const LayerDef& layer : layers) {
+        if (layer.file == "maryland_road_centerlines_comprehensive.geojson") {
+            statewide = &layer;
+            break;
+        }
+    }
+    const bool present = statewide != nullptr;
+    const bool category_ok = present && statewide->category == LayerDef::Category::Infrastructure;
+    const bool geometry_ok = present && layerUsesPolylineGeometry(*statewide) && isRoadLabelLayer(*statewide);
+    const bool source_ok =
+        present &&
+        statewide->import_type == "arcgis_feature_layer" &&
+        statewide->import_service_url.find("MD_RoadCenterlinesComprehensive") != std::string::npos;
+    const bool geography_ok =
+        present &&
+        statewide->provenance_nation_state == "us" &&
+        statewide->provenance_state_region == "md" &&
+        statewide->provenance_county_city.empty();
+    const bool ok = present && category_ok && geometry_ok && source_ok && geography_ok;
+    json out = {
+        {"mode", "road-manifest-selftest"},
+        {"ok", ok},
+        {"present", present},
+        {"category_ok", category_ok},
+        {"geometry_ok", geometry_ok},
+        {"source_ok", source_ok},
+        {"geography_ok", geography_ok}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runMapTitleSourceSelftest() {
+    std::vector<LayerDef> layers(3);
+    layers[0].name = "Primary Parcels";
+    layers[0].file = "parcel.geojson";
+    layers[0].enabled = false;
+    layers[0].source_url = "https://data.baltimorecity.gov/example";
+
+    layers[1].name = "Road Centerlines";
+    layers[1].file = "roads.geojson";
+    layers[1].enabled = true;
+    layers[1].source_urls = {"https://mdgeodata.md.gov/imap/rest/services/Transportation/Example/MapServer/0"};
+
+    layers[2].name = "Hidden Zoning";
+    layers[2].file = "zoning.geojson";
+    layers[2].enabled = false;
+    layers[2].source_url = "https://baltimorecountymd.gov/example";
+
+    const std::vector<size_t> candidates = mapTitleSourceLayerCandidates(layers, 0);
+    const size_t selected_road = resolveMapTitleSourceLayerIndex(layers, "roads.geojson", 0);
+    const size_t fallback_parcel = resolveMapTitleSourceLayerIndex(layers, "missing.geojson", 0);
+    const bool ok =
+        candidates.size() == 2 &&
+        candidates[0] == 0 &&
+        candidates[1] == 1 &&
+        selected_road == 1 &&
+        fallback_parcel == 0 &&
+        mapTitleSourceLabelForLayer(layers[1]) ==
+            "Maryland Department of Transportation State Highway Administration (MDOT SHA)";
+    json out = {
+        {"mode", "map-title-source-selftest"},
+        {"ok", ok},
+        {"candidate_count", candidates.size()},
+        {"selected_road", selected_road},
+        {"fallback_parcel", fallback_parcel},
+        {"road_source", mapTitleSourceLabelForLayer(layers[1])}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
+int runLayerActionTargetsSelftest() {
+    const fs::path test_root = fs::temp_directory_path() / "worldsim3_layer_action_targets_selftest";
+    std::error_code ec;
+    fs::remove_all(test_root, ec);
+    fs::create_directories(test_root / "data", ec);
+
+    std::vector<LayerDef> layers(3);
+    layers[0].name = "Baltimore City Parcels";
+    layers[0].file = "parcel.geojson";
+    layers[0].scale = "parcel";
+    layers[0].enabled = true;
+    layers[1].name = "Baltimore County Parcels";
+    layers[1].file = "baltimore_county_parcels.geojson";
+    layers[1].scale = "parcel";
+    layers[1].enabled = true;
+    layers[2].name = "Baltimore City Zoning";
+    layers[2].file = "zoning.geojson";
+    layers[2].scale = "parcel";
+    layers[2].category = LayerDef::Category::Zoning;
+    layers[2].enabled = true;
+
+    int hover_idx = 0;
+    int click_idx = 1;
+    saveLayerUiState(test_root, layers, true, &hover_idx, &click_idx);
+
+    bool hover_enabled = false;
+    int loaded_hover_idx = -1;
+    int loaded_click_idx = -1;
+    loadLayerUiState(test_root, layers, hover_enabled, &loaded_hover_idx, &loaded_click_idx);
+
+    const bool ok =
+        hover_enabled &&
+        loaded_hover_idx == 0 &&
+        loaded_click_idx == 1 &&
+        loaded_hover_idx != loaded_click_idx;
+    json out = {
+        {"mode", "layer-action-targets-selftest"},
+        {"ok", ok},
+        {"hover_enabled", hover_enabled},
+        {"loaded_hover_idx", loaded_hover_idx},
+        {"loaded_click_idx", loaded_click_idx},
+        {"separate_targets_preserved", loaded_hover_idx != loaded_click_idx}
+    };
+    std::cout << out.dump(2) << '\n';
+    fs::remove_all(test_root, ec);
+    return ok ? 0 : 1;
+}
+
+int runStartupPreprocessPolicySelftest() {
+    const StartupDuckDbPreflightState current =
+        classifyStartupDuckDbPreflight(true, false);
+    const StartupDuckDbPreflightState stale_usable =
+        classifyStartupDuckDbPreflight(true, true);
+    const StartupDuckDbPreflightState required_invalid_fresh =
+        classifyStartupDuckDbPreflight(false, false);
+    const StartupDuckDbPreflightState required_invalid_stale =
+        classifyStartupDuckDbPreflight(false, true);
+
+    StartupPreprocessPlan stale_plan;
+    stale_plan.duckdb_state = startupDuckDbPreflightStateName(stale_usable);
+    stale_plan.duckdb_refresh_recommended = stale_usable == StartupDuckDbPreflightState::StaleUsable;
+    if (stale_usable == StartupDuckDbPreflightState::RequiredInvalid) {
+        stale_plan.required = true;
+        stale_plan.duckdb_required = true;
+    } else if (stale_usable == StartupDuckDbPreflightState::StaleUsable) {
+        stale_plan.warnings.push_back(StartupPreprocessIssue{
+            "duckdb",
+            "data/worldsim.duckdb",
+            "DuckDB semantic artifact is incrementally stale; using validated existing cache and deferring refresh",
+            "/tmp/worldsim.duckdb"
+        });
+    }
+
+    StartupPreprocessPlan invalid_plan;
+    invalid_plan.duckdb_state = startupDuckDbPreflightStateName(required_invalid_stale);
+    if (required_invalid_stale == StartupDuckDbPreflightState::RequiredInvalid) {
+        invalid_plan.required = true;
+        invalid_plan.duckdb_required = true;
+        invalid_plan.issues.push_back(StartupPreprocessIssue{
+            "duckdb",
+            "data/worldsim.duckdb",
+            "DuckDB semantic artifact missing or stale",
+            "/tmp/worldsim.duckdb"
+        });
+    }
+
+    const bool state_ok =
+        current == StartupDuckDbPreflightState::Current &&
+        stale_usable == StartupDuckDbPreflightState::StaleUsable &&
+        required_invalid_fresh == StartupDuckDbPreflightState::RequiredInvalid &&
+        required_invalid_stale == StartupDuckDbPreflightState::RequiredInvalid;
+    const bool naming_ok =
+        std::string(startupDuckDbPreflightStateName(current)) == "current" &&
+        std::string(startupDuckDbPreflightStateName(stale_usable)) == "stale_usable" &&
+        std::string(startupDuckDbPreflightStateName(required_invalid_stale)) == "required_invalid";
+    const bool stale_plan_ok =
+        !stale_plan.required &&
+        !stale_plan.duckdb_required &&
+        stale_plan.duckdb_refresh_recommended &&
+        stale_plan.issues.empty() &&
+        stale_plan.warnings.size() == 1;
+    const bool invalid_plan_ok =
+        invalid_plan.required &&
+        invalid_plan.duckdb_required &&
+        invalid_plan.issues.size() == 1 &&
+        invalid_plan.warnings.empty();
+    const bool ok = state_ok && naming_ok && stale_plan_ok && invalid_plan_ok;
+    json out = {
+        {"mode", "startup-preprocess-policy-selftest"},
+        {"ok", ok},
+        {"state_ok", state_ok},
+        {"naming_ok", naming_ok},
+        {"stale_usable", {
+            {"required", stale_plan.required},
+            {"duckdb_required", stale_plan.duckdb_required},
+            {"duckdb_state", stale_plan.duckdb_state},
+            {"duckdb_refresh_recommended", stale_plan.duckdb_refresh_recommended},
+            {"issue_count", stale_plan.issues.size()},
+            {"warning_count", stale_plan.warnings.size()}
+        }},
+        {"required_invalid", {
+            {"required", invalid_plan.required},
+            {"duckdb_required", invalid_plan.duckdb_required},
+            {"duckdb_state", invalid_plan.duckdb_state},
+            {"issue_count", invalid_plan.issues.size()},
+            {"warning_count", invalid_plan.warnings.size()}
+        }}
+    };
+    std::cout << out.dump(2) << '\n';
+    return ok ? 0 : 1;
+}
+
 struct TilePoint {
     float x = 0.0f;
     float y = 0.0f;
@@ -3967,6 +4301,10 @@ int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
                 event_title_hint VARCHAR,
                 event_detail_hint VARCHAR,
                 event_metadata_json VARCHAR,
+                event_auction_date_text VARCHAR,
+                event_sold_at_auction_text VARCHAR,
+                event_case_number VARCHAR,
+                event_case_title VARCHAR,
                 event_year_hint INTEGER,
                 amount_usd_hint DOUBLE
             )
@@ -4009,27 +4347,33 @@ int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
                 vacant_rehab_count INTEGER,
                 tax_lien_count INTEGER,
                 tax_sale_count INTEGER,
+                foreclosure_filing_count INTEGER,
+                open_receivership_count INTEGER,
+                auction_count INTEGER,
                 tax_lien_amount DOUBLE,
                 tax_sale_amount DOUBLE,
+                latest_foreclosure_date VARCHAR,
+                next_auction_date VARCHAR,
+                last_sold_at_auction_date VARCHAR,
                 min_lon DOUBLE,
                 min_lat DOUBLE,
                 max_lon DOUBLE,
                 max_lat DOUBLE
             )
         )SQL");
-        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, event_year INTEGER, auction_date DATE, sold_at_auction_date DATE, case_number VARCHAR, case_title VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
         exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
         exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
         exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
         exec(R"SQL(
             INSERT INTO layer_features VALUES
-            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 0, 'entity:a', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BLK1', 'owner a', '1 Main', '21201', 'ACTIVE', '', '', 100000, 1200, '', '', '', '', '', '', '', '', '', 0, 0),
-            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 1, 'entity:b', 'parcel', 'Housing', '', '', '', '', -76.68, 39.20, -76.67, 39.21, 'BLK2', 'owner b', '2 Main', '21202', 'ACTIVE', '', '', 200000, 1500, '', '', '', '', '', '', '', '', '', 0, 0)
+            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 0, 'entity:a', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BLK1', 'owner a', '1 Main', '21201', 'ACTIVE', '', '', 100000, 1200, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0),
+            (9, 'Parcels', 'parcel.geojson', 'parcel_record', 1, 'entity:b', 'parcel', 'Housing', '', '', '', '', -76.68, 39.20, -76.67, 39.21, 'BLK2', 'owner b', '2 Main', '21202', 'ACTIVE', '', '', 200000, 1500, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0)
         )SQL");
         exec(R"SQL(
             INSERT INTO unified_parcels VALUES
-            (9, 'entity:a', 'geom:a', 'BLK1', 'parcel.geojson', 'rp.geojson', TRUE, TRUE, 'owner a', 'Owner A', '1 Main', '1main', '21201', 'ACTIVE', 1000, 2000, 1200, 300000, 0, 300000, 2, 1, 3, 0, 4500, 0, -76.70, 39.20, -76.69, 39.21),
-            (9, 'entity:b', 'geom:b', 'BLK2', 'parcel.geojson', '', TRUE, FALSE, 'owner b', 'Owner B', '2 Main', '2main', '21202', 'ACTIVE', 0, 0, 1500, 200000, 0, 200000, 0, 0, 0, 1, 0, 1200, -76.68, 39.20, -76.67, 39.21)
+            (9, 'entity:a', 'geom:a', 'BLK1', 'parcel.geojson', 'rp.geojson', TRUE, TRUE, 'owner a', 'Owner A', '1 Main', '1main', '21201', 'ACTIVE', 1000, 2000, 1200, 300000, 0, 300000, 2, 1, 3, 0, 1, 1, 1, 4500, 0, '2026-01-15', '2026-06-20', '', -76.70, 39.20, -76.69, 39.21),
+            (9, 'entity:b', 'geom:b', 'BLK2', 'parcel.geojson', '', TRUE, FALSE, 'owner b', 'Owner B', '2 Main', '2main', '21202', 'ACTIVE', 0, 0, 1500, 200000, 0, 200000, 0, 0, 0, 1, 0, 0, 0, 0, 1200, '', '', '2025-05-18', -76.68, 39.20, -76.67, 39.21)
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
@@ -4050,6 +4394,12 @@ int runDuckDbParcelSemanticSnapshotSelftest(const fs::path& root) {
             snapshot.parcel_tax_lien_by_feature[0] == 3 &&
             snapshot.parcel_tax_sale_by_feature[1] == 1 &&
             snapshot.parcel_tax_sale_amount_by_feature[1] == 1200.0 &&
+            snapshot.unified_parcels[0].foreclosure_filing_count == 1 &&
+            snapshot.unified_parcels[0].open_receivership_count == 1 &&
+            snapshot.unified_parcels[0].auction_count == 1 &&
+            snapshot.unified_parcels[0].latest_foreclosure_date == "2026-01-15" &&
+            snapshot.unified_parcels[0].next_auction_date == "2026-06-20" &&
+            snapshot.unified_parcels[1].last_sold_at_auction_date == "2025-05-18" &&
             snapshot.parcel_owner_search_by_feature[0] == "owner a" &&
             snapshot.parcel_address_search_by_feature[1] == "2main" &&
             snapshot.unified_parcels[0].parcel_geometry_entity_id == "geom:a" &&
@@ -4093,10 +4443,10 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
                 throw std::runtime_error(res ? res->GetError() : "query failed");
             }
         };
-        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_title_hint VARCHAR, event_detail_hint VARCHAR, event_metadata_json VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
+        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_title_hint VARCHAR, event_detail_hint VARCHAR, event_metadata_json VARCHAR, event_auction_date_text VARCHAR, event_sold_at_auction_text VARCHAR, event_case_number VARCHAR, event_case_title VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
         exec("CREATE TABLE layer_feature_properties(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, property_key VARCHAR, property_value VARCHAR)");
-        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
-        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, foreclosure_filing_count INTEGER, open_receivership_count INTEGER, auction_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, latest_foreclosure_date VARCHAR, next_auction_date VARCHAR, last_sold_at_auction_date VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, event_year INTEGER, auction_date DATE, sold_at_auction_date DATE, case_number VARCHAR, case_title VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
         exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
         exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
         exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
@@ -4104,13 +4454,13 @@ int runParcelHoverClickUiHarness(const fs::path& root) {
         exec("INSERT INTO analytics_build_info VALUES ('parcel_hover_click_ui_sig_v1')");
         exec(R"SQL(
             INSERT INTO layer_features VALUES
-            (0, 'Primary Parcels', 'parcel.geojson', 'parcel_record', 0, 'CANONICALBC0', 'parcel', 'Housing', '', '', '', '', -76.71, 39.20, -76.70, 39.21, 'BC-0', 'owner zero', '8 County St', '21210', 'ACTIVE', '', '', 125000, 800, '', '', '', '', '', '', '', '', '', 0, 0),
-            (0, 'Primary Parcels', 'parcel.geojson', 'parcel_record', 1, 'CANONICALBC1', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', '', '', '', 0, 0)
+            (0, 'Primary Parcels', 'parcel.geojson', 'parcel_record', 0, 'CANONICALBC0', 'parcel', 'Housing', '', '', '', '', -76.71, 39.20, -76.70, 39.21, 'BC-0', 'owner zero', '8 County St', '21210', 'ACTIVE', '', '', 125000, 800, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0),
+            (0, 'Primary Parcels', 'parcel.geojson', 'parcel_record', 1, 'CANONICALBC1', 'parcel', 'Housing', '', '', '', '', -76.70, 39.20, -76.69, 39.21, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0)
         )SQL");
         exec(R"SQL(
             INSERT INTO unified_parcels VALUES
-            (0, 'CANONICALBC0', 'GEOMETRYBC0', 'BC-0', 'parcel.geojson', 'rp.geojson', true, true, 'owner zero', 'Owner Zero', '8 County St', '8countyst', '21210', 'ACTIVE', 70000, 55000, 800, 125000, 0, 125000, 0, 0, 0, 0, 0, 0, -76.71, 39.20, -76.70, 39.21),
-            (0, 'CANONICALBC1', 'GEOMETRYBC1', 'BC-1', 'parcel.geojson', 'rp.geojson', true, true, 'county owner', 'County Owner', '10 County St', '10countyst', '21211', 'ACTIVE', 100000, 50000, 900, 150000, 0, 150000, 0, 0, 0, 0, 0, 0, -76.70, 39.20, -76.69, 39.21)
+            (0, 'CANONICALBC0', 'GEOMETRYBC0', 'BC-0', 'parcel.geojson', 'rp.geojson', true, true, 'owner zero', 'Owner Zero', '8 County St', '8countyst', '21210', 'ACTIVE', 70000, 55000, 800, 125000, 0, 125000, 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '', '', -76.71, 39.20, -76.70, 39.21),
+            (0, 'CANONICALBC1', 'GEOMETRYBC1', 'BC-1', 'parcel.geojson', 'rp.geojson', true, true, 'county owner', 'County Owner', '10 County St', '10countyst', '21211', 'ACTIVE', 100000, 50000, 900, 150000, 0, 150000, 0, 0, 0, 0, 0, 0, 0, 0, 0, '', '', '', -76.70, 39.20, -76.69, 39.21)
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
@@ -4397,16 +4747,16 @@ int runParcelHoverClickPickSelftest(const fs::path& root) {
                 throw std::runtime_error(res ? res->GetError() : "query failed");
             }
         };
-        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_title_hint VARCHAR, event_detail_hint VARCHAR, event_metadata_json VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
+        exec("CREATE TABLE layer_features(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, blocklot VARCHAR, owner VARCHAR, address VARCHAR, zipcode VARCHAR, status VARCHAR, zoning VARCHAR, jurisdiction VARCHAR, value_usd DOUBLE, structure_area_sqft DOUBLE, feature_name VARCHAR, lga_name VARCHAR, ward_name VARCHAR, source_name VARCHAR, event_date_text VARCHAR, event_status_hint VARCHAR, event_title_hint VARCHAR, event_detail_hint VARCHAR, event_metadata_json VARCHAR, event_auction_date_text VARCHAR, event_sold_at_auction_text VARCHAR, event_case_number VARCHAR, event_case_title VARCHAR, event_year_hint INTEGER, amount_usd_hint DOUBLE)");
         exec("CREATE TABLE layer_feature_properties(layer_idx UBIGINT, layer_name VARCHAR, layer_file VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, property_key VARCHAR, property_value VARCHAR)");
-        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
-        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
+        exec("CREATE TABLE unified_parcels(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, parcel_source_file VARCHAR, property_source_file VARCHAR, parcel_has_geometry BOOLEAN, has_property_record BOOLEAN, owner VARCHAR, owner_display VARCHAR, address VARCHAR, address_search VARCHAR, zipcode VARCHAR, status VARCHAR, current_land DOUBLE, current_improvements DOUBLE, structure_area_sqft DOUBLE, tax_base DOUBLE, sale_price DOUBLE, current_value DOUBLE, vacant_notice_count INTEGER, vacant_rehab_count INTEGER, tax_lien_count INTEGER, tax_sale_count INTEGER, foreclosure_filing_count INTEGER, open_receivership_count INTEGER, auction_count INTEGER, tax_lien_amount DOUBLE, tax_sale_amount DOUBLE, latest_foreclosure_date VARCHAR, next_auction_date VARCHAR, last_sold_at_auction_date VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
+        exec("CREATE TABLE parcel_events(blocklot VARCHAR, event_date VARCHAR, event_type VARCHAR, event_label VARCHAR, event_title VARCHAR, event_detail VARCHAR, event_metadata_json VARCHAR, event_status VARCHAR, event_year INTEGER, auction_date DATE, sold_at_auction_date DATE, case_number VARCHAR, case_title VARCHAR, amount_usd DOUBLE, source_layer_name VARCHAR, source_layer_file VARCHAR)");
         exec("CREATE TABLE layer_feature_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, feature_idx UBIGINT, entity_id VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE, center_lon DOUBLE, center_lat DOUBLE)");
         exec("CREATE TABLE layer_bboxes(layer_idx UBIGINT, layer_file VARCHAR, layer_name VARCHAR, duckdb_role VARCHAR, scale VARCHAR, category VARCHAR, provenance_world VARCHAR, provenance_nation_state VARCHAR, provenance_state_region VARCHAR, provenance_county_city VARCHAR, feature_count UBIGINT, min_lon DOUBLE, min_lat DOUBLE, max_lon DOUBLE, max_lat DOUBLE)");
         exec("CREATE TABLE parcel_zone_memberships(parcel_layer_idx UBIGINT, parcel_entity_id VARCHAR, parcel_geometry_entity_id VARCHAR, blocklot VARCHAR, zone_layer_idx UBIGINT, zone_layer_file VARCHAR, zone_layer_name VARCHAR, zone_feature_idx UBIGINT, zone_entity_id VARCHAR, zone_key VARCHAR, zone_label VARCHAR, relation VARCHAR, parcel_centroid_lon DOUBLE, parcel_centroid_lat DOUBLE, overlap_area DOUBLE, overlap_ratio DOUBLE, source_signature VARCHAR)");
         exec(R"SQL(
             INSERT INTO layer_features VALUES
-            (1, 'County Parcel Test', 'county_parcel_test.geojson', 'parcel_record', 0, 'ENTITYCOUNTY1', 'parcel', 'Housing', '', '', '', '', -76.7000, 39.2000, -76.6900, 39.2100, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', '', '', '', 0, 0)
+            (1, 'County Parcel Test', 'county_parcel_test.geojson', 'parcel_record', 0, 'ENTITYCOUNTY1', 'parcel', 'Housing', '', '', '', '', -76.7000, 39.2000, -76.6900, 39.2100, 'BC-1', 'county owner', '10 County St', '21211', 'ACTIVE', '', '', 150000, 900, '', '', '', '', '', '', '', '', '', '', '', '', '', 0, 0)
         )SQL");
 
         DuckDbAnalytics analytics(test_root);
@@ -7015,6 +7365,30 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
             options.run_render_routing_selftest = true;
             continue;
         }
+        if (arg == "--road-label-selftest") {
+            options.run_road_label_selftest = true;
+            continue;
+        }
+        if (arg == "--road-manifest-selftest") {
+            options.run_road_manifest_selftest = true;
+            continue;
+        }
+        if (arg == "--zoning-manifest-selftest") {
+            options.run_zoning_manifest_selftest = true;
+            continue;
+        }
+        if (arg == "--startup-preprocess-policy-selftest") {
+            options.run_startup_preprocess_policy_selftest = true;
+            continue;
+        }
+        if (arg == "--map-title-source-selftest") {
+            options.run_map_title_source_selftest = true;
+            continue;
+        }
+        if (arg == "--layer-action-targets-selftest") {
+            options.run_layer_action_targets_selftest = true;
+            continue;
+        }
         if (arg == "--render-tile-cache-selftest") {
             options.run_render_tile_cache_selftest = true;
             continue;
@@ -7360,6 +7734,12 @@ void printWorldsimUsage() {
         << "       worldsim3 --parcel-query-layer-style-selftest\n"
         << "       worldsim3 --vulkan-device-loss-selftest\n"
         << "       worldsim3 --render-routing-selftest\n"
+        << "       worldsim3 --road-label-selftest\n"
+        << "       worldsim3 --road-manifest-selftest\n"
+        << "       worldsim3 --zoning-manifest-selftest\n"
+        << "       worldsim3 --startup-preprocess-policy-selftest\n"
+        << "       worldsim3 --map-title-source-selftest\n"
+        << "       worldsim3 --layer-action-targets-selftest\n"
         << "       worldsim3 --render-tile-cache-selftest\n"
         << "       worldsim3 --render-polygon-tile-runtime-policy-selftest\n"
         << "       worldsim3 --render-policy-selftest\n"
@@ -7423,6 +7803,24 @@ int runWorldsimCliImmediate(const fs::path& root, const WorldsimCliOptions& opti
     }
     if (options.run_render_routing_selftest) {
         return runRenderRoutingSelftest(root);
+    }
+    if (options.run_road_label_selftest) {
+        return runRoadLabelSelftest();
+    }
+    if (options.run_road_manifest_selftest) {
+        return runRoadManifestSelftest(root);
+    }
+    if (options.run_zoning_manifest_selftest) {
+        return runZoningManifestSelftest(root);
+    }
+    if (options.run_startup_preprocess_policy_selftest) {
+        return runStartupPreprocessPolicySelftest();
+    }
+    if (options.run_map_title_source_selftest) {
+        return runMapTitleSourceSelftest();
+    }
+    if (options.run_layer_action_targets_selftest) {
+        return runLayerActionTargetsSelftest();
     }
     if (options.run_render_tile_cache_selftest) {
         return runRenderTileCacheSelftest(root);

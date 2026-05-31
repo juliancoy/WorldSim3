@@ -105,6 +105,7 @@ struct QueryRecord {
         double zoom = 12.0;
         std::string map_title_text;
         bool map_title_show_primary_parcel_source = false;
+        std::string map_title_source_layer_file;
     } snapshot;
 };
 

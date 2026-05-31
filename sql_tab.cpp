@@ -79,6 +79,7 @@ QueryExecutionContextSnapshot makeQuerySnapshot(
     snapshot.zoom = zoom;
     snapshot.map_title_text = app_settings.map_title_text;
     snapshot.map_title_show_primary_parcel_source = app_settings.map_title_show_primary_parcel_source;
+    snapshot.map_title_source_layer_file = app_settings.map_title_source_layer_file;
     return snapshot;
 }
 

@@ -118,4 +118,7 @@ private:
     DuckDbAnalyticsStatus status_;
     mutable std::mutex parcel_detail_cache_mutex_;
     mutable std::unordered_map<std::string, DuckDbQueryResult> parcel_detail_cache_;
+    mutable std::mutex build_source_signature_cache_mutex_;
+    mutable std::string cached_build_source_signature_key_;
+    mutable std::string cached_build_source_signature_value_;
 };

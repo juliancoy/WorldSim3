@@ -18,6 +18,7 @@ struct RenderTailPassContext {
     double zoom = 0.0;
     int math_zoom = 0;
     int parcel_layer_idx = -1;
+    int zoning_layer_idx = -1;
     int parcel_parameter_mode = 0;
     float parcel_choropleth_gamma = 1.0f;
     int vacant_notice_layer_idx = -1;
@@ -42,6 +43,8 @@ struct RenderTailPassContext {
     const std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     const std::vector<int>* layer_normalize_mode = nullptr;
     const ParcelSelectionState* parcel_selection = nullptr;
+    const bool* show_selected_zone_details = nullptr;
+    const size_t* selected_zone_idx = nullptr;
     MapProjectionCache* projection = nullptr;
     std::function<bool(size_t, size_t, const LayerDef::FeatureRecord&)> feature_passes_filters;
     std::function<bool(size_t)> should_fill_layer_polygon;

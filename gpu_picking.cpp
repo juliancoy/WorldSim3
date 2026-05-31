@@ -131,6 +131,9 @@ GpuPickRequest makePickRequest(const MapHoverQuery& query) {
 
 bool isParcelInteractionLayer(const LayerDef& layer) {
     return layer.scale == "parcel" &&
+           layer.category != LayerDef::Category::Zoning &&
+           !containsCaseInsensitive(layer.file, "zoning") &&
+           !containsCaseInsensitive(layer.name, "zoning") &&
            !layerUsesPointGeometry(layer) &&
            !layerUsesPolylineGeometry(layer);
 }
@@ -297,9 +300,9 @@ void tryPickZone(const MapHoverQuery& query, MapHoverState& out) {
     if (!gpuPickZoningFeature(layer_idx, makePickRequest(query), &feature_idx, &entity_id, &geometry_entity_id, &pick_error)) {
         return;
     }
-    if (feature_idx >= layer.features.size()) return;
+    if (feature_idx >= layer.features.size() && entity_id.empty()) return;
     out.hovered_zone_idx = feature_idx;
-    out.hovered_zone = &layer.features[feature_idx];
+    if (feature_idx < layer.features.size()) out.hovered_zone = &layer.features[feature_idx];
     out.hovered_zone_entity_id = entity_id;
 }
 }

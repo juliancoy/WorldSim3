@@ -38,7 +38,7 @@
     }
   },
   {
-    "name": "Zoning",
+    "name": "Baltimore City Zoning",
     "file": "zoning.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
     "color": "#fc8d62",

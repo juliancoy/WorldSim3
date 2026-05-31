@@ -1,13 +1,126 @@
 #include "filters_tab.h"
 
 #include "app_utils.h"
+#include "cache_io.h"
 #include "feature_props.h"
 #include "imgui.h"
+#include "layer_geometry.h"
 #include "layer_state_io.h"
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <sstream>
+
+namespace {
+struct SelectedZoneDetails {
+    std::string zone_key;
+    std::string zone_label;
+    std::string zone_description;
+    std::string source_url;
+    std::vector<std::pair<std::string, std::string>> fields;
+};
+
+struct SelectedZoneDetailsCache {
+    int layer_idx = -1;
+    size_t feature_idx = (size_t)-1;
+    std::string source_signature;
+    bool valid = false;
+    SelectedZoneDetails details;
+};
+
+SelectedZoneDetails buildSelectedZoneDetails(
+    const LayerDef& layer,
+    const LayerDef::FeatureRecord& selected,
+    size_t feature_idx,
+    const std::unordered_map<std::string, ZoneMetadata>* zoning_metadata) {
+    SelectedZoneDetails details;
+    details.zone_key = zoningClassKey(selected);
+    details.zone_label = zoningClassLabel(selected);
+    details.source_url = trimDisplayValue(getPropertyValue(selected, "URL"));
+    if (zoning_metadata) {
+        auto meta_it = zoning_metadata->find(details.zone_key);
+        if (meta_it != zoning_metadata->end()) {
+            if (!meta_it->second.label.empty()) {
+                details.zone_label = meta_it->second.label;
+            }
+            if (details.source_url.empty() && !meta_it->second.source_url.empty()) {
+                details.source_url = meta_it->second.source_url;
+            }
+        }
+        details.zone_description = zoningDescription(selected, *zoning_metadata);
+    }
+    auto add_field = [&](const char* label, const std::string& value) {
+        const std::string trimmed = trimDisplayValue(value);
+        if (!trimmed.empty()) details.fields.push_back({label, trimmed});
+    };
+    add_field("Layer", layer.name);
+    add_field("Feature", std::to_string(feature_idx));
+    add_field("District", getPropertyValue(selected, "ZONE_DIST"));
+    add_field("Class", getPropertyValue(selected, "ZONE_CLASS"));
+    add_field("District Code", getPropertyValue(selected, "DIST_CODE"));
+    add_field("Acres", getPropertyValue(selected, "ACRES"));
+    add_field("Object ID", getPropertyValue(selected, "OBJECTID"));
+    add_field("Source", details.source_url);
+    return details;
+}
+
+std::optional<SelectedZoneDetails> selectedZoneDetailsForPanel(const FiltersTabContext& ctx) {
+    if (!ctx.show_selected_zone_details || !*ctx.show_selected_zone_details ||
+        !ctx.selected_zone_idx || ctx.zoning_layer_idx < 0 ||
+        !ctx.layers || (size_t)ctx.zoning_layer_idx >= ctx.layers->size()) {
+        return std::nullopt;
+    }
+    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    if (*ctx.selected_zone_idx < zoning_layer.features.size()) {
+        return buildSelectedZoneDetails(
+            zoning_layer,
+            zoning_layer.features[*ctx.selected_zone_idx],
+            *ctx.selected_zone_idx,
+            ctx.zoning_metadata);
+    }
+    if (!ctx.root) return std::nullopt;
+
+    std::string source_signature;
+    const std::filesystem::path layer_path = resolveStoredLayerPath(*ctx.root, zoning_layer);
+    if (!resolveLayerSourceSignature(layer_path, source_signature, nullptr) || source_signature.empty()) {
+        return std::nullopt;
+    }
+
+    static SelectedZoneDetailsCache fallback_cache;
+    if (fallback_cache.valid &&
+        fallback_cache.layer_idx == ctx.zoning_layer_idx &&
+        fallback_cache.feature_idx == *ctx.selected_zone_idx &&
+        fallback_cache.source_signature == source_signature) {
+        return fallback_cache.details;
+    }
+
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> properties;
+    if (!loadCanonicalLayerFeatureCollection(*ctx.root, zoning_layer.file, source_signature, features, &properties) ||
+        *ctx.selected_zone_idx >= features.size()) {
+        fallback_cache.valid = false;
+        return std::nullopt;
+    }
+    LayerDef::FeatureRecord& selected = features[*ctx.selected_zone_idx];
+    if (*ctx.selected_zone_idx < properties.size()) {
+        setTransientFeatureProperties(selected, properties[*ctx.selected_zone_idx].values);
+    }
+    SelectedZoneDetails details = buildSelectedZoneDetails(
+        zoning_layer,
+        selected,
+        *ctx.selected_zone_idx,
+        ctx.zoning_metadata);
+    clearTransientFeatureProperties(selected);
+
+    fallback_cache.layer_idx = ctx.zoning_layer_idx;
+    fallback_cache.feature_idx = *ctx.selected_zone_idx;
+    fallback_cache.source_signature = source_signature;
+    fallback_cache.valid = true;
+    fallback_cache.details = details;
+    return details;
+}
+}
 
 void drawFiltersTab(const FiltersTabContext& ctx) {
     if (!ImGui::BeginTabItem("Filters")) return;
@@ -134,32 +247,50 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
         *ctx.address_locate_status = "Found " + std::to_string(ctx.address_locate_matches->size()) + " matches.";
     };
 
-    const bool selected_zone_valid =
-        *ctx.show_selected_zone_details &&
-        ctx.zoning_layer_idx >= 0 &&
-        (size_t)ctx.zoning_layer_idx < ctx.layers->size() &&
-        *ctx.selected_zone_idx < (*ctx.layers)[(size_t)ctx.zoning_layer_idx].features.size();
+    const std::optional<SelectedZoneDetails> selected_zone = selectedZoneDetailsForPanel(ctx);
+    const bool selected_zone_valid = selected_zone.has_value();
 
     if (selected_zone_valid) {
-        const auto& selected = (*ctx.layers)[(size_t)ctx.zoning_layer_idx].features[*ctx.selected_zone_idx];
         if (ImGui::Button("Back To Filters")) {
             *ctx.show_selected_zone_details = false;
             *ctx.selected_zone_idx = (size_t)-1;
         }
         ImGui::Separator();
-        std::string zone_key = zoningClassKey(selected);
-        std::string zone_label = zoningClassLabel(selected);
-        if (ctx.zoning_metadata) {
-            auto meta_it = ctx.zoning_metadata->find(zone_key);
-            if (meta_it != ctx.zoning_metadata->end() && !meta_it->second.label.empty()) zone_label = meta_it->second.label;
-        }
-        std::string zone_description = ctx.zoning_metadata ? zoningDescription(selected, *ctx.zoning_metadata) : std::string();
+        const std::string& zone_key = selected_zone->zone_key;
+        const std::string& zone_label = selected_zone->zone_label;
+        const std::string& zone_description = selected_zone->zone_description;
         const char* display_zone = !zone_label.empty() ? zone_label.c_str() : (zone_key.empty() ? "(unlabeled)" : zone_key.c_str());
         ImGui::SetWindowFontScale(1.6f);
         ImGui::TextWrapped("%s", display_zone);
         ImGui::SetWindowFontScale(1.0f);
         ImGui::Separator();
         ImGui::TextWrapped("%s", zone_description.empty() ? "No description available." : zone_description.c_str());
+        if (!selected_zone->fields.empty()) {
+            ImGui::SeparatorText("Official Source Fields");
+            if (ImGui::BeginTable("selected_zone_fields", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg)) {
+                ImGui::TableSetupColumn("Field", ImGuiTableColumnFlags_WidthFixed, 112.0f);
+                ImGui::TableSetupColumn("Value");
+                for (const auto& field : selected_zone->fields) {
+                    ImGui::TableNextRow();
+                    ImGui::TableSetColumnIndex(0);
+                    ImGui::TextDisabled("%s", field.first.c_str());
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::TextWrapped("%s", field.second.c_str());
+                }
+                ImGui::EndTable();
+            }
+        }
+        if (!selected_zone->source_url.empty()) {
+            if (ImGui::Button("Open Official Zoning Sheet")) {
+                openUrlInBrowser(selected_zone->source_url);
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                ImGui::SetTooltip(
+                    "Official PDF: %s\n\n%s",
+                    selected_zone->source_url.c_str(),
+                    zone_description.empty() ? "No extracted summary available." : zone_description.c_str());
+            }
+        }
         ImGui::EndTabItem();
         return;
     }

@@ -121,6 +121,8 @@ add_executable(worldsim3
   worldsim_dataset_bootstrap.cpp
   worldsim_bootstrap.cpp
   aggregate_visualization_strategies.cpp
+  animation.cpp
+  av_capture.cpp
   beps_screening.cpp
   app_lifecycle.cpp
   app_settings.cpp
@@ -164,6 +166,8 @@ add_executable(worldsim3
   map_frame_render.cpp
   map_frame_session.cpp
   map_tab.cpp
+  map_title_source.cpp
+  road_label.cpp
   left_panel.cpp
   map_viewport.cpp
   real_property_ui.cpp
@@ -228,6 +232,7 @@ add_executable(worldsim3
   vacancy_parcel_tab.cpp
   parcel_info_tab.cpp
   filters_tab.cpp
+  project_state.cpp
   right_panel.cpp
   event_sectors.cpp
   event_sector_filters_panel.cpp
@@ -482,6 +487,12 @@ if(BUILD_TESTING)
   add_worldsim_cli_test(worldsim3_parcel_query_layer_style_selftest --parcel-query-layer-style-selftest)
   add_worldsim_cli_test(worldsim3_vulkan_device_loss_selftest --vulkan-device-loss-selftest)
   add_worldsim_cli_test(worldsim3_render_routing_selftest --render-routing-selftest)
+  add_worldsim_cli_test(worldsim3_road_label_selftest --road-label-selftest)
+  add_worldsim_cli_test(worldsim3_road_manifest_selftest --road-manifest-selftest)
+  add_worldsim_cli_test(worldsim3_zoning_manifest_selftest --zoning-manifest-selftest)
+  add_worldsim_cli_test(worldsim3_startup_preprocess_policy_selftest --startup-preprocess-policy-selftest)
+  add_worldsim_cli_test(worldsim3_map_title_source_selftest --map-title-source-selftest)
+  add_worldsim_cli_test(worldsim3_layer_action_targets_selftest --layer-action-targets-selftest)
   add_worldsim_cli_test(worldsim3_render_tile_cache_selftest --render-tile-cache-selftest)
   add_test(
     NAME worldsim3_render_polygon_tile_contract

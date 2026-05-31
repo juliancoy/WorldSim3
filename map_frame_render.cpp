@@ -256,6 +256,7 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     render_tail_ctx.zoom = ctx.zoom;
     render_tail_ctx.math_zoom = ctx.math_zoom;
     render_tail_ctx.parcel_layer_idx = ctx.parcel_layer_idx;
+    render_tail_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
     render_tail_ctx.parcel_parameter_mode = ctx.parcel_parameter_mode;
     render_tail_ctx.parcel_choropleth_gamma =
         ctx.parcel_layer_idx >= 0 && (size_t)ctx.parcel_layer_idx < ctx.layer_choropleth_gamma->size()
@@ -283,6 +284,8 @@ void orchestrateMapFrameRender(const RenderFrameOrchestrationContext& ctx) {
     render_tail_ctx.layer_heatmap_percentile_clip = ctx.layer_heatmap_percentile_clip;
     render_tail_ctx.layer_normalize_mode = ctx.layer_normalize_mode;
     render_tail_ctx.parcel_selection = ctx.parcel_selection;
+    render_tail_ctx.show_selected_zone_details = ctx.show_selected_zone_details;
+    render_tail_ctx.selected_zone_idx = ctx.selected_zone_idx;
     render_tail_ctx.projection = ctx.projection;
     render_tail_ctx.feature_passes_filters = ctx.feature_passes_filters;
     render_tail_ctx.should_fill_layer_polygon = ctx.should_fill_layer_polygon;

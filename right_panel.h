@@ -3,6 +3,7 @@
 #include "app_settings.h"
 #include "app_utils.h"
 #include "active_queries_tab.h"
+#include "av_capture.h"
 #include "cache_io.h"
 #include "duckdb_analytics.h"
 #include "filters.h"
@@ -13,6 +14,7 @@
 #include "owner_info.h"
 #include "owners_tab.h"
 #include "parcel_unified.h"
+#include "road_label_state.h"
 #include "selection.h"
 #include "types.h"
 #include "zoning.h"
@@ -77,14 +79,39 @@ struct RightPanelContext {
     int heatmap_algo = 0;
 
     std::vector<bool>* layer_heatmap_enabled = nullptr;
+    std::vector<bool>* layer_hover_enabled = nullptr;
+    std::vector<bool>* layer_inspect_enabled = nullptr;
     std::vector<int>* layer_heatmap_max_zoom = nullptr;
     std::vector<int>* layer_parcel_detail_min_zoom = nullptr;
     std::vector<int>* layer_heatmap_algo = nullptr;
+    std::vector<int>* layer_normalize_mode = nullptr;
+    std::vector<float>* layer_heatmap_cell_px = nullptr;
+    std::vector<float>* layer_heatmap_bandwidth_px = nullptr;
+    std::vector<float>* layer_heatmap_blur_sigma_px = nullptr;
     std::vector<float>* layer_heatmap_percentile_clip = nullptr;
     std::vector<float>* layer_choropleth_gamma = nullptr;
     std::vector<bool>* layer_fill_enabled = nullptr;
+    std::vector<bool>* layer_heatmap_zoom_adaptive_bandwidth = nullptr;
+    std::vector<bool>* layer_heatmap_multires_enabled = nullptr;
+    std::vector<float>* layer_heatmap_multires_blend = nullptr;
+    std::vector<bool>* layer_heatmap_use_gradient = nullptr;
+    int* active_hover_layer_idx = nullptr;
+    int* active_click_layer_idx = nullptr;
+    int* parcel_parameter_mode_ptr = nullptr;
     bool* layer_heatmap_state_changed = nullptr;
+    bool* layer_fill_state_changed = nullptr;
+    bool* layer_hover_state_changed = nullptr;
+    bool* layer_inspect_state_changed = nullptr;
     float heatmap_percentile_clip = 0.0f;
+    int* heatmap_algo_ptr = nullptr;
+    int* heatmap_quality_preset = nullptr;
+    float* global_heat_cell_px = nullptr;
+    float* heatmap_bandwidth_px = nullptr;
+    float* heatmap_blur_sigma_px = nullptr;
+    float* global_heatmap_percentile_clip = nullptr;
+    bool* heatmap_zoom_adaptive_bandwidth = nullptr;
+    bool* heatmap_multires_enabled = nullptr;
+    float* heatmap_multires_blend = nullptr;
 
     std::vector<int>* parcel_vac_notice_by_feature = nullptr;
     std::vector<int>* parcel_vac_rehab_by_feature = nullptr;
@@ -145,6 +172,10 @@ struct RightPanelContext {
     std::atomic<size_t>* prof_heatmap_texture_cache_entries = nullptr;
     bool* gpu_profiler_tab_requested = nullptr;
     bool* gpu_profiler_reload_requested = nullptr;
+    std::string* current_project_path = nullptr;
+    std::string* project_status = nullptr;
+    RoadLabelState* road_label_state = nullptr;
+    AvCaptureState* av_capture_state = nullptr;
 };
 
 void drawRightPanelWindow(const RightPanelContext& ctx);

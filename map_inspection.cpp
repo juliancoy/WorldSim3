@@ -32,6 +32,55 @@ enum class PointMarkerGlyph {
     Droplet
 };
 
+struct HoverZoneFeatureCache {
+    int layer_idx = -1;
+    size_t feature_idx = (size_t)-1;
+    std::string source_signature;
+    bool valid = false;
+    LayerDef::FeatureRecord feature;
+    FeaturePropertyPairs properties;
+};
+
+struct HoverTooltipBounds {
+    ImVec2 min = ImVec2(0.0f, 0.0f);
+    ImVec2 max = ImVec2(0.0f, 0.0f);
+    bool valid = false;
+};
+
+HoverTooltipBounds hoverTooltipBounds(const MapInspectionContext& ctx) {
+    HoverTooltipBounds bounds;
+    bounds.min = ctx.map_origin;
+    bounds.max = ImVec2(ctx.map_origin.x + ctx.map_size.x, ctx.map_origin.y + ctx.map_size.y);
+    bounds.valid = ctx.map_size.x > 80.0f && ctx.map_size.y > 80.0f;
+    return bounds;
+}
+
+float constrainedTooltipWidth(const HoverTooltipBounds& bounds, float desired_width) {
+    if (!bounds.valid) return desired_width;
+    constexpr float margin = 10.0f;
+    return std::clamp(desired_width, 180.0f, std::max(180.0f, bounds.max.x - bounds.min.x - margin * 2.0f));
+}
+
+void placeConstrainedHoverTooltip(const HoverTooltipBounds& bounds, float desired_width, float estimated_height) {
+    const float width = constrainedTooltipWidth(bounds, desired_width);
+    ImGui::SetNextWindowSize(ImVec2(width, 0.0f), ImGuiCond_Always);
+    if (!bounds.valid) return;
+
+    constexpr float margin = 10.0f;
+    constexpr float gap = 16.0f;
+    const float max_height = std::max(80.0f, bounds.max.y - bounds.min.y - margin * 2.0f);
+    const float height = std::clamp(estimated_height, 80.0f, max_height);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(std::min(180.0f, width), 0.0f), ImVec2(width, max_height));
+
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    ImVec2 pos(mouse.x + gap, mouse.y + gap);
+    if (pos.x + width > bounds.max.x - margin) pos.x = mouse.x - width - gap;
+    if (pos.y + height > bounds.max.y - margin) pos.y = mouse.y - height - gap;
+    pos.x = std::clamp(pos.x, bounds.min.x + margin, bounds.max.x - margin - width);
+    pos.y = std::clamp(pos.y, bounds.min.y + margin, bounds.max.y - margin - height);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+}
+
 bool containsCaseInsensitive(const std::string& haystack, const char* needle) {
     if (!needle || !*needle) return false;
     std::string hs = haystack;
@@ -69,6 +118,56 @@ void drawDuckDbHoverPropertySummary(const ParcelHoverDetail& detail) {
     } else {
         ImGui::TextDisabled("No matching property record in DuckDB.");
     }
+}
+
+const LayerDef::FeatureRecord* resolveHoveredZoneFeature(
+    const MapInspectionContext& ctx,
+    const LayerDef::FeatureRecord* direct_zone,
+    size_t feature_idx,
+    LayerDef::FeatureRecord& fallback_zone,
+    bool& fallback_zone_has_transient_props) {
+    fallback_zone_has_transient_props = false;
+    if (direct_zone) return direct_zone;
+    if (!ctx.root || !ctx.layers || ctx.zoning_layer_idx < 0 ||
+        (size_t)ctx.zoning_layer_idx >= ctx.layers->size() ||
+        feature_idx == (size_t)-1) {
+        return nullptr;
+    }
+
+    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    std::string source_signature;
+    const std::filesystem::path layer_path = resolveStoredLayerPath(*ctx.root, zoning_layer);
+    if (!resolveLayerSourceSignature(layer_path, source_signature, nullptr) || source_signature.empty()) {
+        return nullptr;
+    }
+
+    static HoverZoneFeatureCache cache;
+    if (!cache.valid ||
+        cache.layer_idx != ctx.zoning_layer_idx ||
+        cache.feature_idx != feature_idx ||
+        cache.source_signature != source_signature) {
+        std::vector<LayerDef::FeatureRecord> features;
+        std::vector<LayerDef::FeatureProperties> properties;
+        if (!loadCanonicalLayerFeatureCollection(*ctx.root, zoning_layer.file, source_signature, features, &properties) ||
+            feature_idx >= features.size()) {
+            cache.valid = false;
+            return nullptr;
+        }
+        cache.layer_idx = ctx.zoning_layer_idx;
+        cache.feature_idx = feature_idx;
+        cache.source_signature = source_signature;
+        cache.feature = features[feature_idx];
+        cache.properties.clear();
+        if (feature_idx < properties.size()) cache.properties = properties[feature_idx].values;
+        cache.valid = true;
+    }
+
+    fallback_zone = cache.feature;
+    if (!cache.properties.empty()) {
+        setTransientFeatureProperties(fallback_zone, cache.properties);
+        fallback_zone_has_transient_props = true;
+    }
+    return &fallback_zone;
 }
 
 const char* pointIconTypeLabel(const LayerDef& layer, const LayerDef::FeatureRecord* fg = nullptr) {
@@ -466,7 +565,7 @@ std::string pointFeatureOpenUrl(const LayerDef& layer, const LayerDef::FeatureRe
     return eventFeatureOpenUrl(fg);
 }
 
-void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg) {
+void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg, const HoverTooltipBounds& bounds) {
     const std::vector<const LayerDef::FeatureRecord*> colocated = collectColocatedEventFeatures(layer, fg);
     const std::string title = pointFeatureTitle(fg);
     const std::string description = firstDisplayProperty(fg, {"description", "Description", "DESC"});
@@ -483,9 +582,9 @@ void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureRecord&
     const std::string source_url = firstDisplayProperty(fg, {"source_url", "source", "Source"});
     const std::string image_url = eventFeatureImageUrl(fg);
 
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Always);
+    placeConstrainedHoverTooltip(bounds, 560.0f, colocated.size() > 1 ? 430.0f : 500.0f);
     ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(540.0f);
+    ImGui::PushTextWrapPos(constrainedTooltipWidth(bounds, 560.0f) - 20.0f);
     drawPointLayerHeader(layer, &fg);
     if (colocated.size() > 1) {
         ImGui::TextWrapped("%zu events at this location", colocated.size());
@@ -535,9 +634,9 @@ void drawEventPointSummary(const LayerDef& layer, const LayerDef::FeatureRecord&
     ImGui::EndTooltip();
 }
 
-void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg) {
+void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecord& fg, const HoverTooltipBounds& bounds) {
     if (isLikelyEventPointLayer(layer)) {
-        drawEventPointSummary(layer, fg);
+        drawEventPointSummary(layer, fg, bounds);
         return;
     }
     const std::string title = pointFeatureTitle(fg);
@@ -547,9 +646,9 @@ void drawPointFeatureSummary(const LayerDef& layer, const LayerDef::FeatureRecor
     const std::string feature_type = firstDisplayProperty(
         fg, {"type", "Type", "TYPE", "category", "Category", "CATEGORY", "subtype", "SUBTYPE"});
 
-    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+    placeConstrainedHoverTooltip(bounds, 460.0f, 360.0f);
     ImGui::BeginTooltip();
-    ImGui::PushTextWrapPos(440.0f);
+    ImGui::PushTextWrapPos(constrainedTooltipWidth(bounds, 460.0f) - 20.0f);
     drawPointLayerHeader(layer, &fg);
     if (!title.empty()) ImGui::TextWrapped("Feature: %s", title.c_str());
     if (!feature_type.empty()) ImGui::TextWrapped("Type: %s", feature_type.c_str());
@@ -811,11 +910,18 @@ bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHove
     return true;
 }
 
+void clearMapFeatureSelection(const MapInspectionContext& ctx) {
+    if (ctx.parcel_selection) clearParcelSelection(*ctx.parcel_selection);
+    if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
+    if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
+}
+
 void handleMapInspection(const MapInspectionContext& ctx) {
     static bool event_stack_popup_open = false;
     static int event_stack_layer_idx = -1;
     static float event_stack_lon = 0.0f;
     static float event_stack_lat = 0.0f;
+    const HoverTooltipBounds tooltip_bounds = hoverTooltipBounds(ctx);
 
     if (!ctx.hover_state || !ctx.layers || !ctx.parcel_selection) return;
     const ParcelHoverResolution hovered_parcel = resolveHoveredParcel(ctx);
@@ -831,9 +937,25 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     const bool hovered_parcel_hit = hovered_parcel.hit;
     const bool inspect_parcel_hit = inspect_parcel.hit;
     const UnifiedParcelRecord* hovered_unified = resolvedParcelRecord(hovered_parcel);
+    LayerDef::FeatureRecord fallback_hovered_zone;
+    bool fallback_hovered_zone_has_transient_props = false;
+    hovered_zone = resolveHoveredZoneFeature(
+        ctx,
+        hovered_zone,
+        hovered_zone_idx,
+        fallback_hovered_zone,
+        fallback_hovered_zone_has_transient_props);
+    struct ScopedTransientFeaturePropertiesClear {
+        LayerDef::FeatureRecord* feature = nullptr;
+        bool active = false;
+        ~ScopedTransientFeaturePropertiesClear() {
+            if (active && feature) clearTransientFeatureProperties(*feature);
+        }
+    } fallback_hovered_zone_clear{&fallback_hovered_zone, fallback_hovered_zone_has_transient_props};
 
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        !ImGui::GetIO().KeyAlt &&
         ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
 
     if (ctx.map_hovered && click_select && inspect_point && inspect_point_layer_idx >= 0 &&
@@ -865,15 +987,21 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         }
     }
 
+    const bool zone_hit = hovered_zone_idx != (size_t)-1;
+    const bool parcel_hit = hovered_parcel_hit || inspect_parcel_hit;
+
     if (ctx.map_hovered && ctx.parcel_inspect_active && click_select && inspect_parcel_hit) {
         const bool ctrl = ImGui::GetIO().KeyCtrl;
         applyParcelClickSelection(ctx, inspect_parcel, ctrl);
-    } else if (ctx.map_hovered && ctx.parcel_inspect_active && click_select) {
-        logParcelClickDebug(ctx, "miss", inspect_parcel, ImGui::GetIO().KeyCtrl, false);
-    } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && hovered_zone != nullptr) {
+    } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && zone_hit) {
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = true;
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = hovered_zone_idx;
         clearParcelSelection(*ctx.parcel_selection);
+    } else if (ctx.map_hovered && ctx.parcel_inspect_active && click_select) {
+        logParcelClickDebug(ctx, "miss", inspect_parcel, ImGui::GetIO().KeyCtrl, false);
+    }
+    if (ctx.map_hovered && click_select && !parcel_hit && !zone_hit) {
+        clearMapFeatureSelection(ctx);
     }
 
     const ParcelHoverDetail hovered_detail = resolveParcelHoverDetail(ctx, hovered_parcel);
@@ -887,9 +1015,9 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         const double tax_sale_amount = hovered_detail.tax_sale_amount;
         const LayerDef::FeatureRecord* hovered_zoning = hovered_zone;
 
-        ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+        placeConstrainedHoverTooltip(tooltip_bounds, 460.0f, 390.0f);
         ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(440.0f);
+        ImGui::PushTextWrapPos(constrainedTooltipWidth(tooltip_bounds, 460.0f) - 20.0f);
         ImGui::TextUnformatted("Parcel Details");
         ImGui::Separator();
         ImGui::Text("BLOCKLOT: %s", blocklot_raw.empty() ? "(none)" : blocklot_raw.c_str());
@@ -937,9 +1065,9 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     } else if (ctx.parcel_hover_active && ctx.map_hovered && hovered_parcel_hit) {
-        ImGui::SetNextWindowSize(ImVec2(320.0f, 0.0f), ImGuiCond_Always);
+        placeConstrainedHoverTooltip(tooltip_bounds, 320.0f, 110.0f);
         ImGui::BeginTooltip();
-        ImGui::PushTextWrapPos(300.0f);
+        ImGui::PushTextWrapPos(constrainedTooltipWidth(tooltip_bounds, 320.0f) - 20.0f);
         ImGui::TextUnformatted("Parcel Details");
         ImGui::Separator();
         ImGui::TextDisabled("Loading...");
@@ -949,10 +1077,11 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     if (ctx.zoning_hover_active && ctx.map_hovered &&
         !(ctx.parcel_hover_active && hovered_parcel_hit) &&
         hovered_zone && ctx.zoning_metadata) {
+        placeConstrainedHoverTooltip(tooltip_bounds, 460.0f, 175.0f);
         drawZoningHoverTooltip(*hovered_zone, *ctx.zoning_metadata);
     } else if (ctx.map_hovered && hovered_point && hovered_point_layer_idx >= 0 &&
                (size_t)hovered_point_layer_idx < ctx.layers->size()) {
-        drawPointFeatureSummary((*ctx.layers)[(size_t)hovered_point_layer_idx], *hovered_point);
+        drawPointFeatureSummary((*ctx.layers)[(size_t)hovered_point_layer_idx], *hovered_point, tooltip_bounds);
     }
 
     if (event_stack_popup_open) {

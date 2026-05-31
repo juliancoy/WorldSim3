@@ -32,7 +32,7 @@
     "subcategory": "Parcels & Ownership",
     "region": "Maryland",
     "scale": "parcel",
-    "default_enabled": false,
+    "default_enabled": true,
     "source_urls": [
       "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1",
       "https://bcgisdata.baltimorecountymd.gov/arcgis/rest/services/Property/Property/MapServer/1/query?where=1%3D1&outFields=*&returnGeometry=true&f=geojson",
@@ -1631,11 +1631,40 @@
     }
   },
   {
-    "name": "Zoning",
+    "name": "Maryland Road Centerlines Comprehensive",
+    "file": "maryland_road_centerlines_comprehensive.geojson",
+    "color": "#f59e0b",
+    "description": "Statewide public roadway centerlines for Maryland from MDOT SHA / Maryland iMAP. Provides road-name coverage outside Baltimore City for parcel and map navigation lookups.",
+    "reference_url": "https://mdgeodata.md.gov/imap/rest/services/Transportation/MD_RoadCenterlinesComprehensive/MapServer/0",
+    "source_urls": [
+      "https://mdgeodata.md.gov/imap/rest/services/Transportation/MD_RoadCenterlinesComprehensive/MapServer/0",
+      "https://mdgeodata.md.gov/imap/rest/services/Transportation/MD_RoadCenterlinesComprehensive/MapServer/0/query?where=1%3D1&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://mdgeodata.md.gov/imap/rest/services/Transportation/MD_RoadCenterlinesComprehensive/MapServer/0"
+    },
+    "category": "infrastructure",
+    "subcategory": "Transportation",
+    "region": "Maryland",
+    "scale": "line",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "neighborhood_context",
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": ""
+    }
+  },
+  {
+    "name": "Baltimore City Zoning",
     "file": "zoning.geojson",
     "url": "https://data.baltimorecity.gov/api/download/v1/items/dc7bf04cec4e41ef85cc6b391652e1e7/geojson?layers=0",
     "color": "#fc8d62",
-    "description": "Current zoning districts and zoning-code geography.",
+    "description": "Current Baltimore City zoning districts and zoning-code geography.",
     "category": "zoning",
     "subcategory": "Land Use",
     "scale": "parcel",

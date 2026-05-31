@@ -48,6 +48,7 @@ struct LayerUiContextFactoryInput {
     bool* heatmap_controls_active = nullptr;
     MapFilterState* map_filter_state = nullptr;
     LayerBrowseState* layer_browse_state = nullptr;
+    RoadLabelState* road_label_state = nullptr;
 };
 
 struct LayersPanelContextFactoryInput {

@@ -9,7 +9,9 @@
 #include "vacancy_overlay.h"
 
 #include <algorithm>
+#include <initializer_list>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace {
@@ -134,6 +136,81 @@ bool ensureParcelRenderBlobForSemanticSync(
     if (message) message->clear();
     return true;
 }
+
+const std::vector<LayerDef::FeatureRecord>* zoningFeaturesForCaches(
+    const DerivedLayerCachesContext& ctx,
+    size_t layer_idx,
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureRecord>>& fallback_features,
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureProperties>>& fallback_properties) {
+    if (!ctx.layers || layer_idx >= ctx.layers->size()) return nullptr;
+    const LayerDef& layer = (*ctx.layers)[layer_idx];
+    if (!layer.features.empty()) return &layer.features;
+    if (!ctx.root || !ctx.layer_states || layer_idx >= ctx.layer_states->size()) return nullptr;
+    const std::string& sig = (*ctx.layer_states)[layer_idx].hydration_source_signature;
+    if (sig.empty()) return nullptr;
+    auto existing = fallback_features.find(layer_idx);
+    if (existing != fallback_features.end()) return &existing->second;
+
+    std::vector<LayerDef::FeatureRecord> features;
+    std::vector<LayerDef::FeatureProperties> properties;
+    if (!loadCanonicalLayerFeatureCollection(*ctx.root, layer.file, sig, features, &properties) ||
+        features.empty()) {
+        return nullptr;
+    }
+    fallback_properties[layer_idx] = std::move(properties);
+    auto inserted = fallback_features.emplace(layer_idx, std::move(features));
+    return &inserted.first->second;
+}
+
+const FeaturePropertyPairs* featurePropertiesForCaches(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    size_t feature_idx) {
+    if (feature_idx < layer.feature_properties.size()) return &layer.feature_properties[feature_idx].values;
+    if (fallback_properties && feature_idx < fallback_properties->size()) return &(*fallback_properties)[feature_idx].values;
+    return nullptr;
+}
+
+std::string firstFeaturePropertyForCaches(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    const LayerDef::FeatureRecord& fg,
+    size_t feature_idx,
+    std::initializer_list<const char*> keys) {
+    if (const FeaturePropertyPairs* props = featurePropertiesForCaches(layer, fallback_properties, feature_idx)) {
+        for (const char* key : keys) {
+            if (!key) continue;
+            for (const auto& kv : *props) {
+                if (kv.first == key) return kv.second;
+            }
+        }
+    }
+    return getFirstPropertyValue(fg, keys);
+}
+
+std::string zoningClassKeyForCaches(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    const LayerDef::FeatureRecord& fg,
+    size_t feature_idx) {
+    std::string z = firstFeaturePropertyForCaches(layer, fallback_properties, fg, feature_idx, {
+        "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
+        "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
+    return z.empty() ? "UNSPECIFIED" : z;
+}
+
+std::string zoningClassLabelForCaches(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    const LayerDef::FeatureRecord& fg,
+    size_t feature_idx) {
+    std::string z = firstFeaturePropertyForCaches(layer, fallback_properties, fg, feature_idx, {
+        "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
+    return z.empty() ? "UNSPECIFIED" : z;
+}
 }
 
 void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
@@ -174,32 +251,41 @@ void refreshDerivedLayerCaches(DerivedLayerCachesContext& ctx) {
     if (*ctx.last_refresh_inputs_signature == refresh_inputs_signature) return;
     *ctx.last_refresh_inputs_signature = refresh_inputs_signature;
 
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureRecord>> zoning_fallback_features;
+    std::unordered_map<size_t, std::vector<LayerDef::FeatureProperties>> zoning_fallback_properties;
     size_t active_zoning_feature_total = 0;
-    for (const LayerDef& layer : layers) {
+    for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
+        const LayerDef& layer = layers[layer_idx];
         if (!layer.enabled || !isZoningPolygonLayerForCaches(layer)) continue;
-        active_zoning_feature_total += layer.features.size();
+        const std::vector<LayerDef::FeatureRecord>* zoning_features =
+            zoningFeaturesForCaches(ctx, layer_idx, zoning_fallback_features, zoning_fallback_properties);
+        if (zoning_features) active_zoning_feature_total += zoning_features->size();
     }
-    if (active_zoning_feature_total != *ctx.zoning_zone_discovered_feature_count) {
+    {
         *ctx.zoning_zone_discovered_feature_count = active_zoning_feature_total;
         ctx.zoning_zone_counts->clear();
         ctx.zoning_zone_label->clear();
         ctx.zoning_group_zones->clear();
         ctx.zoning_group_order->clear();
-        std::unordered_map<std::string, bool> prev_enabled = *ctx.zoning_zone_enabled;
         ctx.zoning_zone_order->clear();
         std::unordered_set<std::string> seen_zone_keys;
         seen_zone_keys.reserve(active_zoning_feature_total / 4 + 16);
-        for (const LayerDef& layer : layers) {
+        for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
+            const LayerDef& layer = layers[layer_idx];
             if (!layer.enabled || !isZoningPolygonLayerForCaches(layer)) continue;
-            for (const auto& fg : layer.features) {
-                std::string zkey = zoningClassKey(fg);
-                std::string zlabel = zoningClassLabel(fg);
+            const std::vector<LayerDef::FeatureRecord>* zoning_features =
+                zoningFeaturesForCaches(ctx, layer_idx, zoning_fallback_features, zoning_fallback_properties);
+            if (!zoning_features) continue;
+            const auto props_it = zoning_fallback_properties.find(layer_idx);
+            const std::vector<LayerDef::FeatureProperties>* zoning_properties =
+                props_it == zoning_fallback_properties.end() ? nullptr : &props_it->second;
+            for (size_t feature_idx = 0; feature_idx < zoning_features->size(); ++feature_idx) {
+                const auto& fg = (*zoning_features)[feature_idx];
+                std::string zkey = zoningClassKeyForCaches(layer, zoning_properties, fg, feature_idx);
+                std::string zlabel = zoningClassLabelForCaches(layer, zoning_properties, fg, feature_idx);
                 (*ctx.zoning_zone_counts)[zkey] += 1;
                 if (seen_zone_keys.insert(zkey).second) ctx.zoning_zone_order->push_back(zkey);
-                if (ctx.zoning_zone_enabled->find(zkey) == ctx.zoning_zone_enabled->end()) {
-                    auto it_prev = prev_enabled.find(zkey);
-                    (*ctx.zoning_zone_enabled)[zkey] = (it_prev == prev_enabled.end()) ? true : it_prev->second;
-                }
+                (*ctx.zoning_zone_enabled)[zkey] = true;
                 auto meta_it = ctx.zoning_metadata->find(zkey);
                 if (ctx.zoning_zone_label->find(zkey) == ctx.zoning_zone_label->end()) {
                     (*ctx.zoning_zone_label)[zkey] =

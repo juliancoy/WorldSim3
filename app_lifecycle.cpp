@@ -10,7 +10,10 @@
 #include <curl/curl.h>
 
 void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
+    const auto imgui_render_begin = std::chrono::steady_clock::now();
     ImGui::Render();
+    const double imgui_render_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - imgui_render_begin).count();
     ImDrawData* draw_data = ImGui::GetDrawData();
     if (draw_data->DisplaySize.x > 0.0f && draw_data->DisplaySize.y > 0.0f) {
         ctx.window_data->ClearValue.color.float32[0] = ctx.dark_mode ? 0.020f : 0.95f;
@@ -45,6 +48,18 @@ void finalizeWorldSimFrame(FrameFinalizationContext& ctx) {
     ProfileFrameSample sample;
     sample.frame_ms = frame_ms;
     sample.ui_total_ms = ctx.prof_ui_ms_last->load(std::memory_order_relaxed);
+    sample.event_poll_ms = ctx.event_poll_ms;
+    sample.imgui_new_frame_ms = ctx.imgui_new_frame_ms;
+    sample.frame_prelude_ms = ctx.frame_prelude_ms;
+    sample.left_panel_ms = ctx.left_panel_ms;
+    sample.aux_windows_ms = ctx.aux_windows_ms;
+    sample.layer_ui_sync_ms = ctx.layer_ui_sync_ms;
+    sample.derived_caches_ms = ctx.derived_caches_ms;
+    sample.feature_render_cache_ms = ctx.feature_render_cache_ms;
+    sample.runtime_sync_ms = ctx.runtime_sync_ms;
+    sample.right_panel_ms = ctx.right_panel_ms;
+    sample.map_tab_ms = ctx.map_tab_ms;
+    sample.imgui_render_ms = imgui_render_ms;
     sample.owner_aggregate_ms = ctx.prof_owner_ms_last->load(std::memory_order_relaxed);
     sample.owner_filter_ms = ctx.prof_owner_filter_ms_last->load(std::memory_order_relaxed);
     sample.tiles_ms = ctx.prof_tile_ms_last->load(std::memory_order_relaxed);

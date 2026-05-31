@@ -302,22 +302,17 @@ uint64_t hashImU32(ImU32 color) {
 }
 
 uint64_t hashZoningStyleState(
-    const std::unordered_map<std::string, bool>& zoning_zone_enabled,
+    const std::unordered_map<std::string, bool>&,
     const std::unordered_map<std::string, ImVec4>& zoning_zone_color) {
     uint64_t h = 1469598103934665603ull;
     std::vector<std::string> keys;
-    keys.reserve(zoning_zone_color.size() + zoning_zone_enabled.size());
+    keys.reserve(zoning_zone_color.size());
     for (const auto& kv : zoning_zone_color) keys.push_back(kv.first);
-    for (const auto& kv : zoning_zone_enabled) {
-        if (zoning_zone_color.find(kv.first) == zoning_zone_color.end()) keys.push_back(kv.first);
-    }
     std::sort(keys.begin(), keys.end());
     keys.erase(std::unique(keys.begin(), keys.end()), keys.end());
     for (const std::string& key : keys) {
         for (unsigned char ch : key) h = mixStyleHash(h, uint64_t(ch));
-        auto en_it = zoning_zone_enabled.find(key);
         auto col_it = zoning_zone_color.find(key);
-        h = mixStyleHash(h, en_it != zoning_zone_enabled.end() && en_it->second ? 1ull : 0ull);
         if (col_it != zoning_zone_color.end()) {
             h = mixStyleHash(h, hashImU32(ImGui::ColorConvertFloat4ToU32(col_it->second)));
         }
@@ -735,11 +730,6 @@ bool resolveFeatureRenderStyle(
     float& feature_normalized_value,
     bool& feature_heat_value_valid) {
     if (!ctx.feature_passes_filters(layer_idx, feature_idx, fg)) return false;
-    if (is_zoning_layer) {
-        const std::string zkey = zoningClassKey(fg);
-        auto it_en = ctx.zoning_zone_enabled->find(zkey);
-        if (it_en != ctx.zoning_zone_enabled->end() && !it_en->second) return false;
-    }
     const uint64_t style_key = featureStyleKey(ctx, layer_idx, base_color, is_heat_layer, is_zoning_layer);
     const CachedFeatureColorStorage* cached_colors =
         ctx.projection->findFeatureColorStorage(layer_idx, (uint32_t)feature_idx, style_key);

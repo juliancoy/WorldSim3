@@ -45,6 +45,7 @@ LayerUiSharedContext makeLayerUiSharedContext(const LayerUiContextFactoryInput& 
     ctx.parcel_parameter_mode = input.parcel_parameter_mode;
     ctx.map_filter_state = input.map_filter_state;
     ctx.layer_browse_state = input.layer_browse_state;
+    ctx.road_label_state = input.road_label_state;
     return ctx;
 }
 

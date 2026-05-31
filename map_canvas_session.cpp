@@ -24,6 +24,9 @@ bool isParcelInteractionLayer(const std::vector<LayerDef>& layers, int layer_idx
     const LayerDef& layer = layers[(size_t)layer_idx];
     return layer.enabled &&
            layer.scale == "parcel" &&
+           layer.category != LayerDef::Category::Zoning &&
+           !containsCaseInsensitive(layer.file, "zoning") &&
+           !containsCaseInsensitive(layer.name, "zoning") &&
            !layerUsesPointGeometry(layer) &&
            !layerUsesPolylineGeometry(layer);
 }
@@ -72,7 +75,13 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
         ctx.center_lon,
         ctx.center_lat,
         ctx.zoom,
+        ctx.camera_animation,
+        ctx.target_indicator,
         ctx.app_settings->zoom_step,
+        ctx.app_settings->smooth_scroll_zoom,
+        ctx.app_settings->scroll_zoom_distance,
+        ctx.app_settings->scroll_zoom_duration_s,
+        ctx.app_settings->alt_zoom_number_multiplier,
         ctx.min_zoom,
         ctx.max_zoom,
         ctx.max_internal_math_zoom,
@@ -83,6 +92,7 @@ MapCanvasSession beginMapCanvasSession(const MapCanvasSessionContext& ctx) {
     session.size = map_viewport.size;
     session.map_hovered = map_viewport.hovered;
     session.map_active = map_viewport.active;
+    session.navigation_click_consumed = map_viewport.navigation_click_consumed;
     session.math_zoom = map_viewport.math_zoom;
     session.zoom_scale = map_viewport.zoom_scale;
     session.center_world = map_viewport.center_world;
@@ -207,6 +217,8 @@ void refreshMapCanvasHoverState(MapCanvasSession& session, const MapCanvasSessio
     const ImGuiIO& io = ImGui::GetIO();
     const bool click_select =
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        !session.navigation_click_consumed &&
+        !io.KeyAlt &&
         io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] <= 36.0f;
 
     const bool suppress_hover_lookup =

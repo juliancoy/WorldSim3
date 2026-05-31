@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #if !defined(_WIN32)
 #include <malloc.h>
@@ -323,6 +324,30 @@ std::string controlApplyModeName(ApiQueryControlCommand::ApplyMode mode) {
         case ApiQueryControlCommand::ApplyMode::None: break;
     }
     return "none";
+}
+
+bool parseApiBool(const std::string& raw, bool& out) {
+    const std::string value = toLowerAscii(trimDisplayValue(urlDecode(raw)));
+    if (value == "1" || value == "true" || value == "yes" || value == "on") {
+        out = true;
+        return true;
+    }
+    if (value == "0" || value == "false" || value == "no" || value == "off") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+bool parseApiDouble(const std::string& raw, double& out) {
+    try {
+        size_t pos = 0;
+        const std::string value = trimDisplayValue(urlDecode(raw));
+        out = std::stod(value, &pos);
+        return pos == value.size() && std::isfinite(out);
+    } catch (...) {
+        return false;
+    }
 }
 
 bool parseControlFloat(const std::string& raw, float& out) {
@@ -971,6 +996,16 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
         auto& api_zoom_cmd = *ctx.api_zoom_cmd;
         auto& api_lon_cmd = *ctx.api_lon_cmd;
         auto& api_lat_cmd = *ctx.api_lat_cmd;
+        auto& api_smooth_scroll_zoom_cmd = *ctx.api_smooth_scroll_zoom_cmd;
+        auto& api_zoom_step_cmd = *ctx.api_zoom_step_cmd;
+        auto& api_scroll_zoom_distance_cmd = *ctx.api_scroll_zoom_distance_cmd;
+        auto& api_scroll_zoom_duration_cmd = *ctx.api_scroll_zoom_duration_cmd;
+        auto& api_alt_zoom_number_multiplier_cmd = *ctx.api_alt_zoom_number_multiplier_cmd;
+        auto& api_smooth_scroll_zoom_state = *ctx.api_smooth_scroll_zoom_state;
+        auto& api_zoom_step_state = *ctx.api_zoom_step_state;
+        auto& api_scroll_zoom_distance_state = *ctx.api_scroll_zoom_distance_state;
+        auto& api_scroll_zoom_duration_state = *ctx.api_scroll_zoom_duration_state;
+        auto& api_alt_zoom_number_multiplier_state = *ctx.api_alt_zoom_number_multiplier_state;
         auto& api_ui_cmd_seq = *ctx.api_ui_cmd_seq;
         auto& api_ui_cmd_kind = *ctx.api_ui_cmd_kind;
         auto& api_ui_cmd_x = *ctx.api_ui_cmd_x;
@@ -1239,6 +1274,98 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                    << "\r\nConnection: close\r\n\r\n" << body;
                 std::string resp = os.str();
                 (void)writeAll(client_fd, resp.data(), resp.size());
+            } else if (path == "/settings/zoom") {
+                bool queued = false;
+                bool invalid_double = false;
+                std::string invalid_double_key;
+                std::string invalid_double_error = "must be a finite number";
+                double zoom_step_value = std::numeric_limits<double>::quiet_NaN();
+                double distance_value = std::numeric_limits<double>::quiet_NaN();
+                double duration_value = std::numeric_limits<double>::quiet_NaN();
+                double alt_multiplier_value = std::numeric_limits<double>::quiet_NaN();
+                int smooth_value = -1;
+                const auto parse_double_param = [&](const char* key, double& target) {
+                    const std::string raw = get_q(key);
+                    if (raw.empty()) return;
+                    double value = 0.0;
+                    if (!parseApiDouble(raw, value)) {
+                        invalid_double = true;
+                        invalid_double_key = key;
+                        invalid_double_error = "must be a finite number";
+                        return;
+                    }
+                    target = value;
+                    queued = true;
+                };
+                const std::string smooth_raw =
+                    !get_q("smooth_scroll_zoom").empty() ? get_q("smooth_scroll_zoom") : get_q("smooth");
+                if (!smooth_raw.empty()) {
+                    bool smooth = false;
+                    if (!parseApiBool(smooth_raw, smooth)) {
+                        send_json(400, "Bad Request", {
+                            {"ok", false},
+                            {"error", "smooth_scroll_zoom must be one of 1/0, true/false, yes/no, on/off"}
+                        });
+                        continue;
+                    }
+                    smooth_value = smooth ? 1 : 0;
+                    queued = true;
+                }
+                parse_double_param("zoom_step", zoom_step_value);
+                parse_double_param("scroll_zoom_distance", distance_value);
+                if (get_q("scroll_zoom_distance").empty()) parse_double_param("distance", distance_value);
+                parse_double_param("scroll_zoom_duration_s", duration_value);
+                if (get_q("scroll_zoom_duration_s").empty()) parse_double_param("duration", duration_value);
+                parse_double_param("alt_zoom_number_multiplier", alt_multiplier_value);
+                if (get_q("alt_zoom_number_multiplier").empty()) parse_double_param("alt_multiplier", alt_multiplier_value);
+                if (get_q("scroll_zoom_duration_s").empty() && get_q("duration").empty()) {
+                    double speed_value = std::numeric_limits<double>::quiet_NaN();
+                    parse_double_param("scroll_zoom_speed", speed_value);
+                    if (get_q("scroll_zoom_speed").empty()) parse_double_param("speed", speed_value);
+                    if (!std::isnan(speed_value)) {
+                        if (speed_value <= 0.0) {
+                            invalid_double = true;
+                            invalid_double_key = get_q("scroll_zoom_speed").empty() ? "speed" : "scroll_zoom_speed";
+                            invalid_double_error = "must be greater than zero";
+                        } else {
+                            duration_value = 1.0 / speed_value;
+                        }
+                    }
+                }
+                if (invalid_double) {
+                    send_json(400, "Bad Request", {
+                        {"ok", false},
+                        {"error", invalid_double_key + " " + invalid_double_error}
+                    });
+                    continue;
+                }
+                if (smooth_value >= 0) api_smooth_scroll_zoom_cmd.store(smooth_value, std::memory_order_relaxed);
+                if (!std::isnan(zoom_step_value)) api_zoom_step_cmd.store(zoom_step_value, std::memory_order_relaxed);
+                if (!std::isnan(distance_value)) api_scroll_zoom_distance_cmd.store(distance_value, std::memory_order_relaxed);
+                if (!std::isnan(duration_value)) api_scroll_zoom_duration_cmd.store(duration_value, std::memory_order_relaxed);
+                if (!std::isnan(alt_multiplier_value)) api_alt_zoom_number_multiplier_cmd.store(alt_multiplier_value, std::memory_order_relaxed);
+                send_json(200, "OK", {
+                    {"ok", true},
+                    {"queued", queued},
+                    {"note", queued ? "Zoom settings will be applied and persisted on the render thread next frame." : "No setting changes requested."},
+                    {"settings", {
+                        {"smooth_scroll_zoom", api_smooth_scroll_zoom_state.load(std::memory_order_relaxed) != 0},
+                        {"zoom_step", api_zoom_step_state.load(std::memory_order_relaxed)},
+                        {"scroll_zoom_distance", api_scroll_zoom_distance_state.load(std::memory_order_relaxed)},
+                        {"scroll_zoom_duration_s", api_scroll_zoom_duration_state.load(std::memory_order_relaxed)},
+                        {"scroll_zoom_speed", api_scroll_zoom_duration_state.load(std::memory_order_relaxed) > 0.0
+                            ? 1.0 / api_scroll_zoom_duration_state.load(std::memory_order_relaxed)
+                            : 0.0},
+                        {"alt_zoom_number_multiplier", api_alt_zoom_number_multiplier_state.load(std::memory_order_relaxed)}
+                    }},
+                    {"accepted_parameters", json::array({
+                        "smooth_scroll_zoom", "smooth", "zoom_step",
+                        "scroll_zoom_distance", "distance",
+                        "scroll_zoom_duration_s", "duration",
+                        "scroll_zoom_speed", "speed",
+                        "alt_zoom_number_multiplier", "alt_multiplier"
+                    })}
+                });
             } else if (path == "/set_center") {
                 std::string lon = get_q("lon");
                 std::string lat = get_q("lat");
@@ -1410,6 +1537,15 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 out["vacancy_probe"] = {
                     {"matched_total", vacant_parcels_matched_total.load(std::memory_order_relaxed)},
                     {"with_geometry_total", vacant_parcels_with_geometry_total.load(std::memory_order_relaxed)}
+                };
+                const DuckDbAnalyticsStatus duckdb_status = duckdb_analytics.status();
+                out["duckdb"] = {
+                    {"available", duckdb_status.available},
+                    {"last_rebuild_ok", duckdb_status.last_rebuild_ok},
+                    {"layer_count", duckdb_status.layer_count},
+                    {"feature_count", duckdb_status.feature_count},
+                    {"db_path", duckdb_status.db_path},
+                    {"message", duckdb_status.message}
                 };
                 out["perf"] = {
                     {"frame_ms_avg", perf_frame_ms_avg.load(std::memory_order_relaxed)},
@@ -1584,6 +1720,7 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     }
                     profile_generation = profile_reset_generation;
                 }
+                const ProfileFrameSample last_sample = samples.empty() ? ProfileFrameSample{} : samples.back();
                 auto phase_values = [&](double ProfileFrameSample::*field) {
                     std::vector<double> values;
                     values.reserve(samples.size());
@@ -1613,6 +1750,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                     {"sample_count", samples.size()},
                     {"frame_ms", summarize_ms(phase_values(&ProfileFrameSample::frame_ms))},
                     {"ui_total_ms", summarize_ms(phase_values(&ProfileFrameSample::ui_total_ms))},
+                    {"event_poll_ms", summarize_ms(phase_values(&ProfileFrameSample::event_poll_ms))},
+                    {"imgui_new_frame_ms", summarize_ms(phase_values(&ProfileFrameSample::imgui_new_frame_ms))},
+                    {"frame_prelude_ms", summarize_ms(phase_values(&ProfileFrameSample::frame_prelude_ms))},
+                    {"left_panel_ms", summarize_ms(phase_values(&ProfileFrameSample::left_panel_ms))},
+                    {"aux_windows_ms", summarize_ms(phase_values(&ProfileFrameSample::aux_windows_ms))},
+                    {"layer_ui_sync_ms", summarize_ms(phase_values(&ProfileFrameSample::layer_ui_sync_ms))},
+                    {"derived_caches_ms", summarize_ms(phase_values(&ProfileFrameSample::derived_caches_ms))},
+                    {"feature_render_cache_ms", summarize_ms(phase_values(&ProfileFrameSample::feature_render_cache_ms))},
+                    {"runtime_sync_ms", summarize_ms(phase_values(&ProfileFrameSample::runtime_sync_ms))},
+                    {"right_panel_ms", summarize_ms(phase_values(&ProfileFrameSample::right_panel_ms))},
+                    {"map_tab_ms", summarize_ms(phase_values(&ProfileFrameSample::map_tab_ms))},
+                    {"imgui_render_ms", summarize_ms(phase_values(&ProfileFrameSample::imgui_render_ms))},
                     {"owner_aggregate_ms", summarize_ms(phase_values(&ProfileFrameSample::owner_aggregate_ms))},
                     {"owner_filter_ms", summarize_ms(phase_values(&ProfileFrameSample::owner_filter_ms))},
                     {"tiles_ms", summarize_ms(phase_values(&ProfileFrameSample::tiles_ms))},
@@ -1623,6 +1772,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                 };
                 out["phases_ms_last"] = {
                     {"ui_total", prof_ui_ms_last.load(std::memory_order_relaxed)},
+                    {"event_poll", last_sample.event_poll_ms},
+                    {"imgui_new_frame", last_sample.imgui_new_frame_ms},
+                    {"frame_prelude", last_sample.frame_prelude_ms},
+                    {"left_panel", last_sample.left_panel_ms},
+                    {"aux_windows", last_sample.aux_windows_ms},
+                    {"layer_ui_sync", last_sample.layer_ui_sync_ms},
+                    {"derived_caches", last_sample.derived_caches_ms},
+                    {"feature_render_cache", last_sample.feature_render_cache_ms},
+                    {"runtime_sync", last_sample.runtime_sync_ms},
+                    {"right_panel", last_sample.right_panel_ms},
+                    {"map_tab", last_sample.map_tab_ms},
+                    {"imgui_render", last_sample.imgui_render_ms},
                     {"owner_aggregate", prof_owner_ms_last.load(std::memory_order_relaxed)},
                     {"owner_filter", ctx.prof_owner_filter_ms_last ? ctx.prof_owner_filter_ms_last->load(std::memory_order_relaxed) : 0.0},
                     {"tiles", prof_tile_ms_last.load(std::memory_order_relaxed)},
@@ -2113,12 +2274,18 @@ std::thread startStatusApiWorker(StatusApiContext ctx) {
                             const double y = std::stod(get_q("y"));
                             const std::string braw = get_q("button");
                             const int button = braw.empty() ? 0 : std::clamp(std::stoi(braw), 0, 4);
+                            const std::string ctrl_raw = toLowerAscii(get_q("ctrl"));
+                            const bool ctrl = ctrl_raw == "1" || ctrl_raw == "true" || ctrl_raw == "yes" || ctrl_raw == "on";
+                            const std::string alt_raw = toLowerAscii(get_q("alt"));
+                            const bool alt = alt_raw == "1" || alt_raw == "true" || alt_raw == "yes" || alt_raw == "on";
                             api_ui_cmd_x.store(x, std::memory_order_relaxed);
                             api_ui_cmd_y.store(y, std::memory_order_relaxed);
                             api_ui_cmd_button.store(button, std::memory_order_relaxed);
+                            if (ctx.api_ui_cmd_ctrl) ctx.api_ui_cmd_ctrl->store(ctrl, std::memory_order_relaxed);
+                            if (ctx.api_ui_cmd_alt) ctx.api_ui_cmd_alt->store(alt, std::memory_order_relaxed);
                             api_ui_cmd_kind.store(1, std::memory_order_relaxed);
                             api_ui_cmd_seq.fetch_add(1, std::memory_order_relaxed);
-                            out["action"] = {{"type", "click"}, {"x", x}, {"y", y}, {"button", button}};
+                            out["action"] = {{"type", "click"}, {"x", x}, {"y", y}, {"button", button}, {"ctrl", ctrl}, {"alt", alt}};
                         } else if (action == "move") {
                             const double x = std::stod(get_q("x"));
                             const double y = std::stod(get_q("y"));

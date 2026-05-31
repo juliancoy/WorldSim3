@@ -21,9 +21,12 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
         !ctx.api_layer_mutex || !ctx.api_layer_enable_cmds || !ctx.api_layer_fill_cmds ||
         !ctx.api_layer_download_cmds || !ctx.layer_fill_mutex || !ctx.layer_fill_enabled ||
         !ctx.layer_fill_state_changed || !ctx.api_ui_cmd_seq || !ctx.api_ui_cmd_kind ||
-        !ctx.api_ui_cmd_x || !ctx.api_ui_cmd_y || !ctx.api_ui_cmd_button ||
-        !ctx.api_ui_cmd_scroll_y || !ctx.api_ui_cmd_last_seq || !ctx.api_ui_mouse_release_pending ||
-        !ctx.api_ui_mouse_release_button || !ctx.api_zoom_cmd || !ctx.api_lon_cmd ||
+        !ctx.api_ui_cmd_x || !ctx.api_ui_cmd_y || !ctx.api_ui_cmd_button || !ctx.api_ui_cmd_ctrl ||
+        !ctx.api_ui_cmd_alt || !ctx.api_ui_cmd_scroll_y || !ctx.api_ui_cmd_last_seq ||
+        !ctx.api_ui_mouse_release_pending || !ctx.api_ui_mouse_release_button ||
+        !ctx.api_ui_mouse_release_ctrl || !ctx.api_ui_mouse_release_alt ||
+        !ctx.api_ui_ctrl_release_pending || !ctx.api_ui_alt_release_pending ||
+        !ctx.api_zoom_cmd || !ctx.api_lon_cmd ||
         !ctx.api_lat_cmd || !ctx.lazy_tile_download || !ctx.basemap_coverage_dirty ||
         !ctx.basemap_availability_last_check || !ctx.osm_missing_tiles_cached ||
         !ctx.osm_total_tiles_cached || !ctx.topo_missing_tiles_cached ||
@@ -120,6 +123,8 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     api_control_ctx.api_ui_cmd_x = ctx.api_ui_cmd_x;
     api_control_ctx.api_ui_cmd_y = ctx.api_ui_cmd_y;
     api_control_ctx.api_ui_cmd_button = ctx.api_ui_cmd_button;
+    api_control_ctx.api_ui_cmd_ctrl = ctx.api_ui_cmd_ctrl;
+    api_control_ctx.api_ui_cmd_alt = ctx.api_ui_cmd_alt;
     api_control_ctx.api_ui_cmd_scroll_y = ctx.api_ui_cmd_scroll_y;
     api_control_ctx.map_filter_state = ctx.map_filter_state;
     api_control_ctx.active_filter_result_set = ctx.active_filter_result_set;
@@ -132,6 +137,10 @@ FramePreludeResult runFramePrelude(const FramePreludeContext& ctx) {
     api_control_ctx.api_ui_cmd_last_seq = ctx.api_ui_cmd_last_seq;
     api_control_ctx.api_ui_mouse_release_pending = ctx.api_ui_mouse_release_pending;
     api_control_ctx.api_ui_mouse_release_button = ctx.api_ui_mouse_release_button;
+    api_control_ctx.api_ui_mouse_release_ctrl = ctx.api_ui_mouse_release_ctrl;
+    api_control_ctx.api_ui_mouse_release_alt = ctx.api_ui_mouse_release_alt;
+    api_control_ctx.api_ui_ctrl_release_pending = ctx.api_ui_ctrl_release_pending;
+    api_control_ctx.api_ui_alt_release_pending = ctx.api_ui_alt_release_pending;
     applyApiControlCommands(api_control_ctx);
 
     ctx.current_zoom_state->store((int)std::lround(*ctx.zoom), std::memory_order_relaxed);

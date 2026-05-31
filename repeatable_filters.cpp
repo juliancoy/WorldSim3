@@ -174,6 +174,9 @@ const std::unordered_map<std::string, RepeatableFilterFieldSpec>& repeatableFilt
         {"vacant_rehab_count", {"vacant_rehab_count", RepeatableFilterFieldSpec::Type::Number}},
         {"tax_lien_count", {"tax_lien_count", RepeatableFilterFieldSpec::Type::Number}},
         {"tax_sale_count", {"tax_sale_count", RepeatableFilterFieldSpec::Type::Number}},
+        {"foreclosure_filing_count", {"foreclosure_filing_count", RepeatableFilterFieldSpec::Type::Number}},
+        {"open_receivership_count", {"open_receivership_count", RepeatableFilterFieldSpec::Type::Number}},
+        {"auction_count", {"auction_count", RepeatableFilterFieldSpec::Type::Number}},
         {"tax_lien_amount", {"tax_lien_amount", RepeatableFilterFieldSpec::Type::Number}},
         {"tax_sale_amount", {"tax_sale_amount", RepeatableFilterFieldSpec::Type::Number}}
     };
@@ -367,7 +370,8 @@ json queryExecutionSnapshotJson(const QueryExecutionContextSnapshot& snapshot) {
         {"center_lat", snapshot.center_lat},
         {"zoom", snapshot.zoom},
         {"map_title_text", snapshot.map_title_text},
-        {"map_title_show_primary_parcel_source", snapshot.map_title_show_primary_parcel_source}
+        {"map_title_show_primary_parcel_source", snapshot.map_title_show_primary_parcel_source},
+        {"map_title_source_layer_file", snapshot.map_title_source_layer_file}
     };
 }
 

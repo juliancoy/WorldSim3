@@ -14,10 +14,12 @@
 #include "layers_panel_ui.h"
 #include "worldsim_app.h"
 #include "worldsim_app_internal.h"
-#include "zoning_filters_panel.h"
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <future>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 
@@ -60,7 +62,7 @@ struct GeographyHierarchyOptions {
     std::unordered_map<std::string, std::vector<std::string>> regions_by_nation;
 };
 
-GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::path& root) {
+GeographyHierarchyOptions buildGeographyHierarchyOptionsUncached(const std::filesystem::path& root) {
     GeographyHierarchyOptions out;
     std::set<std::string> nations_seen;
     std::unordered_map<std::string, std::set<std::string>> region_sets;
@@ -108,6 +110,47 @@ GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::
     return out;
 }
 
+GeographyHierarchyOptions buildGeographyHierarchyOptions(const std::filesystem::path& root) {
+    static GeographyHierarchyOptions cached;
+    static std::filesystem::path cached_root;
+    static std::chrono::steady_clock::time_point cached_at{};
+    static std::mutex cache_mutex;
+    static std::future<GeographyHierarchyOptions> refresh_future;
+    static std::filesystem::path refresh_root;
+    static bool refresh_inflight = false;
+    constexpr auto kRefreshInterval = std::chrono::seconds(2);
+
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lk(cache_mutex);
+    if (refresh_inflight &&
+        refresh_future.valid() &&
+        refresh_future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        cached = refresh_future.get();
+        cached_root = refresh_root;
+        cached_at = now;
+        refresh_inflight = false;
+    }
+
+    const bool has_cache = !cached_root.empty();
+    if (has_cache && cached_root == root && now - cached_at < kRefreshInterval) return cached;
+
+    if (!has_cache) {
+        cached = buildGeographyHierarchyOptionsUncached(root);
+        cached_root = root;
+        cached_at = now;
+        return cached;
+    }
+
+    if (!refresh_inflight) {
+        refresh_root = root;
+        refresh_inflight = true;
+        refresh_future = std::async(std::launch::async, [root]() {
+            return buildGeographyHierarchyOptionsUncached(root);
+        });
+    }
+    return cached;
+}
+
 bool layerVisibleInSelectedHierarchy(const LeftPanelContext& ctx, const LayerDef& layer) {
     return !ctx.layer_browse_state || layerMatchesBrowseGeography(layer, *ctx.layer_browse_state);
 }
@@ -151,7 +194,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
         ctx.local_layer_exists_cache && ctx.data_freshness_state && ctx.data_freshness_msg &&
         ctx.data_library_status_msg && ctx.zoom && ctx.center_lon && ctx.center_lat &&
         ctx.active_hover_layer_idx && ctx.active_click_layer_idx && ctx.show_sources_panel &&
-        ctx.show_data_library && ctx.parcel_parameter_mode && ctx.layer_spatial &&
+        ctx.show_data_library && ctx.collapsed && ctx.parcel_parameter_mode && ctx.layer_spatial &&
         ctx.layer_states && ctx.status_mutex && ctx.layer_fill_enabled &&
         ctx.layer_hover_enabled && ctx.layer_inspect_enabled && ctx.layer_heatmap_enabled &&
         ctx.layer_heatmap_algo && ctx.layer_heatmap_max_zoom && ctx.layer_parcel_detail_min_zoom &&
@@ -169,9 +212,7 @@ bool leftPanelContextReady(const LeftPanelContext& ctx) {
 	        ctx.crime_filter_shooting && ctx.crime_breakdown && ctx.parcel_jurisdiction_filter_state &&
         ctx.parcel_jurisdiction_options && ctx.basemap_download && ctx.lazy_tile_download && ctx.map_filter_state &&
         ctx.layer_browse_state &&
-	        ctx.basemap_coverage_dirty && ctx.zoning_zone_enabled && ctx.zoning_zone_color &&
-	        ctx.zoning_zone_label && ctx.zoning_metadata && ctx.zoning_zone_order &&
-	        ctx.zoning_zone_counts && ctx.zoning_group_zones && ctx.zoning_group_order;
+        ctx.basemap_coverage_dirty && ctx.road_label_state;
 }
 
 void selectAllLayersAndFilters(const LeftPanelContext& ctx) {
@@ -204,6 +245,13 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::SetNextWindowPos(ImVec2(ctx.layout_margin, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.left_panel_w, ctx.main_panel_h), ImGuiCond_Always);
     ImGui::Begin("Layers and Controls", nullptr, ImGuiWindowFlags_NoCollapse);
+    if (ImGui::SmallButton("<")) *ctx.collapsed = true;
+    if (ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted("Hide left panel");
+        ImGui::EndTooltip();
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Gear")) *ctx.show_sources_panel = !*ctx.show_sources_panel;
     ImGui::SameLine();
     if (ImGui::Button("Library")) *ctx.show_data_library = !*ctx.show_data_library;
@@ -313,11 +361,6 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     ImGui::SameLine();
     if (ImGui::SmallButton("+")) {
         *ctx.zoom = std::min((double)ctx.max_zoom, *ctx.zoom + std::clamp(ctx.app_settings->zoom_step, 0.05, 4.0));
-    }
-    double zoom_step_ui = ctx.app_settings->zoom_step;
-    if (ImGui::InputDouble("Zoom Step", &zoom_step_ui, 0.0, 0.0, "%.2f", ImGuiInputTextFlags_EnterReturnsTrue)) {
-        ctx.app_settings->zoom_step = std::clamp(zoom_step_ui, 0.05, 4.0);
-        saveAppSettings(*ctx.root, *ctx.app_settings);
     }
     double lon_min = -180.0;
     double lon_max = 180.0;
@@ -468,6 +511,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
     layer_ui_input.heatmap_controls_active = ctx.heatmap_controls_active;
     layer_ui_input.map_filter_state = ctx.map_filter_state;
     layer_ui_input.layer_browse_state = ctx.layer_browse_state;
+    layer_ui_input.road_label_state = ctx.road_label_state;
     LayerUiSharedContext layer_ui_shared = makeLayerUiSharedContext(layer_ui_input);
 
     LayersPanelContextFactoryInput layers_panel_input;
@@ -500,19 +544,6 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
 
     if (ctx.map_filter_state) ensureCommunitySectorFilterDefaults(ctx.map_filter_state->event_sector_enabled);
 
-    ZoningFiltersPanelContext zoning_filters_ctx;
-    zoning_filters_ctx.zoning_layer_idx = ctx.zoning_layer_idx;
-    zoning_filters_ctx.root = ctx.root;
-    zoning_filters_ctx.app_settings = ctx.app_settings;
-    zoning_filters_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
-    zoning_filters_ctx.zoning_zone_color = ctx.zoning_zone_color;
-    zoning_filters_ctx.zoning_zone_label = ctx.zoning_zone_label;
-    zoning_filters_ctx.zoning_metadata = ctx.zoning_metadata;
-    zoning_filters_ctx.zoning_zone_order = ctx.zoning_zone_order;
-    zoning_filters_ctx.zoning_zone_counts = ctx.zoning_zone_counts;
-    zoning_filters_ctx.zoning_group_zones = ctx.zoning_group_zones;
-    zoning_filters_ctx.zoning_group_order = ctx.zoning_group_order;
-    result.zoning_filters_changed = drawZoningFiltersPanel(zoning_filters_ctx);
     EventSectorFiltersPanelContext event_sector_filters_ctx;
     event_sector_filters_ctx.layers = ctx.layers;
     event_sector_filters_ctx.map_filter_state = ctx.map_filter_state;

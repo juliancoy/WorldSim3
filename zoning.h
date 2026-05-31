@@ -10,6 +10,8 @@
 struct ZoneMetadata {
     std::string label;
     std::string description;
+    std::string source_url;
+    std::string source;
     std::string color_hex;
     ImVec4 color = ImVec4(0, 0, 0, 1);
     bool has_color = false;

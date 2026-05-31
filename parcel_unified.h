@@ -42,8 +42,14 @@ struct UnifiedParcelRecord {
     int vacant_rehab_count = 0;
     int tax_lien_count = 0;
     int tax_sale_count = 0;
+    int foreclosure_filing_count = 0;
+    int open_receivership_count = 0;
+    int auction_count = 0;
     double tax_lien_amount = 0.0;
     double tax_sale_amount = 0.0;
+    std::string latest_foreclosure_date;
+    std::string next_auction_date;
+    std::string last_sold_at_auction_date;
 };
 
 struct UnifiedParcelBuildRequest {

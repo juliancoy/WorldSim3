@@ -44,6 +44,8 @@ std::unordered_map<std::string, ZoneMetadata> loadZoneMetadata(const fs::path& r
         const auto& v = it.value();
         if (v.contains("label") && v["label"].is_string()) meta.label = v["label"].get<std::string>();
         if (v.contains("description") && v["description"].is_string()) meta.description = v["description"].get<std::string>();
+        if (v.contains("source_url") && v["source_url"].is_string()) meta.source_url = v["source_url"].get<std::string>();
+        if (v.contains("source") && v["source"].is_string()) meta.source = v["source"].get<std::string>();
         if (v.contains("color") && v["color"].is_string()) {
             meta.color_hex = v["color"].get<std::string>();
             meta.has_color = parseHexColor(meta.color_hex, meta.color);
@@ -107,7 +109,7 @@ std::string fallbackDescriptionForZoneCode(const std::string& raw_code) {
     if (code == "MI") return "Maritime industrial zoning district for port, marine, industrial, and water-dependent activity.";
     if (code == "OIC") return "Office-industrial campus zoning district for campus-style employment, office, research, or institutional uses.";
 
-    return "Zoning district with use and development standards defined by the city zoning code.";
+    return "Zoning district with use and development standards defined by the local zoning code.";
 }
 }
 

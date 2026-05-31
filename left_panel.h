@@ -6,6 +6,7 @@
 #include "filters.h"
 #include "layer_registry.h"
 #include "layer_runtime.h"
+#include "road_label_state.h"
 #include "tiles.h"
 #include "types.h"
 #include "zoning.h"
@@ -55,6 +56,7 @@ struct LeftPanelContext {
     int* active_click_layer_idx = nullptr;
     bool* show_sources_panel = nullptr;
     bool* show_data_library = nullptr;
+    bool* collapsed = nullptr;
 
     int* parcel_parameter_mode = nullptr;
     std::vector<LayerSpatialIndex>* layer_spatial = nullptr;
@@ -136,6 +138,7 @@ struct LeftPanelContext {
     std::function<void(size_t, bool)> mark_local_layer_exists;
     std::function<void(size_t, bool)> enqueue_hydration;
     std::function<void(size_t, bool)> open_layer_color_editor;
+    RoadLabelState* road_label_state = nullptr;
 };
 
 LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx);

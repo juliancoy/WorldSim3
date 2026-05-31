@@ -144,8 +144,11 @@ void applyApiControlCommands(ApiControlContext& ctx) {
     applyQueuedFilterControls(ctx);
 
     if (!ctx.api_ui_cmd_seq || !ctx.api_ui_cmd_kind || !ctx.api_ui_cmd_x || !ctx.api_ui_cmd_y ||
-        !ctx.api_ui_cmd_button || !ctx.api_ui_cmd_scroll_y || !ctx.api_ui_cmd_last_seq ||
-        !ctx.api_ui_mouse_release_pending || !ctx.api_ui_mouse_release_button) {
+        !ctx.api_ui_cmd_button || !ctx.api_ui_cmd_ctrl || !ctx.api_ui_cmd_alt ||
+        !ctx.api_ui_cmd_scroll_y || !ctx.api_ui_cmd_last_seq ||
+        !ctx.api_ui_mouse_release_pending || !ctx.api_ui_mouse_release_button ||
+        !ctx.api_ui_mouse_release_ctrl || !ctx.api_ui_mouse_release_alt ||
+        !ctx.api_ui_ctrl_release_pending || !ctx.api_ui_alt_release_pending) {
         return;
     }
 
@@ -153,7 +156,16 @@ void applyApiControlCommands(ApiControlContext& ctx) {
     ImGuiIO& io = ImGui::GetIO();
     if (*ctx.api_ui_mouse_release_pending) {
         io.AddMouseButtonEvent(std::clamp(*ctx.api_ui_mouse_release_button, 0, 4), false);
+        if (*ctx.api_ui_mouse_release_ctrl) *ctx.api_ui_ctrl_release_pending = true;
+        if (*ctx.api_ui_mouse_release_alt) *ctx.api_ui_alt_release_pending = true;
         *ctx.api_ui_mouse_release_pending = false;
+        *ctx.api_ui_mouse_release_ctrl = false;
+        *ctx.api_ui_mouse_release_alt = false;
+    } else if (*ctx.api_ui_ctrl_release_pending || *ctx.api_ui_alt_release_pending) {
+        if (*ctx.api_ui_ctrl_release_pending) io.AddKeyEvent(ImGuiKey_LeftCtrl, false);
+        if (*ctx.api_ui_alt_release_pending) io.AddKeyEvent(ImGuiKey_LeftAlt, false);
+        *ctx.api_ui_ctrl_release_pending = false;
+        *ctx.api_ui_alt_release_pending = false;
     }
     if (ui_seq != *ctx.api_ui_cmd_last_seq) {
         *ctx.api_ui_cmd_last_seq = ui_seq;
@@ -161,12 +173,18 @@ void applyApiControlCommands(ApiControlContext& ctx) {
         const float x = (float)ctx.api_ui_cmd_x->load(std::memory_order_relaxed);
         const float y = (float)ctx.api_ui_cmd_y->load(std::memory_order_relaxed);
         const int button = std::clamp(ctx.api_ui_cmd_button->load(std::memory_order_relaxed), 0, 4);
+        const bool ctrl = ctx.api_ui_cmd_ctrl->load(std::memory_order_relaxed);
+        const bool alt = ctx.api_ui_cmd_alt->load(std::memory_order_relaxed);
         const float scroll_y = (float)ctx.api_ui_cmd_scroll_y->load(std::memory_order_relaxed);
         if (kind == 1) {
             io.AddMousePosEvent(x, y);
+            if (ctrl) io.AddKeyEvent(ImGuiKey_LeftCtrl, true);
+            if (alt) io.AddKeyEvent(ImGuiKey_LeftAlt, true);
             io.AddMouseButtonEvent(button, true);
             *ctx.api_ui_mouse_release_pending = true;
             *ctx.api_ui_mouse_release_button = button;
+            *ctx.api_ui_mouse_release_ctrl = ctrl;
+            *ctx.api_ui_mouse_release_alt = alt;
         } else if (kind == 2) {
             io.AddMousePosEvent(x, y);
         } else if (kind == 3) {

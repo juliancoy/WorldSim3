@@ -64,6 +64,17 @@ struct FrameSupportFinalizationContext {
     double* ema_frame_ms = nullptr;
     double perf_alpha = 0.12;
     std::chrono::steady_clock::time_point frame_begin;
+    double event_poll_ms = 0.0;
+    double imgui_new_frame_ms = 0.0;
+    double frame_prelude_ms = 0.0;
+    double left_panel_ms = 0.0;
+    double aux_windows_ms = 0.0;
+    double layer_ui_sync_ms = 0.0;
+    double derived_caches_ms = 0.0;
+    double feature_render_cache_ms = 0.0;
+    double runtime_sync_ms = 0.0;
+    double right_panel_ms = 0.0;
+    double map_tab_ms = 0.0;
     size_t tiles_drawn_frame = 0;
     size_t features_considered_frame = 0;
     size_t features_drawn_frame = 0;

@@ -83,6 +83,17 @@ void finalizeFrameSupport(const FrameSupportFinalizationContext& ctx) {
     frame_ctx.ema_frame_ms = ctx.ema_frame_ms;
     frame_ctx.perf_alpha = ctx.perf_alpha;
     frame_ctx.frame_begin = ctx.frame_begin;
+    frame_ctx.event_poll_ms = ctx.event_poll_ms;
+    frame_ctx.imgui_new_frame_ms = ctx.imgui_new_frame_ms;
+    frame_ctx.frame_prelude_ms = ctx.frame_prelude_ms;
+    frame_ctx.left_panel_ms = ctx.left_panel_ms;
+    frame_ctx.aux_windows_ms = ctx.aux_windows_ms;
+    frame_ctx.layer_ui_sync_ms = ctx.layer_ui_sync_ms;
+    frame_ctx.derived_caches_ms = ctx.derived_caches_ms;
+    frame_ctx.feature_render_cache_ms = ctx.feature_render_cache_ms;
+    frame_ctx.runtime_sync_ms = ctx.runtime_sync_ms;
+    frame_ctx.right_panel_ms = ctx.right_panel_ms;
+    frame_ctx.map_tab_ms = ctx.map_tab_ms;
     frame_ctx.tiles_drawn_frame = ctx.tiles_drawn_frame;
     frame_ctx.features_considered_frame = ctx.features_considered_frame;
     frame_ctx.features_drawn_frame = ctx.features_drawn_frame;

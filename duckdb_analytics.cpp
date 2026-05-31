@@ -23,7 +23,7 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 namespace {
-constexpr int kAnalyticsSchemaVersion = 13;
+constexpr int kAnalyticsSchemaVersion = 15;
 constexpr size_t kMaxEventDetailChars = 4096;
 constexpr size_t kMaxEventMetadataChars = 8192;
 
@@ -319,6 +319,18 @@ std::string eventMetadataJsonForFeature(const LayerDef& layer, size_t feature_id
         "PREMISE_ADDRESS", "ADDRESS", "Address", "ADDR", "ADDR1", "ADDRESS1",
         "SITE_ADDR", "SITUSADDR", "LOCATION", "Location"
     }));
+    appendMetadataValue(metadata, "case_number", trimFirstPropertyValue(layer, feature_idx, {
+        "Case__", "CaseNumber", "CASE_NUMBER", "CASE_NUM", "Case"
+    }));
+    appendMetadataValue(metadata, "case_title", trimFirstPropertyValue(layer, feature_idx, {
+        "Case_Title", "CaseTitle", "CASE_TITLE"
+    }));
+    appendMetadataValue(metadata, "auction_date", trimFirstPropertyValue(layer, feature_idx, {
+        "DateAuction", "AuctionDate", "AUCTION_DATE"
+    }));
+    appendMetadataValue(metadata, "sold_at_auction", trimFirstPropertyValue(layer, feature_idx, {
+        "SoldAtAuction", "Sold_Auction", "SOLD_AT_AUCTION"
+    }));
     if (metadata.empty()) return {};
     return truncateUtf8Safe(metadata.dump(), kMaxEventMetadataChars);
 }
@@ -601,6 +613,10 @@ void appendSocrataHowardPropertyRows(
         appender.Append<const char*>("");
         appender.Append<const char*>("");
         appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
+        appender.Append<const char*>("");
         appender.Append<int32_t>((int32_t)parseNumericField(get(row, "c_a_m_a_system_data_year_built_yyyy_mdp_field_yearblt_sdat_field_235")));
         appender.Append<double>(parseNumericField(get(row, "sales_segment_1_consideration_mdp_field_considr1_sdat_field_90")));
         appender.EndRow();
@@ -664,8 +680,20 @@ void appendAnalyticsLayerFeatures(
             const std::string event_date_text = firstDisplayProperty(fg, {
                 "event_date", "DateNotice", "DateIssue", "DateIssued", "IssuedDate",
                 "Issue_Date_ISO", "Issue_Date", "DateFiled", "DateAuction",
-                "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
+                "Date", "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
                 "CREATED_DATE", "RECORD_DATE"
+            });
+            const std::string event_auction_date_text = firstDisplayProperty(fg, {
+                "DateAuction", "AuctionDate", "AUCTION_DATE"
+            });
+            const std::string event_sold_at_auction_text = firstDisplayProperty(fg, {
+                "SoldAtAuction", "Sold_Auction", "SOLD_AT_AUCTION"
+            });
+            const std::string event_case_number = firstDisplayProperty(fg, {
+                "Case__", "CaseNumber", "CASE_NUMBER", "CASE_NUM", "Case"
+            });
+            const std::string event_case_title = firstDisplayProperty(fg, {
+                "Case_Title", "CaseTitle", "CASE_TITLE"
             });
             const std::string event_status_hint = firstDisplayProperty(fg, {"CASE_STATUS", "STATUS", "STATE"});
             const std::string event_title_hint = eventTitleHintForFeature(layer, fi);
@@ -714,6 +742,10 @@ void appendAnalyticsLayerFeatures(
             appender.Append<const char*>(event_title_hint.c_str());
             appender.Append<const char*>(event_detail_hint.c_str());
             appender.Append<const char*>(event_metadata_json.c_str());
+            appender.Append<const char*>(event_auction_date_text.c_str());
+            appender.Append<const char*>(event_sold_at_auction_text.c_str());
+            appender.Append<const char*>(event_case_number.c_str());
+            appender.Append<const char*>(event_case_title.c_str());
             appender.Append<int32_t>(event_year_hint);
             appender.Append<double>(amount_usd_hint);
             appender.EndRow();
@@ -757,8 +789,14 @@ void rewriteUnifiedParcelsTable(
         parcel_appender.Append<int32_t>(parcel.vacant_rehab_count);
         parcel_appender.Append<int32_t>(parcel.tax_lien_count);
         parcel_appender.Append<int32_t>(parcel.tax_sale_count);
+        parcel_appender.Append<int32_t>(parcel.foreclosure_filing_count);
+        parcel_appender.Append<int32_t>(parcel.open_receivership_count);
+        parcel_appender.Append<int32_t>(parcel.auction_count);
         parcel_appender.Append<double>(parcel.tax_lien_amount);
         parcel_appender.Append<double>(parcel.tax_sale_amount);
+        parcel_appender.Append<const char*>(parcel.latest_foreclosure_date.c_str());
+        parcel_appender.Append<const char*>(parcel.next_auction_date.c_str());
+        parcel_appender.Append<const char*>(parcel.last_sold_at_auction_date.c_str());
         parcel_appender.Append<double>(parcel.parcel_extent.min_lon);
         parcel_appender.Append<double>(parcel.parcel_extent.min_lat);
         parcel_appender.Append<double>(parcel.parcel_extent.max_lon);
@@ -908,46 +946,136 @@ void refreshUnifiedParcelEventRollups(duckdb::Connection& con) {
                 std::string(context) + ": " + (res ? res->GetError() : std::string("query failed")));
         }
     };
-    exec_or_throw(R"SQL(
+    constexpr const char* kCityParcelEventScopeSql = R"SQL(
+                  AND (
+                    unified_parcels.parcel_source_file = 'parcel.geojson'
+                    OR lower(pe.source_layer_file) NOT IN (
+                        'vacant_building_notices.geojson',
+                        'open_notices_vacant.geojson',
+                        'vacant_building_rehabs.geojson',
+                        'tax_lien_certificate_sale_properties.geojson',
+                        'tax_sale_list_2021.geojson',
+                        'open_bid_list_vacants_to_value.geojson',
+                        'foreclosure_filings.geojson',
+                        'receivership_filed_open.geojson',
+                        'receivership_settled.geojson'
+                    )
+                  )
+    )SQL";
+    std::string sql = R"SQL(
         UPDATE unified_parcels
         SET
             vacant_notice_count = COALESCE((
                 SELECT count(*)::INTEGER
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'vacant_notice'
             ), 0),
             vacant_rehab_count = COALESCE((
                 SELECT count(*)::INTEGER
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'vacant_rehab'
             ), 0),
             tax_lien_count = COALESCE((
                 SELECT count(*)::INTEGER
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'tax_lien'
             ), 0),
             tax_sale_count = COALESCE((
                 SELECT count(*)::INTEGER
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'tax_sale'
+            ), 0),
+            foreclosure_filing_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.event_type = 'foreclosure_filing'
+            ), 0),
+            open_receivership_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.event_type = 'open_receivership'
+            ), 0),
+            auction_count = COALESCE((
+                SELECT count(*)::INTEGER
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.auction_date IS NOT NULL
             ), 0),
             tax_lien_amount = COALESCE((
                 SELECT sum(COALESCE(pe.amount_usd, 0.0))
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'tax_lien'
             ), 0.0),
             tax_sale_amount = COALESCE((
                 SELECT sum(COALESCE(pe.amount_usd, 0.0))
                 FROM parcel_events pe
                 WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
                   AND pe.event_type = 'tax_sale'
-            ), 0.0)
-    )SQL", "refresh unified parcel event rollups");
+            ), 0.0),
+            latest_foreclosure_date = COALESCE((
+                SELECT cast(max(pe.event_date) AS VARCHAR)
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.event_type = 'foreclosure_filing'
+            ), ''),
+            next_auction_date = COALESCE((
+                SELECT cast(min(pe.auction_date) AS VARCHAR)
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.auction_date IS NOT NULL
+                  AND pe.auction_date >= current_date
+            ), ''),
+            last_sold_at_auction_date = COALESCE((
+                SELECT cast(max(pe.sold_at_auction_date) AS VARCHAR)
+                FROM parcel_events pe
+                WHERE pe.blocklot = unified_parcels.blocklot
+)SQL";
+    sql += kCityParcelEventScopeSql;
+    sql += R"SQL(
+                  AND pe.sold_at_auction_date IS NOT NULL
+            ), '')
+    )SQL";
+    exec_or_throw(sql, "refresh unified parcel event rollups");
 }
 
 void rebuildParcelRelationshipArtifacts(duckdb::Connection& con) {
@@ -1046,6 +1174,20 @@ void rebuildParcelRelationshipArtifacts(duckdb::Connection& con) {
           ON vb.blocklot = up.blocklot
         JOIN parcel_events pe
           ON pe.blocklot = up.blocklot
+        WHERE (
+            up.parcel_source_file = 'parcel.geojson'
+            OR lower(pe.source_layer_file) NOT IN (
+                'vacant_building_notices.geojson',
+                'open_notices_vacant.geojson',
+                'vacant_building_rehabs.geojson',
+                'tax_lien_certificate_sale_properties.geojson',
+                'tax_sale_list_2021.geojson',
+                'open_bid_list_vacants_to_value.geojson',
+                'foreclosure_filings.geojson',
+                'receivership_filed_open.geojson',
+                'receivership_settled.geojson'
+            )
+        )
     )SQL", "create parcel_related_events");
 
     exec_or_throw(R"SQL(
@@ -1550,12 +1692,39 @@ void rebuildDerivedAnalyticsObjects(
                 lf.event_title_hint,
                 lf.event_detail_hint,
                 lf.event_metadata_json,
+                lf.event_auction_date_text,
+                lf.event_sold_at_auction_text,
+                lf.event_case_number,
+                lf.event_case_title,
                 lf.event_year_hint,
                 lf.amount_usd_hint,
                 coalesce(
                     try_strptime(lf.event_date_text, '%Y-%m-%dT%H:%M:%SZ'),
-                    try_strptime(lf.event_date_text, '%Y-%m-%d')
-                ) AS parsed_event_ts
+                    try_strptime(lf.event_date_text, '%Y-%m-%d'),
+                    CASE
+                        WHEN try_cast(lf.event_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_date_text AS BIGINT))
+                        WHEN try_cast(lf.event_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_date_text AS BIGINT)) AS TIMESTAMP)
+                        ELSE NULL
+                    END
+                ) AS parsed_event_ts,
+                coalesce(
+                    try_strptime(lf.event_auction_date_text, '%Y-%m-%dT%H:%M:%SZ'),
+                    try_strptime(lf.event_auction_date_text, '%Y-%m-%d'),
+                    CASE
+                        WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_auction_date_text AS BIGINT))
+                        WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_auction_date_text AS BIGINT)) AS TIMESTAMP)
+                        ELSE NULL
+                    END
+                ) AS parsed_auction_ts,
+                coalesce(
+                    try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%dT%H:%M:%SZ'),
+                    try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%d'),
+                    CASE
+                        WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_sold_at_auction_text AS BIGINT))
+                        WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_sold_at_auction_text AS BIGINT)) AS TIMESTAMP)
+                        ELSE NULL
+                    END
+                ) AS parsed_sold_at_auction_ts
             FROM layer_features lf
             WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
         )
@@ -1570,6 +1739,9 @@ void rebuildDerivedAnalyticsObjects(
                 WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
                 WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
                 WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'foreclosure_filing'
+                WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'open_receivership'
+                WHEN lower(layer_file) LIKE '%receivership%' THEN 'receivership'
                 WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                 WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
                 WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
@@ -1589,10 +1761,17 @@ void rebuildDerivedAnalyticsObjects(
                 nullif(event_year_hint, 0),
                 try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
             ) AS event_year,
+            cast(parsed_auction_ts AS DATE) AS auction_date,
+            cast(parsed_sold_at_auction_ts AS DATE) AS sold_at_auction_date,
+            nullif(event_case_number, '') AS case_number,
+            nullif(event_case_title, '') AS case_title,
             CASE
                 WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
                 WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
                 WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'Foreclosure Filing'
+                WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'Open Receivership'
+                WHEN lower(layer_file) LIKE '%receivership%' THEN 'Receivership'
                 WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
                 WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
                 WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
@@ -1622,6 +1801,7 @@ void rebuildDerivedAnalyticsObjects(
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
     exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+    exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_auction_date ON parcel_events(auction_date)", "index parcel_events auction_date");
     refreshUnifiedParcelEventRollups(con);
     rebuildParcelRelationshipArtifacts(con);
     exec_or_throw(R"SQL(
@@ -1856,11 +2036,32 @@ std::string DuckDbAnalytics::buildSourceSignature() const {
         std::error_code ec;
         const fs::path db_path = status_.db_path;
         if (!fs::exists(db_path, ec) || ec) return {};
+
+        const uintmax_t db_size = fs::file_size(db_path, ec);
+        if (ec) return {};
+        const auto db_mtime = fs::last_write_time(db_path, ec);
+        if (ec) return {};
+        std::ostringstream cache_key;
+        cache_key << db_path.string() << ":" << db_size << ":" << db_mtime.time_since_epoch().count();
+        const std::string key = cache_key.str();
+        {
+            std::lock_guard<std::mutex> lock(build_source_signature_cache_mutex_);
+            if (cached_build_source_signature_key_ == key) {
+                return cached_build_source_signature_value_;
+            }
+        }
+
         duckdb::DuckDB db(status_.db_path);
         duckdb::Connection con(db);
         auto res = con.Query("SELECT source_signature FROM analytics_build_info LIMIT 1");
         if (!res || res->HasError() || res->RowCount() == 0) return {};
-        return res->GetValue(0, 0).ToString();
+        const std::string signature = res->GetValue(0, 0).ToString();
+        {
+            std::lock_guard<std::mutex> lock(build_source_signature_cache_mutex_);
+            cached_build_source_signature_key_ = key;
+            cached_build_source_signature_value_ = signature;
+        }
+        return signature;
     } catch (...) {
         return {};
     }
@@ -1942,12 +2143,39 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     lf.event_title_hint,
                                     lf.event_detail_hint,
                                     lf.event_metadata_json,
+                                    lf.event_auction_date_text,
+                                    lf.event_sold_at_auction_text,
+                                    lf.event_case_number,
+                                    lf.event_case_title,
                                     lf.event_year_hint,
                                     lf.amount_usd_hint,
                                     coalesce(
                                         try_strptime(lf.event_date_text, '%Y-%m-%dT%H:%M:%SZ'),
-                                        try_strptime(lf.event_date_text, '%Y-%m-%d')
-                                    ) AS parsed_event_ts
+                                        try_strptime(lf.event_date_text, '%Y-%m-%d'),
+                                        CASE
+                                            WHEN try_cast(lf.event_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_date_text AS BIGINT))
+                                            WHEN try_cast(lf.event_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_date_text AS BIGINT)) AS TIMESTAMP)
+                                            ELSE NULL
+                                        END
+                                    ) AS parsed_event_ts,
+                                    coalesce(
+                                        try_strptime(lf.event_auction_date_text, '%Y-%m-%dT%H:%M:%SZ'),
+                                        try_strptime(lf.event_auction_date_text, '%Y-%m-%d'),
+                                        CASE
+                                            WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_auction_date_text AS BIGINT))
+                                            WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_auction_date_text AS BIGINT)) AS TIMESTAMP)
+                                            ELSE NULL
+                                        END
+                                    ) AS parsed_auction_ts,
+                                    coalesce(
+                                        try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%dT%H:%M:%SZ'),
+                                        try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%d'),
+                                        CASE
+                                            WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_sold_at_auction_text AS BIGINT))
+                                            WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_sold_at_auction_text AS BIGINT)) AS TIMESTAMP)
+                                            ELSE NULL
+                                        END
+                                    ) AS parsed_sold_at_auction_ts
                                 FROM layer_features lf
                                 WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
                             )
@@ -1962,6 +2190,9 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
                                     WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
                                     WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                                    WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'foreclosure_filing'
+                                    WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'open_receivership'
+                                    WHEN lower(layer_file) LIKE '%receivership%' THEN 'receivership'
                                     WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                                     WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
                                     WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
@@ -1978,10 +2209,17 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                                     nullif(event_year_hint, 0),
                                     try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
                                 ) AS event_year,
+                                cast(parsed_auction_ts AS DATE) AS auction_date,
+                                cast(parsed_sold_at_auction_ts AS DATE) AS sold_at_auction_date,
+                                nullif(event_case_number, '') AS case_number,
+                                nullif(event_case_title, '') AS case_title,
                                 CASE
                                     WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
                                     WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
                                     WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                                    WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'Foreclosure Filing'
+                                    WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'Open Receivership'
+                                    WHEN lower(layer_file) LIKE '%receivership%' THEN 'Receivership'
                                     WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
                                     WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
                                     WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
@@ -2008,6 +2246,7 @@ DuckDbArtifactEnsureResult DuckDbAnalytics::ensureCurrentArtifact(
                         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
                         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
                         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+                        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_auction_date ON parcel_events(auction_date)", "index parcel_events auction_date");
                         refreshUnifiedParcelEventRollups(con);
                         rebuildParcelRelationshipArtifacts(con);
                         exec_or_throw(
@@ -2216,6 +2455,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 event_title_hint VARCHAR,
                 event_detail_hint VARCHAR,
                 event_metadata_json VARCHAR,
+                event_auction_date_text VARCHAR,
+                event_sold_at_auction_text VARCHAR,
+                event_case_number VARCHAR,
+                event_case_title VARCHAR,
                 event_year_hint INTEGER,
                 amount_usd_hint DOUBLE
             )
@@ -2287,8 +2530,20 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 const std::string event_date_text = firstDisplayProperty(fg, {
                     "event_date", "DateNotice", "DateIssue", "DateIssued", "IssuedDate",
                     "Issue_Date_ISO", "Issue_Date", "DateFiled", "DateAuction",
-                    "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
+                    "Date", "DateDemoFinished", "ReleasedToContractor", "SALEDATE", "DATE",
                     "CREATED_DATE", "RECORD_DATE"
+                });
+                const std::string event_auction_date_text = firstDisplayProperty(fg, {
+                    "DateAuction", "AuctionDate", "AUCTION_DATE"
+                });
+                const std::string event_sold_at_auction_text = firstDisplayProperty(fg, {
+                    "SoldAtAuction", "Sold_Auction", "SOLD_AT_AUCTION"
+                });
+                const std::string event_case_number = firstDisplayProperty(fg, {
+                    "Case__", "CaseNumber", "CASE_NUMBER", "CASE_NUM", "Case"
+                });
+                const std::string event_case_title = firstDisplayProperty(fg, {
+                    "Case_Title", "CaseTitle", "CASE_TITLE"
                 });
                 const std::string event_status_hint = firstDisplayProperty(fg, {"CASE_STATUS", "STATUS", "STATE"});
                 const std::string event_title_hint = eventTitleHintForFeature(layer, fi);
@@ -2342,6 +2597,10 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 appender.Append<const char*>(event_title_hint.c_str());
                 appender.Append<const char*>(event_detail_hint.c_str());
                 appender.Append<const char*>(event_metadata_json.c_str());
+                appender.Append<const char*>(event_auction_date_text.c_str());
+                appender.Append<const char*>(event_sold_at_auction_text.c_str());
+                appender.Append<const char*>(event_case_number.c_str());
+                appender.Append<const char*>(event_case_title.c_str());
                 appender.Append<int32_t>(event_year_hint);
                 appender.Append<double>(amount_usd_hint);
                 appender.EndRow();
@@ -2430,8 +2689,14 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 vacant_rehab_count INTEGER,
                 tax_lien_count INTEGER,
                 tax_sale_count INTEGER,
+                foreclosure_filing_count INTEGER,
+                open_receivership_count INTEGER,
+                auction_count INTEGER,
                 tax_lien_amount DOUBLE,
                 tax_sale_amount DOUBLE,
+                latest_foreclosure_date VARCHAR,
+                next_auction_date VARCHAR,
+                last_sold_at_auction_date VARCHAR,
                 min_lon DOUBLE,
                 min_lat DOUBLE,
                 max_lon DOUBLE,
@@ -2488,8 +2753,14 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 parcel_appender.Append<int32_t>(0);
                 parcel_appender.Append<int32_t>(0);
                 parcel_appender.Append<int32_t>(0);
+                parcel_appender.Append<int32_t>(0);
+                parcel_appender.Append<int32_t>(0);
+                parcel_appender.Append<int32_t>(0);
                 parcel_appender.Append<double>(0.0);
                 parcel_appender.Append<double>(0.0);
+                parcel_appender.Append<const char*>("");
+                parcel_appender.Append<const char*>("");
+                parcel_appender.Append<const char*>("");
                 parcel_appender.Append<double>(parcel.min_lon);
                 parcel_appender.Append<double>(parcel.min_lat);
                 parcel_appender.Append<double>(parcel.max_lon);
@@ -2774,12 +3045,39 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     lf.event_title_hint,
                     lf.event_detail_hint,
                     lf.event_metadata_json,
+                    lf.event_auction_date_text,
+                    lf.event_sold_at_auction_text,
+                    lf.event_case_number,
+                    lf.event_case_title,
                     lf.event_year_hint,
                     lf.amount_usd_hint,
                     coalesce(
                         try_strptime(lf.event_date_text, '%Y-%m-%dT%H:%M:%SZ'),
-                        try_strptime(lf.event_date_text, '%Y-%m-%d')
-                    ) AS parsed_event_ts
+                        try_strptime(lf.event_date_text, '%Y-%m-%d'),
+                        CASE
+                            WHEN try_cast(lf.event_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_date_text AS BIGINT))
+                            WHEN try_cast(lf.event_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_date_text AS BIGINT)) AS TIMESTAMP)
+                            ELSE NULL
+                        END
+                    ) AS parsed_event_ts,
+                    coalesce(
+                        try_strptime(lf.event_auction_date_text, '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(lf.event_auction_date_text, '%Y-%m-%d'),
+                        CASE
+                            WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_auction_date_text AS BIGINT))
+                            WHEN try_cast(lf.event_auction_date_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_auction_date_text AS BIGINT)) AS TIMESTAMP)
+                            ELSE NULL
+                        END
+                    ) AS parsed_auction_ts,
+                    coalesce(
+                        try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%dT%H:%M:%SZ'),
+                        try_strptime(lf.event_sold_at_auction_text, '%Y-%m-%d'),
+                        CASE
+                            WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 100000000000 THEN epoch_ms(try_cast(lf.event_sold_at_auction_text AS BIGINT))
+                            WHEN try_cast(lf.event_sold_at_auction_text AS BIGINT) >= 1000000000 THEN cast(to_timestamp(try_cast(lf.event_sold_at_auction_text AS BIGINT)) AS TIMESTAMP)
+                            ELSE NULL
+                        END
+                    ) AS parsed_sold_at_auction_ts
                 FROM layer_features lf
                 WHERE lf.duckdb_role = 'parcel_event' AND lf.blocklot IS NOT NULL AND lf.blocklot <> ''
             )
@@ -2792,8 +3090,11 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                 CASE
                     WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'vacant_notice'
                     WHEN lower(layer_file) LIKE '%open_notices%vacant%' THEN 'vacant_notice'
-                    WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
+                WHEN lower(layer_name) LIKE '%open notices%' AND lower(layer_name) LIKE '%vacant%' THEN 'vacant_notice'
                 WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'vacant_rehab'
+                WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'foreclosure_filing'
+                WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'open_receivership'
+                WHEN lower(layer_file) LIKE '%receivership%' THEN 'receivership'
                 WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'tax_lien'
                 WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'tax_sale'
                 WHEN lower(layer_file) LIKE '%building_permits%' THEN 'building_permit'
@@ -2809,15 +3110,22 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
                     feature_status
                 ) AS event_status,
                 cast(parsed_event_ts AS DATE) AS event_date,
-                coalesce(
-                    nullif(event_year_hint, 0),
-                    try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
-                ) AS event_year,
-                CASE
+            coalesce(
+                nullif(event_year_hint, 0),
+                try_cast(strftime(parsed_event_ts, '%Y') AS INTEGER)
+            ) AS event_year,
+            cast(parsed_auction_ts AS DATE) AS auction_date,
+            cast(parsed_sold_at_auction_ts AS DATE) AS sold_at_auction_date,
+            nullif(event_case_number, '') AS case_number,
+            nullif(event_case_title, '') AS case_title,
+            CASE
                     WHEN lower(layer_file) LIKE '%building_permits%' THEN 'Building Permit'
-                    WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
-                    WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
-                    WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
+                WHEN lower(layer_file) IN ('vacant_building_notices.geojson', 'open_notices_vacant.geojson') THEN 'Vacant Notice'
+                WHEN lower(layer_file) = 'vacant_building_rehabs.geojson' THEN 'Vacant Rehab'
+                WHEN lower(layer_file) LIKE '%foreclosure%' THEN 'Foreclosure Filing'
+                WHEN lower(layer_file) LIKE '%receivership%' AND lower(layer_file) LIKE '%filed%open%' THEN 'Open Receivership'
+                WHEN lower(layer_file) LIKE '%receivership%' THEN 'Receivership'
+                WHEN lower(layer_file) LIKE '%tax_lien%' THEN 'Tax Lien'
                     WHEN lower(layer_file) LIKE '%tax_sale%' THEN 'Tax Sale'
                     WHEN lower(layer_file) LIKE '%open_bid_list_vacants_to_value%' THEN 'Vacants to Value Bid'
                     WHEN nullif(event_title_hint, '') IS NOT NULL THEN event_title_hint
@@ -2846,6 +3154,7 @@ bool DuckDbAnalytics::rebuild(const std::vector<LayerDef>& layers, const std::ve
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_blocklot ON parcel_events(blocklot)", "index parcel_events blocklot");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_year ON parcel_events(event_year)", "index parcel_events event_year");
         exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_event_type ON parcel_events(event_type)", "index parcel_events event_type");
+        exec_or_throw("CREATE INDEX IF NOT EXISTS idx_parcel_events_auction_date ON parcel_events(auction_date)", "index parcel_events auction_date");
         refreshUnifiedParcelEventRollups(con);
         rebuildParcelRelationshipArtifacts(con);
         exec_or_throw(R"SQL(
@@ -3125,8 +3434,14 @@ DuckDbQueryResult DuckDbAnalytics::queryUnifiedParcelDetail(const std::string& p
                 vacant_rehab_count,
                 tax_lien_count,
                 tax_sale_count,
+                foreclosure_filing_count,
+                open_receivership_count,
+                auction_count,
                 tax_lien_amount,
                 tax_sale_amount,
+                latest_foreclosure_date,
+                next_auction_date,
+                last_sold_at_auction_date,
                 min_lon,
                 min_lat,
                 max_lon,
@@ -3182,8 +3497,14 @@ DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecord(const 
     rec.vacant_rehab_count = queryResultInt(detail, row, "vacant_rehab_count");
     rec.tax_lien_count = queryResultInt(detail, row, "tax_lien_count");
     rec.tax_sale_count = queryResultInt(detail, row, "tax_sale_count");
+    rec.foreclosure_filing_count = queryResultInt(detail, row, "foreclosure_filing_count");
+    rec.open_receivership_count = queryResultInt(detail, row, "open_receivership_count");
+    rec.auction_count = queryResultInt(detail, row, "auction_count");
     rec.tax_lien_amount = queryResultDouble(detail, row, "tax_lien_amount");
     rec.tax_sale_amount = queryResultDouble(detail, row, "tax_sale_amount");
+    rec.latest_foreclosure_date = queryResultCell(detail, row, "latest_foreclosure_date");
+    rec.next_auction_date = queryResultCell(detail, row, "next_auction_date");
+    rec.last_sold_at_auction_date = queryResultCell(detail, row, "last_sold_at_auction_date");
     rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(detail, row, "min_lon"));
     rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(detail, row, "min_lat"));
     rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(detail, row, "max_lon"));
@@ -3235,8 +3556,14 @@ DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecordByLayer
             rec.vacant_rehab_count = queryResultInt(cached, row, "vacant_rehab_count");
             rec.tax_lien_count = queryResultInt(cached, row, "tax_lien_count");
             rec.tax_sale_count = queryResultInt(cached, row, "tax_sale_count");
+            rec.foreclosure_filing_count = queryResultInt(cached, row, "foreclosure_filing_count");
+            rec.open_receivership_count = queryResultInt(cached, row, "open_receivership_count");
+            rec.auction_count = queryResultInt(cached, row, "auction_count");
             rec.tax_lien_amount = queryResultDouble(cached, row, "tax_lien_amount");
             rec.tax_sale_amount = queryResultDouble(cached, row, "tax_sale_amount");
+            rec.latest_foreclosure_date = queryResultCell(cached, row, "latest_foreclosure_date");
+            rec.next_auction_date = queryResultCell(cached, row, "next_auction_date");
+            rec.last_sold_at_auction_date = queryResultCell(cached, row, "last_sold_at_auction_date");
             rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(cached, row, "min_lon"));
             rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(cached, row, "min_lat"));
             rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(cached, row, "max_lon"));
@@ -3274,8 +3601,14 @@ DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecordByLayer
             up.vacant_rehab_count,
             up.tax_lien_count,
             up.tax_sale_count,
+            up.foreclosure_filing_count,
+            up.open_receivership_count,
+            up.auction_count,
             up.tax_lien_amount,
             up.tax_sale_amount,
+            up.latest_foreclosure_date,
+            up.next_auction_date,
+            up.last_sold_at_auction_date,
             up.min_lon,
             up.min_lat,
             up.max_lon,
@@ -3323,8 +3656,14 @@ DuckDbUnifiedParcelDetail DuckDbAnalytics::queryUnifiedParcelDetailRecordByLayer
     rec.vacant_rehab_count = queryResultInt(detail, row, "vacant_rehab_count");
     rec.tax_lien_count = queryResultInt(detail, row, "tax_lien_count");
     rec.tax_sale_count = queryResultInt(detail, row, "tax_sale_count");
+    rec.foreclosure_filing_count = queryResultInt(detail, row, "foreclosure_filing_count");
+    rec.open_receivership_count = queryResultInt(detail, row, "open_receivership_count");
+    rec.auction_count = queryResultInt(detail, row, "auction_count");
     rec.tax_lien_amount = queryResultDouble(detail, row, "tax_lien_amount");
     rec.tax_sale_amount = queryResultDouble(detail, row, "tax_sale_amount");
+    rec.latest_foreclosure_date = queryResultCell(detail, row, "latest_foreclosure_date");
+    rec.next_auction_date = queryResultCell(detail, row, "next_auction_date");
+    rec.last_sold_at_auction_date = queryResultCell(detail, row, "last_sold_at_auction_date");
     rec.parcel_extent.min_lon = static_cast<float>(queryResultDouble(detail, row, "min_lon"));
     rec.parcel_extent.min_lat = static_cast<float>(queryResultDouble(detail, row, "min_lat"));
     rec.parcel_extent.max_lon = static_cast<float>(queryResultDouble(detail, row, "max_lon"));
@@ -3402,6 +3741,10 @@ DuckDbQueryResult DuckDbAnalytics::queryParcelEvents(
             event_status,
             cast(event_date AS VARCHAR) AS event_date,
             cast(event_year AS VARCHAR) AS event_year,
+            cast(auction_date AS VARCHAR) AS auction_date,
+            cast(sold_at_auction_date AS VARCHAR) AS sold_at_auction_date,
+            case_number,
+            case_title,
             cast(amount_usd AS VARCHAR) AS amount_usd,
             source_layer_name,
             source_layer_file,
@@ -3513,8 +3856,14 @@ DuckDbParcelSemanticSnapshot DuckDbAnalytics::loadParcelSemanticSnapshot(size_t 
                     vacant_rehab_count,
                     tax_lien_count,
                     tax_sale_count,
+                    foreclosure_filing_count,
+                    open_receivership_count,
+                    auction_count,
                     tax_lien_amount,
                     tax_sale_amount,
+                    latest_foreclosure_date,
+                    next_auction_date,
+                    last_sold_at_auction_date,
                     min_lon,
                     min_lat,
                     max_lon,
@@ -3551,8 +3900,14 @@ DuckDbParcelSemanticSnapshot DuckDbAnalytics::loadParcelSemanticSnapshot(size_t 
                 COALESCE(ru.vacant_rehab_count, 0) AS vacant_rehab_count,
                 COALESCE(ru.tax_lien_count, 0) AS tax_lien_count,
                 COALESCE(ru.tax_sale_count, 0) AS tax_sale_count,
+                COALESCE(ru.foreclosure_filing_count, 0) AS foreclosure_filing_count,
+                COALESCE(ru.open_receivership_count, 0) AS open_receivership_count,
+                COALESCE(ru.auction_count, 0) AS auction_count,
                 COALESCE(ru.tax_lien_amount, 0.0) AS tax_lien_amount,
                 COALESCE(ru.tax_sale_amount, 0.0) AS tax_sale_amount,
+                COALESCE(ru.latest_foreclosure_date, '') AS latest_foreclosure_date,
+                COALESCE(ru.next_auction_date, '') AS next_auction_date,
+                COALESCE(ru.last_sold_at_auction_date, '') AS last_sold_at_auction_date,
                 COALESCE(ru.min_lon, lf.min_lon) AS min_lon,
                 COALESCE(ru.min_lat, lf.min_lat) AS min_lat,
                 COALESCE(ru.max_lon, lf.max_lon) AS max_lon,
@@ -3600,12 +3955,18 @@ DuckDbParcelSemanticSnapshot DuckDbAnalytics::loadParcelSemanticSnapshot(size_t 
                 record.vacant_rehab_count = chunk->GetValue(21, row).GetValue<int32_t>();
                 record.tax_lien_count = chunk->GetValue(22, row).GetValue<int32_t>();
                 record.tax_sale_count = chunk->GetValue(23, row).GetValue<int32_t>();
-                record.tax_lien_amount = chunk->GetValue(24, row).GetValue<double>();
-                record.tax_sale_amount = chunk->GetValue(25, row).GetValue<double>();
-                record.parcel_extent.min_lon = (float)chunk->GetValue(26, row).GetValue<double>();
-                record.parcel_extent.min_lat = (float)chunk->GetValue(27, row).GetValue<double>();
-                record.parcel_extent.max_lon = (float)chunk->GetValue(28, row).GetValue<double>();
-                record.parcel_extent.max_lat = (float)chunk->GetValue(29, row).GetValue<double>();
+                record.foreclosure_filing_count = chunk->GetValue(24, row).GetValue<int32_t>();
+                record.open_receivership_count = chunk->GetValue(25, row).GetValue<int32_t>();
+                record.auction_count = chunk->GetValue(26, row).GetValue<int32_t>();
+                record.tax_lien_amount = chunk->GetValue(27, row).GetValue<double>();
+                record.tax_sale_amount = chunk->GetValue(28, row).GetValue<double>();
+                record.latest_foreclosure_date = chunk->GetValue(29, row).ToString();
+                record.next_auction_date = chunk->GetValue(30, row).ToString();
+                record.last_sold_at_auction_date = chunk->GetValue(31, row).ToString();
+                record.parcel_extent.min_lon = (float)chunk->GetValue(32, row).GetValue<double>();
+                record.parcel_extent.min_lat = (float)chunk->GetValue(33, row).GetValue<double>();
+                record.parcel_extent.max_lon = (float)chunk->GetValue(34, row).GetValue<double>();
+                record.parcel_extent.max_lat = (float)chunk->GetValue(35, row).GetValue<double>();
                 if (record.owner_display.empty()) record.owner_display = record.owner;
                 if (record.address_search.empty()) record.address_search = normalizeAddressSearchText(record.address);
                 record.owner_search = normalizeFuzzySearchText(

@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 
 namespace {
@@ -81,6 +82,35 @@ const FeaturePropertyPairs* featurePropertiesForColoring(
     if (feature_idx < layer.feature_properties.size()) return &layer.feature_properties[feature_idx].values;
     if (fallback_properties && feature_idx < fallback_properties->size()) return &(*fallback_properties)[feature_idx].values;
     return nullptr;
+}
+
+std::string firstFeaturePropertyForColoring(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    const LayerDef::FeatureRecord& fg,
+    size_t feature_idx,
+    std::initializer_list<const char*> keys) {
+    if (const FeaturePropertyPairs* props = featurePropertiesForColoring(layer, fallback_properties, feature_idx)) {
+        for (const char* key : keys) {
+            if (!key) continue;
+            for (const auto& kv : *props) {
+                if (kv.first == key) return kv.second;
+            }
+        }
+    }
+    return getFirstPropertyValue(fg, keys);
+}
+
+std::string zoningClassKeyForColoring(
+    const LayerDef& layer,
+    const std::vector<LayerDef::FeatureProperties>* fallback_properties,
+    const LayerDef::FeatureRecord& fg,
+    size_t feature_idx) {
+    std::string z = firstFeaturePropertyForColoring(layer, fallback_properties, fg, feature_idx, {
+        "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
+        "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
+    return z.empty() ? "UNSPECIFIED" : z;
 }
 
 bool tryGetFeaturePropertyFloatForColoring(
@@ -236,7 +266,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
             std::string zoning_error;
             if (ensureZoningGpuBuffersResident(li, blob, &zoning_error)) {
                 state.render_blobs[li] = std::move(blob);
-                if (!layer.heatmap_field.empty()) {
+                if (!layer.heatmap_field.empty() || isZoningPolygonLayer(layer)) {
                     std::vector<LayerDef::FeatureRecord> color_features;
                     std::vector<LayerDef::FeatureProperties> color_properties;
                     if (loadCanonicalLayerFeatureCollection(
@@ -308,11 +338,6 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
             for (float c : ql.color) hashF32(color_state_key, c);
             for (float c : ql.outline_color) hashF32(color_state_key, c);
         }
-        hashMix(color_state_key, static_cast<uint64_t>(input.zoning_zone_enabled->size()));
-        for (const auto& [zone_key, enabled] : *input.zoning_zone_enabled) {
-            for (unsigned char ch : zone_key) hashMix(color_state_key, ch);
-            hashMix(color_state_key, static_cast<uint64_t>(enabled));
-        }
         hashMix(color_state_key, static_cast<uint64_t>(input.zoning_zone_color->size()));
         for (const auto& [zone_key, color] : *input.zoning_zone_color) {
             for (unsigned char ch : zone_key) hashMix(color_state_key, ch);
@@ -351,6 +376,7 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
         hashF32(color_state_key, layer.color.y);
         hashF32(color_state_key, layer.color.z);
         hashF32(color_state_key, layer.color.w);
+        hashMix(color_state_key, static_cast<uint64_t>(input.app_settings->zoning_use_simcity_colors));
         hashF32(color_state_key, input.app_settings->map_polygon_fill_opacity);
         uint64_t outline_state_key = color_state_key;
         hashF32(outline_state_key, layer.outline_color.x);
@@ -419,12 +445,21 @@ void syncZoningGpuLayers(const ZoningRuntimeSyncInput& input, ZoningRuntimeState
                         heat_normalization.normalizedValue(fg, value, polygonNormalizationGroupKey, t)) {
                         color = ImGui::ColorConvertFloat4ToU32(heatColor(applyPowerGamma(t, gamma)));
                     }
-                } else if (static_cast<size_t>(feature_idx) < layer.features.size() && isZoningPolygonLayer(layer)) {
-                    const LayerDef::FeatureRecord& fg = layer.features[static_cast<size_t>(feature_idx)];
-                    const std::string zkey = zoningClassKey(fg);
+                } else if (isZoningPolygonLayer(layer) && (has_live_feature || has_fallback_feature)) {
+                    const LayerDef::FeatureRecord& fg = has_live_feature
+                        ? layer.features[static_cast<size_t>(feature_idx)]
+                        : (*fallback_features)[static_cast<size_t>(feature_idx)];
+                    const std::string zkey =
+                        zoningClassKeyForColoring(layer, fallback_properties, fg, static_cast<size_t>(feature_idx));
                     auto it_col = input.zoning_zone_color->find(zkey);
                     if (it_col != input.zoning_zone_color->end()) {
                         color = ImGui::ColorConvertFloat4ToU32(it_col->second);
+                    } else if (input.app_settings->zoning_use_simcity_colors) {
+                        color = ImGui::ColorConvertFloat4ToU32(
+                            zoningShadeVariant(zoningColorFromConvention(zkey), zkey));
+                    } else {
+                        color = ImGui::ColorConvertFloat4ToU32(
+                            zoningShadeVariant(colorFromStableKey(zkey), zkey));
                     }
                 }
                 if (render_state && render_state->has_query_color) color = render_state->query_color;

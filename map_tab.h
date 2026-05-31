@@ -10,6 +10,7 @@
 #include "map_frame_session.h"
 #include "owner_info.h"
 #include "policy_panel.h"
+#include "road_label_state.h"
 #include "selection.h"
 #include "time_cube_panel.h"
 #include "types.h"
@@ -40,6 +41,8 @@ struct MapTabContext {
     double* center_lon = nullptr;
     double* center_lat = nullptr;
     double* zoom = nullptr;
+    CameraAnimationState* camera_animation = nullptr;
+    TargetIndicatorState* target_indicator = nullptr;
     int min_zoom = 0;
     int max_zoom = 0;
     int max_internal_math_zoom = 0;
@@ -198,6 +201,9 @@ struct MapTabContext {
     size_t* policy_viz_node_count = nullptr;
     std::function<void()> toggle_map_fullscreen;
     std::function<void()> request_snapshot;
+    std::function<void()> toggle_video_recording;
+    std::function<bool()> video_recording_active;
+    RoadLabelState* road_label_state = nullptr;
     bool map_fullscreen = false;
 };
 

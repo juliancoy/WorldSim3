@@ -66,7 +66,26 @@ RenderTailPassResult runRenderTailPass(const RenderTailPassContext& ctx) {
         ctx.polygon_geometry_artifacts,
         ctx.parcel_render_blob,
         ctx.parcel_layer_idx,
+        ctx.zoning_layer_idx,
         ctx.parcel_selection,
+        ctx.show_selected_zone_details,
+        ctx.selected_zone_idx,
+        ctx.math_zoom,
+        ctx.projection,
+        ctx.project_world
+    });
+    renderSelectedZoneOutline(MapSelectionRenderContext{
+        ctx.draw,
+        ctx.origin,
+        ctx.size,
+        ctx.layers,
+        ctx.polygon_geometry_artifacts,
+        ctx.parcel_render_blob,
+        ctx.parcel_layer_idx,
+        ctx.zoning_layer_idx,
+        ctx.parcel_selection,
+        ctx.show_selected_zone_details,
+        ctx.selected_zone_idx,
         ctx.math_zoom,
         ctx.projection,
         ctx.project_world

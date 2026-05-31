@@ -123,6 +123,13 @@ bool colorDiffers(const ImVec4& a, const ImVec4& b) {
         std::abs(a.w - b.w) > 0.0001f;
 }
 
+bool drawOpacitySlider(const char* label, float& alpha) {
+    float opacity_pct = std::clamp(alpha, 0.0f, 1.0f) * 100.0f;
+    if (!ImGui::SliderFloat(label, &opacity_pct, 0.0f, 100.0f, "%.0f%%")) return false;
+    alpha = std::clamp(opacity_pct / 100.0f, 0.0f, 1.0f);
+    return true;
+}
+
 bool optionSettingsDiffer(const ColorEditorOptionSnapshot& a, const ColorEditorOptionSnapshot& b) {
     return
         a.id != b.id ||
@@ -297,6 +304,13 @@ void drawColorEditorWindow(ColorEditorSnapshot& snapshot, uint64_t& next_seq) {
             draft.outline_color = next_color;
             applyLiveOutlineColorChange(snapshot, draft, next_seq, next_color);
         }
+        float outline_opacity = draft.outline_color.w;
+        if (drawOpacitySlider("Opacity##outline_opacity", outline_opacity)) {
+            ImVec4 next_color = draft.outline_color;
+            next_color.w = outline_opacity;
+            draft.outline_color = next_color;
+            applyLiveOutlineColorChange(snapshot, draft, next_seq, next_color);
+        }
         const bool dirty = draftIsDirty(snapshot, draft);
         ImGui::Separator();
         ImGui::BeginDisabled(!dirty);
@@ -316,6 +330,13 @@ void drawColorEditorWindow(ColorEditorSnapshot& snapshot, uint64_t& next_seq) {
     };
     if (ImGui::ColorPicker4("Static color", rgba, ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_NoSidePreview)) {
         const ImVec4 next_color(rgba[0], rgba[1], rgba[2], rgba[3]);
+        draft.fill_color = next_color;
+        applyLiveFillColorChange(snapshot, draft, next_seq, next_color);
+    }
+    float fill_opacity = draft.fill_color.w;
+    if (drawOpacitySlider("Opacity##fill_opacity", fill_opacity)) {
+        ImVec4 next_color = draft.fill_color;
+        next_color.w = fill_opacity;
         draft.fill_color = next_color;
         applyLiveFillColorChange(snapshot, draft, next_seq, next_color);
     }

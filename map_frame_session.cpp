@@ -180,6 +180,8 @@ RenderFrameOrchestrationContext buildRenderFrameContext(
     render_frame_ctx.parcel_tax_sale_by_feature = ctx.parcel_tax_sale_by_feature;
     render_frame_ctx.unified_parcels = ctx.unified_parcels;
     render_frame_ctx.parcel_selection = ctx.parcel_selection;
+    render_frame_ctx.show_selected_zone_details = ctx.show_selected_zone_details;
+    render_frame_ctx.selected_zone_idx = ctx.selected_zone_idx;
     render_frame_ctx.zoning_zone_enabled = ctx.zoning_zone_enabled;
     render_frame_ctx.zoning_zone_color = ctx.zoning_zone_color;
     render_frame_ctx.query_layers = ctx.query_layers;
@@ -291,6 +293,8 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_inspect_active,
         ctx.zoning_hover_active,
         ctx.zoning_inspect_active,
+        ctx.origin,
+        ctx.size,
         ctx.parcel_layer_idx,
         ctx.zoning_layer_idx,
         ctx.layers,
@@ -312,6 +316,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_tax_lien_amount_by_feature,
         ctx.parcel_tax_sale_amount_by_feature,
         ctx.real_property_by_blocklot,
-        ctx.real_property_layer_idx
+        ctx.real_property_layer_idx,
+        ctx.root
     });
 }

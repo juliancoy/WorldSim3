@@ -131,5 +131,6 @@ bool LayerRegistry::isHiddenParcelGeometryLayer(size_t idx) const {
            indices_.parcel_layer_idx >= 0 &&
            (int)idx != indices_.parcel_layer_idx &&
            (*layers_)[idx].scale == "parcel" &&
+           (*layers_)[idx].category != LayerDef::Category::Zoning &&
            (*layers_)[idx].region.empty();
 }

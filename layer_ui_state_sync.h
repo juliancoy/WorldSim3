@@ -26,6 +26,7 @@ struct LayerUiStateSyncContext {
     int* last_active_hover_layer_idx = nullptr;
     int* last_active_click_layer_idx = nullptr;
     std::vector<bool>* last_enabled_state = nullptr;
+    int* most_recent_toggled_layer_idx = nullptr;
 
     bool zoning_filters_changed = false;
     bool event_sector_filters_changed = false;

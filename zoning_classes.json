@@ -1,0 +1,868 @@
+{
+  "zones": {
+    "BL": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL AS": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL AS - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL CCC": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL CCC - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL CCC ESH": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL CCC ESH - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL CR": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL CR - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL CT": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL CT - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL H": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL H - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BL NC": {
+      "description": "Business Local. Permitted by right: Retail Sales, Personal Services, Restaurant, Bank, Office, Tavern, Food Store, And Medical Clinic. Special exception uses: Arcade, Car Wash, Service Garage, Hotel/motel, Funeral Establishment, Golf Course, Driving Range, Animal Boarding Place Class A, Theatre.",
+      "label": "BL NC - Business Local",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BL.pdf"
+    },
+    "BLR": {
+      "description": "Business Local Restricted. Permitted by right: Uses Permitted In Cb, Bank, Fast Food Restaurant, Tavern, Health And Athletic Club. Special exception uses: Arcade, Bowling Alley, Miniature Golf, Batting Range.",
+      "label": "BLR - Business Local Restricted",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BLR.pdf"
+    },
+    "BM": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM AS": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM AS - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM AS MU": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM AS MU - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM CCC": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM CCC - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM CCC MU": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM CCC MU - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM CR": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM CR - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM CT": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM CT - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM CT MU": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM CT MU - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM DT": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM DT - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM IM": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM IM - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM IM MU": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM IM MU - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM MU": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM MU - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BM NC": {
+      "description": "Business Major. Permitted by right: Uses Permitted In BL, Service Garage, Hotel/motel, Theatre, Warehouse, Automobile Sales, Night Club. Special exception uses: Arcade, Car Wash, Bus Terminal, Striptease Business.",
+      "label": "BM NC - Business Major",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BM.pdf"
+    },
+    "BMB": {
+      "description": "Business Maritime Boatyard. Permitted by right: Uses Permitted By Right In BMm, Boat Yard, Repair Shop For Engines, Marina And Fishing Equipment. Special exception uses: Uses Permitted By Special Exception In BMm, Commercial Beach, Boat Docking Facility.",
+      "label": "BMB - Business Maritime Boatyard",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BMB.pdf"
+    },
+    "BMM": {
+      "description": "Business Maritime Marina. Permitted by right: Marina, Retail Sales Or Rental Of Marine-related Goods, Out-of-water Storage Facility Class A, Commercial Fisheries Facilities, Restaurant (Less Than 5,000 Sq. Ft.). Special exception uses: Out-of-water Storage Facility Class B, Restaurant (5,000 Sq. Ft. And More).",
+      "label": "BMM - Business Maritime Marina",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BMM.pdf"
+    },
+    "BMYC": {
+      "description": "Business Maritime Yacht Club. Permitted by right: Yacht Club, Area For Food/drink For Yacht Club Not To Exceed 5,000 Sq. Ft., Community BLdg., Swimming Pool, Other Civic/social Uses Associated With Yacht Club, Out-of-water Storage Facility Class A For Not More Than 20 Boats If Lot Is Greater Than Ten Acres. Special exception uses: Area For Food/drink For Yacht Club Exceeding 5,000 Sq. Ft. If Lot Is At Least Five Acres.",
+      "label": "BMYC - Business Maritime Yacht Club",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BMYC.pdf"
+    },
+    "BR": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR AS": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR AS - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR CCC": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR CCC - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR CCC MU": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR CCC MU - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR CR": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR CR - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR IM": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR IM - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR IM MU": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR IM MU - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BR ME": {
+      "description": "Business Roadside. Permitted by right: Uses Permitted In BM, Kennel, Greenhouse, Lumberyard, Printing Company, Brewery, Hotel/motel. Special exception uses: Contractor?s Equipment Storage Yard, Truck Stop, Airport, Landfill, Trailer Park, Shooting Range, Striptease Business, Used Motor Vehicle Outdoors Sales Separated From Sales Agency Building.",
+      "label": "BR ME - Business Roadside",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/BR.pdf"
+    },
+    "BSC": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "BSC - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "C-1": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-1 - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-1-E": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-1-E - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-1-VC": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-1-VC - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-2": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-2 - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-3": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-3 - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-4": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-4 - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-DC": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-DC - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-DE": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-DE - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-G": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-G - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-HS": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-HS - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-HT": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-HT - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-IH": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-IH - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "C-5-TO": {
+      "description": "Baltimore City commercial district. Official tables identify permitted and conditional commercial uses and bulk and yard regulations for C districts.",
+      "label": "C-5-TO - Commercial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/c.pdf"
+    },
+    "CB": {
+      "description": "Community Business. Permitted by right: Basic Retail And Service Operations Including Food Store, Office, Convenience Store, Restaurant (Standard And Carry-out), Dry Cleaner, Beauty Salon, Elderly Housing Facility. Special exception uses: Bank With No More Than Two Drive Through Lanes.",
+      "label": "CB - Community Business",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/CB.pdf"
+    },
+    "CB CR": {
+      "description": "Community Business. Permitted by right: Basic Retail And Service Operations Including Food Store, Office, Convenience Store, Restaurant (Standard And Carry-out), Dry Cleaner, Beauty Salon, Elderly Housing Facility. Special exception uses: Bank With No More Than Two Drive Through Lanes.",
+      "label": "CB CR - Community Business",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/CB.pdf"
+    },
+    "DR 1": {
+      "description": "Density Residential; 1 Unit/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 1 - Density Residential; 1 Unit/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 1.pdf"
+    },
+    "DR 1 H": {
+      "description": "Density Residential; 1 Unit/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 1 H - Density Residential; 1 Unit/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 1.pdf"
+    },
+    "DR 1 NC": {
+      "description": "Density Residential; 1 Unit/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 1 NC - Density Residential; 1 Unit/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 1.pdf"
+    },
+    "DR 10.5": {
+      "description": "Density Residential; 10.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 10.5 - Density Residential; 10.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 10.5.pdf"
+    },
+    "DR 10.5 ESH": {
+      "description": "Density Residential; 10.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 10.5 ESH - Density Residential; 10.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 10.5.pdf"
+    },
+    "DR 10.5 NC": {
+      "description": "Density Residential; 10.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 10.5 NC - Density Residential; 10.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 10.5.pdf"
+    },
+    "DR 16": {
+      "description": "Density Residential; 16 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 16 - Density Residential; 16 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 16.pdf"
+    },
+    "DR 2": {
+      "description": "Density Residential; 2 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 2 - Density Residential; 2 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 2.pdf"
+    },
+    "DR 2 H": {
+      "description": "Density Residential; 2 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 2 H - Density Residential; 2 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 2.pdf"
+    },
+    "DR 2 NC": {
+      "description": "Density Residential; 2 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 2 NC - Density Residential; 2 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 2.pdf"
+    },
+    "DR 3.5": {
+      "description": "Density Residential; 3.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 3.5 - Density Residential; 3.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 3.5.pdf"
+    },
+    "DR 3.5 H": {
+      "description": "Density Residential; 3.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 3.5 H - Density Residential; 3.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 3.5.pdf"
+    },
+    "DR 3.5 H1": {
+      "description": "Density Residential; 3.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 3.5 H1 - Density Residential; 3.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 3.5.pdf"
+    },
+    "DR 3.5 NC": {
+      "description": "Density Residential; 3.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 3.5 NC - Density Residential; 3.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 3.5.pdf"
+    },
+    "DR 5.5": {
+      "description": "Density Residential; 5.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 5.5 - Density Residential; 5.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 5.5.pdf"
+    },
+    "DR 5.5 H": {
+      "description": "Density Residential; 5.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 5.5 H - Density Residential; 5.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 5.5.pdf"
+    },
+    "DR 5.5 NC": {
+      "description": "Density Residential; 5.5 Units/acre. Permitted by right: Single Family, Semi-detached, Duplex, Single Family Attached, And Multifamily Dwellings. Special exception uses: Convalescent Homes, Community Buildings, Class B (Up To 40 Children) Group Child Care, Assisted Living Facilities (Class B, New Or Modified Building), Professional Offices In The Home (Max. 25% Of Floor Area).",
+      "label": "DR 5.5 NC - Density Residential; 5.5 Units/acre",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/DR 5.5.pdf"
+    },
+    "EC-1": {
+      "description": "Baltimore City educational campus district. Official tables identify permitted and conditional campus uses and bulk and yard regulations for EC districts.",
+      "label": "EC-1 - Educational Campus",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/ec.pdf"
+    },
+    "EC-2": {
+      "description": "Baltimore City educational campus district. Official tables identify permitted and conditional campus uses and bulk and yard regulations for EC districts.",
+      "label": "EC-2 - Educational Campus",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/ec.pdf"
+    },
+    "H": {
+      "description": "Baltimore City hospital campus district. Official tables identify permitted and conditional campus uses and bulk and yard regulations for H districts.",
+      "label": "H - Hospital Campus",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/h.pdf"
+    },
+    "I-1": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "I-1 - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "I-2": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "I-2 - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "IMU-1": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "IMU-1 - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "IMU-2": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "IMU-2 - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "MH": {
+      "description": "Manufacturing, Heavy. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Boat Yard, Laboratory, Office, Medical Clinic, Equipment And Material Storage Yard, Brewery, Adult Entertainment Subject To Locational Criteria. Special exception uses: Landfill, Truck Stop And Trucking Facility.",
+      "label": "MH - Manufacturing, Heavy",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MH.pdf"
+    },
+    "MH AS": {
+      "description": "Manufacturing, Heavy. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Boat Yard, Laboratory, Office, Medical Clinic, Equipment And Material Storage Yard, Brewery, Adult Entertainment Subject To Locational Criteria. Special exception uses: Landfill, Truck Stop And Trucking Facility.",
+      "label": "MH AS - Manufacturing, Heavy",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MH.pdf"
+    },
+    "MH IM": {
+      "description": "Manufacturing, Heavy. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Boat Yard, Laboratory, Office, Medical Clinic, Equipment And Material Storage Yard, Brewery, Adult Entertainment Subject To Locational Criteria. Special exception uses: Landfill, Truck Stop And Trucking Facility.",
+      "label": "MH IM - Manufacturing, Heavy",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MH.pdf"
+    },
+    "MH IM M43": {
+      "description": "Manufacturing, Heavy. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Boat Yard, Laboratory, Office, Medical Clinic, Equipment And Material Storage Yard, Brewery, Adult Entertainment Subject To Locational Criteria. Special exception uses: Landfill, Truck Stop And Trucking Facility.",
+      "label": "MH IM M43 - Manufacturing, Heavy",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MH.pdf"
+    },
+    "MI": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "MI - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "ML": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML AS": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML AS - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML IM": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML IM - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML IM M43": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML IM M43 - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML M43": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML M43 - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML MU": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML MU - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "ML NC": {
+      "description": "Manufacturing, Light. Permitted by right: Industrial Uses Requiring Assembly, Production, Processing, Packaging, Or Treatment Of Various Elements, Laboratory, Office, Medical Clinic, Excavation Not Involving Explosives, Equipment And Material Storage Yard, Brewery. Special exception uses: Excavation Using Explosives, Landfill, Truck Stop And Trucking Facility.",
+      "label": "ML NC - Manufacturing, Light",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ML.pdf"
+    },
+    "MLR": {
+      "description": "Manufacturing, Light, Restricted. Permitted by right: Uses Permitted In Mr (Except Heliport Type Ii), Uses Permitted And As Limited In DR-1 (Except Kennel And Animal Boarding). Special exception uses: Automotive Service Station, Heliport Type Ii, Sanitary And Rubble Landfill.",
+      "label": "MLR - Manufacturing, Light, Restricted",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MLR.pdf"
+    },
+    "MLR IM": {
+      "description": "Manufacturing, Light, Restricted. Permitted by right: Uses Permitted In Mr (Except Heliport Type Ii), Uses Permitted And As Limited In DR-1 (Except Kennel And Animal Boarding). Special exception uses: Automotive Service Station, Heliport Type Ii, Sanitary And Rubble Landfill.",
+      "label": "MLR IM - Manufacturing, Light, Restricted",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MLR.pdf"
+    },
+    "MR": {
+      "description": "Manufacturing, Restricted. Permitted by right: Warehouse, Bank, Laboratory, Limited Manufacturing, Office/medical Clinic, Printing, Research Institute. Special exception uses: None.",
+      "label": "MR - Manufacturing, Restricted",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MR.pdf"
+    },
+    "MR IM": {
+      "description": "Manufacturing, Restricted. Permitted by right: Warehouse, Bank, Laboratory, Limited Manufacturing, Office/medical Clinic, Printing, Research Institute. Special exception uses: None.",
+      "label": "MR IM - Manufacturing, Restricted",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/MR.pdf"
+    },
+    "O 3": {
+      "description": "Office Park. Permitted by right: Uses Permitted By Right In Or-2, Except Dwellings And Elderly Housing Facilities Are Prohibited. Special exception uses: Uses Permitted By Special Exception And Supplementary Use Regulations Of Or-2, Except Dwellings And Elderly Housing Facilities Are Prohibited.",
+      "label": "O 3 - Office Park",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/O 3.pdf"
+    },
+    "O 3 BM/G": {
+      "description": "Office Park. Permitted by right: Uses Permitted By Right In Or-2, Except Dwellings And Elderly Housing Facilities Are Prohibited. Special exception uses: Uses Permitted By Special Exception And Supplementary Use Regulations Of Or-2, Except Dwellings And Elderly Housing Facilities Are Prohibited.",
+      "label": "O 3 BM/G - Office Park",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/O 3.pdf"
+    },
+    "OIC": {
+      "description": "Baltimore City industrial or special industrial district. Official tables identify permitted and conditional industrial uses and bulk and yard regulations.",
+      "label": "OIC - Industrial",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/i.pdf"
+    },
+    "OR 1": {
+      "description": "Office Building - Residential. Permitted by right: Uses Permitted By Right In DR-5.5, Class A And B Office Building, Limited Accessory Uses Within Class B Office Building. Special exception uses: Uses Permitted By Special Exception In DR-5.5, Accessory Commercial Uses.",
+      "label": "OR 1 - Office Building - Residential",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/OR 1.pdf"
+    },
+    "OR 2": {
+      "description": "Office Building - Residential. Permitted by right: Uses Permitted By Right In DR-10.5, Class A And B Office Building, Accessory Uses Related To Principal Use In Building Such As Restaurant, Bank, Conference Facility. Special exception uses: Uses Permitted By Special Exception In DR-10.5, Hotel, Health Club, Parking Structure.",
+      "label": "OR 2 - Office Building - Residential",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/OR 2.pdf"
+    },
+    "OR-1": {
+      "description": "Baltimore City office-residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for OR districts.",
+      "label": "OR-1 - Office-Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/or.pdf"
+    },
+    "OR-2": {
+      "description": "Baltimore City office-residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for OR districts.",
+      "label": "OR-2 - Office-Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/or.pdf"
+    },
+    "OS": {
+      "description": "Baltimore City open-space district. Official tables identify open-space uses and district regulations.",
+      "label": "OS - Open Space",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/os.pdf"
+    },
+    "OT": {
+      "description": "Office And Technology. Permitted by right: Office, Trade School, College, Hospital, Hotel, Research Institute, Light Manufacturing And Assembly Services, Small Attached Warehouse. Special exception uses: Warehouse, If Less Than 60% Of Gross Floor Area; Commercial Recreation Facility Within The Growth Area Boundary.",
+      "label": "OT - Office And Technology",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/OT.pdf"
+    },
+    "PC-1": {
+      "description": "Baltimore City Port Covington district. Official tables identify permitted and conditional uses and bulk and yard regulations for PC districts.",
+      "label": "PC-1 - Port Covington",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/pc.pdf"
+    },
+    "PC-2": {
+      "description": "Baltimore City Port Covington district. Official tables identify permitted and conditional uses and bulk and yard regulations for PC districts.",
+      "label": "PC-2 - Port Covington",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/pc.pdf"
+    },
+    "PC-3": {
+      "description": "Baltimore City Port Covington district. Official tables identify permitted and conditional uses and bulk and yard regulations for PC districts.",
+      "label": "PC-3 - Port Covington",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/pc.pdf"
+    },
+    "PC-4": {
+      "description": "Baltimore City Port Covington district. Official tables identify permitted and conditional uses and bulk and yard regulations for PC districts.",
+      "label": "PC-4 - Port Covington",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/pc.pdf"
+    },
+    "R-1": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1 - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-1-A": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1-A - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-1-B": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1-B - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-1-C": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1-C - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-1-D": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1-D - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-1-E": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-1-E - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-10": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-10 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "R-2": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-2 - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-3": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-3 - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-4": {
+      "description": "Baltimore City detached and semi-detached residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-1 through R-4 districts.",
+      "label": "R-4 - Detached and Semi-Detached Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r1-4.pdf"
+    },
+    "R-5": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-5 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "R-6": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-6 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "R-7": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-7 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "R-8": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-8 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "R-9": {
+      "description": "Baltimore City rowhouse and multi-family residential district. Official tables identify permitted and conditional uses and bulk and yard regulations for R-5 through R-10 districts.",
+      "label": "R-9 - Rowhouse and Multi-Family Residential",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/r5-10.pdf"
+    },
+    "RAE 1": {
+      "description": "Residence, Apartment, Elevator. Permitted by right: Apartment Building, Office In Apartment Buildings Of 25 Units Or More, Retail/service Uses (No More Than 5% Of The Floor Area Of The Building). Special exception uses: None.",
+      "label": "RAE 1 - Residence, Apartment, Elevator",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RAE 1.pdf"
+    },
+    "RAE 1 ESH": {
+      "description": "Residence, Apartment, Elevator. Permitted by right: Apartment Building, Office In Apartment Buildings Of 25 Units Or More, Retail/service Uses (No More Than 5% Of The Floor Area Of The Building). Special exception uses: None.",
+      "label": "RAE 1 ESH - Residence, Apartment, Elevator",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RAE 1.pdf"
+    },
+    "RAE 2": {
+      "description": "Residence, Apartment, Elevator. Permitted by right: Apartment Building, Office In Apartment Buildings Of 25 Units Or More, Retail/service Uses In A Building Of 50 Units Or More (May Not Exceed 25% Of Floor Area). Special exception uses: Office In Buildings Containing Less Than 25 Units, Office Accounting For More Than 25% Of The Floor Area In An Apartment Building.",
+      "label": "RAE 2 - Residence, Apartment, Elevator",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RAE 2.pdf"
+    },
+    "RC 2": {
+      "description": "Agriculture. Permitted by right: Farm, Farmette, Single-family Detached Dwelling, Farmer's Roadside Stand, Tenant House. Special exception uses: Antique Shop, Animal Boarding Place, Church, Farm Market, Landscape Operation, Agricultural Support Uses.",
+      "label": "RC 2 - Agriculture",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 2.pdf"
+    },
+    "RC 20": {
+      "description": "Critical Area. Permitted by right: Single-family Dwelling, Fish And Wildlife Preserve, Agriculture, Aquaculture. Special exception uses: Wildlife Propagation, Farm Market, Nursery, Commercial Water-dependent Facility, Agricultural Support.",
+      "label": "RC 20 - Critical Area",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 20.pdf"
+    },
+    "RC 20 EP": {
+      "description": "Critical Area. Permitted by right: Single-family Dwelling, Fish And Wildlife Preserve, Agriculture, Aquaculture. Special exception uses: Wildlife Propagation, Farm Market, Nursery, Commercial Water-dependent Facility, Agricultural Support.",
+      "label": "RC 20 EP - Critical Area",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 20.pdf"
+    },
+    "RC 20 NC": {
+      "description": "Critical Area. Permitted by right: Single-family Dwelling, Fish And Wildlife Preserve, Agriculture, Aquaculture. Special exception uses: Wildlife Propagation, Farm Market, Nursery, Commercial Water-dependent Facility, Agricultural Support.",
+      "label": "RC 20 NC - Critical Area",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 20.pdf"
+    },
+    "RC 3": {
+      "description": "Deferral Of Planning And Development. Permitted by right: Single-family Detached Dwelling, Farm, Farmette, Church. Special exception uses: Farm Market, Golf Course/country Club, Professional Office, Camp, Animal Boarding Place.",
+      "label": "RC 3 - Deferral Of Planning And Development",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 3.pdf"
+    },
+    "RC 4": {
+      "description": "Watershed Protection. Permitted by right: Single-family Detached Dwelling, Farm. Special exception uses: Antique Shop, Church, Golf Course/country Club, Landscape Operations.",
+      "label": "RC 4 - Watershed Protection",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 4.pdf"
+    },
+    "RC 5": {
+      "description": "Rural Residential. Permitted by right: Single-family Dwelling, Farm, School, Assisted Living 'Class A'. Special exception uses: Antique Shop, Golf Course/country Club.",
+      "label": "RC 5 - Rural Residential",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 5.pdf"
+    },
+    "RC 5 CR": {
+      "description": "Rural Residential. Permitted by right: Single-family Dwelling, Farm, School, Assisted Living 'Class A'. Special exception uses: Antique Shop, Golf Course/country Club.",
+      "label": "RC 5 CR - Rural Residential",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 5.pdf"
+    },
+    "RC 50": {
+      "description": "Critical Area, Agriculture. Permitted by right: Single-family Dwelling, Fish And Wildlife Preserve, Agriculture, Aquaculture. Special exception uses: Wildlife Propagation, Farm Market, Nursery, Commercial Water-dependent Facility, Agricultural Support.",
+      "label": "RC 50 - Critical Area, Agriculture",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 50.pdf"
+    },
+    "RC 6": {
+      "description": "Rural Conservation And Residential. Permitted by right: Single-family Detached Dwelling, Farm, Church With Less Than 10% Impervious Area, Roadside Stand. Special exception uses: Antique Shop, Bed And Breakfast Subject To Conditions, Animal Boarding Place, Winery, Golf Course, Church With More Than 10% Impervious Area, Landscape Service Operation.",
+      "label": "RC 6 - Rural Conservation And Residential",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 6.pdf"
+    },
+    "RC 7": {
+      "description": "Resource Preservation. Permitted by right: Single-family Detached Dwelling, Farm, Farm Roadside Stand. Special exception uses: Antique Shop, Bed And Breakfast, Winery, Church.",
+      "label": "RC 7 - Resource Preservation",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 7.pdf"
+    },
+    "RC 8": {
+      "description": "Environmental Enhancement. Permitted by right: None. Special exception uses: Antique Shop, Bed And Breakfast, Winery, Church.",
+      "label": "RC 8 - Environmental Enhancement",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 8.pdf"
+    },
+    "RC 8 EP": {
+      "description": "Environmental Enhancement. Permitted by right: None. Special exception uses: Antique Shop, Bed And Breakfast, Winery, Church.",
+      "label": "RC 8 EP - Environmental Enhancement",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 8.pdf"
+    },
+    "RC 8 NC": {
+      "description": "Environmental Enhancement. Permitted by right: None. Special exception uses: Antique Shop, Bed And Breakfast, Winery, Church.",
+      "label": "RC 8 NC - Environmental Enhancement",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RC 8.pdf"
+    },
+    "RCC": {
+      "description": "Rural Commercial. Permitted by right: Agriculturally Related Retail, Office And Service Use, Farm Market, Bank, Garden Center, Restaurant/tavern, Retail Establishments, Barber And Beauty Shop, Bed And Breakfast. Special exception uses: Agricultural Machinery Repair, Limited Accessory Uses, Landscape Service Operation.",
+      "label": "RCC - Rural Commercial",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RCC.pdf"
+    },
+    "RO": {
+      "description": "Residential Office. Permitted by right: Uses Permitted By Right In DR-5.5, Class A Office Building. Special exception uses: Uses Permitted By Special Exception In DR-5.5, Class B Office Building.",
+      "label": "RO - Residential Office",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RO.pdf"
+    },
+    "RO CR": {
+      "description": "Residential Office. Permitted by right: Uses Permitted By Right In DR-5.5, Class A Office Building. Special exception uses: Uses Permitted By Special Exception In DR-5.5, Class B Office Building.",
+      "label": "RO CR - Residential Office",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RO.pdf"
+    },
+    "RO NC": {
+      "description": "Residential Office. Permitted by right: Uses Permitted By Right In DR-5.5, Class A Office Building. Special exception uses: Uses Permitted By Special Exception In DR-5.5, Class B Office Building.",
+      "label": "RO NC - Residential Office",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/RO.pdf"
+    },
+    "ROA": {
+      "description": "Residential Office, Class A. Permitted by right: Uses Permitted By Right In DR-3.5, Class A Office Building. Special exception uses: Uses Permitted By Special Exception In DR-3.5.",
+      "label": "ROA - Residential Office, Class A",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/ROA.pdf"
+    },
+    "SE": {
+      "description": "Service Employment. Permitted by right: Light Manufacturing And Assembly, Trade School, Laboratory, Business And Professional Office, Printing, Contractor's Office. Special exception uses: Medical Office And Clinic, Catering Establishment, Health Club, Primary Manufacturing For Uses Permitted By Right.",
+      "label": "SE - Service Employment",
+      "source": "Baltimore County Zoning Report PDF",
+      "source_url": "http://bcgis.baltimorecountymd.gov/ZoningReports/SE.pdf"
+    },
+    "TOD-1": {
+      "description": "Baltimore City transit-oriented development district. Official tables identify permitted and conditional uses and bulk and yard regulations for TOD districts.",
+      "label": "TOD-1 - Transit-Oriented Development",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/tod.pdf"
+    },
+    "TOD-2": {
+      "description": "Baltimore City transit-oriented development district. Official tables identify permitted and conditional uses and bulk and yard regulations for TOD districts.",
+      "label": "TOD-2 - Transit-Oriented Development",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/tod.pdf"
+    },
+    "TOD-3": {
+      "description": "Baltimore City transit-oriented development district. Official tables identify permitted and conditional uses and bulk and yard regulations for TOD districts.",
+      "label": "TOD-3 - Transit-Oriented Development",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/tod.pdf"
+    },
+    "TOD-4": {
+      "description": "Baltimore City transit-oriented development district. Official tables identify permitted and conditional uses and bulk and yard regulations for TOD districts.",
+      "label": "TOD-4 - Transit-Oriented Development",
+      "source": "Baltimore City Zoning Code PDF",
+      "source_url": "https://s3.amazonaws.com/baltimorecity.gov.if-us-east-1/s3fs-public/2026-02/tod.pdf"
+    }
+  }
+}
