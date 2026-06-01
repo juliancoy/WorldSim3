@@ -106,6 +106,7 @@ struct QueryRecord {
         std::string map_title_text;
         bool map_title_show_primary_parcel_source = false;
         std::string map_title_source_layer_file;
+        std::vector<std::string> map_title_source_layer_files;
     } snapshot;
 };
 

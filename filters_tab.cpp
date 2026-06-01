@@ -66,12 +66,16 @@ SelectedZoneDetails buildSelectedZoneDetails(
 }
 
 std::optional<SelectedZoneDetails> selectedZoneDetailsForPanel(const FiltersTabContext& ctx) {
+    const int effective_zoning_layer_idx =
+        (ctx.selected_zone_layer_idx && *ctx.selected_zone_layer_idx >= 0)
+            ? *ctx.selected_zone_layer_idx
+            : ctx.zoning_layer_idx;
     if (!ctx.show_selected_zone_details || !*ctx.show_selected_zone_details ||
-        !ctx.selected_zone_idx || ctx.zoning_layer_idx < 0 ||
-        !ctx.layers || (size_t)ctx.zoning_layer_idx >= ctx.layers->size()) {
+        !ctx.selected_zone_idx || effective_zoning_layer_idx < 0 ||
+        !ctx.layers || (size_t)effective_zoning_layer_idx >= ctx.layers->size()) {
         return std::nullopt;
     }
-    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)effective_zoning_layer_idx];
     if (*ctx.selected_zone_idx < zoning_layer.features.size()) {
         return buildSelectedZoneDetails(
             zoning_layer,
@@ -89,7 +93,7 @@ std::optional<SelectedZoneDetails> selectedZoneDetailsForPanel(const FiltersTabC
 
     static SelectedZoneDetailsCache fallback_cache;
     if (fallback_cache.valid &&
-        fallback_cache.layer_idx == ctx.zoning_layer_idx &&
+        fallback_cache.layer_idx == effective_zoning_layer_idx &&
         fallback_cache.feature_idx == *ctx.selected_zone_idx &&
         fallback_cache.source_signature == source_signature) {
         return fallback_cache.details;
@@ -113,7 +117,7 @@ std::optional<SelectedZoneDetails> selectedZoneDetailsForPanel(const FiltersTabC
         ctx.zoning_metadata);
     clearTransientFeatureProperties(selected);
 
-    fallback_cache.layer_idx = ctx.zoning_layer_idx;
+    fallback_cache.layer_idx = effective_zoning_layer_idx;
     fallback_cache.feature_idx = *ctx.selected_zone_idx;
     fallback_cache.source_signature = source_signature;
     fallback_cache.valid = true;
@@ -253,6 +257,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
     if (selected_zone_valid) {
         if (ImGui::Button("Back To Filters")) {
             *ctx.show_selected_zone_details = false;
+            if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
             *ctx.selected_zone_idx = (size_t)-1;
         }
         ImGui::Separator();
@@ -297,6 +302,7 @@ void drawFiltersTab(const FiltersTabContext& ctx) {
 
     if (*ctx.show_selected_zone_details && !selected_zone_valid) {
         *ctx.show_selected_zone_details = false;
+        if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
         *ctx.selected_zone_idx = (size_t)-1;
     }
 

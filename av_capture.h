@@ -25,6 +25,8 @@ struct AvCaptureState {
     int selected_audio_source_idx = 0;
     int framerate = 60;
     int video_bitrate_mbps = 12;
+    int output_width = 1920;
+    int output_height = 1080;
     std::string selected_audio_source;
     std::string encoder_name;
     std::string status;

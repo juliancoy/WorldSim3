@@ -66,6 +66,7 @@ struct LayerDef {
     std::string scale;
     ImVec4 color;
     ImVec4 outline_color;
+    bool default_fill_enabled = true;
     bool enabled = false;
     bool runtime_load = true;
     bool duckdb_ingest = true;

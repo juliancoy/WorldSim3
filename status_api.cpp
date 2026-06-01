@@ -48,6 +48,7 @@ json buildHoverDebugStatusJson(const HoverDebugState& hover_debug) {
         {"inspect_parcel_entity_id", hover_debug.inspect_parcel_entity_id},
         {"inspect_parcel_geometry_entity_id", hover_debug.inspect_parcel_geometry_entity_id},
         {"hovered_zone", hover_debug.hovered_zone},
+        {"hovered_zone_layer_idx", hover_debug.hovered_zone_layer_idx},
         {"hovered_zone_idx", hover_debug.hovered_zone_idx},
         {"hovered_point", hover_debug.hovered_point},
         {"hovered_point_idx", hover_debug.hovered_point_idx},

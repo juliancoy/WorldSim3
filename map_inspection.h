@@ -35,6 +35,7 @@ struct MapInspectionContext {
     ParcelSelectionState* parcel_selection = nullptr;
     std::function<void(const std::string&)> open_parcel_element;
     bool* show_selected_zone_details = nullptr;
+    int* selected_zone_layer_idx = nullptr;
     size_t* selected_zone_idx = nullptr;
     const MapHoverState* hover_state = nullptr;
     const std::vector<int>* parcel_vac_notice_by_feature = nullptr;

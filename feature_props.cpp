@@ -134,8 +134,27 @@ std::string normalizeJoinKey(std::string s) {
     return s;
 }
 
+std::string zoningClassKeyFromPropertyPairs(const FeaturePropertyPairs& values) {
+    std::string z = findFirstPropertyValueInPairs(values, {
+        "GENZONE", "GENZONE_CAT",
+        "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
+        "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
+    return z.empty() ? "UNSPECIFIED" : z;
+}
+
+std::string zoningClassLabelFromPropertyPairs(const FeaturePropertyPairs& values) {
+    std::string z = findFirstPropertyValueInPairs(values, {
+        "GENZONE",
+        "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
+        "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
+    });
+    return z.empty() ? "UNSPECIFIED" : z;
+}
+
 std::string zoningClassKey(const LayerDef::FeatureRecord& fg) {
     std::string z = getFirstPropertyValue(fg, {
+        "GENZONE", "GENZONE_CAT",
         "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
         "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
     });
@@ -145,6 +164,7 @@ std::string zoningClassKey(const LayerDef::FeatureRecord& fg) {
 
 std::string zoningClassKey(const LayerDef& layer, size_t feature_idx) {
     std::string z = getFirstPropertyValue(layer, feature_idx, {
+        "GENZONE", "GENZONE_CAT",
         "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
         "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
     });
@@ -162,6 +182,7 @@ std::string zoningGroupKey(const std::string& zone_key) {
 
 std::string zoningClassLabel(const LayerDef::FeatureRecord& fg) {
     std::string z = getFirstPropertyValue(fg, {
+        "GENZONE",
         "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
         "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
     });
@@ -171,6 +192,7 @@ std::string zoningClassLabel(const LayerDef::FeatureRecord& fg) {
 
 std::string zoningClassLabel(const LayerDef& layer, size_t feature_idx) {
     std::string z = getFirstPropertyValue(layer, feature_idx, {
+        "GENZONE",
         "Label", "ZONING", "ZONED", "ZONE", "ZONE_CLASS", "ZONE_DIST",
         "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
     });
@@ -277,6 +299,13 @@ static ZoningFamily classifyZoningFamily(const std::string& zone_key_upper) {
     const std::string& u = zone_key_upper;
     if (u.empty() || u == "UNSPECIFIED") return ZoningFamily::Other;
 
+    if (hasAnyToken(u, {"MX", "MU", "MIXED", "TOD", "TRANSIT", "TC", "TOWNCENTER", "VILLAGE", "VC", "CORRIDOR"})) {
+        return ZoningFamily::MixedUse;
+    }
+    if (hasAnyToken(u, {"RESIDENTIAL"})) return ZoningFamily::Residential;
+    if (hasAnyToken(u, {"COMMERCIAL"})) return ZoningFamily::Commercial;
+    if (hasAnyToken(u, {"INDUSTRIAL"})) return ZoningFamily::Industrial;
+
     if (hasAnyToken(u, {"OV", "OVERLAY", "SP", "SPECIAL", "FLOOD", "HIST", "AIR", "CHES", "BUFFER"})) {
         return ZoningFamily::OverlaySpecial;
     }
@@ -285,9 +314,6 @@ static ZoningFamily classifyZoningFamily(const std::string& zone_key_upper) {
     }
     if (hasAnyToken(u, {"AG", "AGR", "AGRIC", "RURAL", "RR", "AR", "RC", "RA"})) {
         return ZoningFamily::AgricultureRural;
-    }
-    if (hasAnyToken(u, {"MX", "MU", "MIXED", "TOD", "TRANSIT", "TC", "TOWNCENTER", "VILLAGE", "VC", "CORRIDOR"})) {
-        return ZoningFamily::MixedUse;
     }
     if (hasAnyToken(u, {"DT", "CBD", "DOWNTOWN", "CENTER", "MAINST", "URBANCORE"})) {
         return ZoningFamily::DowntownCenter;
@@ -298,7 +324,7 @@ static ZoningFamily classifyZoningFamily(const std::string& zone_key_upper) {
     if (hasAnyToken(u, {"OFFICE", "OFF", "EMP", "EMPLOY", "BUSPARK", "BP", "RESEARCH", "CORP", "EO", "EC"})) {
         return ZoningFamily::OfficeEmployment;
     }
-    if (hasAnyToken(u, {"INST", "INSTIT", "CIV", "PUBLIC", "SCHOOL", "CAMPUS", "GOV", "HOSP", "MED"})) {
+    if (hasAnyToken(u, {"INST", "INSTIT", "CIV", "PUBLIC", "SCHOOL", "CAMPUS", "GOV", "HOSP", "MEDICAL"})) {
         return ZoningFamily::CivicInstitutional;
     }
     if (hasAnyToken(u, {"COM", "COMMERCIAL", "BUS", "RETAIL", "SHOP", "CC", "CG", "CN", "CR", "B-", "B1", "B2", "B3", "BL", "BM", "BR"})) {
@@ -333,19 +359,14 @@ ImVec4 zoningColorFromConvention(const std::string& zone_key) {
         case ZoningFamily::Industrial:
             return hsvToRgb(53.0f + (float)(h % 8u), 0.70f + sat_jitter, 0.78f + val_jitter);
         case ZoningFamily::MixedUse:
-            return hsvToRgb(282.0f + (float)(h % 10u), 0.54f + sat_jitter, 0.73f + val_jitter);
         case ZoningFamily::OfficeEmployment:
-            return hsvToRgb(190.0f + (float)(h % 10u), 0.56f + sat_jitter, 0.72f + val_jitter);
         case ZoningFamily::CivicInstitutional:
-            return hsvToRgb(24.0f + (float)(h % 10u), 0.60f + sat_jitter, 0.78f + val_jitter);
-        case ZoningFamily::OpenSpaceConservation:
-            return hsvToRgb(150.0f + (float)(h % 8u), 0.42f + sat_jitter, 0.66f + val_jitter);
-        case ZoningFamily::AgricultureRural:
-            return hsvToRgb(82.0f + (float)(h % 10u), 0.52f + sat_jitter, 0.68f + val_jitter);
         case ZoningFamily::DowntownCenter:
-            return hsvToRgb(336.0f + (float)(h % 10u), 0.58f + sat_jitter, 0.76f + val_jitter);
+            return hsvToRgb(210.0f + (float)(h % 12u), 0.58f + sat_jitter, 0.72f + val_jitter);
+        case ZoningFamily::OpenSpaceConservation:
+        case ZoningFamily::AgricultureRural:
+            return hsvToRgb(128.0f + (float)(h % 10u), 0.46f + sat_jitter, 0.66f + val_jitter);
         case ZoningFamily::OverlaySpecial:
-            return hsvToRgb(6.0f + (float)(h % 10u), 0.40f + sat_jitter, 0.78f + val_jitter);
         case ZoningFamily::Other:
             break;
     }

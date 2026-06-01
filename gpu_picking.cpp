@@ -288,22 +288,51 @@ void tryPickZone(const MapHoverQuery& query, MapHoverState& out) {
         !query.layers || query.zoning_layer_idx < 0) {
         return;
     }
-    const size_t layer_idx = (size_t)query.zoning_layer_idx;
-    if (layer_idx >= query.layers->size()) return;
-    const LayerDef& layer = (*query.layers)[layer_idx];
-    if (!layer.enabled) return;
+    const auto* enabled_flags = query.zoning_inspect_active ? query.layer_inspect_enabled : query.layer_hover_enabled;
+    const int active_layer_idx = query.zoning_inspect_active ? query.active_click_layer_idx : query.active_hover_layer_idx;
+    const size_t layer_count = query.layers->size();
+    std::vector<size_t> candidates;
+    auto append_candidate = [&](int candidate_idx, bool require_enabled_flag) {
+        if (candidate_idx < 0) return;
+        const size_t idx = (size_t)candidate_idx;
+        if (idx >= layer_count) return;
+        if (require_enabled_flag && (!enabled_flags || idx >= enabled_flags->size() || !(*enabled_flags)[idx])) return;
+        const LayerDef& layer = (*query.layers)[idx];
+        if (!layer.enabled ||
+            layer.category != LayerDef::Category::Zoning ||
+            layerUsesPointGeometry(layer) ||
+            layerUsesPolylineGeometry(layer)) {
+            return;
+        }
+        if (std::find(candidates.begin(), candidates.end(), idx) == candidates.end()) candidates.push_back(idx);
+    };
 
-    size_t feature_idx = (size_t)-1;
-    std::string entity_id;
-    std::string geometry_entity_id;
-    std::string pick_error;
-    if (!gpuPickZoningFeature(layer_idx, makePickRequest(query), &feature_idx, &entity_id, &geometry_entity_id, &pick_error)) {
+    append_candidate(active_layer_idx, true);
+    append_candidate(query.zoning_layer_idx, false);
+    if (enabled_flags) {
+        const size_t enabled_count = std::min(layer_count, enabled_flags->size());
+        for (size_t idx = 0; idx < enabled_count; ++idx) {
+            if ((*enabled_flags)[idx]) append_candidate((int)idx, true);
+        }
+    }
+
+    const GpuPickRequest request = makePickRequest(query);
+    for (size_t layer_idx : candidates) {
+        const LayerDef& layer = (*query.layers)[layer_idx];
+        size_t feature_idx = (size_t)-1;
+        std::string entity_id;
+        std::string geometry_entity_id;
+        std::string pick_error;
+        if (!gpuPickZoningFeature(layer_idx, request, &feature_idx, &entity_id, &geometry_entity_id, &pick_error)) {
+            continue;
+        }
+        if (feature_idx >= layer.features.size() && entity_id.empty()) continue;
+        out.hovered_zone_layer_idx = (int)layer_idx;
+        out.hovered_zone_idx = feature_idx;
+        if (feature_idx < layer.features.size()) out.hovered_zone = &layer.features[feature_idx];
+        out.hovered_zone_entity_id = entity_id;
         return;
     }
-    if (feature_idx >= layer.features.size() && entity_id.empty()) return;
-    out.hovered_zone_idx = feature_idx;
-    if (feature_idx < layer.features.size()) out.hovered_zone = &layer.features[feature_idx];
-    out.hovered_zone_entity_id = entity_id;
 }
 }
 

@@ -95,6 +95,18 @@ std::string fallbackDescriptionForZoneCode(const std::string& raw_code) {
     const std::string code = upperAscii(trimAscii(raw_code));
     if (code.empty() || code == "UNSPECIFIED") return "Zoning district with no class description available.";
 
+    if (code == "COMMERCIAL") return "Generalized commercial zoning for retail, service, office, and related business activity.";
+    if (code == "INDUSTRIAL") return "Generalized industrial zoning for production, distribution, warehousing, repair, and related employment uses.";
+    if (code == "MIXED USE") return "Generalized mixed-use zoning where residential, commercial, office, civic, or employment uses may be combined.";
+    if (code == "OTHER") return "Generalized zoning category for civic, institutional, open-space, transportation, utility, or locally specific districts outside the main residential, commercial, industrial, and mixed-use classes.";
+    if (code == "VERY LOW DENSITY RESIDENTIAL") return "Generalized residential zoning for very low-density housing patterns.";
+    if (code == "LOW DENSITY RESIDENTIAL") return "Generalized residential zoning for low-density housing patterns.";
+    if (code == "MEDIUM DENSITY RESIDENTIAL") return "Generalized residential zoning for medium-density housing patterns.";
+    if (code == "HIGH DENSITY RESIDENTIAL") return "Generalized residential zoning for high-density housing patterns.";
+    if (code == "RURAL LOW DENSITY RESIDENTIAL") return "Generalized rural residential zoning for low-density housing in rural or resource-oriented areas.";
+    if (code == "RURAL MEDIUM DENSITY RES") return "Generalized rural residential zoning for medium-density housing in rural or resource-oriented areas.";
+    if (code == "RURAL HIGH DENSITY RESIDENTIAL") return "Generalized rural residential zoning for higher-density residential areas in rural jurisdictions or municipalities.";
+
     if (code.rfind("R-", 0) == 0) return "Residential zoning district regulating housing form, density, setbacks, and compatible neighborhood uses.";
     if (code.rfind("OR-", 0) == 0) return "Office-residential zoning district allowing a mix of residential and office uses with development standards for mixed-use corridors.";
     if (code.rfind("C-", 0) == 0) return "Commercial zoning district for retail, service, office, and other business uses at an intensity set by the district.";

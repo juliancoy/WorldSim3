@@ -123,18 +123,20 @@ void drawDuckDbHoverPropertySummary(const ParcelHoverDetail& detail) {
 const LayerDef::FeatureRecord* resolveHoveredZoneFeature(
     const MapInspectionContext& ctx,
     const LayerDef::FeatureRecord* direct_zone,
+    int zone_layer_idx,
     size_t feature_idx,
     LayerDef::FeatureRecord& fallback_zone,
     bool& fallback_zone_has_transient_props) {
     fallback_zone_has_transient_props = false;
     if (direct_zone) return direct_zone;
-    if (!ctx.root || !ctx.layers || ctx.zoning_layer_idx < 0 ||
-        (size_t)ctx.zoning_layer_idx >= ctx.layers->size() ||
+    if (zone_layer_idx < 0) zone_layer_idx = ctx.zoning_layer_idx;
+    if (!ctx.root || !ctx.layers || zone_layer_idx < 0 ||
+        (size_t)zone_layer_idx >= ctx.layers->size() ||
         feature_idx == (size_t)-1) {
         return nullptr;
     }
 
-    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)ctx.zoning_layer_idx];
+    const LayerDef& zoning_layer = (*ctx.layers)[(size_t)zone_layer_idx];
     std::string source_signature;
     const std::filesystem::path layer_path = resolveStoredLayerPath(*ctx.root, zoning_layer);
     if (!resolveLayerSourceSignature(layer_path, source_signature, nullptr) || source_signature.empty()) {
@@ -143,7 +145,7 @@ const LayerDef::FeatureRecord* resolveHoveredZoneFeature(
 
     static HoverZoneFeatureCache cache;
     if (!cache.valid ||
-        cache.layer_idx != ctx.zoning_layer_idx ||
+        cache.layer_idx != zone_layer_idx ||
         cache.feature_idx != feature_idx ||
         cache.source_signature != source_signature) {
         std::vector<LayerDef::FeatureRecord> features;
@@ -153,7 +155,7 @@ const LayerDef::FeatureRecord* resolveHoveredZoneFeature(
             cache.valid = false;
             return nullptr;
         }
-        cache.layer_idx = ctx.zoning_layer_idx;
+        cache.layer_idx = zone_layer_idx;
         cache.feature_idx = feature_idx;
         cache.source_signature = source_signature;
         cache.feature = features[feature_idx];
@@ -906,6 +908,7 @@ bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHove
     }
     if (ctx.open_parcel_element) ctx.open_parcel_element(selected_entity_id);
     if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
+    if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
     if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
     return true;
 }
@@ -913,6 +916,7 @@ bool applyParcelClickSelection(const MapInspectionContext& ctx, const ParcelHove
 void clearMapFeatureSelection(const MapInspectionContext& ctx) {
     if (ctx.parcel_selection) clearParcelSelection(*ctx.parcel_selection);
     if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = false;
+    if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
     if (ctx.selected_zone_idx) *ctx.selected_zone_idx = (size_t)-1;
 }
 
@@ -942,6 +946,7 @@ void handleMapInspection(const MapInspectionContext& ctx) {
     hovered_zone = resolveHoveredZoneFeature(
         ctx,
         hovered_zone,
+        ctx.hover_state ? ctx.hover_state->hovered_zone_layer_idx : ctx.zoning_layer_idx,
         hovered_zone_idx,
         fallback_hovered_zone,
         fallback_hovered_zone_has_transient_props);
@@ -995,6 +1000,9 @@ void handleMapInspection(const MapInspectionContext& ctx) {
         applyParcelClickSelection(ctx, inspect_parcel, ctrl);
     } else if (ctx.map_hovered && ctx.zoning_inspect_active && click_select && zone_hit) {
         if (ctx.show_selected_zone_details) *ctx.show_selected_zone_details = true;
+        if (ctx.selected_zone_layer_idx) {
+            *ctx.selected_zone_layer_idx = ctx.hover_state ? ctx.hover_state->hovered_zone_layer_idx : ctx.zoning_layer_idx;
+        }
         if (ctx.selected_zone_idx) *ctx.selected_zone_idx = hovered_zone_idx;
         clearParcelSelection(*ctx.parcel_selection);
     } else if (ctx.map_hovered && ctx.parcel_inspect_active && click_select) {

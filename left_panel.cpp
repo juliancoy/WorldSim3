@@ -244,7 +244,7 @@ LeftPanelResult drawLeftPanelWindow(const LeftPanelContext& ctx) {
 
     ImGui::SetNextWindowPos(ImVec2(ctx.layout_margin, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.left_panel_w, ctx.main_panel_h), ImGuiCond_Always);
-    ImGui::Begin("Layers and Controls", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Layers and Controls", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     if (ImGui::SmallButton("<")) *ctx.collapsed = true;
     if (ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();

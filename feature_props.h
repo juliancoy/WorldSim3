@@ -22,6 +22,8 @@ std::string getPropertyValue(const LayerDef& layer, size_t feature_idx, const st
 std::string getFirstPropertyValue(const LayerDef::FeatureRecord& fg, std::initializer_list<const char*> keys);
 std::string getFirstPropertyValue(const LayerDef& layer, size_t feature_idx, std::initializer_list<const char*> keys);
 std::string normalizeJoinKey(std::string s);
+std::string zoningClassKeyFromPropertyPairs(const FeaturePropertyPairs& values);
+std::string zoningClassLabelFromPropertyPairs(const FeaturePropertyPairs& values);
 std::string zoningClassKey(const LayerDef::FeatureRecord& fg);
 std::string zoningClassKey(const LayerDef& layer, size_t feature_idx);
 std::string zoningGroupKey(const std::string& zone_key);

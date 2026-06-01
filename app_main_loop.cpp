@@ -445,8 +445,8 @@ int runWorldSim3App(int argc, char** argv) {
     std::atomic<double> perf_frame_ms_avg{0.0};
     std::atomic<double> perf_frame_ms_last{0.0};
     std::atomic<double> perf_fps_avg{0.0};
-    std::atomic<double> ui_left_panel_frac{0.34};
-    std::atomic<double> ui_right_panel_frac{0.24};
+    std::atomic<double> ui_left_panel_frac{app_settings.ui_left_panel_frac};
+    std::atomic<double> ui_right_panel_frac{app_settings.ui_right_panel_frac};
     std::atomic<double> prof_ui_ms_last{0.0};
     std::atomic<double> prof_owner_ms_last{0.0};
     std::atomic<double> prof_tile_ms_last{0.0};
@@ -534,7 +534,9 @@ int runWorldSim3App(int argc, char** argv) {
     std::unordered_map<std::string, bool> api_layer_fill_cmds;
     std::vector<std::string> api_layer_download_cmds;
     std::mutex layer_fill_mutex;
-    std::vector<bool> layer_fill_enabled(layers.size(), true);
+    std::vector<bool> layer_fill_enabled;
+    layer_fill_enabled.reserve(layers.size());
+    for (const LayerDef& layer : layers) layer_fill_enabled.push_back(layer.default_fill_enabled);
     std::vector<bool> layer_hover_enabled(layers.size(), true);
     std::vector<bool> layer_inspect_enabled(layers.size(), true);
     std::vector<bool> layer_heatmap_enabled(layers.size(), true);
@@ -964,6 +966,7 @@ int runWorldSim3App(int argc, char** argv) {
     int selected_record_year_total = 0;
     std::vector<std::string> selected_record_year_samples;
     bool show_selected_zone_details = false;
+    int selected_zone_layer_idx = -1;
     size_t selected_zone_idx = (size_t)-1;
     std::string current_project_path;
     std::string project_status;
@@ -1178,8 +1181,15 @@ int runWorldSim3App(int argc, char** argv) {
         g_ScreenshotState.framebuffer_scale_y = 1.0f;
     };
     AvCaptureState av_capture_state;
+    av_capture_state.include_audio = app_settings.av_record_audio;
+    av_capture_state.output_width = app_settings.av_output_width;
+    av_capture_state.output_height = app_settings.av_output_height;
+    av_capture_state.framerate = app_settings.av_framerate;
+    av_capture_state.video_bitrate_mbps = app_settings.av_video_bitrate_mbps;
+    av_capture_state.selected_audio_source = app_settings.av_audio_source;
+    av_capture_state.encoder_name = app_settings.av_encoder_name;
     refreshAvAudioSources(av_capture_state);
-    av_capture_state.encoder_name = detectAvHardwareEncoder();
+    if (av_capture_state.encoder_name.empty()) av_capture_state.encoder_name = detectAvHardwareEncoder();
     auto make_av_capture_options = [&]() {
         int capture_x = 0;
         int capture_y = 0;
@@ -1202,6 +1212,59 @@ int runWorldSim3App(int argc, char** argv) {
     };
     auto video_recording_active = [&]() -> bool {
         return av_capture_state.recording;
+    };
+    auto draw_panel_splitter = [&](const char* id, float x, bool resize_left_panel, float content_w, float splitter_layout_margin, float splitter_main_panel_h) {
+        if (content_w <= 1.0f) return;
+        constexpr float hit_w = 8.0f;
+        const ImVec2 min(x - hit_w * 0.5f, splitter_layout_margin);
+        ImGui::PushID(id);
+        ImGui::SetNextWindowPos(min, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(hit_w, std::max(1.0f, splitter_main_panel_h)), ImGuiCond_Always);
+        const std::string window_name = std::string("##panel_splitter_window_") + id;
+        ImGui::Begin(
+            window_name.c_str(),
+            nullptr,
+            ImGuiWindowFlags_NoDecoration |
+                ImGuiWindowFlags_NoBackground |
+                ImGuiWindowFlags_NoSavedSettings |
+                ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::SetCursorScreenPos(min);
+        ImGui::InvisibleButton("splitter", ImVec2(hit_w, std::max(1.0f, splitter_main_panel_h)));
+        const bool hovered = ImGui::IsItemHovered();
+        const bool active = ImGui::IsItemActive();
+        if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        if (active && ImGui::GetIO().MouseDelta.x != 0.0f) {
+            const double delta_frac = (double)ImGui::GetIO().MouseDelta.x / (double)content_w;
+            if (resize_left_panel) {
+                const double next = std::clamp(
+                    ui_left_panel_frac.load(std::memory_order_relaxed) + delta_frac,
+                    0.08,
+                    0.70);
+                ui_left_panel_frac.store(next, std::memory_order_relaxed);
+                app_settings.ui_left_panel_frac = next;
+            } else {
+                const double next = std::clamp(
+                    ui_right_panel_frac.load(std::memory_order_relaxed) - delta_frac,
+                    0.08,
+                    0.50);
+                ui_right_panel_frac.store(next, std::memory_order_relaxed);
+                app_settings.ui_right_panel_frac = next;
+            }
+            saveAppSettings(root, app_settings);
+        }
+        ImDrawList* fg = ImGui::GetForegroundDrawList();
+        if (fg && (hovered || active)) {
+            const ImU32 color = active ? IM_COL32(125, 220, 255, 190) : IM_COL32(125, 220, 255, 95);
+            fg->AddRectFilled(
+                ImVec2(x - 1.0f, splitter_layout_margin + 8.0f),
+                ImVec2(x + 1.0f, splitter_layout_margin + splitter_main_panel_h - 8.0f),
+                color,
+                1.0f);
+        }
+        ImGui::End();
+        ImGui::PopID();
     };
     const fs::path color_editor_dir = root / "data" / "cache" / "ui" / "layer_color_editor";
     const fs::path color_editor_snapshot_path = color_editor_dir / "session.json";
@@ -2594,6 +2657,7 @@ int runWorldSim3App(int argc, char** argv) {
                 &element_info_state,
                 &show_selected_parcel_details,
                 &show_selected_zone_details,
+                &selected_zone_layer_idx,
                 &selected_zone_idx,
                 &center_lon,
                 &center_lat,
@@ -2740,6 +2804,7 @@ int runWorldSim3App(int argc, char** argv) {
             &parcel_selection,
             &selected_parcel_entity_ids,
             &show_selected_zone_details,
+            &selected_zone_layer_idx,
             &selected_zone_idx,
             &element_info_state,
             &background_services.hover_debug_state,
@@ -2874,6 +2939,24 @@ int runWorldSim3App(int argc, char** argv) {
             map_window_fullscreen
         });
         prof_map_tab_ms = prof_ms_since(prof_map_tab_begin);
+        if (!map_window_fullscreen) {
+            if (!left_panel_collapsed) {
+                draw_panel_splitter(
+                    "left",
+                    layout_margin + left_panel_w + layout_gap * 0.5f,
+                    true,
+                    frame_layout.content_w,
+                    layout_margin,
+                    main_panel_h);
+            }
+            draw_panel_splitter(
+                "right",
+                layout_w - layout_margin - right_panel_w - layout_gap * 0.5f,
+                false,
+                frame_layout.content_w,
+                layout_margin,
+                main_panel_h);
+        }
         if (left_panel_collapsed && !map_window_fullscreen) {
             ImDrawList* fg = ImGui::GetForegroundDrawList();
             const ImVec2 button_min(layout_margin + 8.0f, layout_margin + 52.0f);

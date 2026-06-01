@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
 
 namespace {
 std::string trimCopy(const std::string& value) {
@@ -126,6 +127,47 @@ std::vector<size_t> mapTitleSourceLayerCandidates(const std::vector<LayerDef>& l
         if (!layerHasSource(layer)) continue;
         if (!layer.enabled && (int)i != parcel_layer_idx) continue;
         out.push_back(i);
+    }
+    return out;
+}
+
+std::vector<size_t> resolveMapTitleSourceLayerIndices(
+    const std::vector<LayerDef>& layers,
+    const std::vector<std::string>& selected_layer_files,
+    int parcel_layer_idx) {
+    const std::vector<size_t> candidates = mapTitleSourceLayerCandidates(layers, parcel_layer_idx);
+    if (candidates.empty()) return {};
+    if (selected_layer_files.empty()) return candidates;
+
+    std::unordered_set<std::string> selected;
+    selected.reserve(selected_layer_files.size());
+    for (const std::string& file : selected_layer_files) {
+        const std::string clean = trimCopy(file);
+        if (!clean.empty()) selected.insert(clean);
+    }
+    if (selected.empty()) return {};
+
+    std::vector<size_t> out;
+    out.reserve(candidates.size());
+    for (const size_t idx : candidates) {
+        if (idx < layers.size() && selected.find(layers[idx].file) != selected.end()) out.push_back(idx);
+    }
+    return out;
+}
+
+std::string mapTitleSourceLabelsForLayers(
+    const std::vector<LayerDef>& layers,
+    const std::vector<size_t>& selected_layer_indices) {
+    std::string out;
+    std::unordered_set<std::string> seen;
+    seen.reserve(selected_layer_indices.size());
+    for (const size_t idx : selected_layer_indices) {
+        if (idx >= layers.size()) continue;
+        const std::string label = trimCopy(mapTitleSourceLabelForLayer(layers[idx]));
+        if (label.empty() || seen.find(label) != seen.end()) continue;
+        seen.insert(label);
+        if (!out.empty()) out += "; ";
+        out += label;
     }
     return out;
 }

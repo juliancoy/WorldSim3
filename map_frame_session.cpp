@@ -307,6 +307,7 @@ void runMapFrameSession(const MapFrameSessionContext& ctx) {
         ctx.parcel_selection,
         ctx.open_parcel_element,
         ctx.show_selected_zone_details,
+        ctx.selected_zone_layer_idx,
         ctx.selected_zone_idx,
         ctx.hover_state,
         ctx.parcel_vac_notice_by_feature,

@@ -107,6 +107,7 @@ struct MapFrameSessionContext {
     std::unordered_map<std::string, ImVec4>* zoning_zone_color = nullptr;
     ParcelSelectionState* parcel_selection = nullptr;
     bool* show_selected_zone_details = nullptr;
+    int* selected_zone_layer_idx = nullptr;
     size_t* selected_zone_idx = nullptr;
     const MapHoverState* hover_state = nullptr;
 

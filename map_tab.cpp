@@ -860,10 +860,12 @@ void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& tit
     const float source_font_size = ImGui::GetFontSize() * 1.0f;
     const ImVec2 title_size =
         clean_title.empty() ? ImVec2(0.0f, 0.0f) : font->CalcTextSizeA(title_font_size, FLT_MAX, 0.0f, clean_title.c_str());
-    const std::string source_text = clean_source.empty() ? std::string() : ("Source: " + clean_source);
+    const bool multiple_sources = clean_source.find(';') != std::string::npos;
+    const std::string source_text = clean_source.empty() ? std::string() : ((multiple_sources ? "Sources: " : "Source: ") + clean_source);
+    const float max_text_w = std::max(120.0f, session.size.x - 96.0f);
     const ImVec2 source_size =
-        source_text.empty() ? ImVec2(0.0f, 0.0f) : font->CalcTextSizeA(source_font_size, FLT_MAX, 0.0f, source_text.c_str());
-    const float content_w = std::max(title_size.x, source_size.x);
+        source_text.empty() ? ImVec2(0.0f, 0.0f) : font->CalcTextSizeA(source_font_size, max_text_w, max_text_w, source_text.c_str());
+    const float content_w = std::min(max_text_w, std::max(title_size.x, source_size.x));
     const float content_h = title_size.y + (source_text.empty() ? 0.0f : (6.0f + source_size.y));
     const ImVec2 pad(18.0f, 12.0f);
     const ImVec2 box_min(
@@ -884,8 +886,8 @@ void drawMapTitleOverlay(const MapCanvasSession& session, const std::string& tit
     }
     if (!source_text.empty()) {
         const float source_x = session.origin.x + session.size.x * 0.5f - source_size.x * 0.5f;
-        draw->AddText(font, source_font_size, ImVec2(source_x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 140), source_text.c_str());
-        draw->AddText(font, source_font_size, ImVec2(source_x, y), IM_COL32(220, 226, 232, 235), source_text.c_str());
+        draw->AddText(font, source_font_size, ImVec2(source_x + 1.0f, y + 1.0f), IM_COL32(0, 0, 0, 140), source_text.c_str(), nullptr, max_text_w);
+        draw->AddText(font, source_font_size, ImVec2(source_x, y), IM_COL32(220, 226, 232, 235), source_text.c_str(), nullptr, max_text_w);
     }
     draw->PopClipRect();
 }
@@ -1246,7 +1248,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
 
     ImGui::SetNextWindowPos(ImVec2(ctx.map_x, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.map_w, ctx.main_panel_h), ImGuiCond_Always);
-    ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::Begin("Map", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     MapCanvasSessionContext map_canvas_ctx{
                 ctx.center_lon,
                 ctx.center_lat,
@@ -1461,6 +1463,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
                 ctx.hover_debug_state->inspect_parcel_entity_id = map_canvas_session.hover_state.inspect_parcel_entity_id;
                 ctx.hover_debug_state->inspect_parcel_geometry_entity_id = map_canvas_session.hover_state.inspect_parcel_geometry_entity_id;
                 ctx.hover_debug_state->hovered_zone = map_canvas_session.hover_state.hovered_zone_idx != (size_t)-1;
+                ctx.hover_debug_state->hovered_zone_layer_idx = map_canvas_session.hover_state.hovered_zone_layer_idx;
                 ctx.hover_debug_state->hovered_zone_idx = map_canvas_session.hover_state.hovered_zone_idx;
                 ctx.hover_debug_state->hovered_point = map_canvas_session.hover_state.hovered_point != nullptr;
                 ctx.hover_debug_state->hovered_point_idx = map_canvas_session.hover_state.hovered_point_idx;
@@ -1570,6 +1573,7 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             map_frame_session_ctx.zoning_zone_color = ctx.zoning_zone_color;
             map_frame_session_ctx.parcel_selection = ctx.parcel_selection;
             map_frame_session_ctx.show_selected_zone_details = ctx.show_selected_zone_details;
+            map_frame_session_ctx.selected_zone_layer_idx = ctx.selected_zone_layer_idx;
             map_frame_session_ctx.selected_zone_idx = ctx.selected_zone_idx;
             map_frame_session_ctx.hover_state = &map_canvas_session.hover_state;
             map_frame_session_ctx.layer_fill_enabled = ctx.layer_fill_enabled;
@@ -1635,13 +1639,11 @@ void drawMapTabWindow(const MapTabContext& ctx) {
             }
     std::string title_source;
     if (!trimCopy(map_title).empty() && ctx.app_settings && ctx.app_settings->map_title_show_primary_parcel_source && ctx.layers) {
-        const size_t source_layer_idx = resolveMapTitleSourceLayerIndex(
+        const std::vector<size_t> source_layer_indices = resolveMapTitleSourceLayerIndices(
             *ctx.layers,
-            ctx.app_settings->map_title_source_layer_file,
+            ctx.app_settings->map_title_source_layer_files,
             ctx.parcel_layer_idx);
-        if (source_layer_idx != (size_t)-1 && source_layer_idx < ctx.layers->size()) {
-            title_source = mapTitleSourceLabelForLayer((*ctx.layers)[source_layer_idx]);
-        }
+        title_source = mapTitleSourceLabelsForLayers(*ctx.layers, source_layer_indices);
     }
     drawMapTitleOverlay(map_canvas_session, map_title, title_source);
     if (ctx.app_settings && ctx.app_settings->map_legend_show_overlay) {

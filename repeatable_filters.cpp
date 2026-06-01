@@ -371,7 +371,8 @@ json queryExecutionSnapshotJson(const QueryExecutionContextSnapshot& snapshot) {
         {"zoom", snapshot.zoom},
         {"map_title_text", snapshot.map_title_text},
         {"map_title_show_primary_parcel_source", snapshot.map_title_show_primary_parcel_source},
-        {"map_title_source_layer_file", snapshot.map_title_source_layer_file}
+        {"map_title_source_layer_file", snapshot.map_title_source_layer_file},
+        {"map_title_source_layer_files", snapshot.map_title_source_layer_files}
     };
 }
 

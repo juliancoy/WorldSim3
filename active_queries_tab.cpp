@@ -265,6 +265,7 @@ void restoreQuerySnapshot(ActiveQueriesTabContext& ctx, const QueryExecutionCont
     ctx.app_settings->map_title_text = snapshot.map_title_text;
     ctx.app_settings->map_title_show_primary_parcel_source = snapshot.map_title_show_primary_parcel_source;
     ctx.app_settings->map_title_source_layer_file = snapshot.map_title_source_layer_file;
+    ctx.app_settings->map_title_source_layer_files = snapshot.map_title_source_layer_files;
 }
 
 std::vector<DuckDbSelectedParcel> selectedParcelsFromSnapshot(const QueryExecutionContextSnapshot& snapshot) {

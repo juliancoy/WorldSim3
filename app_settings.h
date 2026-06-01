@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 struct AppSettings {
     bool dark_mode = false;
@@ -37,9 +38,19 @@ struct AppSettings {
     std::string map_title_text;
     bool map_title_show_primary_parcel_source = false;
     std::string map_title_source_layer_file;
+    std::vector<std::string> map_title_source_layer_files;
     bool map_title_all_caps = false;
     bool map_legend_show_overlay = false;
     int map_legend_overlay_position = 0;
+    double ui_left_panel_frac = 0.34;
+    double ui_right_panel_frac = 0.24;
+    bool av_record_audio = true;
+    int av_output_width = 1920;
+    int av_output_height = 1080;
+    int av_framerate = 60;
+    int av_video_bitrate_mbps = 12;
+    std::string av_audio_source;
+    std::string av_encoder_name;
     std::string last_project_path;
 };
 

@@ -26,6 +26,11 @@ ImVec4 defaultOutlineColor(const ImVec4& fill) {
         1.0f);
 }
 
+ImVec4 defaultOutlineColorForLayer(const LayerDef& layer) {
+    if (layer.category == LayerDef::Category::Zoning) return ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+    return defaultOutlineColor(layer.color);
+}
+
 std::string mapViewKey() {
     return "global";
 }
@@ -318,13 +323,17 @@ static void appendManifestEntries(
         ld.region = arr[i].contains("region") ? arr[i]["region"].get<std::string>() : "";
         ld.scale = arr[i].contains("scale") ? arr[i]["scale"].get<std::string>() : "";
         ld.duckdb_role = arr[i].contains("duckdb_role") ? arr[i]["duckdb_role"].get<std::string>() : "";
+        ld.category = parseCategory(arr[i], ld.name);
         std::string c = arr[i].value("color", std::string("#999999"));
         parseHexLayerColor(c, ld.color);
-        ld.outline_color = defaultOutlineColor(ld.color);
+        ld.outline_color = defaultOutlineColorForLayer(ld);
+        if (arr[i].contains("outline_color") && arr[i]["outline_color"].is_string()) {
+            parseHexLayerColor(arr[i]["outline_color"].get<std::string>(), ld.outline_color);
+        }
+        ld.default_fill_enabled = arr[i].contains("fill_enabled") ? arr[i]["fill_enabled"].get<bool>() : true;
         ld.enabled = arr[i].contains("default_enabled") ? arr[i]["default_enabled"].get<bool>() : false;
         ld.runtime_load = arr[i].contains("runtime_load") ? arr[i]["runtime_load"].get<bool>() : true;
         ld.duckdb_ingest = arr[i].contains("duckdb_ingest") ? arr[i]["duckdb_ingest"].get<bool>() : true;
-        ld.category = parseCategory(arr[i], ld.name);
         refreshLayerGeometryUsageCache(ld);
         layers.push_back(std::move(ld));
         seen_files.insert(file);
@@ -419,10 +428,7 @@ void loadLayerUiState(
         for (auto& l : layers) {
             auto it = obj.find(l.file);
             if (it != obj.end() && it->is_string() && parseHexLayerColor(it->get<std::string>(), l.outline_color)) continue;
-            l.outline_color = defaultOutlineColor(l.color);
         }
-    } else {
-        for (auto& l : layers) l.outline_color = defaultOutlineColor(l.color);
     }
     if (zoning_zone_enabled && j.contains("zoning_zones") && j["zoning_zones"].is_object()) {
         zoning_zone_enabled->clear();
@@ -979,7 +985,8 @@ json queryHistoryEntryJson(const QueryHistoryEntry& entry) {
             {"zoom", entry.snapshot.zoom},
             {"map_title_text", entry.snapshot.map_title_text},
             {"map_title_show_primary_parcel_source", entry.snapshot.map_title_show_primary_parcel_source},
-            {"map_title_source_layer_file", entry.snapshot.map_title_source_layer_file}
+            {"map_title_source_layer_file", entry.snapshot.map_title_source_layer_file},
+            {"map_title_source_layer_files", entry.snapshot.map_title_source_layer_files}
         }}
     };
 }
@@ -1036,6 +1043,12 @@ void loadQueryHistoryEntryFromJson(const json& j, QueryHistoryEntry& entry) {
     }
     if (s.contains("map_title_source_layer_file") && s["map_title_source_layer_file"].is_string()) {
         entry.snapshot.map_title_source_layer_file = s["map_title_source_layer_file"].get<std::string>();
+    }
+    if (s.contains("map_title_source_layer_files") && s["map_title_source_layer_files"].is_array()) {
+        entry.snapshot.map_title_source_layer_files.clear();
+        for (const auto& item : s["map_title_source_layer_files"]) {
+            if (item.is_string()) entry.snapshot.map_title_source_layer_files.push_back(item.get<std::string>());
+        }
     }
 }
 }

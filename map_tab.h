@@ -63,6 +63,7 @@ struct MapTabContext {
     ParcelSelectionState* parcel_selection = nullptr;
     std::vector<std::string>* selected_parcel_ids = nullptr;
     bool* show_selected_zone_details = nullptr;
+    int* selected_zone_layer_idx = nullptr;
     size_t* selected_zone_idx = nullptr;
     ElementInfoUiState* element_info_state = nullptr;
     HoverDebugState* hover_debug_state = nullptr;

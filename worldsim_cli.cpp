@@ -3207,12 +3207,104 @@ int runZoningManifestSelftest(const fs::path& root) {
         city ? !registry.isHiddenParcelGeometryLayer((size_t)(city - layers.data())) : false;
     const bool county_visible_in_layer_panel =
         county ? !registry.isHiddenParcelGeometryLayer((size_t)(county - layers.data())) : false;
+    const LayerDef::FeatureProperties generalized_residential =
+        makeProperties({{"GENZONE", "Residential Medium"}, {"GENZONE_CAT", "Residential"}});
+    const LayerDef::FeatureProperties generalized_commercial =
+        makeProperties({{"GENZONE", "Commercial"}, {"GENZONE_CAT", "Commercial"}});
+    const LayerDef::FeatureProperties generalized_industrial =
+        makeProperties({{"GENZONE", "Industrial"}, {"GENZONE_CAT", "Industrial"}});
+    const LayerDef::FeatureProperties generalized_mixed_use =
+        makeProperties({{"GENZONE", "Mixed Use"}, {"GENZONE_CAT", "Mixed Use"}});
+    const LayerDef::FeatureProperties generalized_agriculture =
+        makeProperties({{"GENZONE", "Agricultural"}, {"GENZONE_CAT", "Agricultural"}});
+    const ImVec4 residential_color = zoningColorFromConvention(zoningClassKeyFromPropertyPairs(generalized_residential.values));
+    const ImVec4 commercial_color = zoningColorFromConvention(zoningClassKeyFromPropertyPairs(generalized_commercial.values));
+    const ImVec4 industrial_color = zoningColorFromConvention(zoningClassKeyFromPropertyPairs(generalized_industrial.values));
+    const ImVec4 mixed_use_color = zoningColorFromConvention(zoningClassKeyFromPropertyPairs(generalized_mixed_use.values));
+    const ImVec4 agriculture_color = zoningColorFromConvention(zoningClassKeyFromPropertyPairs(generalized_agriculture.values));
+    const bool simcity_generalized_colors_ok =
+        zoningClassKeyFromPropertyPairs(generalized_residential.values) == "Residential Medium" &&
+        residential_color.y > residential_color.x &&
+        residential_color.y > residential_color.z &&
+        commercial_color.z > commercial_color.x &&
+        commercial_color.z > commercial_color.y &&
+        mixed_use_color.z > mixed_use_color.x &&
+        mixed_use_color.z > mixed_use_color.y &&
+        agriculture_color.y > agriculture_color.x &&
+        agriculture_color.y > agriculture_color.z &&
+        industrial_color.x > 0.6f &&
+        industrial_color.y > 0.6f &&
+        industrial_color.z < industrial_color.x &&
+        industrial_color.z < industrial_color.y;
+    const std::array<std::pair<const char*, const char*>, 24> expected_jurisdictions{{
+        {"Allegany County Zoning", "allegany_county"},
+        {"Anne Arundel County Zoning", "anne_arundel_county"},
+        {"Baltimore City Zoning", "baltimore_city"},
+        {"Baltimore County Zoning", "baltimore_county"},
+        {"Calvert County Zoning", "calvert_county"},
+        {"Caroline County Zoning", "caroline_county"},
+        {"Carroll County Zoning", "carroll_county"},
+        {"Cecil County Zoning", "cecil_county"},
+        {"Charles County Zoning", "charles_county"},
+        {"Dorchester County Zoning", "dorchester_county"},
+        {"Frederick County Zoning", "frederick_county"},
+        {"Garrett County Zoning", "garrett_county"},
+        {"Harford County Zoning", "harford_county"},
+        {"Howard County Zoning", "howard_county"},
+        {"Kent County Zoning", "kent_county"},
+        {"Montgomery County Zoning", "montgomery_county"},
+        {"Prince George's County Zoning", "prince_georges_county"},
+        {"Queen Anne's County Zoning", "queen_annes_county"},
+        {"St. Mary's County Zoning", "st_marys_county"},
+        {"Somerset County Zoning", "somerset_county"},
+        {"Talbot County Zoning", "talbot_county"},
+        {"Washington County Zoning", "washington_county"},
+        {"Wicomico County Zoning", "wicomico_county"},
+        {"Worcester County Zoning", "worcester_county"},
+    }};
+    json jurisdiction_status = json::object();
+    bool statewide_ok = true;
+    for (const auto& expected : expected_jurisdictions) {
+        const LayerDef* layer = find_layer(expected.first, expected.second);
+        const bool present = layer != nullptr;
+        const bool category_ok = present && layer->category == LayerDef::Category::Zoning;
+        const bool role_ok = present && layer->duckdb_role == "parcel_context";
+        const bool local = present && layerRuntimeSourceMaterializedForFile(root, layer->file);
+        const bool visible =
+            present && !registry.isHiddenParcelGeometryLayer((size_t)(layer - layers.data()));
+        const bool source_ok =
+            present &&
+            (!layer->source_url.empty() ||
+             !layer->source_urls.empty() ||
+             (layer->import_type == "arcgis_feature_layer" && !layer->import_service_url.empty()));
+        const bool presentation_ok =
+            present &&
+            layer->default_fill_enabled &&
+            layer->outline_color.w <= 0.0001f;
+        statewide_ok = statewide_ok && present && category_ok && role_ok && local && visible && source_ok && presentation_ok;
+        jurisdiction_status[expected.second] = {
+            {"present", present},
+            {"file", present ? layer->file : ""},
+            {"category_ok", category_ok},
+            {"duckdb_role_ok", role_ok},
+            {"source_ok", source_ok},
+            {"default_fill_enabled", present ? layer->default_fill_enabled : false},
+            {"outline_alpha", present ? layer->outline_color.w : 1.0f},
+            {"presentation_ok", presentation_ok},
+            {"local_source_materialized", local},
+            {"visible_in_layer_panel", visible}
+        };
+    }
     const bool ok = city_ok && county_ok && city_local && county_local &&
-        city_visible_in_layer_panel && county_visible_in_layer_panel;
+        city_visible_in_layer_panel && county_visible_in_layer_panel && statewide_ok &&
+        simcity_generalized_colors_ok;
     json out = {
         {"mode", "zoning-manifest-selftest"},
         {"ok", ok},
         {"layer_count", layers.size()},
+        {"expected_jurisdiction_count", expected_jurisdictions.size()},
+        {"simcity_generalized_colors_ok", simcity_generalized_colors_ok},
+        {"jurisdictions", std::move(jurisdiction_status)},
         {"baltimore_city", {
             {"present", city != nullptr},
             {"file", city ? city->file : ""},
@@ -3287,12 +3379,18 @@ int runMapTitleSourceSelftest() {
     const std::vector<size_t> candidates = mapTitleSourceLayerCandidates(layers, 0);
     const size_t selected_road = resolveMapTitleSourceLayerIndex(layers, "roads.geojson", 0);
     const size_t fallback_parcel = resolveMapTitleSourceLayerIndex(layers, "missing.geojson", 0);
+    const std::vector<size_t> selected_sources =
+        resolveMapTitleSourceLayerIndices(layers, {"parcel.geojson", "roads.geojson"}, 0);
+    const std::string selected_source_labels = mapTitleSourceLabelsForLayers(layers, selected_sources);
     const bool ok =
         candidates.size() == 2 &&
         candidates[0] == 0 &&
         candidates[1] == 1 &&
         selected_road == 1 &&
         fallback_parcel == 0 &&
+        selected_sources.size() == 2 &&
+        selected_source_labels.find("Baltimore City Open Data") != std::string::npos &&
+        selected_source_labels.find("Maryland Department of Transportation State Highway Administration") != std::string::npos &&
         mapTitleSourceLabelForLayer(layers[1]) ==
             "Maryland Department of Transportation State Highway Administration (MDOT SHA)";
     json out = {
@@ -3301,6 +3399,8 @@ int runMapTitleSourceSelftest() {
         {"candidate_count", candidates.size()},
         {"selected_road", selected_road},
         {"fallback_parcel", fallback_parcel},
+        {"selected_source_count", selected_sources.size()},
+        {"selected_source_labels", selected_source_labels},
         {"road_source", mapTitleSourceLabelForLayer(layers[1])}
     };
     std::cout << out.dump(2) << '\n';
@@ -7698,8 +7798,8 @@ WorldsimCliOptions parseWorldsimCliOptions(int argc, char** argv) {
 void printWorldsimUsage() {
     std::cout
         << "Usage: worldsim3 [--reserve-one-core|--reserve-cores N]\n"
-        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|beps|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
-        << "       worldsim3 [--generate-canonical-files [all|must-have|nice-to-have|heavy-data|beps|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--download-layers [all|must-have|nice-to-have|heavy-data|beps|zoning-statewide|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
+        << "       worldsim3 [--generate-canonical-files [all|must-have|nice-to-have|heavy-data|beps|zoning-statewide|capital-flows|anambra-runtime|anambra-repository|extended-events|historical-high-quality|archival-research]] [--include-large]\n"
         << "       worldsim3 --rebuild-duckdb-analytics [--reserve-cores N]\n"
         << "       worldsim3 --inspect-duckdb-geography-tables\n"
         << "       worldsim3 --report-duckdb-coverage\n"

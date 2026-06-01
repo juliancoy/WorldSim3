@@ -587,7 +587,11 @@ GroupControlState buildGroupControlState(const LayersPanelUiContext& ctx, const 
         if (layerSupportsClickSelection(ctx, idx)) {
             state.click_supported = true;
             if (state.first_click_idx < 0) state.first_click_idx = (int)idx;
-            state.click_selected = state.click_selected || layerIsSelectedClickTarget(ctx, idx);
+            state.click_selected = state.click_selected ||
+                layerIsSelectedClickTarget(ctx, idx) ||
+                (ctx.shared->layer_inspect_enabled &&
+                 idx < ctx.shared->layer_inspect_enabled->size() &&
+                 (*ctx.shared->layer_inspect_enabled)[idx]);
         }
     }
     return state;

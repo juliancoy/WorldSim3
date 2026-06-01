@@ -1,0 +1,578 @@
+[
+  {
+    "name": "Allegany County Zoning",
+    "file": "allegany_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27ALLE%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'ALLE'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "allegany_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Calvert County Zoning",
+    "file": "calvert_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27CALV%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'CALV'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "calvert_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Caroline County Zoning",
+    "file": "caroline_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27CARO%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'CARO'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "caroline_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Carroll County Zoning",
+    "file": "carroll_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27CARR%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'CARR'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "carroll_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Cecil County Zoning",
+    "file": "cecil_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27CECI%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'CECI'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "cecil_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Charles County Zoning",
+    "file": "charles_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27CHAR%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'CHAR'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "charles_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Dorchester County Zoning",
+    "file": "dorchester_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27DORC%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'DORC'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "dorchester_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Frederick County Zoning",
+    "file": "frederick_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27FRED%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'FRED'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "frederick_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Garrett County Zoning",
+    "file": "garrett_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27GARR%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'GARR'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "garrett_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Harford County Zoning",
+    "file": "harford_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27HARF%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'HARF'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "harford_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Kent County Zoning",
+    "file": "kent_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27KENT%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'KENT'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "kent_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Queen Anne's County Zoning",
+    "file": "queen_annes_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27QUEE%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'QUEE'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "queen_annes_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "St. Mary's County Zoning",
+    "file": "st_marys_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27STMA%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'STMA'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "st_marys_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Somerset County Zoning",
+    "file": "somerset_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27SOME%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'SOME'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "somerset_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Talbot County Zoning",
+    "file": "talbot_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27TALB%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'TALB'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "talbot_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Washington County Zoning",
+    "file": "washington_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27WASH%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'WASH'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "washington_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Wicomico County Zoning",
+    "file": "wicomico_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27WICO%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'WICO'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "wicomico_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  },
+  {
+    "name": "Worcester County Zoning",
+    "file": "worcester_county_zoning.geojson",
+    "color": "#8ab17d",
+    "description": "County zoning coverage from the Maryland Department of Planning Generalized Zoning service, used as the statewide canonical fallback where a local county zoning GIS layer is not yet materialized.",
+    "reference_url": "https://storymaps.arcgis.com/stories/4a3bd4e562c44d41b2f0f413d44aff13",
+    "source_urls": [
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3/query?where=JURSCODE%20%3D%20%27WORC%27&outFields=*&returnGeometry=true&outSR=4326&f=geojson"
+    ],
+    "category": "zoning",
+    "subcategory": "Land Use",
+    "region": "Maryland",
+    "scale": "parcel",
+    "default_enabled": false,
+    "runtime_load": true,
+    "duckdb_ingest": true,
+    "duckdb_role": "parcel_context",
+    "import": {
+      "type": "arcgis_feature_layer",
+      "service_url": "https://services.arcgis.com/njFNhDsUCentVYJW/arcgis/rest/services/GeneralizedZoning2021_StoryMap/FeatureServer/3",
+      "where": "JURSCODE = 'WORC'"
+    },
+    "provenance": {
+      "world": "earth",
+      "nation_state": "us",
+      "state_region": "md",
+      "county_city": "worcester_county"
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
+  }
+]

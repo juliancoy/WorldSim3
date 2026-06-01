@@ -600,6 +600,7 @@ std::filesystem::path layerManifestPathForPhase(const fs::path& root, const std:
     if (phase == "nice-to-have") return us_md_root / "layers_manifest.nice_to_have.json";
     if (phase == "heavy-data") return us_md_root / "layers_manifest.heavy_data.json";
     if (phase == "beps") return us_md_root / "layers_manifest.beps.json";
+    if (phase == "zoning-statewide") return us_md_root / "layers_manifest.zoning_statewide.json";
     if (phase == "capital-flows") return us_md_root / "layers_manifest.capital_flows.json";
     if (phase == "anambra-runtime") return ng_anambra_root / "layers_manifest.runtime.json";
     if (phase == "anambra-repository") return ng_anambra_root / "layers_manifest.repository.json";

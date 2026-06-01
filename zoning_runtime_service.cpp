@@ -106,7 +106,11 @@ std::string zoningClassKeyForColoring(
     const std::vector<LayerDef::FeatureProperties>* fallback_properties,
     const LayerDef::FeatureRecord& fg,
     size_t feature_idx) {
-    std::string z = firstFeaturePropertyForColoring(layer, fallback_properties, fg, feature_idx, {
+    if (const FeaturePropertyPairs* props = featurePropertiesForColoring(layer, fallback_properties, feature_idx)) {
+        return zoningClassKeyFromPropertyPairs(*props);
+    }
+    std::string z = getFirstPropertyValue(fg, {
+        "GENZONE", "GENZONE_CAT",
         "Zoning", "Label", "ZoningLabel", "ZONING", "ZONED", "ZONE",
         "ZONE_CLASS", "ZONE_DIST", "CLASS", "DISTRICT", "Type", "TYPE", "DIST_CODE"
     });

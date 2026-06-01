@@ -81,18 +81,23 @@ std::vector<std::string> splitTabLine(const std::string& line) {
     return parts;
 }
 
-std::string encoderOptions(const std::string& encoder, int bitrate_mbps) {
+std::string encoderOptions(const std::string& encoder, int bitrate_mbps, int output_width, int output_height) {
     const int bitrate = std::clamp(bitrate_mbps, 2, 80);
+    const int width = std::max(2, output_width & ~1);
+    const int height = std::max(2, output_height & ~1);
     std::ostringstream ss;
     if (encoder == "h264_nvenc") {
+        ss << "-vf scale=" << width << ":" << height << ":flags=bicubic ";
         ss << "-c:v h264_nvenc -preset p4 -tune ll -rc vbr -b:v " << bitrate
            << "M -maxrate " << (bitrate + bitrate / 2) << "M -bufsize " << (bitrate * 2) << "M ";
     } else if (encoder == "h264_qsv") {
+        ss << "-vf scale=" << width << ":" << height << ":flags=bicubic ";
         ss << "-c:v h264_qsv -preset veryfast -b:v " << bitrate << "M ";
     } else if (encoder == "h264_vaapi") {
-        ss << "-vaapi_device /dev/dri/renderD128 -vf 'format=nv12,hwupload' -c:v h264_vaapi -b:v "
-           << bitrate << "M ";
+        ss << "-vaapi_device /dev/dri/renderD128 -vf 'scale=" << width << ":" << height
+           << ":flags=bicubic,format=nv12,hwupload' -c:v h264_vaapi -b:v " << bitrate << "M ";
     } else {
+        ss << "-vf scale=" << width << ":" << height << ":flags=bicubic ";
         ss << "-c:v libx264 -preset veryfast -crf 20 ";
     }
     return ss.str();
@@ -163,6 +168,10 @@ bool startAvRecording(AvCaptureState& state, const AvCaptureStartOptions& option
 
     const int width = std::max(2, options.width & ~1);
     const int height = std::max(2, options.height & ~1);
+    const int output_width = std::clamp(state.output_width, 320, 7680) & ~1;
+    const int output_height = std::clamp(state.output_height, 180, 4320) & ~1;
+    state.output_width = std::max(2, output_width);
+    state.output_height = std::max(2, output_height);
     const int fps = std::clamp(state.framerate, 10, 120);
 
     const std::filesystem::path out_dir = options.root / "recordings";
@@ -193,7 +202,7 @@ bool startAvRecording(AvCaptureState& state, const AvCaptureStartOptions& option
     } else {
         command << "-map 0:v:0 ";
     }
-    command << encoderOptions(state.encoder_name, state.video_bitrate_mbps);
+    command << encoderOptions(state.encoder_name, state.video_bitrate_mbps, state.output_width, state.output_height);
     if (use_audio) command << "-c:a aac -b:a 160k ";
     command << "-movflags +faststart " << shellQuote(state.output_path.string()) << " 2>&1";
 
@@ -204,7 +213,9 @@ bool startAvRecording(AvCaptureState& state, const AvCaptureStartOptions& option
         return false;
     }
     state.recording = true;
-    state.status = "Recording to " + state.output_path.string() + " using " + state.encoder_name + ".";
+    state.status =
+        "Recording " + std::to_string(state.output_width) + "x" + std::to_string(state.output_height) +
+        " to " + state.output_path.string() + " using " + state.encoder_name + ".";
     return true;
 }
 

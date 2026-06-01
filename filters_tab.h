@@ -33,6 +33,7 @@ struct FiltersTabContext {
     int zoning_layer_idx = -1;
     bool* show_selected_parcel_details = nullptr;
     bool* show_selected_zone_details = nullptr;
+    int* selected_zone_layer_idx = nullptr;
     size_t* selected_zone_idx = nullptr;
     double* center_lon = nullptr;
     double* center_lat = nullptr;

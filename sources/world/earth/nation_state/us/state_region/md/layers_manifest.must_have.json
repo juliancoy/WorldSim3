@@ -54,7 +54,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Housing and Building Permits 2019-Present",

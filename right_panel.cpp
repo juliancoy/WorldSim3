@@ -190,7 +190,8 @@ json queryRecordJson(const QueryRecord& q) {
             {"zoom", q.snapshot.zoom},
             {"map_title_text", q.snapshot.map_title_text},
             {"map_title_show_primary_parcel_source", q.snapshot.map_title_show_primary_parcel_source},
-            {"map_title_source_layer_file", q.snapshot.map_title_source_layer_file}
+            {"map_title_source_layer_file", q.snapshot.map_title_source_layer_file},
+            {"map_title_source_layer_files", q.snapshot.map_title_source_layer_files}
         }}
     };
 }
@@ -238,6 +239,12 @@ void loadQueryRecordJson(const json& j, QueryRecord& q) {
     }
     if (s.contains("map_title_source_layer_file") && s["map_title_source_layer_file"].is_string()) {
         q.snapshot.map_title_source_layer_file = s["map_title_source_layer_file"].get<std::string>();
+    }
+    if (s.contains("map_title_source_layer_files") && s["map_title_source_layer_files"].is_array()) {
+        q.snapshot.map_title_source_layer_files.clear();
+        for (const auto& item : s["map_title_source_layer_files"]) {
+            if (item.is_string()) q.snapshot.map_title_source_layer_files.push_back(item.get<std::string>());
+        }
     }
 }
 
@@ -354,9 +361,19 @@ json buildProjectStatePayload(const RightPanelContext& ctx) {
             {"map_title_text", ctx.app_settings->map_title_text},
             {"map_title_show_primary_parcel_source", ctx.app_settings->map_title_show_primary_parcel_source},
             {"map_title_source_layer_file", ctx.app_settings->map_title_source_layer_file},
+            {"map_title_source_layer_files", ctx.app_settings->map_title_source_layer_files},
             {"map_title_all_caps", ctx.app_settings->map_title_all_caps},
             {"map_legend_show_overlay", ctx.app_settings->map_legend_show_overlay},
-            {"map_legend_overlay_position", ctx.app_settings->map_legend_overlay_position}
+            {"map_legend_overlay_position", ctx.app_settings->map_legend_overlay_position},
+            {"ui_left_panel_frac", ctx.app_settings->ui_left_panel_frac},
+            {"ui_right_panel_frac", ctx.app_settings->ui_right_panel_frac},
+            {"av_record_audio", ctx.app_settings->av_record_audio},
+            {"av_output_width", ctx.app_settings->av_output_width},
+            {"av_output_height", ctx.app_settings->av_output_height},
+            {"av_framerate", ctx.app_settings->av_framerate},
+            {"av_video_bitrate_mbps", ctx.app_settings->av_video_bitrate_mbps},
+            {"av_audio_source", ctx.app_settings->av_audio_source},
+            {"av_encoder_name", ctx.app_settings->av_encoder_name}
         };
     }
 
@@ -408,6 +425,7 @@ json buildProjectStatePayload(const RightPanelContext& ctx) {
             {"parcel_active_entity_id", ctx.parcel_selection ? ctx.parcel_selection->active_entity_id : std::string()},
             {"parcel_refs", std::move(parcel_refs)},
             {"show_selected_zone_details", ctx.show_selected_zone_details ? *ctx.show_selected_zone_details : false},
+            {"selected_zone_layer_idx", ctx.selected_zone_layer_idx ? *ctx.selected_zone_layer_idx : -1},
             {"selected_zone_idx", ctx.selected_zone_idx ? *ctx.selected_zone_idx : (size_t)-1}
         }},
         {"query_layers", std::move(query_layers)},
@@ -470,9 +488,24 @@ bool applyProjectJson(const RightPanelContext& ctx, const json& project, std::st
         if (a.contains("map_title_text") && a["map_title_text"].is_string()) ctx.app_settings->map_title_text = a["map_title_text"].get<std::string>();
         if (a.contains("map_title_show_primary_parcel_source") && a["map_title_show_primary_parcel_source"].is_boolean()) ctx.app_settings->map_title_show_primary_parcel_source = a["map_title_show_primary_parcel_source"].get<bool>();
         if (a.contains("map_title_source_layer_file") && a["map_title_source_layer_file"].is_string()) ctx.app_settings->map_title_source_layer_file = a["map_title_source_layer_file"].get<std::string>();
+        if (a.contains("map_title_source_layer_files") && a["map_title_source_layer_files"].is_array()) {
+            ctx.app_settings->map_title_source_layer_files.clear();
+            for (const auto& item : a["map_title_source_layer_files"]) {
+                if (item.is_string()) ctx.app_settings->map_title_source_layer_files.push_back(item.get<std::string>());
+            }
+        }
         if (a.contains("map_title_all_caps") && a["map_title_all_caps"].is_boolean()) ctx.app_settings->map_title_all_caps = a["map_title_all_caps"].get<bool>();
         if (a.contains("map_legend_show_overlay") && a["map_legend_show_overlay"].is_boolean()) ctx.app_settings->map_legend_show_overlay = a["map_legend_show_overlay"].get<bool>();
         if (a.contains("map_legend_overlay_position") && a["map_legend_overlay_position"].is_number_integer()) ctx.app_settings->map_legend_overlay_position = std::clamp(a["map_legend_overlay_position"].get<int>(), 0, 3);
+        if (a.contains("ui_left_panel_frac") && a["ui_left_panel_frac"].is_number()) ctx.app_settings->ui_left_panel_frac = std::clamp(a["ui_left_panel_frac"].get<double>(), 0.08, 0.70);
+        if (a.contains("ui_right_panel_frac") && a["ui_right_panel_frac"].is_number()) ctx.app_settings->ui_right_panel_frac = std::clamp(a["ui_right_panel_frac"].get<double>(), 0.08, 0.50);
+        if (a.contains("av_record_audio") && a["av_record_audio"].is_boolean()) ctx.app_settings->av_record_audio = a["av_record_audio"].get<bool>();
+        if (a.contains("av_output_width") && a["av_output_width"].is_number_integer()) ctx.app_settings->av_output_width = std::clamp(a["av_output_width"].get<int>(), 320, 7680);
+        if (a.contains("av_output_height") && a["av_output_height"].is_number_integer()) ctx.app_settings->av_output_height = std::clamp(a["av_output_height"].get<int>(), 180, 4320);
+        if (a.contains("av_framerate") && a["av_framerate"].is_number_integer()) ctx.app_settings->av_framerate = std::clamp(a["av_framerate"].get<int>(), 10, 120);
+        if (a.contains("av_video_bitrate_mbps") && a["av_video_bitrate_mbps"].is_number_integer()) ctx.app_settings->av_video_bitrate_mbps = std::clamp(a["av_video_bitrate_mbps"].get<int>(), 2, 80);
+        if (a.contains("av_audio_source") && a["av_audio_source"].is_string()) ctx.app_settings->av_audio_source = a["av_audio_source"].get<std::string>();
+        if (a.contains("av_encoder_name") && a["av_encoder_name"].is_string()) ctx.app_settings->av_encoder_name = a["av_encoder_name"].get<std::string>();
         if (ctx.root) saveAppSettings(*ctx.root, *ctx.app_settings);
     }
     if (project.contains("map") && project["map"].is_object()) {
@@ -595,6 +628,7 @@ bool applyProjectJson(const RightPanelContext& ctx, const json& project, std::st
             if (s.contains("parcel_group_highlight") && s["parcel_group_highlight"].is_boolean()) ctx.parcel_selection->group_highlight = s["parcel_group_highlight"].get<bool>();
         }
         if (ctx.show_selected_zone_details && s.contains("show_selected_zone_details") && s["show_selected_zone_details"].is_boolean()) *ctx.show_selected_zone_details = s["show_selected_zone_details"].get<bool>();
+        if (ctx.selected_zone_layer_idx && s.contains("selected_zone_layer_idx") && s["selected_zone_layer_idx"].is_number_integer()) *ctx.selected_zone_layer_idx = s["selected_zone_layer_idx"].get<int>();
         if (ctx.selected_zone_idx && s.contains("selected_zone_idx") && s["selected_zone_idx"].is_number_unsigned()) *ctx.selected_zone_idx = s["selected_zone_idx"].get<size_t>();
     }
     if (ctx.query_layers && project.contains("query_layers") && project["query_layers"].is_array()) {
@@ -881,36 +915,58 @@ void drawMapTitleTab(const RightPanelContext& ctx) {
         }
         const std::vector<size_t> source_candidates =
             ctx.layers ? mapTitleSourceLayerCandidates(*ctx.layers, ctx.parcel_layer_idx) : std::vector<size_t>{};
-        size_t selected_source_idx = ctx.layers
-            ? resolveMapTitleSourceLayerIndex(*ctx.layers, ctx.app_settings->map_title_source_layer_file, ctx.parcel_layer_idx)
-            : (size_t)-1;
-        int selected_combo_idx = -1;
-        for (size_t i = 0; i < source_candidates.size(); ++i) {
-            if (source_candidates[i] == selected_source_idx) {
-                selected_combo_idx = (int)i;
-                break;
-            }
-        }
         ImGui::BeginDisabled(!show_source || source_candidates.empty());
-        const char* preview_value = "No visible source layers";
-        std::string selected_name;
-        if (selected_combo_idx >= 0 && (size_t)selected_combo_idx < source_candidates.size()) {
-            selected_name = mapTitleSourceDisplayName((*ctx.layers)[source_candidates[(size_t)selected_combo_idx]]);
-            preview_value = selected_name.c_str();
+        ImGui::SeparatorText("Source selection");
+        if (ImGui::SmallButton("Select All Sources")) {
+            ctx.app_settings->map_title_source_layer_files.clear();
+            for (const size_t layer_idx : source_candidates) {
+                if (ctx.layers && layer_idx < ctx.layers->size()) {
+                    ctx.app_settings->map_title_source_layer_files.push_back((*ctx.layers)[layer_idx].file);
+                }
+            }
+            ctx.app_settings->map_title_source_layer_file =
+                ctx.app_settings->map_title_source_layer_files.empty() ? std::string() : ctx.app_settings->map_title_source_layer_files.front();
+            saveAppSettings(*ctx.root, *ctx.app_settings);
         }
-        if (ImGui::BeginCombo("Source layer", preview_value)) {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear Sources")) {
+            ctx.app_settings->map_title_source_layer_files.clear();
+            ctx.app_settings->map_title_source_layer_file.clear();
+            ctx.app_settings->map_title_show_primary_parcel_source = false;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+        const float source_list_h = std::min(220.0f, std::max(72.0f, ImGui::GetTextLineHeightWithSpacing() * (float)std::min<size_t>(source_candidates.size(), 8)));
+        if (ImGui::BeginChild("##map_title_source_selection", ImVec2(0.0f, source_list_h), true)) {
             for (size_t i = 0; i < source_candidates.size(); ++i) {
                 const size_t layer_idx = source_candidates[i];
+                if (!ctx.layers || layer_idx >= ctx.layers->size()) continue;
                 const std::string label = mapTitleSourceDisplayName((*ctx.layers)[layer_idx]);
-                const bool selected = (int)i == selected_combo_idx;
-                if (ImGui::Selectable(label.c_str(), selected)) {
-                    ctx.app_settings->map_title_source_layer_file = (*ctx.layers)[layer_idx].file;
+                const std::string& file = (*ctx.layers)[layer_idx].file;
+                const bool implicit_all = ctx.app_settings->map_title_source_layer_files.empty();
+                bool selected = implicit_all ||
+                    std::find(
+                        ctx.app_settings->map_title_source_layer_files.begin(),
+                        ctx.app_settings->map_title_source_layer_files.end(),
+                        file) != ctx.app_settings->map_title_source_layer_files.end();
+                ImGui::PushID((int)layer_idx);
+                if (ImGui::Checkbox(label.c_str(), &selected)) {
+                    auto& files = ctx.app_settings->map_title_source_layer_files;
+                    if (implicit_all) {
+                        files.clear();
+                        for (const size_t candidate_idx : source_candidates) {
+                            if (ctx.layers && candidate_idx < ctx.layers->size()) files.push_back((*ctx.layers)[candidate_idx].file);
+                        }
+                    }
+                    auto it = std::find(files.begin(), files.end(), file);
+                    if (selected && it == files.end()) files.push_back(file);
+                    if (!selected && it != files.end()) files.erase(it);
+                    ctx.app_settings->map_title_source_layer_file = files.empty() ? std::string() : files.front();
                     saveAppSettings(*ctx.root, *ctx.app_settings);
                 }
-                if (selected) ImGui::SetItemDefaultFocus();
+                ImGui::PopID();
             }
-            ImGui::EndCombo();
         }
+        ImGui::EndChild();
         ImGui::EndDisabled();
         bool all_caps = ctx.app_settings->map_title_all_caps;
         if (ImGui::Checkbox("All caps", &all_caps)) {
@@ -940,14 +996,19 @@ void drawMapTitleTab(const RightPanelContext& ctx) {
             "Legend source: %zu active query layer%s",
             active_legend_items,
             active_legend_items == 1 ? "" : "s");
+        const std::vector<size_t> selected_source_indices =
+            ctx.layers
+                ? resolveMapTitleSourceLayerIndices(
+                    *ctx.layers,
+                    ctx.app_settings->map_title_source_layer_files,
+                    ctx.parcel_layer_idx)
+                : std::vector<size_t>{};
         const std::string preview_source =
-            ctx.layers && selected_source_idx != (size_t)-1 && selected_source_idx < ctx.layers->size()
-                ? mapTitleSourceLabelForLayer((*ctx.layers)[selected_source_idx])
-                : std::string();
+            ctx.layers ? mapTitleSourceLabelsForLayers(*ctx.layers, selected_source_indices) : std::string();
         if (!preview_source.empty()) {
-            ImGui::TextDisabled("Preview: Source: %s", preview_source.c_str());
+            ImGui::TextDisabled("Preview: Sources: %s", preview_source.c_str());
         } else {
-            ImGui::TextDisabled("Preview: no visible source layer selected");
+            ImGui::TextDisabled("Preview: no source layers selected");
         }
     }
     ImGui::EndTabItem();
@@ -1099,16 +1160,77 @@ void drawAvTab(const RightPanelContext& ctx) {
         return;
     }
 
+    if (ctx.app_settings && !state->recording) {
+        state->include_audio = ctx.app_settings->av_record_audio;
+        state->output_width = ctx.app_settings->av_output_width;
+        state->output_height = ctx.app_settings->av_output_height;
+        state->framerate = ctx.app_settings->av_framerate;
+        state->video_bitrate_mbps = ctx.app_settings->av_video_bitrate_mbps;
+        state->selected_audio_source = ctx.app_settings->av_audio_source;
+        state->encoder_name = ctx.app_settings->av_encoder_name;
+    }
     if (state->audio_sources.empty()) refreshAvAudioSources(*state);
+    for (size_t i = 0; i < state->audio_sources.size(); ++i) {
+        if (state->audio_sources[i].name == state->selected_audio_source) {
+            state->selected_audio_source_idx = static_cast<int>(i);
+            break;
+        }
+    }
     if (state->encoder_name.empty()) state->encoder_name = detectAvHardwareEncoder();
 
     ImGui::Text("Video");
     ImGui::BeginDisabled(state->recording);
     int fps = state->framerate;
-    if (ImGui::SliderInt("Frame rate", &fps, 10, 120)) state->framerate = std::clamp(fps, 10, 120);
+    if (ImGui::SliderInt("Frame rate", &fps, 10, 120)) {
+        state->framerate = std::clamp(fps, 10, 120);
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_framerate = state->framerate;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
     int bitrate = state->video_bitrate_mbps;
     if (ImGui::SliderInt("Bitrate Mbps", &bitrate, 2, 80)) {
         state->video_bitrate_mbps = std::clamp(bitrate, 2, 80);
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_video_bitrate_mbps = state->video_bitrate_mbps;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
+    ImGui::SeparatorText("Output");
+    int output_width = state->output_width;
+    int output_height = state->output_height;
+    if (ImGui::InputInt("Output width", &output_width, 16, 160)) {
+        state->output_width = std::max(2, std::clamp(output_width, 320, 7680) & ~1);
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_output_width = state->output_width;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
+    if (ImGui::InputInt("Output height", &output_height, 16, 160)) {
+        state->output_height = std::max(2, std::clamp(output_height, 180, 4320) & ~1);
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_output_height = state->output_height;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
+    if (ImGui::Button("1920 x 1080")) {
+        state->output_width = 1920;
+        state->output_height = 1080;
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_output_width = state->output_width;
+            ctx.app_settings->av_output_height = state->output_height;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("3840 x 2160")) {
+        state->output_width = 3840;
+        state->output_height = 2160;
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_output_width = state->output_width;
+            ctx.app_settings->av_output_height = state->output_height;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
     }
 
     const char* encoders[] = {"Auto hardware", "h264_nvenc", "h264_qsv", "h264_vaapi", "libx264"};
@@ -1118,13 +1240,23 @@ void drawAvTab(const RightPanelContext& ctx) {
     }
     if (ImGui::Combo("Encoder", &encoder_idx, encoders, IM_ARRAYSIZE(encoders))) {
         state->encoder_name = encoder_idx == 0 ? detectAvHardwareEncoder() : encoders[encoder_idx];
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_encoder_name = state->encoder_name;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
     }
     ImGui::EndDisabled();
 
     ImGui::Separator();
-    ImGui::Text("Audio");
+    ImGui::Text("Input Audio");
     bool include_audio = state->include_audio;
-    if (ImGui::Checkbox("Record audio", &include_audio)) state->include_audio = include_audio;
+    if (ImGui::Checkbox("Record audio", &include_audio)) {
+        state->include_audio = include_audio;
+        if (ctx.app_settings && ctx.root) {
+            ctx.app_settings->av_record_audio = state->include_audio;
+            saveAppSettings(*ctx.root, *ctx.app_settings);
+        }
+    }
     ImGui::SameLine();
     if (ImGui::Button("Refresh sources")) refreshAvAudioSources(*state);
 
@@ -1134,12 +1266,16 @@ void drawAvTab(const RightPanelContext& ctx) {
         static_cast<size_t>(state->selected_audio_source_idx) < state->audio_sources.size()) {
         preview = state->audio_sources[static_cast<size_t>(state->selected_audio_source_idx)].description;
     }
-    if (ImGui::BeginCombo("Audio source", preview.c_str())) {
+    if (ImGui::BeginCombo("Input audio source", preview.c_str())) {
         for (size_t i = 0; i < state->audio_sources.size(); ++i) {
             const bool selected = static_cast<int>(i) == state->selected_audio_source_idx;
             if (ImGui::Selectable(state->audio_sources[i].description.c_str(), selected)) {
                 state->selected_audio_source_idx = static_cast<int>(i);
                 state->selected_audio_source = state->audio_sources[i].name;
+                if (ctx.app_settings && ctx.root) {
+                    ctx.app_settings->av_audio_source = state->selected_audio_source;
+                    saveAppSettings(*ctx.root, *ctx.app_settings);
+                }
             }
             if (selected) ImGui::SetItemDefaultFocus();
         }
@@ -1147,6 +1283,9 @@ void drawAvTab(const RightPanelContext& ctx) {
     }
     ImGui::EndDisabled();
 
+    ImGui::Separator();
+    ImGui::Text("Output");
+    ImGui::Text("Pixel size: %d x %d", state->output_width, state->output_height);
     ImGui::Separator();
     ImGui::Text("Status");
     ImGui::TextWrapped("%s", state->status.empty() ? "Idle." : state->status.c_str());
@@ -1202,6 +1341,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         }
         openElementParcelPage(*ctx.element_info_state, entity_id);
         *ctx.show_selected_zone_details = false;
+        if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
         *ctx.selected_zone_idx = (size_t)-1;
         return true;
     };
@@ -1230,6 +1370,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
         }
         ctx.parcel_selection->group_highlight = selected > 0;
         *ctx.show_selected_zone_details = false;
+        if (ctx.selected_zone_layer_idx) *ctx.selected_zone_layer_idx = -1;
         *ctx.selected_zone_idx = (size_t)-1;
         return selected;
     };
@@ -1267,7 +1408,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
 
     ImGui::SetNextWindowPos(ImVec2(ctx.layout_w - ctx.right_panel_w - ctx.layout_margin, ctx.layout_margin), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(ctx.right_panel_w, ctx.main_panel_h), ImGuiCond_Always);
-    ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin("Record Filters", nullptr, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     if (ImGui::BeginTabBar("right_tabs")) {
         drawFiltersTab(FiltersTabContext{
             ctx.root,
@@ -1282,6 +1423,7 @@ void drawRightPanelWindow(const RightPanelContext& ctx) {
             ctx.zoning_layer_idx,
             ctx.show_selected_parcel_details,
             ctx.show_selected_zone_details,
+            ctx.selected_zone_layer_idx,
             ctx.selected_zone_idx,
             ctx.center_lon,
             ctx.center_lat,

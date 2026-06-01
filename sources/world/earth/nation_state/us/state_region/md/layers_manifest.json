@@ -1677,7 +1677,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_city"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Streets",
@@ -2285,7 +2287,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "baltimore_county"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Montgomery County Zoning",
@@ -2314,7 +2318,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "montgomery_county"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Anne Arundel County Zoning",
@@ -2343,7 +2349,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "anne_arundel_county"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Prince George's County Zoning",
@@ -2374,7 +2382,9 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "prince_georges_county"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   },
   {
     "name": "Howard County Zoning",
@@ -2401,6 +2411,8 @@
       "nation_state": "us",
       "state_region": "md",
       "county_city": "howard_county"
-    }
+    },
+    "outline_color": "#00000000",
+    "fill_enabled": true
   }
 ]
